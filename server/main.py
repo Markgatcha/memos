@@ -14,20 +14,15 @@ Usage:
 from __future__ import annotations
 
 import os
-import signal
-import sys
-import json
-import subprocess
 import shutil
-from pathlib import Path
+import subprocess
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from .routes import router
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -35,9 +30,7 @@ from .routes import router
 
 MEMOS_PORT = int(os.environ.get("MEMOS_PORT", 7400))
 MEMOS_HOST = os.environ.get("MEMOS_HOST", "0.0.0.0")
-MEMOS_DB_PATH = os.environ.get(
-    "MEMOS_DB_PATH", str(Path.home() / ".memos" / "memos.db")
-)
+MEMOS_DB_PATH = os.environ.get("MEMOS_DB_PATH", str(Path.home() / ".memos" / "memos.db"))
 MEMOS_LOG_LEVEL = os.environ.get("MEMOS_LOG_LEVEL", "info").lower()
 
 

@@ -14,7 +14,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-
 router = APIRouter()
 
 
@@ -31,15 +30,9 @@ class StoreRequest(BaseModel):
         "fact",
         description="Memory type: fact, preference, context, relationship, entity, custom.",
     )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict, description="Arbitrary metadata."
-    )
-    summary: str | None = Field(
-        None, description="Optional summary. Auto-generated if omitted."
-    )
-    importance: float = Field(
-        0.5, ge=0.0, le=1.0, description="Importance score [0, 1]."
-    )
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Arbitrary metadata.")
+    summary: str | None = Field(None, description="Optional summary. Auto-generated if omitted.")
+    importance: float = Field(0.5, ge=0.0, le=1.0, description="Importance score [0, 1].")
 
 
 class SearchRequest(BaseModel):
@@ -99,9 +92,7 @@ def _rpc_call(method: str, params: dict[str, Any] | None = None) -> Any:
     """Send a JSON-RPC call to the Node.js bridge and return the result."""
     bridge = _get_bridge()
     msg_id = str(uuid.uuid4())
-    payload = (
-        json.dumps({"id": msg_id, "method": method, "params": params or {}}) + "\n"
-    )
+    payload = json.dumps({"id": msg_id, "method": method, "params": params or {}}) + "\n"
 
     try:
         bridge.stdin.write(payload)
@@ -109,9 +100,7 @@ def _rpc_call(method: str, params: dict[str, Any] | None = None) -> Any:
 
         line = bridge.stdout.readline()
         if not line:
-            raise HTTPException(
-                status_code=502, detail="No response from MemOS bridge."
-            )
+            raise HTTPException(status_code=502, detail="No response from MemOS bridge.")
 
         response = json.loads(line.strip())
 
@@ -119,8 +108,8 @@ def _rpc_call(method: str, params: dict[str, Any] | None = None) -> Any:
             raise HTTPException(status_code=400, detail=response["error"])
 
         return response.get("result")
-    except BrokenPipeError:
-        raise HTTPException(status_code=503, detail="MemOS bridge process crashed.")
+    except BrokenPipeError as err:
+        raise HTTPException(status_code=503, detail="MemOS bridge process crashed.") from err
 
 
 # ---------------------------------------------------------------------------
