@@ -1,0 +1,82 @@
+{
+  "name": "@memos/sdk",
+  "version": "0.1.0",
+  "description": "Universal, local-first, persistent memory layer for AI agents, LLM apps, and chatbots.",
+  "license": "MIT",
+  "author": "Markgatcha",
+  "homepage": "https://github.com/Markgatcha/memos",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Markgatcha/memos.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Markgatcha/memos/issues"
+  },
+  "keywords": [
+    "memory",
+    "ai",
+    "llm",
+    "agent",
+    "graph",
+    "sqlite",
+    "local-first",
+    "ollama",
+    "langchain",
+    "chatbot",
+    "persistent-memory"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./sqlite": {
+      "import": "./dist/storage/sqlite.js",
+      "types": "./dist/storage/sqlite.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "memos": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint 'src/**/*.ts'",
+    "lint:fix": "eslint 'src/**/*.ts' --fix",
+    "format": "prettier --write 'src/**/*.ts'",
+    "format:check": "prettier --check 'src/**/*.ts'",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "test:watch": "jest --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "serve": "node dist/cli.js serve"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^9.1.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.4.2",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

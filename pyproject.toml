@@ -1,0 +1,109 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "memos"
+version = "0.1.0"
+description = "Universal, local-first, persistent memory layer for AI agents, LLM apps, and chatbots."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Markgatcha" },
+]
+keywords = [
+    "memory",
+    "ai",
+    "llm",
+    "agent",
+    "graph",
+    "sqlite",
+    "local-first",
+    "ollama",
+    "langchain",
+    "chatbot",
+    "persistent-memory",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+langchain = [
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+]
+ollama = [
+    "ollama>=0.4.0",
+]
+all = [
+    "memos[langchain,ollama]",
+]
+dev = [
+    "ruff>=0.8.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
+    "mypy>=1.13.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Markgatcha/memos"
+Repository = "https://github.com/Markgatcha/memos"
+Issues = "https://github.com/Markgatcha/memos/issues"
+Documentation = "https://memos.readthedocs.io"
+
+[project.scripts]
+memos-server = "server.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server", "adapters"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults (FastAPI)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["server", "adapters"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
