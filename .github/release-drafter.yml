@@ -1,0 +1,60 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+categories:
+  - title: "Breaking Changes"
+    labels:
+      - "breaking-change"
+      - "breaking"
+  - title: "New Adapters"
+    labels:
+      - "adapter"
+  - title: "New Features"
+    labels:
+      - "enhancement"
+      - "feature"
+  - title: "Bug Fixes"
+    labels:
+      - "fix"
+      - "bugfix"
+      - "bug"
+  - title: "Performance Improvements"
+    labels:
+      - "performance"
+  - title: "Documentation"
+    labels:
+      - "documentation"
+      - "docs"
+  - title: "Maintenance"
+    labels:
+      - "chore"
+      - "dependencies"
+      - "ci"
+exclude-labels:
+  - "skip-changelog"
+change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
+change-title-escapes: "\\<*_&"
+version-resolver:
+  major:
+    labels:
+      - "breaking-change"
+      - "breaking"
+  minor:
+    labels:
+      - "enhancement"
+      - "feature"
+      - "adapter"
+  patch:
+    labels:
+      - "fix"
+      - "bugfix"
+      - "bug"
+      - "performance"
+      - "documentation"
+      - "chore"
+  default: patch
+template: |
+  ## What's Changed
+
+  $CHANGES
+
+  **Full Changelog**: https://github.com/Markgatcha/memos/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
