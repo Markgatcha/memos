@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Markgatcha/memos/main/assets/memos-logo.png" alt="MemOS" width="200" />
+      <img src="https://raw.githubusercontent.com/Markgatcha/memos/main/assets/memos-logo.svg" alt="MemOS" width="200" />
 </p>
 
 <h1 align="center">MemOS</h1>
@@ -333,6 +333,23 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. The fastest way to co
 | **v1.0** | Production-ready | Stable API, comprehensive test suite, performance benchmarks, enterprise features |
 
 See [ROADMAP.md](ROADMAP.md) for the detailed milestone plan.
+
+
+## Ecosystem
+
+MemOS is the **memory layer** of the local-first AI stack. Pair it with these tools for a complete setup:
+
+| Tool | Role | Works with MemOS |
+|------|------|------------------|
+| [universal-mcp-toolkit](https://github.com/Markgatcha/universal-mcp-toolkit) | MCP transport & tool registry | ✅ Native MCP adapter (v0.2) |
+| Ollama | Local LLM inference | ✅ Adapter included |
+| LangChain | Agent framework | ✅ Adapter included |
+| LangGraph | Stateful agent graphs | 🔜 Coming in v0.2 |
+| CrewAI | Multi-agent orchestration | 🔜 Coming in v0.3 |
+
+> **Building with MCP?** The official MemOS MCP adapter is coming in v0.2 and will plug directly into [universal-mcp-toolkit](https://github.com/Markgatcha/universal-mcp-toolkit), giving every Claude, OpenClaw, and MCP-compatible agent persistent memory in one step.
+
+---
 
 ---
 
