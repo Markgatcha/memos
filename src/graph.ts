@@ -337,7 +337,7 @@ export class GraphEngine {
 
         const neighbours = this.getNeighbours(current);
         for (const n of neighbours) {
-          if (!visited.has(n.id)) queue.push(n);
+          if (!visited.has(n.id)) queue.push(n.id);
         }
       }
 
