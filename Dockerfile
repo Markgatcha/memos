@@ -27,7 +27,7 @@ COPY adapters/ ./adapters/
 
 # Install Python deps
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir ".[all]"
+RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic langchain langchain-core ollama
 
 # Copy built TypeScript
 COPY --from=ts-build /app/dist ./src
