@@ -5,7 +5,7 @@
 FROM node:22-slim AS ts-build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --ignore-scripts
+RUN npm install --ignore-scripts
 COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npm run build
