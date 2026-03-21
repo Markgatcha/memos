@@ -29,7 +29,7 @@ import urllib.request
 from typing import Any
 
 from langchain.memory.chat_memory import BaseMemory
-from langchain.schema import BaseMessage, HumanMessage, AIMessage
+from langchain.schema import AIMessage, BaseMessage, HumanMessage
 from pydantic import Field
 
 
@@ -88,9 +88,7 @@ class MemOSMemory(BaseMemory):
         """Return the memory variables this class adds to the prompt."""
         return [self.memory_key]
 
-    def load_memory_variables(
-        self, inputs: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
+    def load_memory_variables(self, inputs: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Load memory variables for chain injection.
 
@@ -124,9 +122,7 @@ class MemOSMemory(BaseMemory):
             result_messages = list(self._conversation_buffer)
             if memory_texts:
                 memory_context = "Relevant memories:\n" + "\n".join(memory_texts)
-                result_messages.insert(
-                    0, HumanMessage(content=f"(System: {memory_context})")
-                )
+                result_messages.insert(0, HumanMessage(content=f"(System: {memory_context})"))
             return {self.memory_key: result_messages}
         else:
             buffer_str = self._buffer_as_str()
@@ -156,11 +152,7 @@ class MemOSMemory(BaseMemory):
             self._conversation_buffer.append(AIMessage(content=output_str))
 
         # Auto-extract facts from user messages
-        if (
-            self.auto_extract_facts
-            and input_str
-            and len(input_str) >= self.min_message_length
-        ):
+        if self.auto_extract_facts and input_str and len(input_str) >= self.min_message_length:
             self._memos_store(
                 content=input_str,
                 type="fact",

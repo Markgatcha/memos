@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
 import urllib.error
+import urllib.request
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
 
 @dataclass
@@ -46,9 +47,7 @@ class OllamaConfig:
     """Maximum number of memories to inject into the system prompt."""
     auto_store: bool = True
     """Automatically store user messages as memories."""
-    memory_types: list[str] = field(
-        default_factory=lambda: ["preference", "fact", "context"]
-    )
+    memory_types: list[str] = field(default_factory=lambda: ["preference", "fact", "context"])
     """Memory types to store when auto-storing is enabled."""
     store_threshold: int = 20
     """Minimum message length to trigger auto-storage."""
@@ -139,9 +138,7 @@ class OllamaMemory:
 
         return assistant_msg
 
-    async def chat_stream(
-        self, message: str, **ollama_kwargs: Any
-    ) -> AsyncIterator[str]:
+    async def chat_stream(self, message: str, **ollama_kwargs: Any) -> AsyncIterator[str]:
         """
         Stream a chat response token by token.
 
@@ -255,8 +252,7 @@ class OllamaMemory:
             self._http_get(f"{self.config.base_url}/api/tags")
         except (urllib.error.URLError, ConnectionError) as exc:
             raise ConnectionError(
-                f"Cannot reach Ollama at {self.config.base_url}. "
-                f"Is Ollama running? Error: {exc}"
+                f"Cannot reach Ollama at {self.config.base_url}. Is Ollama running? Error: {exc}"
             ) from exc
 
     def _check_memos(self) -> None:
@@ -269,9 +265,7 @@ class OllamaMemory:
                 f"Start it with: npx @memos/sdk serve. Error: {exc}"
             ) from exc
 
-    def _ollama_chat(
-        self, messages: list[dict[str, str]], **kwargs: Any
-    ) -> dict[str, Any]:
+    def _ollama_chat(self, messages: list[dict[str, str]], **kwargs: Any) -> dict[str, Any]:
         """Call Ollama chat completion API."""
         payload = {
             "model": self.config.model,
@@ -298,9 +292,7 @@ class OllamaMemory:
         payload = {"content": content, **kwargs}
         return self._http_post(f"{self.config.memos_url}/api/mem/store", payload)
 
-    def _memos_search(
-        self, query: str, limit: int | None = None
-    ) -> list[dict[str, Any]]:
+    def _memos_search(self, query: str, limit: int | None = None) -> list[dict[str, Any]]:
         """Search memories via MemOS API."""
         payload: dict[str, Any] = {"query": query}
         if limit is not None:
@@ -318,9 +310,7 @@ class OllamaMemory:
     def _memos_forget(self, memory_id: str) -> bool:
         """Delete a memory via MemOS API."""
         try:
-            self._http_post(
-                f"{self.config.memos_url}/api/mem/forget", {"id": memory_id}
-            )
+            self._http_post(f"{self.config.memos_url}/api/mem/forget", {"id": memory_id})
             return True
         except Exception:
             return False
@@ -370,6 +360,4 @@ class OllamaMemory:
     def _assert_init(self) -> None:
         """Assert the adapter has been initialised."""
         if not self._initialized:
-            raise RuntimeError(
-                "OllamaMemory not initialised. Call `await chat.init()` first."
-            )
+            raise RuntimeError("OllamaMemory not initialised. Call `await chat.init()` first.")
