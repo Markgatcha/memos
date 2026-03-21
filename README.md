@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@memos/sdk"><img src="https://img.shields.io/npm/v/@memos/sdk?style=flat-square&color=cb3837" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/@memos/sdk"><img src="https://img.shields.io/badge/npm-v0.1.0-cb3837?style=flat-square" alt="npm"></a>
   <a href="https://pypi.org/project/memos/"><img src="https://img.shields.io/pypi/v/memos?style=flat-square&color=3776ab" alt="PyPI"></a>
   <a href="https://github.com/Markgatcha/memos/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Markgatcha/memos?style=flat-square&color=green" alt="License"></a>
   <a href="https://github.com/Markgatcha/memos/actions"><img src="https://img.shields.io/github/actions/workflow/status/Markgatcha/memos/ci.yml?style=flat-square" alt="CI"></a>
