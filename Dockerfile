@@ -21,6 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy Python source first (needed by hatchling for wheel build)
+COPY server/ ./server/
+COPY adapters/ ./adapters/
+
 # Install Python deps
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir ".[all]"
@@ -29,19 +33,15 @@ RUN pip install --no-cache-dir ".[all]"
 COPY --from=ts-build /app/dist ./src
 COPY --from=ts-build /app/package.json ./
 
-# Copy Python source
-COPY server/ ./server/
-COPY adapters/ ./adapters/
-
 # Data volume
 VOLUME /root/.memos
 
-# Expose port
+# Expose API port
 EXPOSE 7400
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:7400/health || exit 1
 
-# Run the server
-CMD ["python", "-m", "server.main"]
+# Default command
+CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "7400"]
