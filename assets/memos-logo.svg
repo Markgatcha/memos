@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f0f1a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1a1a2e;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="brain" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6c63ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#48cfad;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="url(#bg)" stroke="#6c63ff" stroke-width="2"/>
+  <!-- Brain icon (simplified) -->
+  <g transform="translate(100,100)">
+    <!-- Left lobe -->
+    <path d="M-10,-30 C-40,-35 -55,-20 -50,-5 C-55,5 -50,20 -35,25 C-25,30 -15,25 -10,20 Z"
+      fill="none" stroke="url(#brain)" stroke-width="3" stroke-linecap="round"/>
+    <!-- Right lobe -->
+    <path d="M10,-30 C40,-35 55,-20 50,-5 C55,5 50,20 35,25 C25,30 15,25 10,20 Z"
+      fill="none" stroke="url(#brain)" stroke-width="3" stroke-linecap="round"/>
+    <!-- Center stem -->
+    <line x1="0" y1="-30" x2="0" y2="20" stroke="url(#brain)" stroke-width="2.5"/>
+    <!-- Neural nodes -->
+    <circle cx="-30" cy="-10" r="4" fill="#6c63ff" opacity="0.9"/>
+    <circle cx="30" cy="-10" r="4" fill="#48cfad" opacity="0.9"/>
+    <circle cx="-38" cy="10" r="3" fill="#6c63ff" opacity="0.7"/>
+    <circle cx="38" cy="10" r="3" fill="#48cfad" opacity="0.7"/>
+    <circle cx="0" cy="-15" r="3.5" fill="#a78bfa" opacity="0.9"/>
+    <!-- Connection lines -->
+    <line x1="-30" y1="-10" x2="0" y2="-15" stroke="#6c63ff" stroke-width="1" opacity="0.5"/>
+    <line x1="30" y1="-10" x2="0" y2="-15" stroke="#48cfad" stroke-width="1" opacity="0.5"/>
+    <line x1="-30" y1="-10" x2="-38" y2="10" stroke="#6c63ff" stroke-width="1" opacity="0.4"/>
+    <line x1="30" y1="-10" x2="38" y2="10" stroke="#48cfad" stroke-width="1" opacity="0.4"/>
+  </g>
+  <!-- Text -->
+  <text x="100" y="165" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
+    font-size="22" font-weight="700" fill="#ffffff" text-anchor="middle"
+    letter-spacing="3">MemOS</text>
+  <text x="100" y="182" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
+    font-size="9" fill="#6c63ff" text-anchor="middle" letter-spacing="1">MEMORY LAYER</text>
+</svg>
