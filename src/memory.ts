@@ -45,17 +45,60 @@ function extractiveSummary(text: string): string {
   if (sentences.length === 1) return sentences[0];
 
   const stopWords = new Set([
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "shall",
-    "should", "may", "might", "must", "can", "could", "to", "of", "in",
-    "for", "on", "with", "at", "by", "from", "as", "into", "through",
-    "and", "but", "or", "not", "it", "its", "this", "that",
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "shall",
+    "should",
+    "may",
+    "might",
+    "must",
+    "can",
+    "could",
+    "to",
+    "of",
+    "in",
+    "for",
+    "on",
+    "with",
+    "at",
+    "by",
+    "from",
+    "as",
+    "into",
+    "through",
+    "and",
+    "but",
+    "or",
+    "not",
+    "it",
+    "its",
+    "this",
+    "that",
   ]);
 
   // Build word frequency across all sentences
   const freq = new Map<string, number>();
   for (const sentence of sentences) {
-    const words = sentence.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/);
+    const words = sentence
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, "")
+      .split(/\s+/);
     for (const w of words) {
       if (w.length > 1 && !stopWords.has(w)) {
         freq.set(w, (freq.get(w) || 0) + 1);
@@ -68,7 +111,10 @@ function extractiveSummary(text: string): string {
   let bestSentence = sentences[0];
 
   for (const sentence of sentences) {
-    const words = sentence.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/);
+    const words = sentence
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, "")
+      .split(/\s+/);
     let score = 0;
     for (const w of words) {
       score += freq.get(w) || 0;
@@ -103,7 +149,9 @@ function extractiveSummary(text: string): string {
 export class MemOS {
   private graph: GraphEngine;
   private storage: StorageAdapter;
-  private config: Required<Omit<MemOSConfig, "storage">> & { storage?: StorageAdapter };
+  private config: Required<Omit<MemOSConfig, "storage">> & {
+    storage?: StorageAdapter;
+  };
   private listeners: Map<MemOSEvent, MemOSEventListener[]> = new Map();
   private initialised = false;
 
@@ -123,7 +171,8 @@ export class MemOS {
 
     this.graph = new GraphEngine();
     this.storage =
-      this.config.storage ?? new SQLiteStorage(this.config.dbPath, this.config.wal);
+      this.config.storage ??
+      new SQLiteStorage(this.config.dbPath, this.config.wal);
   }
 
   /**
@@ -169,7 +218,7 @@ export class MemOS {
    */
   async store(
     content: string,
-    opts: Omit<CreateMemoryInput, "content"> = {}
+    opts: Omit<CreateMemoryInput, "content"> = {},
   ): Promise<{ node: MemoryNode; links: MemoryEdge[] }> {
     this.assertInit();
 
@@ -193,7 +242,10 @@ export class MemOS {
     // Auto-link
     const links: MemoryEdge[] = [];
     if (this.config.autoLinkThreshold > 0) {
-      const autoEdges = this.graph.autoLink(node, this.config.autoLinkThreshold);
+      const autoEdges = this.graph.autoLink(
+        node,
+        this.config.autoLinkThreshold,
+      );
       for (const edge of autoEdges) {
         await this.storage.saveEdge(edge);
         links.push(edge);
@@ -294,7 +346,7 @@ export class MemOS {
     sourceId: string,
     targetId: string,
     relation: MemoryEdge["relation"] = "relates_to",
-    weight = 0.5
+    weight = 0.5,
   ): Promise<MemoryEdge> {
     this.assertInit();
 
@@ -316,7 +368,10 @@ export class MemOS {
   /**
    * Update an existing memory node.
    */
-  async update(id: string, input: UpdateMemoryInput): Promise<MemoryNode | null> {
+  async update(
+    id: string,
+    input: UpdateMemoryInput,
+  ): Promise<MemoryNode | null> {
     this.assertInit();
     const node = await this.storage.updateNode(id, input);
     if (node) {
@@ -432,7 +487,7 @@ export class MemOS {
   private assertInit(): void {
     if (!this.initialised) {
       throw new Error(
-        "MemOS not initialised. Call `await memos.init()` before using the API."
+        "MemOS not initialised. Call `await memos.init()` before using the API.",
       );
     }
   }
@@ -460,6 +515,13 @@ export class MemOS {
 }
 
 // Re-export for convenience
-export type { MemoryNode, MemoryEdge, SearchFilter, ScoredMemory, GraphSnapshot, MemOSConfig } from "./types";
+export type {
+  MemoryNode,
+  MemoryEdge,
+  SearchFilter,
+  ScoredMemory,
+  GraphSnapshot,
+  MemOSConfig,
+} from "./types";
 export { GraphEngine, textSimilarity } from "./graph";
 export { SQLiteStorage } from "./storage/sqlite";

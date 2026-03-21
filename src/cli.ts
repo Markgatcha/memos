@@ -54,7 +54,12 @@ Examples:
 }
 
 async function main(): Promise<void> {
-  if (!command || command === "help" || command === "--help" || command === "-h") {
+  if (
+    !command ||
+    command === "help" ||
+    command === "--help" ||
+    command === "-h"
+  ) {
     printHelp();
     process.exit(0);
   }
@@ -71,19 +76,26 @@ async function main(): Promise<void> {
       case "store": {
         const content = args[1];
         if (!content) {
-          console.error("Error: content is required.\n  Usage: memos store <content>");
+          console.error(
+            "Error: content is required.\n  Usage: memos store <content>",
+          );
           process.exit(1);
         }
         const typeIdx = args.indexOf("--type");
         const type = typeIdx !== -1 ? args[typeIdx + 1] : undefined;
-        const result = await memos.store(content, type ? { type: type as any } : {});
+        const result = await memos.store(
+          content,
+          type ? { type: type as any } : {},
+        );
         if (jsonFlag) {
           console.log(JSON.stringify(result, null, 2));
         } else {
           console.log(`Stored memory: ${result.node.id}`);
           console.log(`  Summary: ${result.node.summary}`);
           if (result.links.length > 0) {
-            console.log(`  Auto-linked to ${result.links.length} existing memories`);
+            console.log(
+              `  Auto-linked to ${result.links.length} existing memories`,
+            );
           }
         }
         break;
@@ -115,7 +127,9 @@ async function main(): Promise<void> {
       case "search": {
         const query = args[1];
         if (!query) {
-          console.error("Error: query is required.\n  Usage: memos search <query>");
+          console.error(
+            "Error: query is required.\n  Usage: memos search <query>",
+          );
           process.exit(1);
         }
         const limitIdx = args.indexOf("--limit");
@@ -147,7 +161,9 @@ async function main(): Promise<void> {
         if (jsonFlag) {
           console.log(JSON.stringify({ deleted, id }));
         } else {
-          console.log(deleted ? `Forgot memory: ${id}` : `Memory not found: ${id}`);
+          console.log(
+            deleted ? `Forgot memory: ${id}` : `Memory not found: ${id}`,
+          );
         }
         break;
       }
@@ -167,15 +183,19 @@ async function main(): Promise<void> {
         if (jsonFlag) {
           console.log(JSON.stringify(graph, null, 2));
         } else {
-          console.log(`Memory Graph: ${graph.nodes.length} nodes, ${graph.edges.length} edges\n`);
+          console.log(
+            `Memory Graph: ${graph.nodes.length} nodes, ${graph.edges.length} edges\n`,
+          );
           for (const node of graph.nodes) {
-            console.log(`  [${node.type}] ${node.id.slice(0, 8)} — ${node.content.slice(0, 60)}`);
+            console.log(
+              `  [${node.type}] ${node.id.slice(0, 8)} — ${node.content.slice(0, 60)}`,
+            );
           }
           if (graph.edges.length > 0) {
             console.log("\nEdges:");
             for (const edge of graph.edges) {
               console.log(
-                `  ${edge.sourceId.slice(0, 8)} --[${edge.relation}]--> ${edge.targetId.slice(0, 8)}`
+                `  ${edge.sourceId.slice(0, 8)} --[${edge.relation}]--> ${edge.targetId.slice(0, 8)}`,
               );
             }
           }
@@ -187,14 +207,18 @@ async function main(): Promise<void> {
         const sourceId = args[1];
         const targetId = args[2];
         if (!sourceId || !targetId) {
-          console.error("Error: source and target IDs are required.\n  Usage: memos link <source-id> <target-id>");
+          console.error(
+            "Error: source and target IDs are required.\n  Usage: memos link <source-id> <target-id>",
+          );
           process.exit(1);
         }
         const edge = await memos.link(sourceId, targetId);
         if (jsonFlag) {
           console.log(JSON.stringify(edge, null, 2));
         } else {
-          console.log(`Linked: ${sourceId.slice(0, 8)} --[${edge.relation}]--> ${targetId.slice(0, 8)}`);
+          console.log(
+            `Linked: ${sourceId.slice(0, 8)} --[${edge.relation}]--> ${targetId.slice(0, 8)}`,
+          );
         }
         break;
       }

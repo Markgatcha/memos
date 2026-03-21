@@ -155,7 +155,12 @@ export interface SearchFilter {
   /** Offset for pagination. */
   offset?: number;
   /** Sort field. */
-  sortBy?: "importance" | "createdAt" | "updatedAt" | "accessCount" | "relevance";
+  sortBy?:
+    | "importance"
+    | "createdAt"
+    | "updatedAt"
+    | "accessCount"
+    | "relevance";
   /** Sort direction. */
   sortOrder?: "asc" | "desc";
 }

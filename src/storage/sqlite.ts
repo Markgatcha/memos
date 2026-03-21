@@ -161,7 +161,7 @@ export class SQLiteStorage implements StorageAdapter {
     // Update access stats
     this.db
       .prepare(
-        "UPDATE nodes SET access_count = access_count + 1, last_accessed = ? WHERE id = ?"
+        "UPDATE nodes SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
       )
       .run(Date.now(), id);
 
@@ -170,7 +170,7 @@ export class SQLiteStorage implements StorageAdapter {
 
   async updateNode(
     id: string,
-    input: UpdateMemoryInput
+    input: UpdateMemoryInput,
   ): Promise<MemoryNode | null> {
     const existing = await this.getNode(id);
     if (!existing) return null;
@@ -186,7 +186,7 @@ export class SQLiteStorage implements StorageAdapter {
       .prepare(
         `UPDATE nodes SET content = @content, summary = @summary, type = @type,
          metadata = @metadata, importance = @importance, updated_at = @updatedAt
-         WHERE id = @id`
+         WHERE id = @id`,
       )
       .run({
         id: updated.id,
@@ -259,7 +259,7 @@ export class SQLiteStorage implements StorageAdapter {
            JOIN nodes n ON n.rowid = fts.rowid
            WHERE nodes_fts MATCH ?
            ORDER BY rank
-           LIMIT ? OFFSET ?`
+           LIMIT ? OFFSET ?`,
         )
         .all(filter.query, filter.limit ?? 50, filter.offset ?? 0) as Record<
         string,
@@ -295,7 +295,7 @@ export class SQLiteStorage implements StorageAdapter {
 
       rows = this.db
         .prepare(
-          `SELECT * FROM nodes ${where} ORDER BY ${sortField} ${order} LIMIT ? OFFSET ?`
+          `SELECT * FROM nodes ${where} ORDER BY ${sortField} ${order} LIMIT ? OFFSET ?`,
         )
         .all(...params, filter.limit ?? 50, filter.offset ?? 0) as Record<
         string,
@@ -310,7 +310,11 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   async queryEdges(
-    filter: { sourceId?: string; targetId?: string; relation?: EdgeRelation } = {}
+    filter: {
+      sourceId?: string;
+      targetId?: string;
+      relation?: EdgeRelation;
+    } = {},
   ): Promise<MemoryEdge[]> {
     const conditions: string[] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -339,12 +343,14 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   async getGraph(): Promise<GraphSnapshot> {
-    const nodes = this.db
-      .prepare("SELECT * FROM nodes")
-      .all() as Record<string, unknown>[];
-    const edges = this.db
-      .prepare("SELECT * FROM edges")
-      .all() as Record<string, unknown>[];
+    const nodes = this.db.prepare("SELECT * FROM nodes").all() as Record<
+      string,
+      unknown
+    >[];
+    const edges = this.db.prepare("SELECT * FROM edges").all() as Record<
+      string,
+      unknown
+    >[];
 
     return {
       nodes: nodes.map((r) => this.rowToNode(r)),
@@ -393,9 +399,7 @@ export class SQLiteStorage implements StorageAdapter {
     };
   }
 
-  private mapSortField(
-    field?: SearchFilter["sortBy"]
-  ): string {
+  private mapSortField(field?: SearchFilter["sortBy"]): string {
     switch (field) {
       case "importance":
         return "importance";
