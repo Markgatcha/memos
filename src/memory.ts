@@ -13,7 +13,7 @@ import { SQLiteStorage } from "./storage/sqlite";
 import { defaultDbPath } from "./storage/sqlite";
 import type {
   MemoryNode,
-    MemoryEdge,
+  MemoryEdge,
   MemoryType,
   CreateMemoryInput,
   UpdateMemoryInput,
