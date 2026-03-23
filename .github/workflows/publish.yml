@@ -6,7 +6,7 @@ on:
 
 jobs:
   publish:
-    name: Publish @memos/sdk to npm
+    name: Publish @mem-os/sdk to npm
     runs-on: ubuntu-latest
     permissions:
       contents: read
