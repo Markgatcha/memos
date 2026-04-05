@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@memos/sdk"><img src="https://img.shields.io/badge/npm-v0.1.0-cb3837?style=flat-square" alt="npm"></a>
-[![PyPI](https://img.shields.io/pypi/v/YOUR-PACKAGE-NAME.svg?logo=python&logoColor=white)](https://pypi.org/project/YOUR-PACKAGE-NAME/)
+  <a href="https://www.npmjs.com/package/@mem-os/sdk"><img src="https://img.shields.io/badge/npm-v0.1.0-cb3837?style=flat-square" alt="npm"></a>
+<a href="https://pypi.org/project/memos/"><img src="https://img.shields.io/pypi/v/memos.svg?logo=python&logoColor=white" alt="PyPI"></a>
   <a href="https://github.com/Markgatcha/memos/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Markgatcha/memos?style=flat-square&color=green" alt="License"></a>
   <a href="https://github.com/Markgatcha/memos/actions"><img src="https://img.shields.io/github/actions/workflow/status/Markgatcha/memos/ci.yml?style=flat-square" alt="CI"></a>
   <img src="https://img.shields.io/badge/100%25%20local-zero%20cloud%20deps-brightgreen?style=flat-square" alt="100% Local">
@@ -37,7 +37,7 @@
 
 ```bash
 # TypeScript / Node.js
-npm install @memos/sdk
+npm install @mem-os/sdk
 
 # Python
 pip install memos
@@ -150,7 +150,7 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 ### TypeScript
 
 ```typescript
-import { MemOS } from "@memos/sdk";
+import { MemOS } from "@mem-os/sdk";
 
 const memos = new MemOS();
 await memos.init();
