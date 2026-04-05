@@ -11,7 +11,6 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@mem-os/sdk"><img src="https://img.shields.io/badge/npm-v0.1.0-cb3837?style=flat-square" alt="npm"></a>
-<a href="https://pypi.org/project/memos/"><img src="https://img.shields.io/pypi/v/memos.svg?logo=python&logoColor=white" alt="PyPI"></a>
   <a href="https://github.com/Markgatcha/memos/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Markgatcha/memos?style=flat-square&color=green" alt="License"></a>
   <a href="https://github.com/Markgatcha/memos/actions"><img src="https://img.shields.io/github/actions/workflow/status/Markgatcha/memos/ci.yml?style=flat-square" alt="CI"></a>
   <img src="https://img.shields.io/badge/100%25%20local-zero%20cloud%20deps-brightgreen?style=flat-square" alt="100% Local">
