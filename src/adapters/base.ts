@@ -6,4 +6,4 @@
  *
  * @module @memos/adapters/base
  */
-export type { StorageAdapter } from "../types";
+export type { StorageAdapter } from "../types.js";

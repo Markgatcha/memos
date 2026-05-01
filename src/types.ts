@@ -54,6 +54,12 @@ export interface MemoryNode {
   accessCount: number;
   /** Timestamp of last access (Unix ms). */
   lastAccessed: number;
+  /** Custom tags for categorisation. */
+  tags: string[];
+  /** TTL expiration as Unix timestamp (seconds). null = no expiration. */
+  expiresAt: number | null;
+  /** Namespace for grouping memories (experimental). */
+  namespace: string;
 }
 
 /**
@@ -66,6 +72,12 @@ export interface CreateMemoryInput {
   metadata?: Record<string, unknown>;
   summary?: string;
   importance?: number;
+  /** TTL in seconds from now. */
+  ttl?: number;
+  /** Custom tags. */
+  tags?: string[];
+  /** Namespace (experimental). */
+  namespace?: string;
 }
 
 /**
@@ -77,6 +89,8 @@ export interface UpdateMemoryInput {
   type?: MemoryType;
   metadata?: Record<string, unknown>;
   importance?: number;
+  tags?: string[];
+  namespace?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +177,10 @@ export interface SearchFilter {
     | "relevance";
   /** Sort direction. */
   sortOrder?: "asc" | "desc";
+  /** Filter by tags (AND logic — node must have ALL specified tags). */
+  tags?: string[];
+  /** Filter by namespace (experimental). */
+  namespace?: string;
 }
 
 /**
@@ -235,6 +253,18 @@ export interface StorageAdapter {
   /** Return the full graph (nodes + edges). */
   getGraph(): Promise<GraphSnapshot>;
 
+  /** Set TTL on a node. */
+  setTTL(id: string, seconds: number): Promise<void>;
+
+  /** Clear TTL on a node. */
+  clearTTL(id: string): Promise<void>;
+
+  /** Delete expired nodes and return the count of deleted nodes. */
+  sweepExpired(): Promise<number>;
+
+  /** Get all nodes with a specific tag. */
+  queryNodesByTag(tag: string): Promise<MemoryNode[]>;
+
   /** Close connections and release resources. */
   close(): Promise<void>;
 }
@@ -242,6 +272,20 @@ export interface StorageAdapter {
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
+
+/**
+ * Experimental feature flags.
+ */
+export interface ExperimentalConfig {
+  /** Enable semantic search via embeddings (requires adapter). */
+  semanticSearch?: boolean;
+  /** Enable graph visualization export. */
+  graphViz?: boolean;
+  /** Enable namespace isolation. */
+  namespaces?: boolean;
+  /** Enable context injection from graph neighbours. */
+  contextInjection?: boolean;
+}
 
 /**
  * Configuration options for a MemOS instance.
@@ -278,6 +322,51 @@ export interface MemOSConfig {
    * Custom storage adapter. When provided, `dbPath` is ignored.
    */
   storage?: StorageAdapter;
+
+  /**
+   * Interval in seconds for the TTL expiration sweep.
+   * Set to `0` to disable the sweep.
+   * @default 60
+   */
+  sweepInterval?: number;
+
+  /**
+   * Experimental feature flags.
+   */
+  experimental?: ExperimentalConfig;
+}
+
+// ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+
+/**
+ * Export format options.
+ */
+export type ExportFormat = "json" | "markdown" | "obsidian";
+
+/**
+ * Options for exporting memories.
+ */
+export interface ExportOptions {
+  /** Export format. */
+  format?: ExportFormat;
+  /** Output directory path (for markdown/obsidian). */
+  output?: string;
+  /** Only export memories with this tag. */
+  tag?: string;
+}
+
+/**
+ * Result of an export operation.
+ */
+export interface ExportResult {
+  /** The format used. */
+  format: ExportFormat;
+  /** For JSON format, the serialized data. For file-based formats, the output directory. */
+  data: string;
+  /** Number of memories exported. */
+  count: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +381,8 @@ export type MemOSEvent =
   | "edge:created"
   | "edge:deleted"
   | "link:auto"
-  | "eviction";
+  | "eviction"
+  | "ttl:expired";
 
 /** Event listener signature. */
 export type MemOSEventListener = (data: unknown) => void;

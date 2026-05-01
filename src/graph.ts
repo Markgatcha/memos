@@ -8,12 +8,7 @@
  * @module @memos/graph
  */
 
-import type {
-  MemoryNode,
-  MemoryEdge,
-  CreateEdgeInput,
-  EdgeRelation,
-} from "./types";
+import type { MemoryNode, MemoryEdge, CreateEdgeInput } from "./types.js";
 
 /**
  * Bag-of-words cosine similarity between two strings.

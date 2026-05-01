@@ -247,6 +247,22 @@ memos summarize
 memos serve
 ```
 
+### MCP Server
+
+Expose MemOS directly to any MCP-compatible agent over stdio:
+
+```bash
+npx -y @mem-os/sdk mcp
+```
+
+Use a specific local database:
+
+```bash
+npx -y @mem-os/sdk mcp --db ~/.memos/memos.db
+```
+
+The MCP adapter provides tools for storing, searching, retrieving, deleting, graph inspection, and context injection. It is intentionally local-first: the server reads and writes the SQLite database you point it at and does not require cloud credentials.
+
 ---
 
 ## Configuration

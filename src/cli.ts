@@ -10,16 +10,64 @@
  *   memos forget <id>
  *   memos summarize
  *   memos graph
- *   memos serve           # Start the HTTP server
+ *   memos link <src> <dst>
+ *   memos count
+ *   memos tag <id> <tag1> [tag2...]
+ *   memos untag <id> <tag1> [tag2...]
+ *   memos list --tag <tag>
+ *   memos export [--format json|markdown|obsidian] [--output <dir>] [--tag <tag>]
+ *   memos backup [--output <path>]
+ *   memos restore <path>
+ *   memos mcp
+ *   memos serve
  *
  * @module @memos/cli
  */
 
-import { MemOS } from "./memory";
-import { resolve } from "path";
+import { MemOS } from "./memory.js";
+import { resolve, dirname } from "path";
+import {
+  existsSync,
+  copyFileSync,
+  statSync,
+  writeFileSync,
+  readFileSync,
+} from "fs";
 
 const args = process.argv.slice(2);
 const command = args[0];
+
+/**
+ * Filter out flags and their values from an argument list.
+ * Flags that take a value: --db, --type, --ttl, --limit, --format, --output
+ * Boolean flags: --json
+ */
+function nonFlagArgs(args: string[], startIndex: number): string[] {
+  const flagsWithValue = new Set([
+    "--db",
+    "--type",
+    "--ttl",
+    "--limit",
+    "--format",
+    "--output",
+  ]);
+  const result: string[] = [];
+  let skipNext = false;
+  for (let i = startIndex; i < args.length; i++) {
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    if (args[i] === "--json") continue;
+    if (flagsWithValue.has(args[i])) {
+      skipNext = true;
+      continue;
+    }
+    if (args[i].startsWith("--")) continue;
+    result.push(args[i]);
+  }
+  return result;
+}
 
 function printHelp(): void {
   console.log(`
@@ -29,27 +77,44 @@ Usage:
   memos <command> [options]
 
 Commands:
-  store <content>     Store a new memory
-  retrieve <id>       Retrieve a memory by ID
-  search <query>      Search memories by text
-  forget <id>         Delete a memory by ID
-  summarize           Summarize all memories
-  graph               Print the full memory graph
-  link <src> <dst>    Link two memories
-  count               Show memory count
-  serve               Start the HTTP server
-  help                Show this help message
+  store <content>         Store a new memory
+  retrieve <id>           Retrieve a memory by ID
+  search <query>          Search memories by text
+  forget <id>             Delete a memory by ID
+  summarize               Summarize all memories
+  graph                   Print the full memory graph
+  link <src> <dst>        Link two memories
+  count                   Show memory count
+  tag <id> <tag> [...]    Add tags to a memory
+  untag <id> <tag> [...]  Remove tags from a memory
+  list --tag <tag>        List memories by tag
+  export                  Export memories to file
+  backup                  Backup the database
+  restore <path>          Restore from a backup
+  mcp                     Start the MemOS MCP stdio server
+  serve                   Start the HTTP server
+  help                    Show this help message
 
 Options:
-  --db <path>         Database path (default: ~/.memos/memos.db)
-  --type <type>       Memory type (store command)
-  --limit <n>         Result limit (search command)
-  --json              Output as JSON
+  --db <path>             Database path (default: ~/.memos/memos.db)
+  --type <type>           Memory type (store command)
+  --ttl <seconds>         TTL in seconds (store command)
+  --limit <n>             Result limit (search command)
+  --format <fmt>          Export format: json, markdown, obsidian
+  --output <path>         Output path (export/backup)
+  --tag <tag>             Tag filter (export/list)
+  --json                  Output as JSON
 
 Examples:
   memos store "User prefers dark mode" --type preference
+  memos store "Temp note" --ttl 3600
   memos search "dark mode" --limit 5
-  memos store "Project uses TypeScript" --type fact --json
+  memos tag <id> work important
+  memos list --tag work
+  memos export --format markdown --output ./my-export
+  memos backup --output ./backup.db
+  memos restore ./backup.db
+  memos mcp --db ~/.memos/memos.db
 `);
 }
 
@@ -68,6 +133,12 @@ async function main(): Promise<void> {
   const dbPath = dbFlagIdx !== -1 ? args[dbFlagIdx + 1] : undefined;
   const jsonFlag = args.includes("--json");
 
+  if (command === "mcp") {
+    const { runMcpServer } = await import("./mcp.js");
+    await runMcpServer({ dbPath });
+    return;
+  }
+
   const memos = new MemOS({ dbPath });
   await memos.init();
 
@@ -83,15 +154,37 @@ async function main(): Promise<void> {
         }
         const typeIdx = args.indexOf("--type");
         const type = typeIdx !== -1 ? args[typeIdx + 1] : undefined;
-        const result = await memos.store(
-          content,
-          type ? { type: type as any } : {},
-        );
+        const ttlIdx = args.indexOf("--ttl");
+        const ttl = ttlIdx !== -1 ? parseInt(args[ttlIdx + 1], 10) : undefined;
+        const tagIdx = args.indexOf("--tag");
+        let tags: string[] | undefined;
+        if (tagIdx !== -1) {
+          tags = [];
+          for (let i = tagIdx + 1; i < args.length; i++) {
+            if (args[i].startsWith("--")) break;
+            tags.push(args[i]);
+          }
+          if (tags.length === 0) tags = undefined;
+        }
+        const opts: Record<string, unknown> = {};
+        if (type) opts.type = type;
+        if (ttl) opts.ttl = ttl;
+        if (tags && tags.length > 0) opts.tags = tags;
+        const result = await memos.store(content, opts as any);
         if (jsonFlag) {
           console.log(JSON.stringify(result, null, 2));
         } else {
           console.log(`Stored memory: ${result.node.id}`);
           console.log(`  Summary: ${result.node.summary}`);
+          if (result.node.expiresAt) {
+            const expDate = new Date(
+              result.node.expiresAt * 1000,
+            ).toISOString();
+            console.log(`  Expires: ${expDate}`);
+          }
+          if (result.node.tags.length > 0) {
+            console.log(`  Tags: ${result.node.tags.join(", ")}`);
+          }
           if (result.links.length > 0) {
             console.log(
               `  Auto-linked to ${result.links.length} existing memories`,
@@ -120,6 +213,14 @@ async function main(): Promise<void> {
           console.log(`  Importance: ${node.importance}`);
           console.log(`  Access count: ${node.accessCount}`);
           console.log(`  Created: ${new Date(node.createdAt).toISOString()}`);
+          if (node.tags.length > 0) {
+            console.log(`  Tags: ${node.tags.join(", ")}`);
+          }
+          if (node.expiresAt) {
+            console.log(
+              `  Expires: ${new Date(node.expiresAt * 1000).toISOString()}`,
+            );
+          }
         }
         break;
       }
@@ -134,7 +235,17 @@ async function main(): Promise<void> {
         }
         const limitIdx = args.indexOf("--limit");
         const limit = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : 10;
-        const results = await memos.search({ query, limit });
+        const tagIdx = args.indexOf("--tag");
+        let searchTags: string[] | undefined;
+        if (tagIdx !== -1) {
+          searchTags = [];
+          for (let i = tagIdx + 1; i < args.length; i++) {
+            if (args[i].startsWith("--")) break;
+            searchTags.push(args[i]);
+          }
+          if (searchTags.length === 0) searchTags = undefined;
+        }
+        const results = await memos.search({ query, limit, tags: searchTags });
         if (jsonFlag) {
           console.log(JSON.stringify(results, null, 2));
         } else {
@@ -145,6 +256,9 @@ async function main(): Promise<void> {
             for (const r of results) {
               console.log(`  [${r.node.type}] ${r.node.content}`);
               console.log(`    ID: ${r.node.id}  Score: ${r.score.toFixed(3)}`);
+              if (r.node.tags.length > 0) {
+                console.log(`    Tags: ${r.node.tags.join(", ")}`);
+              }
             }
           }
         }
@@ -232,13 +346,247 @@ async function main(): Promise<void> {
         break;
       }
 
+      case "tag": {
+        const id = args[1];
+        const tags = nonFlagArgs(args, 2);
+        if (!id || tags.length === 0) {
+          console.error(
+            "Error: ID and at least one tag are required.\n  Usage: memos tag <id> <tag1> [tag2...]",
+          );
+          process.exit(1);
+        }
+        await memos.tag(id, tags);
+        if (jsonFlag) {
+          console.log(JSON.stringify({ id, tags, tagged: true }));
+        } else {
+          console.log(`Tagged ${id.slice(0, 8)} with: ${tags.join(", ")}`);
+        }
+        break;
+      }
+
+      case "untag": {
+        const id = args[1];
+        const tags = nonFlagArgs(args, 2);
+        if (!id || tags.length === 0) {
+          console.error(
+            "Error: ID and at least one tag are required.\n  Usage: memos untag <id> <tag1> [tag2...]",
+          );
+          process.exit(1);
+        }
+        await memos.untag(id, tags);
+        if (jsonFlag) {
+          console.log(JSON.stringify({ id, tags, untagged: true }));
+        } else {
+          console.log(
+            `Removed tags from ${id.slice(0, 8)}: ${tags.join(", ")}`,
+          );
+        }
+        break;
+      }
+
+      case "list": {
+        const tagIdx = args.indexOf("--tag");
+        if (tagIdx === -1 || !args[tagIdx + 1]) {
+          console.error(
+            "Error: --tag is required.\n  Usage: memos list --tag <tag>",
+          );
+          process.exit(1);
+        }
+        const tag = args[tagIdx + 1];
+        const nodes = await memos.listByTag(tag);
+        if (jsonFlag) {
+          console.log(JSON.stringify(nodes, null, 2));
+        } else {
+          if (nodes.length === 0) {
+            console.log(`No memories with tag: ${tag}`);
+          } else {
+            console.log(`Found ${nodes.length} memories with tag "${tag}":\n`);
+            for (const node of nodes) {
+              console.log(
+                `  [${node.type}] ${node.id.slice(0, 8)} — ${node.content.slice(0, 60)}`,
+              );
+            }
+          }
+        }
+        break;
+      }
+
+      case "export": {
+        const formatIdx = args.indexOf("--format");
+        const format = formatIdx !== -1 ? args[formatIdx + 1] : "json";
+        const outputIdx = args.indexOf("--output");
+        const output = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
+        const tagIdx = args.indexOf("--tag");
+        const tag = tagIdx !== -1 ? args[tagIdx + 1] : undefined;
+
+        if (!["json", "markdown", "obsidian"].includes(format)) {
+          console.error(
+            `Error: Invalid format: ${format}. Use json, markdown, or obsidian.`,
+          );
+          process.exit(1);
+        }
+
+        const result = await memos.export({
+          format: format as any,
+          output,
+          tag,
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          if (format === "json") {
+            // Write to file
+            const outPath = output ?? "./memos-export/memories.json";
+            const dir = dirname(outPath);
+            if (!existsSync(dir)) {
+              const fs = await import("fs");
+              fs.mkdirSync(dir, { recursive: true });
+            }
+            writeFileSync(outPath, result.data);
+            console.log(`Exported ${result.count} memories to ${outPath}`);
+          } else {
+            console.log(`Exported ${result.count} memories to ${result.data}/`);
+          }
+        }
+        break;
+      }
+
+      case "backup": {
+        const outputIdx = args.indexOf("--output");
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const defaultPath = `./memos-backup-${timestamp}.db`;
+        const outputPath = outputIdx !== -1 ? args[outputIdx + 1] : defaultPath;
+
+        const resolvedDb = resolve(
+          dbPath ??
+            (await import("path")).join(
+              process.env.HOME || process.env.USERPROFILE || ".",
+              ".memos/memos.db",
+            ),
+        );
+        const resolvedOut = resolve(outputPath);
+
+        if (!existsSync(resolvedDb)) {
+          console.error(`Error: Database not found at ${resolvedDb}`);
+          process.exit(1);
+        }
+
+        // Close before copying
+        await memos.close();
+
+        copyFileSync(resolvedDb, resolvedOut);
+
+        // Get stats for manifest
+        const dbStat = statSync(resolvedDb);
+        // Re-open to get counts
+        const tmpMemos = new MemOS({ dbPath: resolvedDb });
+        await tmpMemos.init();
+        const graph = await tmpMemos.getGraph();
+        await tmpMemos.close();
+
+        const manifest = {
+          timestamp: new Date().toISOString(),
+          version: "1.5.0-beta.1",
+          nodeCount: graph.nodes.length,
+          edgeCount: graph.edges.length,
+          dbSizeBytes: dbStat.size,
+        };
+
+        const manifestPath = `${resolvedOut}.manifest.json`;
+        writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+        if (jsonFlag) {
+          console.log(
+            JSON.stringify({ backup: resolvedOut, manifest }, null, 2),
+          );
+        } else {
+          console.log(`Backup created: ${resolvedOut}`);
+          console.log(
+            `  Nodes: ${manifest.nodeCount}, Edges: ${manifest.edgeCount}`,
+          );
+          console.log(
+            `  DB size: ${(manifest.dbSizeBytes / 1024).toFixed(1)} KB`,
+          );
+          console.log(`  Manifest: ${manifestPath}`);
+        }
+        break;
+      }
+
+      case "restore": {
+        const path = args[1];
+        if (!path) {
+          console.error(
+            "Error: backup path is required.\n  Usage: memos restore <path>",
+          );
+          process.exit(1);
+        }
+
+        const resolvedBackup = resolve(path);
+        const manifestPath = `${resolvedBackup}.manifest.json`;
+
+        if (!existsSync(resolvedBackup)) {
+          console.error(`Error: Backup file not found: ${resolvedBackup}`);
+          process.exit(1);
+        }
+
+        // Validate manifest
+        if (existsSync(manifestPath)) {
+          const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+          if (jsonFlag) {
+            console.log(JSON.stringify({ manifest }, null, 2));
+          } else {
+            console.log(`Backup manifest:`);
+            console.log(`  Timestamp: ${manifest.timestamp}`);
+            console.log(`  Version: ${manifest.version}`);
+            console.log(
+              `  Nodes: ${manifest.nodeCount}, Edges: ${manifest.edgeCount}`,
+            );
+          }
+        }
+
+        // Stop sweep, close DB
+        await memos.close();
+
+        const resolvedDb = resolve(
+          dbPath ??
+            (await import("path")).join(
+              process.env.HOME || process.env.USERPROFILE || ".",
+              ".memos/memos.db",
+            ),
+        );
+        const dbDir = dirname(resolvedDb);
+        if (!existsSync(dbDir)) {
+          const fs = await import("fs");
+          fs.mkdirSync(dbDir, { recursive: true });
+        }
+
+        copyFileSync(resolvedBackup, resolvedDb);
+
+        // Re-open and report
+        const restored = new MemOS({ dbPath: resolvedDb });
+        await restored.init();
+        const graph = await restored.getGraph();
+        await restored.close();
+
+        if (!jsonFlag) {
+          console.log(`\nRestored from: ${resolvedBackup}`);
+          console.log(
+            `  Nodes: ${graph.nodes.length}, Edges: ${graph.edges.length}`,
+          );
+        }
+        break;
+      }
+
       default:
         console.error(`Unknown command: ${command}`);
         printHelp();
         process.exit(1);
     }
   } finally {
-    await memos.close();
+    // Only close if we haven't already (backup/restore handle their own close)
+    if (command !== "backup" && command !== "restore") {
+      await memos.close();
+    }
   }
 }
 

@@ -17,7 +17,7 @@ import type {
   GraphSnapshot,
   UpdateMemoryInput,
   EdgeRelation,
-} from "../types";
+} from "../types.js";
 
 /**
  * Default database path: `~/.memos/memos.db`.
@@ -51,7 +51,8 @@ export class SQLiteStorage implements StorageAdapter {
    */
   async init(): Promise<void> {
     const fs = await import("fs");
-    const dir = this.path.substring(0, this.path.lastIndexOf("/"));
+    const { dirname } = await import("path");
+    const dir = dirname(this.path);
     if (dir && !fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -94,6 +95,22 @@ export class SQLiteStorage implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
     `);
 
+    // Migration: add expires_at column if missing
+    this.migrateAddColumn("nodes", "expires_at", "INTEGER DEFAULT NULL");
+    // Migration: add tags column if missing
+    this.migrateAddColumn("nodes", "tags", "TEXT NOT NULL DEFAULT '[]'");
+    // Migration: add namespace column if missing
+    this.migrateAddColumn(
+      "nodes",
+      "namespace",
+      "TEXT NOT NULL DEFAULT 'default'",
+    );
+
+    // Index for TTL sweep
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_nodes_expires_at ON nodes(expires_at);
+    `);
+
     // FTS5 virtual table for full-text search
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
@@ -125,14 +142,33 @@ export class SQLiteStorage implements StorageAdapter {
     `);
   }
 
+  /**
+   * Migration-safe column addition. Checks if column exists before ALTER TABLE.
+   * SQLite does not support ALTER TABLE IF NOT EXISTS, so we check pragmatically.
+   */
+  private migrateAddColumn(
+    table: string,
+    column: string,
+    definition: string,
+  ): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as Record<
+      string,
+      unknown
+    >[];
+    const exists = cols.some((c) => c.name === column);
+    if (!exists) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Nodes
   // -----------------------------------------------------------------------
 
   async saveNode(node: MemoryNode): Promise<MemoryNode> {
     const stmt = this.db.prepare(`
-      INSERT INTO nodes (id, content, summary, type, metadata, importance, created_at, updated_at, access_count, last_accessed)
-      VALUES (@id, @content, @summary, @type, @metadata, @importance, @createdAt, @updatedAt, @accessCount, @lastAccessed)
+      INSERT INTO nodes (id, content, summary, type, metadata, importance, created_at, updated_at, access_count, last_accessed, expires_at, tags, namespace)
+      VALUES (@id, @content, @summary, @type, @metadata, @importance, @createdAt, @updatedAt, @accessCount, @lastAccessed, @expiresAt, @tags, @namespace)
     `);
 
     stmt.run({
@@ -146,6 +182,9 @@ export class SQLiteStorage implements StorageAdapter {
       updatedAt: node.updatedAt,
       accessCount: node.accessCount,
       lastAccessed: node.lastAccessed,
+      expiresAt: node.expiresAt,
+      tags: JSON.stringify(node.tags),
+      namespace: node.namespace,
     });
 
     return node;
@@ -179,13 +218,16 @@ export class SQLiteStorage implements StorageAdapter {
       ...existing,
       ...input,
       metadata: input.metadata ?? existing.metadata,
+      tags: input.tags ?? existing.tags,
+      namespace: input.namespace ?? existing.namespace,
       updatedAt: Date.now(),
     };
 
     this.db
       .prepare(
         `UPDATE nodes SET content = @content, summary = @summary, type = @type,
-         metadata = @metadata, importance = @importance, updated_at = @updatedAt
+         metadata = @metadata, importance = @importance, updated_at = @updatedAt,
+         tags = @tags, namespace = @namespace
          WHERE id = @id`,
       )
       .run({
@@ -196,6 +238,8 @@ export class SQLiteStorage implements StorageAdapter {
         metadata: JSON.stringify(updated.metadata),
         importance: updated.importance,
         updatedAt: updated.updatedAt,
+        tags: JSON.stringify(updated.tags),
+        namespace: updated.namespace,
       });
 
     return updated;
@@ -252,21 +296,33 @@ export class SQLiteStorage implements StorageAdapter {
 
     if (filter.query) {
       // Full-text search via FTS5
-      const ftsRows = this.db
-        .prepare(
-          `SELECT n.*, rank
+      const tagFilter = this.buildTagFilter(filter.tags, "n");
+      const namespaceFilter = filter.namespace ? " AND n.namespace = ?" : "";
+      const whereExtra = tagFilter ? ` AND ${tagFilter}` : "";
+
+      const ftsSql = `SELECT n.*, rank
            FROM nodes_fts fts
            JOIN nodes n ON n.rowid = fts.rowid
-           WHERE nodes_fts MATCH ?
+           WHERE nodes_fts MATCH ?${whereExtra}${namespaceFilter}
            ORDER BY rank
-           LIMIT ? OFFSET ?`,
-        )
-        .all(filter.query, filter.limit ?? 50, filter.offset ?? 0) as Record<
+           LIMIT ? OFFSET ?`;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const params: any[] = [filter.query];
+      if (filter.tags && filter.tags.length > 0) {
+        for (const tag of filter.tags) {
+          params.push(`%${JSON.stringify(tag)}%`);
+        }
+      }
+      if (filter.namespace) {
+        params.push(filter.namespace);
+      }
+      params.push(filter.limit ?? 50, filter.offset ?? 0);
+
+      rows = this.db.prepare(ftsSql).all(...params) as Record<
         string,
         unknown
       >[];
-
-      rows = ftsRows;
     } else {
       // Structured query
       const conditions: string[] = [];
@@ -284,6 +340,18 @@ export class SQLiteStorage implements StorageAdapter {
       if (filter.maxImportance !== undefined) {
         conditions.push("importance <= ?");
         params.push(filter.maxImportance);
+      }
+      if (filter.namespace) {
+        conditions.push("namespace = ?");
+        params.push(filter.namespace);
+      }
+
+      // Tag filter: node must contain ALL specified tags
+      if (filter.tags && filter.tags.length > 0) {
+        for (const tag of filter.tags) {
+          conditions.push("tags LIKE ?");
+          params.push(`%${JSON.stringify(tag)}%`);
+        }
       }
 
       const where = conditions.length
@@ -359,6 +427,42 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   // -----------------------------------------------------------------------
+  // TTL
+  // -----------------------------------------------------------------------
+
+  async setTTL(id: string, seconds: number): Promise<void> {
+    const expiresAt = Math.floor(Date.now() / 1000) + seconds;
+    this.db
+      .prepare("UPDATE nodes SET expires_at = ? WHERE id = ?")
+      .run(expiresAt, id);
+  }
+
+  async clearTTL(id: string): Promise<void> {
+    this.db.prepare("UPDATE nodes SET expires_at = NULL WHERE id = ?").run(id);
+  }
+
+  async sweepExpired(): Promise<number> {
+    const now = Math.floor(Date.now() / 1000);
+    const result = this.db
+      .prepare(
+        "DELETE FROM nodes WHERE expires_at IS NOT NULL AND expires_at <= ?",
+      )
+      .run(now);
+    return result.changes;
+  }
+
+  // -----------------------------------------------------------------------
+  // Tags
+  // -----------------------------------------------------------------------
+
+  async queryNodesByTag(tag: string): Promise<MemoryNode[]> {
+    const rows = this.db
+      .prepare("SELECT * FROM nodes WHERE tags LIKE ?")
+      .all(`%${JSON.stringify(tag)}%`) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToNode(r));
+  }
+
+  // -----------------------------------------------------------------------
   // Lifecycle
   // -----------------------------------------------------------------------
 
@@ -384,6 +488,9 @@ export class SQLiteStorage implements StorageAdapter {
       updatedAt: row.updated_at as number,
       accessCount: row.access_count as number,
       lastAccessed: row.last_accessed as number,
+      tags: JSON.parse((row.tags as string) || "[]"),
+      expiresAt: (row.expires_at as number) ?? null,
+      namespace: (row.namespace as string) || "default",
     };
   }
 
@@ -413,5 +520,11 @@ export class SQLiteStorage implements StorageAdapter {
       default:
         return "updated_at";
     }
+  }
+
+  private buildTagFilter(tags?: string[], tableAlias?: string): string {
+    if (!tags || tags.length === 0) return "";
+    const prefix = tableAlias ? `${tableAlias}.` : "";
+    return tags.map(() => `${prefix}tags LIKE ?`).join(" AND ");
   }
 }

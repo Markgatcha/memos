@@ -9,6 +9,8 @@ runs the TypeScript SDK.
 Usage:
     python -m server.main            # Default: localhost:7400
     MEMOS_PORT=8080 python -m server.main
+    memos-server backup              # Backup the database
+    memos-server restore <path>      # Restore from backup
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -93,7 +96,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MemOS",
     description="Universal memory layer for AI agents — REST API",
-    version="0.1.0",
+    version="1.5.0-beta.1",
     lifespan=lifespan,
 )
 
@@ -111,7 +114,7 @@ app.include_router(router, prefix="/api/mem")
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "service": "memos"}
+    return {"status": "ok", "service": "memos", "version": "1.5.0-beta.1"}
 
 
 # ---------------------------------------------------------------------------
@@ -119,8 +122,108 @@ async def health():
 # ---------------------------------------------------------------------------
 
 
+def _cli_backup(output: str | None = None) -> None:
+    """CLI backup subcommand."""
+    import json
+    import sqlite3
+    from datetime import datetime
+
+    db_path = MEMOS_DB_PATH
+    if not os.path.exists(db_path):
+        print(f"Error: Database not found at {db_path}")
+        sys.exit(1)
+
+    timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    default_output = f"./memos-backup-{timestamp}.db"
+    output_path = output or default_output
+
+    shutil.copy2(db_path, output_path)
+
+    # Get stats
+    db_size = os.path.getsize(db_path)
+    conn = sqlite3.connect(db_path)
+    node_count = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    edge_count = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+    conn.close()
+
+    manifest = {
+        "timestamp": datetime.now().isoformat(),
+        "version": "1.5.0-beta.1",
+        "nodeCount": node_count,
+        "edgeCount": edge_count,
+        "dbSizeBytes": db_size,
+    }
+
+    manifest_path = f"{output_path}.manifest.json"
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    print(f"Backup created: {output_path}")
+    print(f"  Nodes: {node_count}, Edges: {edge_count}")
+    print(f"  DB size: {db_size / 1024:.1f} KB")
+    print(f"  Manifest: {manifest_path}")
+
+
+def _cli_restore(path: str) -> None:
+    """CLI restore subcommand."""
+    import json
+
+    backup_path = path
+    manifest_path = f"{backup_path}.manifest.json"
+
+    if not os.path.exists(backup_path):
+        print(f"Error: Backup file not found: {backup_path}")
+        sys.exit(1)
+
+    if os.path.exists(manifest_path):
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        print("Backup manifest:")
+        print(f"  Timestamp: {manifest['timestamp']}")
+        print(f"  Version: {manifest['version']}")
+        print(f"  Nodes: {manifest['nodeCount']}, Edges: {manifest['edgeCount']}")
+
+    db_path = MEMOS_DB_PATH
+    db_dir = os.path.dirname(db_path)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+
+    shutil.copy2(backup_path, db_path)
+
+    # Report restored state
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    node_count = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    edge_count = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+    conn.close()
+
+    print(f"\nRestored from: {backup_path}")
+    print(f"  Nodes: {node_count}, Edges: {edge_count}")
+
+
 def main():
-    """Run the MemOS server with uvicorn."""
+    """Run the MemOS server with uvicorn, or handle CLI subcommands."""
+    # Handle CLI subcommands
+    if len(sys.argv) > 1:
+        subcmd = sys.argv[1]
+        if subcmd == "backup":
+            output = None
+            if "--output" in sys.argv:
+                idx = sys.argv.index("--output")
+                if idx + 1 < len(sys.argv):
+                    output = sys.argv[idx + 1]
+            _cli_backup(output)
+            return
+        elif subcmd == "restore":
+            if len(sys.argv) < 3:
+                print(
+                    "Error: restore requires a path argument.\n  Usage: memos-server restore <path>"
+                )
+                sys.exit(1)
+            _cli_restore(sys.argv[2])
+            return
+
     import uvicorn
 
     print(f"  MemOS server starting on {MEMOS_HOST}:{MEMOS_PORT}")
@@ -212,6 +315,43 @@ rl.on('line', async (line) => {
         break;
       case 'count':
         result = memos.count;
+        break;
+      case 'setTTL':
+        await memos.setTTL(params.id, params.seconds);
+        result = true;
+        break;
+      case 'clearTTL':
+        await memos.clearTTL(params.id);
+        result = true;
+        break;
+      case 'tag':
+        await memos.tag(params.id, params.tags);
+        result = true;
+        break;
+      case 'untag':
+        await memos.untag(params.id, params.tags);
+        result = true;
+        break;
+      case 'listByTag':
+        result = await memos.listByTag(params.tag);
+        break;
+      case 'export':
+        result = await memos.export(params.opts || {});
+        break;
+      case 'semanticSearch':
+        result = await memos.semanticSearch(params.query, params.limit, params.threshold);
+        break;
+      case 'graphViz':
+        result = await memos.graphViz();
+        break;
+      case 'listNamespaces':
+        result = await memos.listNamespaces();
+        break;
+      case 'namespaceCount':
+        result = await memos.namespaceCount(params.namespace);
+        break;
+      case 'injectContext':
+        result = await memos.injectContext(params.id, params.depth, params.maxChars);
         break;
       default:
         writeResponse({ id, error: `Unknown method: ${method}` });

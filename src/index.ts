@@ -17,9 +17,10 @@
  * @module @memos/sdk
  */
 
-export { MemOS } from "./memory";
-export { GraphEngine, textSimilarity, generateId } from "./graph";
-export { SQLiteStorage } from "./storage/sqlite";
+export { MemOS } from "./memory.js";
+export { getMcpTools, runMcpServer } from "./mcp.js";
+export { GraphEngine, textSimilarity, generateId } from "./graph.js";
+export { SQLiteStorage } from "./storage/sqlite.js";
 export type {
   MemoryNode,
   MemoryEdge,
@@ -35,4 +36,8 @@ export type {
   MemOSConfig,
   MemOSEvent,
   MemOSEventListener,
-} from "./types";
+  ExportFormat,
+  ExportOptions,
+  ExportResult,
+  ExperimentalConfig,
+} from "./types.js";
