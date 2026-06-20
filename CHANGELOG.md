@@ -7,6 +7,189 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Temporal validity** — `validFrom` / `validTo` fields on `MemoryNode`, `memos.setValidity()`, `memos.searchTemporal()`, `memos.supersede()`. Memories with `validTo` in the past are "historical" — excluded from default search, queryable via `searchTemporal(query, atTime)`. `temporal_precedes` edge relation for linking superseded memories to their replacements.
+- **Trust scoring & provenance** — `source` (`user_input` | `agent_inferred` | `external_data` | `system`) and `trustScore` [0,1] fields on `MemoryNode`. `memos.trust()`, `memos.setTrust()`, `memos.adjustTrust()`. Search filters: `source`, `minTrustScore`, `sortBy: "trustScore"`. Trust-weighted hybrid search fusion (0.7–1.0 multiplier).
+- **Fact extraction** — `memos.extractFacts(messages, opts)` — rule-based local-first extractor that identifies preferences, entities, context, and facts from conversation messages. Optional `autoStore` with confidence threshold and embedding-based dedup.
+- **Diagnostics** — `memos.diagnostics()` — comprehensive health report with counts by source/type/namespace, temporal stats, embedding coverage, storage capabilities, and DB file size.
+- **CLI commands** — `set-validity`, `search-temporal`, `trust`, `set-trust`, `extract-facts`, `diagnostics`, `supersede`.
+- **MCP tools** — `memos_set_validity`, `memos_search_temporal`, `memos_set_trust`, `memos_extract_facts`, `memos_diagnostics`.
+- **REST endpoints** — `PATCH /mem/{id}/validity`, `POST /search-temporal`, `POST /mem/{id}/supersede`, `GET|PATCH /mem/{id}/trust`, `POST /extract-facts`, `GET /diagnostics`.
+- **OpenAI SDK adapter** — `adapters/openai.ts` — first-class MemOS integration for OpenAI SDK with `addMessages`, `searchMemories`, `getMemoryContext`.
+- **Anthropic SDK adapter** — `adapters/anthropic.ts` — same pattern for the Anthropic SDK.
+
+### Performance
+
+- **Parallel hybrid search** — keyword (FTS5) and semantic (embedding) retrieval now run concurrently via `Promise.all`, halving the p50 latency of `search()` when both providers are configured.
+- **Trust-weighted score fusion** — hybrid search now applies a gentle trust multiplier (0.7–1.0) to the merged score, so high-trust memories rank above low-trust ones for the same relevance. Matches Mem0's multi-signal retrieval approach without requiring an LLM call.
+- **Batch edge insertion** — `saveEdgesBatch()` on `StorageAdapter` wraps multiple edge INSERTs in a single SQLite transaction. Auto-linking now uses batch saves, ~10x faster for stores with 10+ auto-linked edges.
+- **Prepared statement caching** — `saveNode`, `getNode`, `peekNode`, and `saveEdge` now use a `Map`-backed statement cache, avoiding JS-level `Statement` object recreation on every call.
+
+### Changed
+
+- Default search now excludes historical (superseded) memories. Use `includeHistorical: true` to include them, or `validAt: <timestamp>` for point-in-time queries.
+- `MemoryNode` interface extended with `validFrom`, `validTo`, `source`, `trustScore`.
+- `CreateMemoryInput` and `UpdateMemoryInput` extended with temporal and trust fields.
+- `EdgeRelation` extended with `temporal_precedes`.
+- `SearchFilter` extended with `source`, `minTrustScore`, `includeHistorical`, `validAt`, and `sortBy: "trustScore"`.
+- New events: `trust:changed`, `validity:changed`, `facts:extracted`.
+- SQLite schema: new columns `valid_from`, `valid_to`, `source`, `trust_score` with migration-safe `ALTER TABLE` and new indexes for temporal/trust queries.
+
+### Performance
+
+- **TOON format for search results** — `memos.searchToon()` returns a compact pipe-delimited string instead of the full JSON array of `ScoredMemory` objects. **53.5% token reduction on real search results** (3,451 → 1,604 tokens for 20-result responses). Exported as `searchResultsToToon` from `@mem-os/sdk`.
+- **Prepared statement cache** — `better-sqlite3` already caches prepared statements internally. Measured at 0.03ms per prepare() call, no significant additional gain from JS-level caching.
+
+## [1.6.26] - 2026-06-17
+
+Stable v1.6.26 release. Adds the background embedding queue, HTTP+SSE MCP transport, three new embedding providers, memory consolidation, the CLI REPL, cross-OS perf hardening, AI Trio context packs, MCP 2025-06-18 compliance, and a retrieval-quality benchmark.
+
+### Added
+
+- **Background embedding queue** — `EmbeddingQueue` in `src/embedding-queue.ts`. Bounded concurrency, exponential backoff retries, backpressure on `maxQueueSize`, lifecycle events, per-job status. `store()` and `update()` now return immediately instead of blocking on remote embedding APIs.
+- **Public queue API** — `memos.flushEmbeddings()`, `memos.embeddingStatus()`, and `memos.embeddingStatus(nodeId)`. CLI mirrors: `memos flush-embeddings` and `memos embedding-status`.
+- **New queue events** — `embedding:queued`, `embedding:started`, `embedding:complete`, `embedding:failed`, `embedding:retry`. Existing listeners continue to work.
+- **`memos.contextPack()` SDK method** — implements the `ai.trio.memos.context-pack.v1` contract documented in `docs/ai-trio-contracts.md`. Sorted by descending relevance, plain-text content, `trust`/`source`/`tags`/`updatedAt` preserved per item, score reproducible for the same query + provider + model + database.
+- **MCP 2025-06-18** — protocolVersion bumped from `2024-11-05` to `2025-06-18`. `serverInfo.version` now read from `package.json` at startup so the wire value is never stale.
+- **MCP tool additions** — `memos_context_pack`, `memos_flush_embeddings`, `memos_embedding_status`. The 2025-06-18 `notifications/cancelled` handler is now wired (no-op for now, but spec-compliant).
+- **MCP bug fix** — `memos_store` was silently dropping `metadata`, `importance`, and `summary`. All three are now preserved end-to-end.
+- **REST endpoints** — `POST /api/mem/context-pack`, `GET /api/mem/embedding-status`, `POST /api/mem/flush-embeddings`.
+- **MCP server card** — `GET /.well-known/mcp-server.json` returns the discovery document the `@universal-mcp-toolkit/core` runtime and other MCP-aware hosts expect.
+- **CLI** — `memos context-pack <query> [--budget N] [--namespace NS] [--json]` for inspecting AI Trio context packs from the shell.
+- **Storage adapter contract** — `peekNode?(id)` and `evictLeastImportant?()` on `StorageAdapter`. SQLite implements both; custom adapters can opt in.
+- **Hermes-style retain pre-filter** (`src/retain-filter.ts`) — scores candidate memories on length (`MIN_LENGTH=15`), signal density, action/preference verbs, and novelty against existing content; skips anything below `RETAIN_THRESHOLD` (0.3) before the write. Exports `scoreRetain()`, `shouldRetain()`, `decideRetain()`, `setRetainClassifier()`, plus `RetainInput` / `RetainDecision` types. `store()` honors an opt-in `filterRetain: true` on `CreateMemoryInput` and throws a typed `MemorySkippedError` when the gate drops the memory, so callers can distinguish a skip from a real failure. Mirrors the same technique llm-guardian uses on its read path — the AI Trio now applies consistent quality gating on both ends.
+
+### Changed
+
+- SQLite embedding vectors are stored as compact binary blobs with legacy JSON-vector read compatibility for older local databases.
+- Search and semantic search now share namespace, tag, type, importance, limit, and offset filters consistently.
+- Embedding backfill now skips fresh persisted vectors on restart and only refreshes when model metadata or node freshness requires it.
+- OpenAI-compatible embedding endpoints no longer require fake API keys, so local runtimes such as LM Studio can be used directly.
+- Tooling was refreshed to current stable npm dependencies, including Jest 30, TypeScript 6, ESLint 10 flat config, and `better-sqlite3` 12, with Windows-compatible lint/test commands.
+- The Python REST bridge now uses request-id demuxing and writes its generated bridge script into temp storage instead of source or package directories.
+- **Per-user bridge script dir** — the inline Node bridge no longer lives at the shared `/tmp/memos-bridge/`; it's now `/tmp/memos-bridge-<user>/`, so multi-user hosts don't stomp on each other.
+- **REST version pulled from package.json** — `app.version`, `/health`, and `/.well-known/mcp-server.json` all read the live `package.json` (with `MEMOS_VERSION` env override) instead of a hardcoded `1.5.0`.
+
+### Performance
+
+- **Eviction is now a single SQL statement** — `evictLeastImportant()` does `SELECT id … ORDER BY importance ASC, last_accessed ASC, created_at ASC LIMIT 1` and `DELETE` in one shot. The old code loaded the full table into memory and sorted it on every eviction.
+- **`peekNode` for non-retrieval reads** — `tag`/`untag`/`setTTL`/`clearTTL` no longer hit the side-effecting `getNode` (which wrote access stats on every read). Skips the read-modify-write write amplification that distorted LRU eviction.
+- **`autoLink` bag cache** — bag-of-words tokenization is memoized per `MemoryNode` in a `WeakMap`. Every existing node's tokens are computed once, not on every `store()` call.
+- **Inlined cosine in `autoLink`** — the small-over-large intersection loop avoids an unnecessary `Math.sqrt` per candidate.
+
+### Fixed
+
+- REST `update` calls now bridge correctly to the TypeScript MemOS engine.
+- TTL updates now synchronize storage and the in-memory graph.
+- Manual link creation now rolls back in-memory graph state if SQLite persistence fails.
+- Metadata filters are implemented for SQLite keyword, structured, and embedding queries.
+- CrewAI `MemOSTool` now initializes correctly when `MemOSMemory()` constructs its backing tool.
+- **`tag` / `untag` no longer bump access_count** — the side-effecting read was distorting LRU eviction whenever a memory was re-tagged.
+- **Temporal boundary in historical-memory exclusion** — the default/exclude-historical SQL filter used `valid_to >= now`, so a memory superseded in the same millisecond as the search (`validTo === now`) was wrongly kept. The FTS and structured paths now use strict `valid_to > now`. `validAt` point-in-time queries intentionally keep the inclusive `>=` boundary. Fixes the flaky `temporal-trust` cases (full suite now 255/255).
+
+### Added (continued)
+
+- **Memory consolidation ("dreaming")** — `memos.dedupe()`, `memos.archive()`, `memos.summarizeCluster()`, and `memos.consolidate()` as a single entry point. All accept `dryRun` for safe previewing. Greedy single-linkage clustering over embeddings; archived memories move to the `archived` namespace (not deleted) and can be restored. Emits a new event: `consolidation:complete`.
+- **HTTP+SSE MCP transport** — `startMcpHttpServer(memos, options)` plus `memos mcp --http [--port N] [--host H]`. Two endpoints: `GET /mcp/sse` opens the stream and advertises `POST /mcp/messages`. Same wire protocol as `@universal-mcp-toolkit/core` and web-based MCP hosts.
+- **Three new embedding providers** — `VoyageAIEmbeddingProvider` (voyage-3, 1024-d), `CohereEmbeddingProvider` (embed-english-v3.0, 1024-d), and `FastEmbedEmbeddingProvider` (BAAI/bge-small-en-v1.5, 384-d). The FastEmbed provider lazy-loads `@xenova/transformers` and falls back to a deterministic local hash if the package is not installed. All three are wired through `createEmbeddingProvider({ provider: "voyage" | "cohere" | "fastembed" })`.
+- **Interactive CLI shell** — `memos repl` drops into a read-eval-print loop with `store`, `search`, `semantic`, `context-pack`, `flush-embeddings`, `embedding-status`, `graph`, `link`, `tag`, `untag`, `help`, `exit`. Same MemOS instance, no subprocess overhead.
+- **Retrieval-quality benchmark** — `npx tsx scripts/bench-quality.ts` (also `npm run bench:quality`). Synthetic LoCoMo-shape dataset: 30 conversation memories, 20 ground-truth queries, recall@5/10 and MRR per category. Writes JSON to `scripts/bench-quality-results.json` and a markdown report to `docs/benchmark-quality.md`.
+- **Comparison doc** — `docs/benchmark-comparison.md` puts MemOS's local-hash baseline next to published Zep/Graphiti/Mem0 numbers, with an honest explanation of methodology differences.
+- **Tag join table** — `node_tags(node_id, tag)` replaces the JSON-LIKE scan on every tag query. Auto-migrated on next `init()`. Reverses a long-standing O(n) bottleneck into O(log n) B-tree lookups.
+- **Access-count debounce** — `SQLiteStorage.getNode()` now buffers access stats in memory and flushes once every 500 ms (or on `close()`). Removes the read-modify-write write amplification that distorted LRU eviction under read-heavy workloads.
+- **Cross-OS SQLite pragmas** — `synchronous = NORMAL`, `cache_size = 32 MiB`, `temp_store = MEMORY`, `mmap_size = 256 MiB`. Big wins on macOS and Windows where `fsync` is slow.
+- **`.gitattributes`** — locks down LF for source, CRLF for Windows scripts. Drops the `LF will be replaced by CRLF` noise from `git status`.
+- **Optional peer type shim** — `src/xenova-transformers.d.ts` lets `tsc --noEmit` succeed without `@xenova/transformers` installed.
+
+### Changed
+
+- `StorageAdapter` interface extended with `peekNode?()`, `evictLeastImportant?()`, `getAllEmbeddings?()`, `setNodeNamespace?()`. SQLite implements all four; custom adapters can opt in.
+- `EmbeddingProviderKind` union extended with `"voyage" | "cohere" | "fastembed"`.
+- `MemOSEvent` extended with `consolidation:complete` and queue lifecycle events (`embedding:queued`, `embedding:started`, `embedding:complete`, `embedding:failed`, `embedding:retry`).
+- The CLI argument parser now scans for the first non-flag positional, so `memos --db x store "y"` and `memos store "y" --db x` both work.
+- `store()` now accepts `filterRetain: true` on `CreateMemoryInput` to run the Hermes-style retain gate; a skipped memory throws the new exported `MemorySkippedError`. Plain `store()` is unchanged.
+- `src/index.ts` now also exports `MemorySkippedError`, `scoreRetain`, `shouldRetain`, `decideRetain`, `setRetainClassifier`, `RetainInput`, and `RetainDecision`.
+- `package.json` — expanded npm-discovery keywords (11→20) and added `sideEffects: false` + `publishConfig` for cleaner npm search ranking and better treeshaking by bundlers.
+
+### Performance
+
+- `evict()` is now a single SQL `SELECT id … ORDER BY importance, last_accessed, created_at LIMIT 1` + `DELETE`. Falls back to the in-memory path for custom adapters that don't implement `evictLeastImportant()`.
+- Tag-filtered queries now use an `EXISTS (SELECT 1 FROM node_tags …)` subquery against the B-tree index. The FTS5 JOIN order is flipped (`FROM nodes n INNER JOIN nodes_fts fts`) so the correlated subquery resolves correctly.
+- The `EmbeddingQueue` returns immediately from `store()` and `update()`, eliminating remote-embedding round-trips from the write critical path.
+
+## [1.5.0] - 2026-05-28
+
+### Added
+
+#### New Features
+
+- **Import Command** — Restore memories from JSON files or Markdown/Obsidian directories
+  - `memos.importMemories({ source, format })` SDK method
+  - `memos import <source> [--format json|markdown|obsidian]` CLI command
+  - `POST /api/mem/import` REST endpoint
+  - Auto-detects format from file extension
+  - Supports YAML frontmatter parsing for Markdown files
+  - Recreates wikilink edges during Obsidian import
+
+- **CrewAI Adapter** — Persistent memory for CrewAI agents and crews
+  - `MemOSTool` class with store/search/retrieve/forget/summarize actions
+  - `MemOSMemory` class with `save()`, `search()`, `get_context()` methods
+  - Compatible with CrewAI agent `memory=True` parameter
+  - Added `crewai` optional dependency to `pyproject.toml`
+
+- **WebSocket API** — Real-time memory event streaming
+  - `ws://localhost:7400/ws` endpoint for live event broadcast
+  - Events: node:created, node:updated, node:deleted, edge:created, edge:deleted, link:auto, eviction, ttl:expired
+  - JSON-RPC notification format for event delivery
+  - Ping/pong keepalive support
+  - `ConnectionManager` for multi-client broadcasting
+
+- **Expanded Test Coverage** — Grew from 47 to 110 tests
+  - SQLiteStorage layer: CRUD, queries, TTL, FTS5, batch operations
+  - Import from JSON and Markdown with edge cases
+  - LRU eviction with configurable limits
+  - Auto-linking with threshold configuration
+  - Context injection depth and maxChars limits
+  - Graph operations: clusters, neighbours, edges
+  - Event system: multiple listeners, off/remove
+  - MCP adapter schema validation
+
+#### Stability Fixes
+
+- **FTS5 Query Escaping** — User queries with special characters (quotes, parentheses) no longer throw SQL errors
+- **Batch Clear Operation** — `memos.clear()` now uses a single `DELETE` statement instead of N individual deletes
+- **Stop Words Optimization** — Moved to module scope to avoid recreating 97-element Set on every call
+
+### Fixed
+
+#### Critical Bugs
+
+- **`updateNode` side-effect** — Previously incremented `access_count` on every update because it called `getNode()` internally. Now uses a direct read without side effects.
+- **`retrieve()` false events** — Previously emitted `node:updated` on every read operation. Reads no longer trigger update events.
+- **MCP `store()` type safety** — Fixed `content` field being passed in opts where it shouldn't be. Now correctly typed as `Omit<CreateMemoryInput, "content">`.
+- **WebSocket disconnect crash** — `ConnectionManager.disconnect()` no longer throws `ValueError` if connection was already removed by broadcast cleanup.
+
+#### Performance Fixes
+
+- **BFS traversal O(n²) → O(n)** — `findClusters()` and `injectContext()` now use index-based queue traversal instead of `Array.shift()` which is O(n) per call on V8.
+- **Stop words deduplication** — Consolidated duplicate stop words lists (40 words in memory.ts, 97 words in graph.ts) into a single canonical list at module scope.
+
+#### Edge Cases
+
+- **FTS5 special character handling** — Queries containing `"`, `(`, `)`, `AND`, `OR`, `NOT`, `NEAR`, `:` are now properly escaped for literal search
+- **Empty graph operations** — All graph methods now handle empty state gracefully
+- **TTL sweep race condition** — Improved consistency between storage sweep and in-memory graph removal
+
+### Changed
+
+- Version bumped from `1.5.0-beta.1` to `1.5.0` (stable)
+- PyPI package renamed from `memos` (taken) to `mem-os-sdk` (matches npm scope)
+- `StorageAdapter` interface extended with `deleteAllNodes()` method
+- `clear()` now uses batch delete instead of per-node deletion
+- README updated with import, CrewAI adapter, WebSocket docs, and cross-platform install options
+- All version strings updated to `1.5.0` across npm, PyPI, CLI, MCP, and server
+
 ## [1.5.0-beta.1] - 2026-03-24
 
 ### Added
@@ -103,6 +286,13 @@ All experimental features gated behind `experimental` config object:
 - SQLite migration now uses `PRAGMA table_info` check instead of `IF NOT EXISTS` on ALTER TABLE (SQLite limitation)
 - Directory creation in SQLiteStorage uses `path.dirname` for cross-platform compatibility
 
+## [0.1.1] - 2026-03-23
+
+### Fixed
+
+- Minor bug fixes and documentation updates
+- Improved error messages for missing Node.js dependency
+
 ## [0.1.0] - 2026-03-22
 
 ### Added
@@ -123,6 +313,9 @@ All experimental features gated behind `experimental` config object:
 - GitHub Actions CI (lint + test + typecheck)
 - README, LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY docs
 
-[Unreleased]: https://github.com/Markgatcha/memos/compare/v1.5.0-beta.1...HEAD
-[1.5.0-beta.1]: https://github.com/Markgatcha/memos/compare/v0.1.0...v1.5.0-beta.1
+[Unreleased]: https://github.com/Markgatcha/memos/compare/v1.6.26...HEAD
+[1.6.26]: https://github.com/Markgatcha/memos/compare/v1.5.0...v1.6.26
+[1.5.0]: https://github.com/Markgatcha/memos/compare/v1.5.0-beta.1...v1.5.0
+[1.5.0-beta.1]: https://github.com/Markgatcha/memos/compare/v0.1.1...v1.5.0-beta.1
+[0.1.1]: https://github.com/Markgatcha/memos/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Markgatcha/memos/releases/tag/v0.1.0

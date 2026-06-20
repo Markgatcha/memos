@@ -17,14 +17,52 @@
  * @module @memos/sdk
  */
 
-export { MemOS } from "./memory.js";
+export { MemOS, MemorySkippedError } from "./memory.js";
+export {
+  decideRetain,
+  shouldRetain,
+  scoreRetain,
+  setRetainClassifier,
+  type RetainInput,
+  type RetainDecision,
+} from "./retain-filter.js";
 export { getMcpTools, runMcpServer } from "./mcp.js";
 export { GraphEngine, textSimilarity, generateId } from "./graph.js";
+export {
+  LocalHashEmbeddingProvider,
+  OllamaEmbeddingProvider,
+  OpenAICompatibleEmbeddingProvider,
+  VoyageAIEmbeddingProvider,
+  CohereEmbeddingProvider,
+  FastEmbedEmbeddingProvider,
+  cosineSimilarity,
+  createEmbeddingProvider,
+  normalizeVector,
+} from "./embeddings.js";
 export { SQLiteStorage } from "./storage/sqlite.js";
+export {
+  EmbeddingQueue,
+  type EmbeddingJob,
+  type EmbeddingJobStatus,
+  type EmbeddingQueueConfig,
+  type PersistEmbeddingFn,
+  type EmbeddingStatusChangeFn,
+} from "./embedding-queue.js";
+export {
+  buildContextPack,
+  CONTEXT_PACK_SCHEMA,
+  packToToon,
+  searchResultsToToon,
+  serializeContextPack,
+  type ContextPack,
+  type ContextPackItem,
+  type BuildContextPackOptions,
+} from "./context-pack.js";
 export type {
   MemoryNode,
   MemoryEdge,
   MemoryType,
+  MemorySource,
   EdgeRelation,
   CreateMemoryInput,
   UpdateMemoryInput,
@@ -39,5 +77,29 @@ export type {
   ExportFormat,
   ExportOptions,
   ExportResult,
+  ImportFormat,
+  ImportOptions,
+  ImportResult,
   ExperimentalConfig,
+  EmbeddingProvider,
+  EmbeddingVector,
+  EmbeddingRecordInfo,
+  EmbeddingNodeStatus,
+  EmbeddingNodeStatusInfo,
+  EmbeddingQueueStatus,
+  EmbeddingProviderKind,
+  DedupeOptions,
+  DedupeMerge,
+  DedupeResult,
+  ArchiveOptions,
+  ArchiveMove,
+  ArchiveResult,
+  ConsolidateOptions,
+  ConsolidateResult,
+  ConversationMessage,
+  ExtractedFact,
+  ExtractFactsOptions,
+  ExtractFactsResult,
+  DiagnosticsResult,
 } from "./types.js";
+export { DEFAULT_TRUST_SCORES } from "./types.js";
