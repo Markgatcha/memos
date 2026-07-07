@@ -1,0 +1,25 @@
+# Lock down text file behavior across OSes.
+# Source: LF on every OS; toolchain re-converts as needed.
+* text=auto eol=lf
+
+# Shell scripts: also LF, even when checked out on Windows.
+*.sh text eol=lf
+
+# Windows-specific scripts and batch files: keep CRLF so the
+# interpreter is happy.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Generated and vendored artefacts that should never be touched
+# by line-ending normalization.
+dist/** binary
+node_modules/** binary
+*.db binary
+*.sqlite binary
+*.sqlite-journal binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary

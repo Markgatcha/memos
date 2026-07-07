@@ -1,0 +1,472 @@
+{
+  "startedAt": "2026-06-17T16:34:50.352Z",
+  "finishedAt": "2026-06-17T16:34:50.399Z",
+  "durationMs": 47,
+  "provider": {
+    "id": "bench-hash",
+    "model": "bench-hash-v1",
+    "dimensions": 256
+  },
+  "dataset": {
+    "nodes": 30,
+    "queries": 19
+  },
+  "metrics": {
+    "recallAt5": 0.47368421052631576,
+    "recallAt10": 0.7894736842105263,
+    "mrr": 0.30868838763575607,
+    "perCategory": {
+      "factual": {
+        "queries": 11,
+        "recallAt10": 0.8181818181818182,
+        "mrr": 0.21753246753246752
+      },
+      "preference": {
+        "queries": 5,
+        "recallAt10": 0.8,
+        "mrr": 0.4722222222222222
+      },
+      "temporal": {
+        "queries": 2,
+        "recallAt10": 0.5,
+        "mrr": 0.5
+      },
+      "entity": {
+        "queries": 1,
+        "recallAt10": 1,
+        "mrr": 0.1111111111111111
+      }
+    }
+  },
+  "perQuery": [
+    {
+      "query": "where does the user live",
+      "category": "factual",
+      "retrievedIds": [
+        "n-20",
+        "n-6",
+        "n-24",
+        "n-21",
+        "n-4",
+        "n-17",
+        "n-16",
+        "n-7",
+        "n-15",
+        "n-11"
+      ],
+      "hitAt5": false,
+      "hitAt10": false,
+      "reciprocalRank": 0,
+      "expectedRelevant": [
+        "n-1"
+      ]
+    },
+    {
+      "query": "what color does the user like",
+      "category": "preference",
+      "retrievedIds": [
+        "n-24",
+        "n-21",
+        "n-4",
+        "n-17",
+        "n-6",
+        "n-16",
+        "n-7",
+        "n-11",
+        "n-2",
+        "n-1"
+      ],
+      "hitAt5": false,
+      "hitAt10": true,
+      "reciprocalRank": 0.1111111111111111,
+      "expectedRelevant": [
+        "n-2"
+      ]
+    },
+    {
+      "query": "tell me about Pixel the corgi",
+      "category": "entity",
+      "retrievedIds": [
+        "n-22",
+        "n-9",
+        "n-14",
+        "n-17",
+        "n-20",
+        "n-16",
+        "n-24",
+        "n-5",
+        "n-4",
+        "n-13"
+      ],
+      "hitAt5": false,
+      "hitAt10": true,
+      "reciprocalRank": 0.1111111111111111,
+      "expectedRelevant": [
+        "n-3",
+        "n-4"
+      ]
+    },
+    {
+      "query": "where does the user work and what industry",
+      "category": "factual",
+      "retrievedIds": [
+        "n-16",
+        "n-14",
+        "n-24",
+        "n-21",
+        "n-4",
+        "n-17",
+        "n-6",
+        "n-7",
+        "n-11",
+        "n-3"
+      ],
+      "hitAt5": false,
+      "hitAt10": true,
+      "reciprocalRank": 0.14285714285714285,
+      "expectedRelevant": [
+        "n-5",
+        "n-6"
+      ]
+    },
+    {
+      "query": "when did the user start at their company",
+      "category": "temporal",
+      "retrievedIds": [
+        "n-29",
+        "n-10",
+        "n-1",
+        "n-16",
+        "n-24",
+        "n-17",
+        "n-12",
+        "n-23",
+        "n-21",
+        "n-11"
+      ],
+      "hitAt5": false,
+      "hitAt10": false,
+      "reciprocalRank": 0,
+      "expectedRelevant": [
+        "n-7"
+      ]
+    },
+    {
+      "query": "dark mode preference editor",
+      "category": "preference",
+      "retrievedIds": [
+        "n-8",
+        "n-15",
+        "n-1",
+        "n-24",
+        "n-21",
+        "n-28",
+        "n-12",
+        "n-9",
+        "n-2",
+        "n-3"
+      ],
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 1,
+      "expectedRelevant": [
+        "n-8",
+        "n-9"
+      ]
+    },
+    {
+      "query": "what extensions on vscode",
+      "category": "factual",
+      "retrievedIds": [
+        "n-18",
+        "n-26",
+        "n-21",
+        "n-10",
+        "n-1",
+        "n-2",
+        "n-3",
+        "n-4",
+        "n-5",
+        "n-6"
+      ],
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 0.25,
+      "expectedRelevant": [
+        "n-10"
+      ]
+    },
+    {
+      "query": "instrument hobby and how long",
+      "category": "factual",
+      "retrievedIds": [
+        "n-5",
+        "n-11",
+        "n-16",
+        "n-27",
+        "n-3",
+        "n-22",
+        "n-19",
+        "n-1",
+        "n-2",
+        "n-4"
+      ],
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 0.5,
+      "expectedRelevant": [
+        "n-11",
+        "n-12"
+      ]
+    },
+    {
+      "query": "coffee preference and brand",
+      "category": "preference",
+      "retrievedIds": [
+        "n-21",
+        "n-12",
+        "n-15",
+        "n-14",
+        "n-22",
+        "n-13",
+        "n-3",
+        "n-19",
+        "n-1",
+        "n-2"
+      ],
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 0.25,
+      "expectedRelevant": [
+        "n-13",
+        "n-14"
+      ]
+    },
+    {
+      "query": "exercise routine",
+      "category": "factual",
+      "retrievedIds": [
+        "n-16",
+        "n-24",
+        "n-17",
+        "n-1",
+        "n-21",
+        "n-25",
+        "n-10",
+        "n-2",
+        "n-3",
+        "n-4"
+      ],
+      "hitAt5": false,
+      "hitAt10": false,
+      "reciprocalRank": 0,
+      "expectedRelevant": [
+        "n-15"
+      ]
+    },
+    {
+      "query": "favorite podcast",
+      "category": "preference",
+      "retrievedIds": [
+        "n-16",
+        "n-27",
+        "n-2",
+        "n-1",
+        "n-3",
+        "n-4",
+        "n-5",
+        "n-6",
+        "n-7",
+        "n-8"
+      ],
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 1,
+      "expectedRelevant": [
+        "n-16"
+      ]
+    },
+    {
+      "query": "last vacation destination and when",
+      "category": "temporal",
+      "retrievedIds": [
+        "n-17",
+        "n-13",
+        "n-12",
+        "n-23",
+        "n-3",
+        "n-26",
+        "n-22",
+        "n-19",
+        "n-1",
+        "n-2"
+      ],
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 1,
+      "expectedRelevant": [
+        "n-17",
+        "n-18"
+      ]
+    },
+    {
+      "query": "partner and their job",
+      "category": "factual",
+      "retrievedIds": [
+        "n-23",
+        "n-27",
+        "n-19",
+        "n-20",
+        "n-3",
+        "n-22",
+        "n-18",
+        "n-1",
+        "n-2",
+        "n-4"
+      ],
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 0.3333333333333333,
+      "expectedRelevant": [
+        "n-19",
+        "n-20"
+      ]
+    },
+    {
+      "query": "book author preferences",
+      "category": "preference",
+      "retrievedIds": [
+        "n-29",
+        "n-14",
+        "n-12",
+        "n-7",
+        "n-1",
+        "n-10",
+        "n-2",
+        "n-3",
+        "n-4",
+        "n-5"
+      ],
+      "hitAt5": false,
+      "hitAt10": false,
+      "reciprocalRank": 0,
+      "expectedRelevant": [
+        "n-21"
+      ]
+    },
+    {
+      "query": "siblings and where they live",
+      "category": "factual",
+      "retrievedIds": [
+        "n-8",
+        "n-24",
+        "n-6",
+        "n-28",
+        "n-21",
+        "n-3",
+        "n-5",
+        "n-22",
+        "n-2",
+        "n-19"
+      ],
+      "hitAt5": false,
+      "hitAt10": true,
+      "reciprocalRank": 0.125,
+      "expectedRelevant": [
+        "n-22",
+        "n-23"
+      ]
+    },
+    {
+      "query": "transportation method and bike",
+      "category": "factual",
+      "retrievedIds": [
+        "n-11",
+        "n-5",
+        "n-4",
+        "n-24",
+        "n-25",
+        "n-27",
+        "n-3",
+        "n-22",
+        "n-19",
+        "n-1"
+      ],
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 0.25,
+      "expectedRelevant": [
+        "n-24",
+        "n-25"
+      ]
+    },
+    {
+      "query": "allergies and health restrictions",
+      "category": "factual",
+      "retrievedIds": [
+        "n-3",
+        "n-26",
+        "n-30",
+        "n-22",
+        "n-19",
+        "n-1",
+        "n-2",
+        "n-4",
+        "n-5",
+        "n-6"
+      ],
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 0.5,
+      "expectedRelevant": [
+        "n-26"
+      ]
+    },
+    {
+      "query": "online games and skill level",
+      "category": "factual",
+      "retrievedIds": [
+        "n-21",
+        "n-15",
+        "n-29",
+        "n-12",
+        "n-24",
+        "n-27",
+        "n-3",
+        "n-22",
+        "n-19",
+        "n-1"
+      ],
+      "hitAt5": false,
+      "hitAt10": true,
+      "reciprocalRank": 0.16666666666666666,
+      "expectedRelevant": [
+        "n-27",
+        "n-28"
+      ]
+    },
+    {
+      "query": "language study tool and duration",
+      "category": "factual",
+      "retrievedIds": [
+        "n-8",
+        "n-13",
+        "n-25",
+        "n-23",
+        "n-3",
+        "n-22",
+        "n-19",
+        "n-29",
+        "n-1",
+        "n-2"
+      ],
+      "hitAt5": false,
+      "hitAt10": true,
+      "reciprocalRank": 0.125,
+      "expectedRelevant": [
+        "n-29",
+        "n-30"
+      ]
+    }
+  ]
+}
