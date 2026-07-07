@@ -151,7 +151,10 @@ export function debloatContent(text: string): string {
     result = result.replace("\n\n\n", "\n\n");
   }
   // Strip trailing whitespace per line.
-  result = result.replace(/[ \t]+$/gm, "");
+  result = result
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n");
   // Collapse 3+ spaces to 1.
   result = result.replace(/ {3,}/g, " ");
   // Remove duplicate consecutive lines.
