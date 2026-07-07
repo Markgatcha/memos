@@ -79,7 +79,7 @@ jobs:
             bootstrap: pacman -Sy --noconfirm nodejs npm python base-devel
           - name: openSUSE
             image: opensuse/tumbleweed:latest
-            bootstrap: zypper -n install nodejs22 npm22 python3 gcc-c++ make
+            bootstrap: zypper -n install nodejs npm python3 gcc-c++ make
     steps:
       - uses: actions/checkout@v4
       - name: better-sqlite3 install/build/test smoke
