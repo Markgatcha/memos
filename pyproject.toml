@@ -50,7 +50,7 @@ langchain = [
     "langchain-core>=1.4.8",
 ]
 ollama = [
-    "ollama>=0.4.0",
+    "ollama>=0.6.2",
 ]
 all = [
     "memos[langchain,ollama]",
