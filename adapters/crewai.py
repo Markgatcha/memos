@@ -81,11 +81,13 @@ class MemOSTool:
                     type=kwargs.get("type", "fact"),
                     tags=kwargs.get("tags", []),
                 )
-                return json.dumps({
-                    "status": "success",
-                    "id": result.get("node", {}).get("id"),
-                    "summary": result.get("node", {}).get("summary"),
-                })
+                return json.dumps(
+                    {
+                        "status": "success",
+                        "id": result.get("node", {}).get("id"),
+                        "summary": result.get("node", {}).get("summary"),
+                    }
+                )
 
             elif action == "search":
                 results = self._memos_search(
@@ -95,12 +97,14 @@ class MemOSTool:
                 memories = []
                 for r in results:
                     node = r.get("node", r)
-                    memories.append({
-                        "content": node.get("content"),
-                        "type": node.get("type"),
-                        "score": r.get("score", 0),
-                        "id": node.get("id"),
-                    })
+                    memories.append(
+                        {
+                            "content": node.get("content"),
+                            "type": node.get("type"),
+                            "score": r.get("score", 0),
+                            "id": node.get("id"),
+                        }
+                    )
                 return json.dumps({"status": "success", "results": memories})
 
             elif action == "retrieve":
@@ -115,10 +119,12 @@ class MemOSTool:
 
             elif action == "summarize":
                 result = self._memos_post("/api/mem/summarize", {})
-                return json.dumps({
-                    "status": "success",
-                    "summary": result.get("summary", ""),
-                })
+                return json.dumps(
+                    {
+                        "status": "success",
+                        "summary": result.get("summary", ""),
+                    }
+                )
 
             else:
                 return json.dumps({"status": "error", "message": f"Unknown action: {action}"})
@@ -264,6 +270,7 @@ class MemOSMemory:
 
     class Config:
         """Pydantic config."""
+
         arbitrary_types_allowed = True
 
     def __init__(self, **kwargs: Any):
