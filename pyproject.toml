@@ -39,9 +39,15 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+<<<<<<< HEAD
     "fastapi>=0.139.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.13.4",
+=======
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.50.2",
+    "pydantic>=2.0.0",
+>>>>>>> 0ec9e5d (chore(deps): update uvicorn requirement from >=0.32.0 to >=0.50.2)
 ]
 
 [project.optional-dependencies]

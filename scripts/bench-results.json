@@ -1,0 +1,110 @@
+[
+  {
+    "nodeCount": 1000,
+    "operation": "store",
+    "p50": 0.128,
+    "p95": 0.443,
+    "p99": 5.092,
+    "mean": 0.248,
+    "samples": 1000
+  },
+  {
+    "nodeCount": 1000,
+    "operation": "retrieveById",
+    "p50": 0.006,
+    "p95": 0.014,
+    "p99": 0.03,
+    "mean": 0.01,
+    "samples": 1000
+  },
+  {
+    "nodeCount": 1000,
+    "operation": "search",
+    "p50": 0.001,
+    "p95": 0.272,
+    "p99": 0.438,
+    "mean": 0.039,
+    "samples": 100
+  },
+  {
+    "nodeCount": 1000,
+    "operation": "getNeighbours",
+    "p50": 0.002,
+    "p95": 0.02,
+    "p99": 0.032,
+    "mean": 0.006,
+    "samples": 100
+  },
+  {
+    "nodeCount": 10000,
+    "operation": "store",
+    "p50": 0.125,
+    "p95": 0.426,
+    "p99": 5.946,
+    "mean": 0.267,
+    "samples": 10000
+  },
+  {
+    "nodeCount": 10000,
+    "operation": "retrieveById",
+    "p50": 0.006,
+    "p95": 0.014,
+    "p99": 0.031,
+    "mean": 0.008,
+    "samples": 1000
+  },
+  {
+    "nodeCount": 10000,
+    "operation": "search",
+    "p50": 0.001,
+    "p95": 1.053,
+    "p99": 1.34,
+    "mean": 0.094,
+    "samples": 100
+  },
+  {
+    "nodeCount": 10000,
+    "operation": "getNeighbours",
+    "p50": 0.002,
+    "p95": 0.004,
+    "p99": 0.006,
+    "mean": 0.002,
+    "samples": 100
+  },
+  {
+    "nodeCount": 100000,
+    "operation": "store",
+    "p50": 0.126,
+    "p95": 0.485,
+    "p99": 7.875,
+    "mean": 0.391,
+    "samples": 100000
+  },
+  {
+    "nodeCount": 100000,
+    "operation": "retrieveById",
+    "p50": 0.009,
+    "p95": 0.022,
+    "p99": 0.045,
+    "mean": 0.011,
+    "samples": 1000
+  },
+  {
+    "nodeCount": 100000,
+    "operation": "search",
+    "p50": 0.001,
+    "p95": 11.048,
+    "p99": 11.909,
+    "mean": 0.848,
+    "samples": 100
+  },
+  {
+    "nodeCount": 100000,
+    "operation": "getNeighbours",
+    "p50": 0.003,
+    "p95": 0.005,
+    "p99": 0.018,
+    "mean": 0.004,
+    "samples": 100
+  }
+]
