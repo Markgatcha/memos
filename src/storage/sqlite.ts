@@ -46,7 +46,10 @@ export class SQLiteStorage implements StorageAdapter {
    * was previously amplified to a `SET access_count = access_count + 1`
    * on every `getNode` call. See {@link flushAccessCounts}.
    */
-  private readonly accessBuffer: Map<string, { count: number; lastAccessed: number }> = new Map();
+  private readonly accessBuffer: Map<
+    string,
+    { count: number; lastAccessed: number }
+  > = new Map();
   private accessFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private accessFlushIntervalMs: number;
 
@@ -155,11 +158,7 @@ export class SQLiteStorage implements StorageAdapter {
       "source",
       "TEXT NOT NULL DEFAULT 'user_input'",
     );
-    this.migrateAddColumn(
-      "nodes",
-      "trust_score",
-      "REAL NOT NULL DEFAULT 1.0",
-    );
+    this.migrateAddColumn("nodes", "trust_score", "REAL NOT NULL DEFAULT 1.0");
 
     // Index for TTL sweep
     this.db.exec(`
@@ -229,9 +228,10 @@ export class SQLiteStorage implements StorageAdapter {
    * database finishes in well under a second on a warm cache.
    */
   private migrateBackfillNodeTags(): void {
-    const rows = this.db
-      .prepare("SELECT id, tags FROM nodes")
-      .all() as Array<{ id: string; tags: string }>;
+    const rows = this.db.prepare("SELECT id, tags FROM nodes").all() as Array<{
+      id: string;
+      tags: string;
+    }>;
     if (rows.length === 0) return;
     const insert = this.db.prepare(
       "INSERT OR IGNORE INTO node_tags (node_id, tag) VALUES (?, ?)",
@@ -342,10 +342,11 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   async getNode(id: string): Promise<MemoryNode | null> {
-    const stmt = this.getPreparedStatement("getNode", "SELECT * FROM nodes WHERE id = ?");
-    const row = stmt.get(id) as
-      | Record<string, unknown>
-      | undefined;
+    const stmt = this.getPreparedStatement(
+      "getNode",
+      "SELECT * FROM nodes WHERE id = ?",
+    );
+    const row = stmt.get(id) as Record<string, unknown> | undefined;
 
     if (!row) return null;
 
@@ -378,7 +379,10 @@ export class SQLiteStorage implements StorageAdapter {
       }
     }, this.accessFlushIntervalMs);
     // Don't keep the process alive for a flush.
-    if (this.accessFlushTimer && typeof this.accessFlushTimer.unref === "function") {
+    if (
+      this.accessFlushTimer &&
+      typeof this.accessFlushTimer.unref === "function"
+    ) {
       this.accessFlushTimer.unref();
     }
   }
@@ -399,10 +403,11 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   async peekNode(id: string): Promise<MemoryNode | null> {
-    const stmt = this.getPreparedStatement("peekNode", "SELECT * FROM nodes WHERE id = ?");
-    const row = stmt.get(id) as
-      | Record<string, unknown>
-      | undefined;
+    const stmt = this.getPreparedStatement(
+      "peekNode",
+      "SELECT * FROM nodes WHERE id = ?",
+    );
+    const row = stmt.get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToNode(row) : null;
   }
 
@@ -434,10 +439,12 @@ export class SQLiteStorage implements StorageAdapter {
       metadata: input.metadata ?? existing.metadata,
       tags: input.tags ?? existing.tags,
       namespace: input.namespace ?? existing.namespace,
-      validFrom: input.validFrom !== undefined ? input.validFrom : existing.validFrom,
+      validFrom:
+        input.validFrom !== undefined ? input.validFrom : existing.validFrom,
       validTo: input.validTo !== undefined ? input.validTo : existing.validTo,
       source: input.source ?? existing.source,
-      trustScore: input.trustScore !== undefined ? input.trustScore : existing.trustScore,
+      trustScore:
+        input.trustScore !== undefined ? input.trustScore : existing.trustScore,
       updatedAt: Date.now(),
     };
 
@@ -610,7 +617,9 @@ export class SQLiteStorage implements StorageAdapter {
         ...metadata.conditions,
         ...extraConds,
       ].filter(Boolean);
-      const whereExtra = whereParts.length ? ` AND ${whereParts.join(" AND ")}` : "";
+      const whereExtra = whereParts.length
+        ? ` AND ${whereParts.join(" AND ")}`
+        : "";
 
       const ftsSql = `SELECT n.*, rank
            FROM nodes n
@@ -736,7 +745,9 @@ export class SQLiteStorage implements StorageAdapter {
 
   async getEmbeddingInfo(nodeId: string): Promise<EmbeddingRecordInfo | null> {
     const row = this.db
-      .prepare("SELECT model, dimensions, updated_at FROM embeddings WHERE node_id = ?")
+      .prepare(
+        "SELECT model, dimensions, updated_at FROM embeddings WHERE node_id = ?",
+      )
       .get(nodeId) as Record<string, unknown> | undefined;
 
     if (!row) return null;
@@ -1066,7 +1077,10 @@ export class SQLiteStorage implements StorageAdapter {
     for (const [key, value] of Object.entries(metadata)) {
       if (!/^[A-Za-z0-9_-]+$/.test(key)) continue;
       conditions.push(`json_extract(${prefix}metadata, ?) = ?`);
-      params.push(`$.${key}`, typeof value === "object" ? JSON.stringify(value) : value);
+      params.push(
+        `$.${key}`,
+        typeof value === "object" ? JSON.stringify(value) : value,
+      );
     }
     return { conditions, params };
   }

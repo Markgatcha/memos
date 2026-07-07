@@ -237,7 +237,10 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     // Track how many tokens debloating saved on this item.
     const rawContentTokens = tokenCounter(rawContent);
     const rawSummaryTokens = includeSummary ? tokenCounter(rawSummary) : 0;
-    const debloatSaved = Math.max(0, (rawContentTokens + rawSummaryTokens) - (contentTokens + summaryTokens));
+    const debloatSaved = Math.max(
+      0,
+      rawContentTokens + rawSummaryTokens - (contentTokens + summaryTokens),
+    );
     return { item, tokenCount, debloatSaved };
   });
 
@@ -250,7 +253,9 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     if (dedup) {
       let isDup = false;
       for (const existing of output) {
-        if (jaccardSimilarity(item.content, existing.content) >= dedupThreshold) {
+        if (
+          jaccardSimilarity(item.content, existing.content) >= dedupThreshold
+        ) {
           isDup = true;
           break;
         }

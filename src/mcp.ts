@@ -31,10 +31,21 @@ const toolList: McpTool[] = [
       required: ["content"],
       properties: {
         content: { type: "string", description: "Memory text to store." },
-        type: { type: "string", description: "Memory type, such as fact, preference, or context." },
-        tags: { type: "array", items: { type: "string" }, description: "Optional tags for filtering." },
+        type: {
+          type: "string",
+          description: "Memory type, such as fact, preference, or context.",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional tags for filtering.",
+        },
         ttl: { type: "number", description: "Optional expiration in seconds." },
-        namespace: { type: "string", description: "Optional namespace when experimental namespaces are enabled." },
+        namespace: {
+          type: "string",
+          description:
+            "Optional namespace when experimental namespaces are enabled.",
+        },
       },
     },
   },
@@ -47,8 +58,15 @@ const toolList: McpTool[] = [
       properties: {
         query: { type: "string", description: "Search query." },
         limit: { type: "number", description: "Maximum result count." },
-        tags: { type: "array", items: { type: "string" }, description: "Optional tag filter." },
-        namespace: { type: "string", description: "Optional namespace filter." },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional tag filter.",
+        },
+        namespace: {
+          type: "string",
+          description: "Optional namespace filter.",
+        },
       },
     },
   },
@@ -91,7 +109,10 @@ const toolList: McpTool[] = [
       properties: {
         id: { type: "string", description: "Memory ID." },
         depth: { type: "number", description: "Graph walk depth." },
-        maxChars: { type: "number", description: "Maximum returned context length." },
+        maxChars: {
+          type: "number",
+          description: "Maximum returned context length.",
+        },
       },
     },
   },
@@ -128,7 +149,9 @@ function asNumber(value: unknown, fallback: number): number {
 
 function asStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const strings = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  const strings = value.filter(
+    (item): item is string => typeof item === "string" && item.length > 0,
+  );
   return strings.length > 0 ? strings : undefined;
 }
 
@@ -139,18 +162,26 @@ function textResponse(text: string, structuredContent?: unknown): unknown {
   };
 }
 
-async function callTool(memos: MemOS, name: string, input: Record<string, unknown>): Promise<unknown> {
+async function callTool(
+  memos: MemOS,
+  name: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
   switch (name) {
     case "memos_store": {
       const content = asString(input.content, "content");
       const createInput: CreateMemoryInput = {
         content,
-        type: typeof input.type === "string" ? input.type as CreateMemoryInput["type"] : "fact",
+        type:
+          typeof input.type === "string"
+            ? (input.type as CreateMemoryInput["type"])
+            : "fact",
       };
       const tags = asStringArray(input.tags);
       if (tags) createInput.tags = tags;
       if (typeof input.ttl === "number") createInput.ttl = input.ttl;
-      if (typeof input.namespace === "string") createInput.namespace = input.namespace;
+      if (typeof input.namespace === "string")
+        createInput.namespace = input.namespace;
       const stored = await memos.store(content, createInput);
       return textResponse(`Stored memory ${stored.node.id}.`, stored);
     }
@@ -160,27 +191,42 @@ async function callTool(memos: MemOS, name: string, input: Record<string, unknow
         query,
         limit: asNumber(input.limit, 10),
         tags: asStringArray(input.tags),
-        namespace: typeof input.namespace === "string" ? input.namespace : undefined,
+        namespace:
+          typeof input.namespace === "string" ? input.namespace : undefined,
       });
-      return textResponse(`Found ${found.length} memories.`, { results: found });
+      return textResponse(`Found ${found.length} memories.`, {
+        results: found,
+      });
     }
     case "memos_retrieve": {
       const id = asString(input.id, "id");
       const node = await memos.retrieve(id);
-      return textResponse(node ? node.content : `Memory not found: ${id}`, { node });
+      return textResponse(node ? node.content : `Memory not found: ${id}`, {
+        node,
+      });
     }
     case "memos_forget": {
       const id = asString(input.id, "id");
       const deleted = await memos.forget(id);
-      return textResponse(deleted ? `Forgot memory ${id}.` : `Memory not found: ${id}.`, { id, deleted });
+      return textResponse(
+        deleted ? `Forgot memory ${id}.` : `Memory not found: ${id}.`,
+        { id, deleted },
+      );
     }
     case "memos_graph": {
       const graph = await memos.getGraph();
-      return textResponse(`Memory graph has ${graph.nodes.length} nodes and ${graph.edges.length} edges.`, graph);
+      return textResponse(
+        `Memory graph has ${graph.nodes.length} nodes and ${graph.edges.length} edges.`,
+        graph,
+      );
     }
     case "memos_context": {
       const id = asString(input.id, "id");
-      const context = await memos.injectContext(id, asNumber(input.depth, 1), asNumber(input.maxChars, 2000));
+      const context = await memos.injectContext(
+        id,
+        asNumber(input.depth, 1),
+        asNumber(input.maxChars, 2000),
+      );
       return textResponse(context, { id, context });
     }
     default:
@@ -247,11 +293,19 @@ export async function runMcpServer(config: MemOSConfig = {}): Promise<void> {
         }
         default:
           if (request.id !== undefined) {
-            error(request.id, -32601, `Method not found: ${request.method ?? ""}`);
+            error(
+              request.id,
+              -32601,
+              `Method not found: ${request.method ?? ""}`,
+            );
           }
       }
     } catch (err) {
-      error(request.id, -32000, err instanceof Error ? err.message : "Unknown error");
+      error(
+        request.id,
+        -32000,
+        err instanceof Error ? err.message : "Unknown error",
+      );
     }
   }
 

@@ -381,7 +381,12 @@ export interface EmbeddingRecordInfo {
  * persisted vector is fresh for the current provider/model. `failed`
  * means the most recent attempt gave up after retries.
  */
-export type EmbeddingNodeStatus = "pending" | "queued" | "running" | "ready" | "failed";
+export type EmbeddingNodeStatus =
+  | "pending"
+  | "queued"
+  | "running"
+  | "ready"
+  | "failed";
 
 /** Lightweight status snapshot returned by `memos.embeddingStatus()`. */
 export interface EmbeddingNodeStatusInfo {
@@ -530,7 +535,9 @@ export interface StorageAdapter {
    * by memory consolidation. Implementations may return an empty
    * array when embeddings are not stored.
    */
-  getAllEmbeddings?(): Promise<Array<{ nodeId: string; vector: EmbeddingVector; model: string }>>;
+  getAllEmbeddings?(): Promise<
+    Array<{ nodeId: string; vector: EmbeddingVector; model: string }>
+  >;
 
   /**
    * Update only the `namespace` of a node. Used by `archive` to

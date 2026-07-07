@@ -52,7 +52,10 @@ export function normalizeVector(vector: EmbeddingVector): EmbeddingVector {
   return vector.map((value) => value / norm);
 }
 
-export function cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number {
+export function cosineSimilarity(
+  a: EmbeddingVector,
+  b: EmbeddingVector,
+): number {
   const length = Math.min(a.length, b.length);
   if (length === 0) return 0;
   let dot = 0;
@@ -108,8 +111,13 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   public readonly dimensions: number;
   private readonly baseUrl: string;
 
-  constructor(options: { baseUrl?: string; model?: string; dimensions?: number } = {}) {
-    this.baseUrl = (options.baseUrl ?? "http://127.0.0.1:11434").replace(/\/+$/, "");
+  constructor(
+    options: { baseUrl?: string; model?: string; dimensions?: number } = {},
+  ) {
+    this.baseUrl = (options.baseUrl ?? "http://127.0.0.1:11434").replace(
+      /\/+$/,
+      "",
+    );
     this.model = options.model ?? "nomic-embed-text";
     this.dimensions = options.dimensions ?? 768;
   }
@@ -121,9 +129,14 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       body: JSON.stringify({ model: this.model, input: text }),
     });
     if (!response.ok) {
-      throw new Error(`Ollama embedding request failed: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Ollama embedding request failed: ${response.status} ${response.statusText}`,
+      );
     }
-    const payload = await response.json() as { embeddings?: number[][]; embedding?: number[] };
+    const payload = (await response.json()) as {
+      embeddings?: number[][];
+      embedding?: number[];
+    };
     const vector = payload.embeddings?.[0] ?? payload.embedding;
     if (!Array.isArray(vector)) {
       throw new Error("Ollama embedding response did not include a vector.");
@@ -139,8 +152,16 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
-  constructor(options: { baseUrl?: string; apiKey?: string; model?: string; dimensions?: number }) {
-    this.baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+  constructor(options: {
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+    dimensions?: number;
+  }) {
+    this.baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(
+      /\/+$/,
+      "",
+    );
     this.apiKey = options.apiKey ?? "";
     this.model = options.model ?? "text-embedding-3-small";
     this.dimensions = options.dimensions ?? 1536;
@@ -155,9 +176,13 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
       body: JSON.stringify({ model: this.model, input: text }),
     });
     if (!response.ok) {
-      throw new Error(`Embedding request failed: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Embedding request failed: ${response.status} ${response.statusText}`,
+      );
     }
-    const payload = await response.json() as { data?: Array<{ embedding?: number[] }> };
+    const payload = (await response.json()) as {
+      data?: Array<{ embedding?: number[] }>;
+    };
     const vector = payload.data?.[0]?.embedding;
     if (!Array.isArray(vector)) {
       throw new Error("Embedding response did not include a vector.");
@@ -181,14 +206,26 @@ export class VoyageAIEmbeddingProvider implements EmbeddingProvider {
   private readonly apiKey: string;
   private readonly baseUrl: string;
 
-  constructor(options: { apiKey?: string; model?: string; dimensions?: number; baseUrl?: string } = {}) {
+  constructor(
+    options: {
+      apiKey?: string;
+      model?: string;
+      dimensions?: number;
+      baseUrl?: string;
+    } = {},
+  ) {
     if (!options.apiKey) {
-      throw new Error("VoyageAIEmbeddingProvider requires an `apiKey` (e.g. `pa-…`).");
+      throw new Error(
+        "VoyageAIEmbeddingProvider requires an `apiKey` (e.g. `pa-…`).",
+      );
     }
     this.apiKey = options.apiKey;
     this.model = options.model ?? "voyage-3";
     this.dimensions = options.dimensions ?? 1024;
-    this.baseUrl = (options.baseUrl ?? "https://api.voyageai.com/v1").replace(/\/+$/, "");
+    this.baseUrl = (options.baseUrl ?? "https://api.voyageai.com/v1").replace(
+      /\/+$/,
+      "",
+    );
   }
 
   async embed(text: string): Promise<EmbeddingVector> {
@@ -221,7 +258,9 @@ export class VoyageAIEmbeddingProvider implements EmbeddingProvider {
     }
     const vectors = payload.data.map((row) => {
       if (!Array.isArray(row.embedding)) {
-        throw new Error("Voyage embedding response contained a non-vector entry.");
+        throw new Error(
+          "Voyage embedding response contained a non-vector entry.",
+        );
       }
       return row.embedding;
     });
@@ -275,14 +314,25 @@ export class CohereEmbeddingProvider implements EmbeddingProvider {
   private readonly baseUrl: string;
   private readonly inputType: string;
 
-  constructor(options: { apiKey?: string; model?: string; dimensions?: number; baseUrl?: string; inputType?: string } = {}) {
+  constructor(
+    options: {
+      apiKey?: string;
+      model?: string;
+      dimensions?: number;
+      baseUrl?: string;
+      inputType?: string;
+    } = {},
+  ) {
     if (!options.apiKey) {
       throw new Error("CohereEmbeddingProvider requires an `apiKey`.");
     }
     this.apiKey = options.apiKey;
     this.model = options.model ?? "embed-english-v3.0";
     this.dimensions = options.dimensions ?? 1024;
-    this.baseUrl = (options.baseUrl ?? "https://api.cohere.ai/v1").replace(/\/+$/, "");
+    this.baseUrl = (options.baseUrl ?? "https://api.cohere.ai/v1").replace(
+      /\/+$/,
+      "",
+    );
     // `search_document` is the right value for indexing; callers that
     // need query-side embeddings can construct a separate provider
     // instance with input_type=`search_query`.
@@ -375,7 +425,9 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
       // declared in `src/xenova-transformers.d.ts`.
       const mod = (await import("@xenova/transformers" as string).catch(
         () => null,
-      )) as { pipeline: (task: string, model: string) => Promise<unknown> } | null;
+      )) as {
+        pipeline: (task: string, model: string) => Promise<unknown>;
+      } | null;
       if (!mod) return;
       const pipeline = await mod.pipeline("feature-extraction", this.model);
       this.pipeline = pipeline as FastEmbedEmbeddingProvider["pipeline"];

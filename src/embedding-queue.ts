@@ -42,7 +42,10 @@ export type EmbeddingJobStatus =
   | "retrying";
 
 /** Reasons a job can be marked failed. */
-export type EmbeddingFailureReason = "max_retries" | "aborted" | "provider_error";
+export type EmbeddingFailureReason =
+  | "max_retries"
+  | "aborted"
+  | "provider_error";
 
 /** A single embedding job, exposed for observability. */
 export interface EmbeddingJob {
@@ -153,9 +156,15 @@ export class EmbeddingQueue {
   constructor(config: EmbeddingQueueConfig) {
     this.provider = config.provider;
     this.concurrency = Math.max(1, config.concurrency ?? DEFAULT_CONCURRENCY);
-    this.maxQueueSize = Math.max(1, config.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE);
+    this.maxQueueSize = Math.max(
+      1,
+      config.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE,
+    );
     this.maxRetries = Math.max(0, config.maxRetries ?? DEFAULT_MAX_RETRIES);
-    this.retryBackoffMs = Math.max(0, config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS);
+    this.retryBackoffMs = Math.max(
+      0,
+      config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS,
+    );
     this.onPersist = config.onPersist;
     this.onStatusChange = config.onStatusChange;
     this.running = new Array<InternalJob | null>(this.concurrency).fill(null);
@@ -217,7 +226,11 @@ export class EmbeddingQueue {
   pendingJobs(): EmbeddingJob[] {
     const out: EmbeddingJob[] = [];
     for (const j of this.jobs.values()) {
-      if (j.status === "queued" || j.status === "running" || j.status === "retrying") {
+      if (
+        j.status === "queued" ||
+        j.status === "running" ||
+        j.status === "retrying"
+      ) {
         out.push({ ...j });
       }
     }

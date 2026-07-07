@@ -247,7 +247,10 @@ export class MemOS {
    * the same query is issued repeatedly within a short window.
    * Key: `${query}::${namespace}::${limit}`. Value: { results, expiry }.
    */
-  private searchCache: Map<string, { results: ScoredMemory[]; expiry: number }> = new Map();
+  private searchCache: Map<
+    string,
+    { results: ScoredMemory[]; expiry: number }
+  > = new Map();
   private searchCacheMaxEntries = 128;
   private searchCacheTtlMs = 5_000; // 5 seconds
 
@@ -327,9 +330,11 @@ export class MemOS {
           // "retrying" is purely an internal queue event; we don't surface
           // it as a node status but we do emit "embedding:retry".
           const nodeStatus: EmbeddingNodeStatus =
-            status === "complete" ? "ready" :
-            status === "retrying" ? "running" :
-            status;
+            status === "complete"
+              ? "ready"
+              : status === "retrying"
+                ? "running"
+                : status;
           this.recordEmbeddingStatus(nodeId, nodeStatus, error);
           if (status === "retrying") {
             this.emit("embedding:retry", { nodeId, error });
@@ -374,30 +379,30 @@ export class MemOS {
     }
 
     const now = Date.now();
-        const namespace = this.experimental.namespaces
-          ? (opts.namespace ?? "default")
-          : "default";
-        const source: MemorySource = opts.source ?? "user_input";
+    const namespace = this.experimental.namespaces
+      ? (opts.namespace ?? "default")
+      : "default";
+    const source: MemorySource = opts.source ?? "user_input";
 
-        const node: MemoryNode = {
-          id: generateId(),
-          content,
-          summary: opts.summary ?? extractiveSummary(content),
-          type: opts.type ?? "fact",
-          metadata: opts.metadata ?? {},
-          importance: opts.importance ?? 0.5,
-          createdAt: now,
-          updatedAt: now,
-          accessCount: 0,
-          lastAccessed: now,
-          tags: opts.tags ?? [],
-          expiresAt: opts.ttl ? Math.floor(now / 1000) + opts.ttl : null,
-          namespace,
-          validFrom: opts.validFrom ?? null,
-          validTo: opts.validTo ?? null,
-          source,
-          trustScore: opts.trustScore ?? DEFAULT_TRUST_SCORES[source],
-        };
+    const node: MemoryNode = {
+      id: generateId(),
+      content,
+      summary: opts.summary ?? extractiveSummary(content),
+      type: opts.type ?? "fact",
+      metadata: opts.metadata ?? {},
+      importance: opts.importance ?? 0.5,
+      createdAt: now,
+      updatedAt: now,
+      accessCount: 0,
+      lastAccessed: now,
+      tags: opts.tags ?? [],
+      expiresAt: opts.ttl ? Math.floor(now / 1000) + opts.ttl : null,
+      namespace,
+      validFrom: opts.validFrom ?? null,
+      validTo: opts.validTo ?? null,
+      source,
+      trustScore: opts.trustScore ?? DEFAULT_TRUST_SCORES[source],
+    };
 
     await this.storage.saveNode(node);
     this.graph.addNode(node);
@@ -479,14 +484,18 @@ export class MemOS {
           if (v.expiry <= now) this.searchCache.delete(k);
         }
       }
-      const results = filter.query && this.embeddingProvider
-        ? await this.hybridSearch(filter)
-        : await this.storage.queryNodes(filter);
+      const results =
+        filter.query && this.embeddingProvider
+          ? await this.hybridSearch(filter)
+          : await this.storage.queryNodes(filter);
 
       // Post-sort by trustScore when requested — the FTS path always
       // sorts by rank, so we re-sort here.
       const sorted = this.postSortResults(results, filter);
-      this.searchCache.set(cacheKey, { results: sorted, expiry: Date.now() + this.searchCacheTtlMs });
+      this.searchCache.set(cacheKey, {
+        results: sorted,
+        expiry: Date.now() + this.searchCacheTtlMs,
+      });
       return sorted;
     }
 
@@ -818,18 +827,25 @@ export class MemOS {
     const items: unknown = JSON.parse(raw);
 
     if (!Array.isArray(items)) {
-      throw new Error("JSON import source must contain an array of memory objects.");
+      throw new Error(
+        "JSON import source must contain an array of memory objects.",
+      );
     }
 
     let count = 0;
     for (const item of items) {
-      if (isRecord(item) && typeof item.content === "string" && item.content.length > 0) {
+      if (
+        isRecord(item) &&
+        typeof item.content === "string" &&
+        item.content.length > 0
+      ) {
         await this.store(item.content, {
           type: normalizeMemoryType(item.type),
           tags: stringArray(item.tags),
           metadata: isRecord(item.metadata) ? item.metadata : undefined,
           summary: typeof item.summary === "string" ? item.summary : undefined,
-          importance: typeof item.importance === "number" ? item.importance : undefined,
+          importance:
+            typeof item.importance === "number" ? item.importance : undefined,
         });
         count++;
       }
@@ -852,7 +868,11 @@ export class MemOS {
     const wikilinks: string[] = [];
 
     for (const line of lines) {
-      if (line.trim() === "---" && !inFrontmatter && frontmatterLines.length === 0) {
+      if (
+        line.trim() === "---" &&
+        !inFrontmatter &&
+        frontmatterLines.length === 0
+      ) {
         inFrontmatter = true;
         continue;
       }
@@ -942,10 +962,7 @@ export class MemOS {
     for (const node of nodes) {
       if (filter.namespace && node.namespace !== filter.namespace) continue;
       if (filter.type && node.type !== filter.type) continue;
-      if (
-        filter.tags &&
-        filter.tags.some((tag) => !node.tags.includes(tag))
-      ) {
+      if (filter.tags && filter.tags.some((tag) => !node.tags.includes(tag))) {
         continue;
       }
       const score = textSimilarity(query, node.content);
@@ -1201,13 +1218,20 @@ export class MemOS {
     includeSummary?: boolean;
   }): Promise<ContextPack> {
     this.assertInit();
-    const namespace = opts.namespace ?? (this.experimental.namespaces ? "default" : "default");
-    const limit = opts.limit ?? Math.min(50, Math.max(8, Math.floor(opts.tokenBudget / 80)));
+    const namespace =
+      opts.namespace ?? (this.experimental.namespaces ? "default" : "default");
+    const limit =
+      opts.limit ??
+      Math.min(50, Math.max(8, Math.floor(opts.tokenBudget / 80)));
     // Always go through the hybrid path so we get a score breakdown,
     // and a wider candidate set so budget trimming has material to work
     // with. Falls back to keyword search when no embedding provider is
     // configured.
-    const filter: SearchFilter = { query: opts.query, namespace, limit: limit * 4 };
+    const filter: SearchFilter = {
+      query: opts.query,
+      namespace,
+      limit: limit * 4,
+    };
     const items = this.embeddingProvider
       ? await this.hybridSearch(filter)
       : await this.storage.queryNodes(filter);
@@ -1243,14 +1267,20 @@ export class MemOS {
 
     const all = await this.collectEmbeddings(namespace);
     if (all.length < 2) {
-      return { merges: [], clustersFound: 0, dryRun, durationMs: Date.now() - start };
+      return {
+        merges: [],
+        clustersFound: 0,
+        dryRun,
+        durationMs: Date.now() - start,
+      };
     }
 
     // Greedy single-linkage clustering. O(n²) — fine up to a few
     // thousand nodes. For larger stores, callers should pass
     // `maxPairs` to bound the work.
     const parents: number[] = all.map((_, i) => i);
-    const find = (i: number): number => (parents[i] === i ? i : (parents[i] = find(parents[i])));
+    const find = (i: number): number =>
+      parents[i] === i ? i : (parents[i] = find(parents[i]));
     const union = (a: number, b: number): void => {
       parents[find(a)] = find(b);
     };
@@ -1281,8 +1311,10 @@ export class MemOS {
       const sorted = [...indices].sort((a, b) => {
         const na = all[a].node;
         const nb = all[b].node;
-        if (nb.importance !== na.importance) return nb.importance - na.importance;
-        if (nb.accessCount !== na.accessCount) return nb.accessCount - na.accessCount;
+        if (nb.importance !== na.importance)
+          return nb.importance - na.importance;
+        if (nb.accessCount !== na.accessCount)
+          return nb.accessCount - na.accessCount;
         if (nb.updatedAt !== na.updatedAt) return nb.updatedAt - na.updatedAt;
         return na.id.localeCompare(nb.id);
       });
@@ -1303,7 +1335,10 @@ export class MemOS {
       let simCount = 0;
       for (let i = 0; i < sorted.length; i += 1) {
         for (let j = i + 1; j < sorted.length; j += 1) {
-          simSum += cosineSimilarity(all[sorted[i]].vector, all[sorted[j]].vector);
+          simSum += cosineSimilarity(
+            all[sorted[i]].vector,
+            all[sorted[j]].vector,
+          );
           simCount += 1;
         }
       }
@@ -1405,7 +1440,8 @@ export class MemOS {
     }
 
     const parents: number[] = all.map((_, i) => i);
-    const find = (i: number): number => (parents[i] === i ? i : (parents[i] = find(parents[i])));
+    const find = (i: number): number =>
+      parents[i] === i ? i : (parents[i] = find(parents[i]));
     const union = (a: number, b: number): void => {
       parents[find(a)] = find(b);
     };
@@ -1456,9 +1492,7 @@ export class MemOS {
    * Run dedupe + archive (+ optional cluster summary) in one pass.
    * This is the canonical entry point for "memory maintenance".
    */
-  async consolidate(
-    opts: ConsolidateOptions = {},
-  ): Promise<ConsolidateResult> {
+  async consolidate(opts: ConsolidateOptions = {}): Promise<ConsolidateResult> {
     this.assertInit();
     const start = Date.now();
     const namespace = (opts as { namespace?: string }).namespace ?? "default";
@@ -1503,13 +1537,19 @@ export class MemOS {
    * Returns an empty array if the storage adapter doesn't expose
    * `getAllEmbeddings` (e.g. an in-memory custom adapter).
    */
-  private async collectEmbeddings(namespace: string): Promise<
+  private async collectEmbeddings(
+    namespace: string,
+  ): Promise<
     Array<{ node: MemoryNode; vector: EmbeddingVector; model: string }>
   > {
     if (!this.storage.getAllEmbeddings) return [];
     const all = await this.storage.queryNodes({ namespace, limit: 10_000 });
     const byId = new Map(all.map((r) => [r.node.id, r.node]));
-    const result: Array<{ node: MemoryNode; vector: EmbeddingVector; model: string }> = [];
+    const result: Array<{
+      node: MemoryNode;
+      vector: EmbeddingVector;
+      model: string;
+    }> = [];
     for (const row of await this.storage.getAllEmbeddings()) {
       const node = byId.get(row.nodeId);
       if (!node) continue;
@@ -1549,12 +1589,16 @@ export class MemOS {
    */
   embeddingStatus(): EmbeddingQueueStatus;
   embeddingStatus(nodeId: string): EmbeddingNodeStatusInfo | null;
-  embeddingStatus(nodeId?: string): EmbeddingQueueStatus | EmbeddingNodeStatusInfo | null {
+  embeddingStatus(
+    nodeId?: string,
+  ): EmbeddingQueueStatus | EmbeddingNodeStatusInfo | null {
     if (nodeId !== undefined) {
       return this.nodeEmbeddingStatus.get(nodeId) ?? null;
     }
     const nodes = [...this.nodeEmbeddingStatus.values()];
-    const pending = this.embeddingQueue ? this.embeddingQueue.pendingJobs().length : 0;
+    const pending = this.embeddingQueue
+      ? this.embeddingQueue.pendingJobs().length
+      : 0;
     const running = this.embeddingQueue ? this.embeddingQueue.activeCount() : 0;
     return {
       pending,
@@ -1629,11 +1673,15 @@ export class MemOS {
    * @param replacementId — Optional ID of the new memory that replaces it.
    * @returns The superseded (updated) node, or null if not found.
    */
-  async supersede(id: string, replacementId?: string): Promise<MemoryNode | null> {
+  async supersede(
+    id: string,
+    replacementId?: string,
+  ): Promise<MemoryNode | null> {
     this.assertInit();
     const now = Date.now();
     // Read the current node to preserve validFrom.
-    const current = await this.storage.peekNode?.(id) ?? await this.storage.getNode(id);
+    const current =
+      (await this.storage.peekNode?.(id)) ?? (await this.storage.getNode(id));
     if (!current) return null;
     const node = await this.setValidity(id, current.validFrom, now);
     if (node && replacementId) {
@@ -1666,7 +1714,8 @@ export class MemOS {
    */
   async trust(id: string): Promise<number | null> {
     this.assertInit();
-    const node = await this.storage.peekNode?.(id) ?? await this.storage.getNode(id);
+    const node =
+      (await this.storage.peekNode?.(id)) ?? (await this.storage.getNode(id));
     return node?.trustScore ?? null;
   }
 
@@ -1745,7 +1794,11 @@ export class MemOS {
         if (fact.confidence < minConfidence) continue;
 
         // Dedup against existing memories if embeddings are available.
-        if (dedupe && this.embeddingProvider && this.storage.querySimilarEmbeddings) {
+        if (
+          dedupe &&
+          this.embeddingProvider &&
+          this.storage.querySimilarEmbeddings
+        ) {
           const embedding = await this.embeddingProvider.embed(fact.content);
           const similar = await this.storage.querySimilarEmbeddings(
             embedding,
@@ -1770,7 +1823,11 @@ export class MemOS {
       }
     }
 
-    this.emit("facts:extracted", { facts: facts.length, stored: storedIds.length, duplicates });
+    this.emit("facts:extracted", {
+      facts: facts.length,
+      stored: storedIds.length,
+      duplicates,
+    });
     return { facts, storedIds, duplicates };
   }
 
@@ -1901,7 +1958,8 @@ export class MemOS {
       byType[node.type] = (byType[node.type] ?? 0) + 1;
       byNamespace[node.namespace] = (byNamespace[node.namespace] ?? 0) + 1;
 
-      if (node.validFrom !== null || node.validTo !== null) nodesWithValidity += 1;
+      if (node.validFrom !== null || node.validTo !== null)
+        nodesWithValidity += 1;
       if (node.validTo !== null && node.validTo < now) historicalNodes += 1;
       if (node.expiresAt !== null) {
         nodesWithTTL += 1;
@@ -1942,9 +2000,7 @@ export class MemOS {
       byType,
       byNamespace,
       dbSizeBytes,
-      embeddingQueue: this.embeddingQueue
-        ? this.embeddingStatus()
-        : undefined,
+      embeddingQueue: this.embeddingQueue ? this.embeddingStatus() : undefined,
       storageCapabilities: {
         peekNode: !!this.storage.peekNode,
         evictLeastImportant: !!this.storage.evictLeastImportant,
@@ -2144,9 +2200,9 @@ export class MemOS {
     const info = await this.storage.getEmbeddingInfo(node.id);
     return Boolean(
       info &&
-        info.model === this.embeddingProvider.model &&
-        info.dimensions === this.embeddingProvider.dimensions &&
-        info.updatedAt >= node.updatedAt,
+      info.model === this.embeddingProvider.model &&
+      info.dimensions === this.embeddingProvider.dimensions &&
+      info.updatedAt >= node.updatedAt,
     );
   }
 
@@ -2160,12 +2216,11 @@ export class MemOS {
 
     // Run keyword and semantic retrieval in parallel for lower latency.
     const [semanticResults, keywordResults] = await Promise.all([
-      this.semanticSearch(
-        filter.query ?? "",
-        candidateLimit,
-        0,
-        { ...filter, limit: candidateLimit, offset: 0 },
-      ),
+      this.semanticSearch(filter.query ?? "", candidateLimit, 0, {
+        ...filter,
+        limit: candidateLimit,
+        offset: 0,
+      }),
       this.storage.queryNodes({
         ...filter,
         limit: candidateLimit,

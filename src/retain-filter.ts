@@ -113,12 +113,18 @@ export function scoreRetain(input: RetainInput): number {
   // Novelty: down-weight near-duplicates of existing memory.
   if (existingContent.length > 0) {
     const tokens = new Set(
-      content.toLowerCase().split(/[^a-z0-9]+/i).filter((w) => w.length > 2),
+      content
+        .toLowerCase()
+        .split(/[^a-z0-9]+/i)
+        .filter((w) => w.length > 2),
     );
     let maxOverlap = 0;
     for (const existing of existingContent.slice(0, 20)) {
       const exTokens = new Set(
-        existing.toLowerCase().split(/[^a-z0-9]+/i).filter((w) => w.length > 2),
+        existing
+          .toLowerCase()
+          .split(/[^a-z0-9]+/i)
+          .filter((w) => w.length > 2),
       );
       let overlap = 0;
       for (const t of tokens) if (exTokens.has(t)) overlap++;
