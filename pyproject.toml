@@ -46,13 +46,8 @@ dependencies = [
 
 [project.optional-dependencies]
 langchain = [
-<<<<<<< HEAD
-    "langchain>=0.3.0",
-    "langchain-core>=1.4.8",
-=======
     "langchain>=1.3.11",
-    "langchain-core>=0.3.0",
->>>>>>> 741222d (chore(deps-dev): update langchain requirement from >=0.3.0 to >=1.3.11)
+    "langchain-core>=1.4.8",
 ]
 ollama = [
     "ollama>=0.6.2",
