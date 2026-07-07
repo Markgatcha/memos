@@ -4,6 +4,16 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Auto-rebase dependabot branches onto the latest main so they always
+    # inherit the current CI workflow (verify-lockfile + codeql.yml) and never
+    # get stuck on a stale, failing config like the 2026-07 batch did.
+    rebase-strategy: "auto"
+    # Group all npm dev/runtime bumps into a single PR to cut notification spam
+    # and merge-conflict churn.
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
@@ -12,6 +22,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    rebase-strategy: "auto"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
@@ -20,6 +35,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    rebase-strategy: "auto"
     labels:
       - "dependencies"
       - "github-actions"

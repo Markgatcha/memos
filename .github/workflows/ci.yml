@@ -47,7 +47,7 @@ jobs:
     needs: [verify-lockfile]
     strategy:
       matrix:
-        node-version: [20, 22]
+        node-version: [22]
     steps:
       - uses: actions/checkout@v7
       - name: Setup Node.js ${{ matrix.node-version }}
@@ -88,6 +88,13 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-22-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-22-
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
@@ -158,6 +165,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
