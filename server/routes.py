@@ -13,11 +13,9 @@ import os
 import zipfile
 from typing import Any
 
-from fastapi import HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-
-from fastapi import APIRouter
 
 router = APIRouter()
 
