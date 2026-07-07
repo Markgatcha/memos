@@ -8,6 +8,7 @@
  */
 
 import Database from "better-sqlite3";
+import type { Statement } from "better-sqlite3";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -535,9 +536,9 @@ export class SQLiteStorage implements StorageAdapter {
    * but the JS Statement wrapper is still recreated on each prepare()
    * call. Caching the JS object avoids that overhead on hot paths.
    */
-  private readonly stmtCache = new Map<string, import("better-sqlite3").Statement>();
+  private readonly stmtCache = new Map<string, Statement>();
 
-  private getPreparedStatement(key: string, sql: string): import("better-sqlite3").Statement {
+  private getPreparedStatement(key: string, sql: string): Statement {
     let stmt = this.stmtCache.get(key);
     if (!stmt) {
       stmt = this.db.prepare(sql);
