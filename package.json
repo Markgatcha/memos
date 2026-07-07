@@ -99,7 +99,8 @@
     "better-sqlite3": "^12.10.0"
   },
   "overrides": {
-    "brace-expansion@>=4.0.0 <5.0.5": "5.0.5"
+    "brace-expansion@>=4.0.0 <5.0.5": "5.0.5",
+    "js-yaml": ">=3.15.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

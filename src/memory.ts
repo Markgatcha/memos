@@ -2349,7 +2349,10 @@ export class MemOS {
   }
 
   private escapeDot(str: string): string {
-    return str.replace(/"/g, '\\"').replace(/\n/g, "\\n");
+    return str
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n");
   }
 
   private escapeRegex(str: string): string {

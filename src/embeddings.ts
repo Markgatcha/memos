@@ -4,6 +4,19 @@ import type {
   EmbeddingVector,
 } from "./types.js";
 
+/**
+ * Strip all trailing slash characters from a URL/base path without using a
+ * regular expression. Avoids a ReDoS-flagged `/+$/` pattern on user-supplied
+ * input (CodeQL js/regular-expression-polynomial-redos).
+ */
+function stripTrailingSlashes(url: string): string {
+  let result = url;
+  while (result.endsWith("/")) {
+    result = result.slice(0, -1);
+  }
+  return result;
+}
+
 const DEFAULT_DIMENSIONS = 384;
 
 const SYNONYMS: Record<string, readonly string[]> = {
@@ -114,9 +127,8 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   constructor(
     options: { baseUrl?: string; model?: string; dimensions?: number } = {},
   ) {
-    this.baseUrl = (options.baseUrl ?? "http://127.0.0.1:11434").replace(
-      /\/+$/,
-      "",
+    this.baseUrl = stripTrailingSlashes(
+      options.baseUrl ?? "http://127.0.0.1:11434",
     );
     this.model = options.model ?? "nomic-embed-text";
     this.dimensions = options.dimensions ?? 768;
@@ -158,9 +170,8 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
     model?: string;
     dimensions?: number;
   }) {
-    this.baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(
-      /\/+$/,
-      "",
+    this.baseUrl = stripTrailingSlashes(
+      options.baseUrl ?? "https://api.openai.com/v1",
     );
     this.apiKey = options.apiKey ?? "";
     this.model = options.model ?? "text-embedding-3-small";
@@ -222,9 +233,8 @@ export class VoyageAIEmbeddingProvider implements EmbeddingProvider {
     this.apiKey = options.apiKey;
     this.model = options.model ?? "voyage-3";
     this.dimensions = options.dimensions ?? 1024;
-    this.baseUrl = (options.baseUrl ?? "https://api.voyageai.com/v1").replace(
-      /\/+$/,
-      "",
+    this.baseUrl = stripTrailingSlashes(
+      options.baseUrl ?? "https://api.voyageai.com/v1",
     );
   }
 
@@ -329,9 +339,8 @@ export class CohereEmbeddingProvider implements EmbeddingProvider {
     this.apiKey = options.apiKey;
     this.model = options.model ?? "embed-english-v3.0";
     this.dimensions = options.dimensions ?? 1024;
-    this.baseUrl = (options.baseUrl ?? "https://api.cohere.ai/v1").replace(
-      /\/+$/,
-      "",
+    this.baseUrl = stripTrailingSlashes(
+      options.baseUrl ?? "https://api.cohere.ai/v1",
     );
     // `search_document` is the right value for indexing; callers that
     // need query-side embeddings can construct a separate provider

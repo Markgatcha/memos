@@ -147,7 +147,9 @@ export function debloatContent(text: string): string {
   if (!text || text.length === 0) return text;
   let result = text;
   // Collapse excessive newlines.
-  result = result.replace(/\n{3,}/g, "\n\n");
+  while (result.includes("\n\n\n")) {
+    result = result.replace("\n\n\n", "\n\n");
+  }
   // Strip trailing whitespace per line.
   result = result.replace(/[ \t]+$/gm, "");
   // Collapse 3+ spaces to 1.
