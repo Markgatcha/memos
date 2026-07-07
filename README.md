@@ -19,6 +19,18 @@
 
 ---
 
+## 🔗 Part of the AI Trio
+
+MemOS is one of three sibling projects that compose into a complete agent memory + tooling stack:
+
+| Project | Role |
+| --- | --- |
+| **[universal-mcp-toolkit](https://github.com/Markgatcha/universal-mcp-toolkit)** | MCP protocol, server registry, and tool routing |
+| **[memos](https://github.com/Markgatcha/memos)** | Graph-based persistent memory across agent sessions |
+| **[llm-guardian](https://github.com/Markgatcha/llm-guardian)** | Token-cost guardian that compresses prompts and injects MemOS memory slices |
+
+Together they cover transport + tools (UMT), memory + persistence (MemOS), and LLM inference cost control (llm-guardian). MemOS publishes the `@mem-os/sdk` MCP adapter, which pairs directly with UMT's `link memos` command and feeds memory slices into llm-guardian's prompt optimization.
+
 ## One-liner install
 
 ```bash
