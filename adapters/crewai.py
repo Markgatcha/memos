@@ -40,6 +40,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+
 class MemOSTool:
     """
     CrewAI-compatible tool for interacting with MemOS.

@@ -72,7 +72,7 @@ export function createReplHandlers(memos: MemOS): ReplHandlers {
           }
           out.push("");
           out.push("Usage: each command takes a single line of arguments.");
-          out.push("Quoted strings stay together: store \"hello world\".");
+          out.push('Quoted strings stay together: store "hello world".');
           break;
 
         case "store": {
@@ -147,7 +147,9 @@ export function createReplHandlers(memos: MemOS): ReplHandlers {
             break;
           }
           const deleted = await memos.forget(id);
-          out.push(deleted ? `Forgot memory: ${id}` : `Memory not found: ${id}`);
+          out.push(
+            deleted ? `Forgot memory: ${id}` : `Memory not found: ${id}`,
+          );
           break;
         }
 
@@ -158,10 +160,14 @@ export function createReplHandlers(memos: MemOS): ReplHandlers {
 
         case "graph": {
           const g = await memos.getGraph();
-          out.push(`Memory Graph: ${g.nodes.length} nodes, ${g.edges.length} edges`);
+          out.push(
+            `Memory Graph: ${g.nodes.length} nodes, ${g.edges.length} edges`,
+          );
           if (g.nodes.length > 0) {
             for (const n of g.nodes.slice(0, 20)) {
-              out.push(`  [${n.type}] ${n.id.slice(0, 8)} — ${n.content.slice(0, 60)}`);
+              out.push(
+                `  [${n.type}] ${n.id.slice(0, 8)} — ${n.content.slice(0, 60)}`,
+              );
             }
             if (g.nodes.length > 20) {
               out.push(`  ... ${g.nodes.length - 20} more`);
@@ -188,7 +194,9 @@ export function createReplHandlers(memos: MemOS): ReplHandlers {
             `Context pack for "${query}" (${pack.items.length} items, ${pack.tokenBudget} token budget):`,
           );
           for (const item of pack.items) {
-            out.push(`  [${item.score.toFixed(3)}] ${item.content.slice(0, 80)}`);
+            out.push(
+              `  [${item.score.toFixed(3)}] ${item.content.slice(0, 80)}`,
+            );
           }
           break;
         }
@@ -308,7 +316,11 @@ function unquote(s: string): string {
  */
 export async function runRepl(memos: MemOS): Promise<void> {
   const handlers = createReplHandlers(memos);
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: false,
+  });
   // eslint-disable-next-line no-console
   console.log(BANNER);
 

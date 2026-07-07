@@ -556,8 +556,7 @@ export class SQLiteStorage implements StorageAdapter {
 
   async getEdge(id: string): Promise<MemoryEdge | null> {
     const row = this.db.prepare("SELECT * FROM edges WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
 
     if (!row) return null;
     return this.rowToEdge(row);

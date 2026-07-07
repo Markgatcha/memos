@@ -35,17 +35,11 @@ import type { EmbeddingProvider, EmbeddingVector } from "./types.js";
 
 /** Lifecycle states an embedding job can be in. */
 export type EmbeddingJobStatus =
-  | "queued"
-  | "running"
-  | "complete"
-  | "failed"
-  | "retrying";
+  "queued" | "running" | "complete" | "failed" | "retrying";
 
 /** Reasons a job can be marked failed. */
 export type EmbeddingFailureReason =
-  | "max_retries"
-  | "aborted"
-  | "provider_error";
+  "max_retries" | "aborted" | "provider_error";
 
 /** A single embedding job, exposed for observability. */
 export interface EmbeddingJob {

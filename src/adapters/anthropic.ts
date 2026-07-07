@@ -72,7 +72,8 @@ export interface AnthropicToolResultBlock {
 }
 
 /** Union of content blocks this adapter produces. */
-export type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolResultBlock;
+export type AnthropicContentBlock =
+  AnthropicTextBlock | AnthropicToolResultBlock;
 
 /**
  * Minimal Anthropic-compatible message.
@@ -353,9 +354,7 @@ export class MemOSAnthropicPlugin {
       await this.addMessages(messages);
     }
 
-    const lastUser = [...messages]
-      .reverse()
-      .find((m) => m.role === "user");
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const query = lastUser?.content.trim() ?? "";
     if (!query) return "";
 

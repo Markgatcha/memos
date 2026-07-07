@@ -335,9 +335,7 @@ export class MemOSOpenAIPlugin {
       await this.addMessages(messages);
     }
 
-    const lastUser = [...messages]
-      .reverse()
-      .find((m) => m.role === "user");
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const query = lastUser?.content.trim() ?? "";
     if (!query) return "";
 
