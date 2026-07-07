@@ -31,13 +31,12 @@ jobs:
           cache: npm
       - name: Verify package-lock.json is in sync
         run: |
-          cp package-lock.json /tmp/package-lock.before.json
-          npm install --package-lock-only --ignore-scripts
-          if ! diff -q package-lock.json /tmp/package-lock.before.json >/dev/null; then
-            echo "::error::package-lock.json is out of sync with package.json. Run 'npm install' locally and commit the regenerated lockfile."
-            git --no-pager diff --stat package-lock.json
-            exit 1
-          fi
+          # Use `npm ci --dry-run` rather than regenerating + diffing the
+          # lockfile. It validates that package.json and package-lock.json are
+          # in sync (the real failure mode) without byte-comparing the file,
+          # so it does not false-positive on npm-version formatting differences
+          # between the local machine and the CI runner.
+          npm ci --dry-run
 
   # ──────────────────────────────────────────────
   # TypeScript: Lint + Format + Build + Test
