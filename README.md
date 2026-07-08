@@ -10,12 +10,14 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@mem-os/sdk"><img src="https://img.shields.io/badge/npm-v1.6.26-cb3837?style=flat-square" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/@mem-os/sdk"><img src="https://img.shields.io/npm/v/@mem-os/sdk?style=flat-square&color=cb3837" alt="npm"></a>
   <a href="https://pypi.org/project/mem-os-sdk/"><img src="https://img.shields.io/badge/pypi-v1.6.26-3776ab?style=flat-square" alt="PyPI"></a>
   <a href="https://github.com/Markgatcha/memos/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Markgatcha/memos?style=flat-square&color=green" alt="License"></a>
   <a href="https://github.com/Markgatcha/memos/actions"><img src="https://img.shields.io/github/actions/workflow/status/Markgatcha/memos/ci.yml?style=flat-square" alt="CI"></a>
   <img src="https://img.shields.io/badge/100%25%20local-zero%20cloud%20deps-brightgreen?style=flat-square" alt="100% Local">
 </p>
+
+> **Release status:** The GitHub source is the canonical, always-current build (v1.6.26). The published npm package (`@mem-os/sdk`) and PyPI package (`mem-os-sdk`) are updated on each tagged release but may briefly lag the source. For the latest features, install [from source](#from-source).
 
 ---
 
@@ -34,12 +36,15 @@ Together they cover transport + tools (UMT), memory + persistence (MemOS), and L
 ## One-liner install
 
 ```bash
-# TypeScript / Node.js (npm)
+# TypeScript / Node.js (from source — always current)
 npm install @mem-os/sdk
-
-# Python (PyPI)
-pip install mem-os-sdk
+# The published npm package is updated on each tagged release but may briefly
+# lag the GitHub source. For the absolute latest, clone and build from source
+# (see Installation → From source below).
 ```
+
+> **Note:** `@mem-os/sdk` is published to npm, but the live package can trail the
+> main branch. If you need a feature that just landed on `main`, install from source.
 
 Start the HTTP server (Python):
 

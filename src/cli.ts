@@ -584,13 +584,17 @@ async function main(): Promise<void> {
         // command locates the sibling repos and spawns Guardian + UMT from
         // their entrypoints; without it, it prints the compose plan.
         const up = args.includes("--up");
+        const flagIdx = (name: string) =>
+          args.indexOf(name) !== -1 ? args[args.indexOf(name) + 1] : undefined;
         const home = process.env.HOME || process.env.USERPROFILE || ".";
         const candidates = [
+          flagIdx("--guardian"),
+          flagIdx("--umt"),
           join(home, "llm-guardian"),
           join(home, "universal-mcp-toolkit"),
           resolve(process.cwd(), "..", "llm-guardian"),
           resolve(process.cwd(), "..", "universal-mcp-toolkit"),
-        ];
+        ].filter(Boolean) as string[];
         const findRepo = (name: string) =>
           candidates.find(
             (c) => existsSync(join(c, "package.json")) && c.includes(name),
@@ -604,10 +608,10 @@ async function main(): Promise<void> {
             `  [memory]     memos   (this process)  db=${dbPath ?? join(home, ".memos/memos.db")}`,
           );
           console.log(
-            `  [optimize]   llm-guardian  ${guardian ? `→ ${guardian}` : "(not found; set path)"}`,
+            `  [optimize]   llm-guardian  ${guardian ? `→ ${guardian}` : "(not found; pass --guardian <path>)"}`,
           );
           console.log(
-            `  [tools]      universal-mcp-toolkit  ${umt ? `→ ${umt}` : "(not found; set path)"}`,
+            `  [tools]      universal-mcp-toolkit  ${umt ? `→ ${umt}` : "(not found; pass --umt <path>)"}`,
           );
         }
 
@@ -617,14 +621,6 @@ async function main(): Promise<void> {
               "\nRun with --up to launch Guardian + UMT alongside this MemOS instance.",
             );
           break;
-        }
-
-        if (!guardian || !umt) {
-          console.error(
-            "Error: could not locate llm-guardian and/or universal-mcp-toolkit siblings. " +
-              "Expected them next to this repo or under your home directory.",
-          );
-          process.exit(1);
         }
 
         const children: any[] = [];
@@ -640,20 +636,60 @@ async function main(): Promise<void> {
             stdio: "inherit" as const,
             shell: true,
           });
+          child.on("error", (err: Error) => {
+            console.error(`Failed to launch ${cmd} in ${cwd}: ${err.message}`);
+          });
           children.push(child);
           return child;
         };
 
-        // Guardian needs Node (better-sqlite3) when MemOS memory is enabled.
-        await spawn("bun", guardian, {
-          MEMOS_NAMESPACE: "default",
-          MEMOS_STORAGE_PATH: dbPath ?? join(home, ".memos/memos.db"),
-        });
-        await spawn("npx", umt, {});
+        // Guardian must run under Node (not Bun) when MemOS memory is enabled,
+        // because MemOS uses better-sqlite3 — a native Node module Bun cannot
+        // load. If the user has not set MemOS env vars (standalone Guardian),
+        // Bun is fine and faster to start.
+        const memosEnabled =
+          !!process.env.MEMOS_NAMESPACE ||
+          !!process.env.MEMOS_STORAGE_PATH ||
+          !!dbPath;
+        if (guardian) {
+          const guardianEnv: Record<string, string> = {};
+          if (memosEnabled) {
+            guardianEnv.MEMOS_NAMESPACE =
+              process.env.MEMOS_NAMESPACE || "default";
+            guardianEnv.MEMOS_STORAGE_PATH =
+              process.env.MEMOS_STORAGE_PATH ||
+              dbPath ||
+              join(home, ".memos/memos.db");
+          }
+          await spawn(memosEnabled ? "node" : "bun", guardian, guardianEnv);
+          if (!jsonFlag)
+            console.log(
+              `  → llm-guardian via ${memosEnabled ? "node" : "bun"}${memosEnabled ? " (MemOS memory enabled)" : ""}`,
+            );
+        } else if (!jsonFlag) {
+          console.warn(
+            "  ⚠ skipping llm-guardian: not found. Pass --guardian <path> or clone it next to memos.",
+          );
+        }
 
-        if (!jsonFlag)
+        if (umt) {
+          await spawn("npx", umt, {});
+        } else if (!jsonFlag) {
+          console.warn(
+            "  ⚠ skipping universal-mcp-toolkit: not found. Pass --umt <path> or clone it next to memos.",
+          );
+        }
+
+        if (!guardian && !umt) {
+          console.error(
+            "Error: no sibling repos located. Clone llm-guardian and/or universal-mcp-toolkit next to memos, or pass --guardian / --umt.",
+          );
+          process.exit(1);
+        }
+
+        if (!jsonFlag && (guardian || umt))
           console.log(
-            "\nAI Trio is starting. MemOS is live (this process), Guardian on :3000, UMT per its config.",
+            "\nAI Trio is starting. MemOS is live (this process); Guardian + UMT launching above.",
           );
 
         const shutdown = () => {
