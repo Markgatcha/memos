@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Trust scoring & provenance** — `source` (`user_input` | `agent_inferred` | `external_data` | `system`) and `trustScore` [0,1] fields on `MemoryNode`. `memos.trust()`, `memos.setTrust()`, `memos.adjustTrust()`. Search filters: `source`, `minTrustScore`, `sortBy: "trustScore"`. Trust-weighted hybrid search fusion (0.7–1.0 multiplier).
 - **Fact extraction** — `memos.extractFacts(messages, opts)` — rule-based local-first extractor that identifies preferences, entities, context, and facts from conversation messages. Optional `autoStore` with confidence threshold and embedding-based dedup.
 - **Diagnostics** — `memos.diagnostics()` — comprehensive health report with counts by source/type/namespace, temporal stats, embedding coverage, storage capabilities, and DB file size.
-- **CLI commands** — `set-validity`, `search-temporal`, `trust`, `set-trust`, `extract-facts`, `diagnostics`, `supersede`.
+- **CLI commands** — `set-validity`, `search-temporal`, `trust`, `set-trust`, `extract-facts`, `diagnostics`, `supersede`, `trio`.
+- **`memos trio` command** — compose the full AI Trio from a single entrypoint: prints the MemOS + LLM-Guardian + Universal-MCP-Toolkit boot plan, or with `--up` locates the sibling repos and launches Guardian (with `MEMOS_NAMESPACE`/`MEMOS_STORAGE_PATH` wired) and UMT alongside this MemOS instance.
 - **MCP tools** — `memos_set_validity`, `memos_search_temporal`, `memos_set_trust`, `memos_extract_facts`, `memos_diagnostics`.
 - **REST endpoints** — `PATCH /mem/{id}/validity`, `POST /search-temporal`, `POST /mem/{id}/supersede`, `GET|PATCH /mem/{id}/trust`, `POST /extract-facts`, `GET /diagnostics`.
 - **OpenAI SDK adapter** — `adapters/openai.ts` — first-class MemOS integration for OpenAI SDK with `addMessages`, `searchMemories`, `getMemoryContext`.

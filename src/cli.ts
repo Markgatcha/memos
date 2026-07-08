@@ -25,7 +25,7 @@
  */
 
 import { MemOS } from "./memory.js";
-import { resolve, dirname } from "path";
+import { resolve, dirname, join } from "path";
 import {
   existsSync,
   copyFileSync,
@@ -93,6 +93,7 @@ Commands:
   restore <path>          Restore from a backup
   mcp                     Start the MemOS MCP stdio server
   serve                   Start the HTTP server
+  trio [--up]             Show (or launch) the full AI Trio: MemOS + LLM-Guardian + Universal-MCP-Toolkit
   help                    Show this help message
 
 Options:
@@ -574,6 +575,95 @@ async function main(): Promise<void> {
             `  Nodes: ${graph.nodes.length}, Edges: ${graph.edges.length}`,
           );
         }
+        break;
+      }
+
+      case "trio": {
+        // Boot the full AI Trio: MemOS (this process, memory) + LLM-Guardian
+        // (optimization) + Universal-MCP-Toolkit (tools). With `--up` the
+        // command locates the sibling repos and spawns Guardian + UMT from
+        // their entrypoints; without it, it prints the compose plan.
+        const up = args.includes("--up");
+        const home = process.env.HOME || process.env.USERPROFILE || ".";
+        const candidates = [
+          join(home, "llm-guardian"),
+          join(home, "universal-mcp-toolkit"),
+          resolve(process.cwd(), "..", "llm-guardian"),
+          resolve(process.cwd(), "..", "universal-mcp-toolkit"),
+        ];
+        const findRepo = (name: string) =>
+          candidates.find(
+            (c) => existsSync(join(c, "package.json")) && c.includes(name),
+          );
+        const guardian = findRepo("llm-guardian");
+        const umt = findRepo("universal-mcp-toolkit");
+
+        if (!jsonFlag) {
+          console.log("AI Trio — compose plan:");
+          console.log(
+            `  [memory]     memos   (this process)  db=${dbPath ?? join(home, ".memos/memos.db")}`,
+          );
+          console.log(
+            `  [optimize]   llm-guardian  ${guardian ? `→ ${guardian}` : "(not found; set path)"}`,
+          );
+          console.log(
+            `  [tools]      universal-mcp-toolkit  ${umt ? `→ ${umt}` : "(not found; set path)"}`,
+          );
+        }
+
+        if (!up) {
+          if (!jsonFlag)
+            console.log(
+              "\nRun with --up to launch Guardian + UMT alongside this MemOS instance.",
+            );
+          break;
+        }
+
+        if (!guardian || !umt) {
+          console.error(
+            "Error: could not locate llm-guardian and/or universal-mcp-toolkit siblings. " +
+              "Expected them next to this repo or under your home directory.",
+          );
+          process.exit(1);
+        }
+
+        const children: any[] = [];
+        const spawn = async (
+          cmd: string,
+          cwd: string,
+          env: Record<string, string>,
+        ) => {
+          const { spawn: _spawn } = await import("child_process");
+          const child = _spawn(cmd, ["run", "start"], {
+            cwd,
+            env: { ...process.env, ...env },
+            stdio: "inherit" as const,
+            shell: true,
+          });
+          children.push(child);
+          return child;
+        };
+
+        // Guardian needs Node (better-sqlite3) when MemOS memory is enabled.
+        await spawn("bun", guardian, {
+          MEMOS_NAMESPACE: "default",
+          MEMOS_STORAGE_PATH: dbPath ?? join(home, ".memos/memos.db"),
+        });
+        await spawn("npx", umt, {});
+
+        if (!jsonFlag)
+          console.log(
+            "\nAI Trio is starting. MemOS is live (this process), Guardian on :3000, UMT per its config.",
+          );
+
+        const shutdown = () => {
+          for (const c of children) c.kill();
+          process.exit(0);
+        };
+        process.on("SIGINT", shutdown);
+        process.on("SIGTERM", shutdown);
+        // Keep the parent alive while children run.
+        await new Promise(() => {});
         break;
       }
 

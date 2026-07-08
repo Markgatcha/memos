@@ -113,14 +113,14 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 | Cross-OS SQLite pragmas | ✅ v1.6.26 |
 | Semantic search (embeddings) | ✅ v1.6.26 |
 | Hermes-style retain pre-filter | ✅ v1.6.26 |
-| Temporal knowledge graphs | ✅ Unreleased |
-| Trust scoring & provenance | ✅ Unreleased |
-| Fact extraction from conversations | ✅ Unreleased |
-| Diagnostics & health monitoring | ✅ Unreleased |
-| OpenAI SDK adapter | ✅ Unreleased |
-| Anthropic SDK adapter | ✅ Unreleased |
-| Trust-weighted hybrid search | ✅ Unreleased |
-| Parallel hybrid retrieval | ✅ Unreleased |
+| Temporal knowledge graphs | ✅ v1.6.26 |
+| Trust scoring & provenance | ✅ v1.6.26 |
+| Fact extraction from conversations | ✅ v1.6.26 |
+| Diagnostics & health monitoring | ✅ v1.6.26 |
+| OpenAI SDK adapter | ✅ v1.6.26 |
+| Anthropic SDK adapter | ✅ v1.6.26 |
+| Trust-weighted hybrid search | ✅ v1.6.26 |
+| Parallel hybrid retrieval | ✅ v1.6.26 |
 | Multi-user isolation | 🔜 v3.0 |
 | Plugin system for custom backends | 🔜 v3.0 |
 | Admin dashboard | 🔜 v4.0 |
@@ -348,6 +348,10 @@ memos import ./memories.json
 
 # Start the HTTP server
 memos serve
+
+# Boot the full AI Trio (MemOS + LLM-Guardian + Universal-MCP-Toolkit)
+memos trio            # print the compose plan
+memos trio --up       # launch Guardian + UMT alongside this MemOS instance
 ```
 
 ### MCP Server
