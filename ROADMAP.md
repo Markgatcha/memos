@@ -4,7 +4,7 @@ Public milestone plan. Each phase has a clear scope, success criteria, and a tar
 
 ---
 
-## Phase 1 — Core Engine (v0.1) ✅ Current
+## Phase 1 — Core Engine (v0.1) ✅ Released
 
 **Goal:** A working, installable memory layer that any developer can use in 5 minutes.
 
@@ -32,20 +32,20 @@ Public milestone plan. Each phase has a clear scope, success criteria, and a tar
 
 ---
 
-## Phase 2 — Semantic Search & Export (v0.2)
+## Phase 2 — Semantic Search & Export (v0.2 → shipped in v1.6.26) ✅ Released
 
 **Goal:** Make memory retrieval smarter and enable knowledge base integration.
 
 ### Deliverables
 
-- [ ] Embedding-based similarity search (local models via `@xenova/transformers`)
-- [ ] Configurable embedding model (swap between local and API-based)
-- [ ] Obsidian / Markdown export (`memos export --format obsidian`)
-- [ ] Memory expiration (TTL) with automatic cleanup
-- [ ] Memory tagging system (custom tags beyond `type`)
-- [ ] Grafana-compatible metrics endpoint
-- [ ] Performance benchmarks (10K, 100K, 1M memories)
-- [ ] Backup / restore CLI commands
+- [x] Embedding-based similarity search (local models via `@xenova/transformers`)
+- [x] Configurable embedding model (swap between local and API-based)
+- [x] Obsidian / Markdown export (`memos export --format obsidian`)
+- [x] Memory expiration (TTL) with automatic cleanup
+- [x] Memory tagging system (custom tags beyond `type`)
+- [x] Grafana-compatible metrics endpoint
+- [x] Performance benchmarks (10K, 100K, 1M memories)
+- [x] Backup / restore CLI commands
 
 ### Success criteria
 
@@ -55,23 +55,23 @@ Public milestone plan. Each phase has a clear scope, success criteria, and a tar
 
 ---
 
-## Phase 3 — Multi-User & Plugin System (v0.3)
+## Phase 3 — Multi-User & Plugin System (v0.3 → core adapters shipped in v1.6.26; backends/RBAC pending) 🚧 In progress
 
 **Goal:** Enable production deployments with multiple users and custom backends.
 
 ### Deliverables
 
-- [ ] Multi-user isolation (namespace per user/agent)
+- [x] Multi-user isolation (namespace per user/agent)
 - [ ] Role-based access control (read/write/admin)
 - [ ] Plugin system for custom storage adapters
 - [ ] PostgreSQL storage backend
 - [ ] Redis storage backend (hot cache layer)
 - [ ] Qdrant storage backend (vector search)
-- [ ] Memory access audit log
-- [ ] Rate limiting per user
-- [ ] WebSocket API for real-time memory updates
-- [ ] CrewAI adapter
-- [ ] Vercel AI SDK adapter
+- [x] Memory access audit log
+- [x] Rate limiting per user
+- [x] WebSocket API for real-time memory updates
+- [x] CrewAI adapter
+- [x] Vercel AI SDK adapter
 
 ### Success criteria
 
@@ -81,7 +81,7 @@ Public milestone plan. Each phase has a clear scope, success criteria, and a tar
 
 ---
 
-## Phase 4 — Production Hardening (v1.0)
+## Phase 4 — Production Hardening (v1.0 → partial: consolidation, semantic search, trust scoring shipped in v1.6.26; infra pending) 🚧 In progress
 
 **Goal:** A battle-tested memory layer ready for production AI applications.
 
@@ -90,13 +90,13 @@ Public milestone plan. Each phase has a clear scope, success criteria, and a tar
 - [ ] Stable public API (no breaking changes until v2.0)
 - [ ] Comprehensive test suite (90%+ coverage)
 - [ ] Load testing and performance tuning
-- [ ] Memory compression (deduplication, merging near-duplicates)
-- [ ] Conflict resolution for concurrent writes
-- [ ] Schema migration system
+- [x] Memory compression (deduplication, merging near-duplicates)
+- [x] Conflict resolution for concurrent writes
+- [x] Schema migration system
 - [ ] Admin dashboard (web UI)
 - [ ] Kubernetes Helm chart
 - [ ] Cloudflare Workers adapter (edge deployment)
-- [ ] Comprehensive architecture documentation
+- [x] Comprehensive architecture documentation
 - [ ] Security audit
 
 ### Success criteria
