@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TOON format for search results** — `memos.searchToon()` returns a compact pipe-delimited string instead of the full JSON array of `ScoredMemory` objects. **53.5% token reduction on real search results** (3,451 → 1,604 tokens for 20-result responses). Exported as `searchResultsToToon` from `@mem-os/sdk`.
 - **Prepared statement cache** — `better-sqlite3` already caches prepared statements internally. Measured at 0.03ms per prepare() call, no significant additional gain from JS-level caching.
 
+### Fixed
+
+- **CI test suite now runs under TypeScript 7** — replaced the `ts-jest` transform with `@swc/jest` in `jest.config.js`. `ts-jest@29` peer-depends on `typescript <7` and crashed loading the tsconfig under the repo's TypeScript 7.0.2, so every test suite failed to start and the CI `Test` step went red. `@swc/jest` is TS-version-agnostic; type-checking is still enforced by `tsc --noEmit` / `npm run build` in CI.
+- **`diagnostics()` historical-node count** — a node is now counted as historical when `validTo <= now` (was `< now`). `supersede()` sets `validTo = now`, so a freshly-superseded node was previously never reported as historical, inconsistent with the documented behavior and with the search layer (which already treats `validTo === now` as historical).
+
 ## [1.6.26] - 2026-06-17
 
 Stable v1.6.26 release. Adds the background embedding queue, HTTP+SSE MCP transport, three new embedding providers, memory consolidation, the CLI REPL, cross-OS perf hardening, AI Trio context packs, MCP 2025-06-18 compliance, and a retrieval-quality benchmark.
