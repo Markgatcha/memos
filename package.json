@@ -104,6 +104,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@swc/core": "^1.15.43",
+    "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^7.6.12",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.1.0",
@@ -113,7 +115,6 @@
     "eslint-config-prettier": "^10.1.8",
     "jest": "^30.4.2",
     "prettier": "^3.4.2",
-    "ts-jest": "^29.2.5",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2"
   },

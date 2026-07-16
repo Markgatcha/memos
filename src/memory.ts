@@ -1960,7 +1960,10 @@ export class MemOS {
 
       if (node.validFrom !== null || node.validTo !== null)
         nodesWithValidity += 1;
-      if (node.validTo !== null && node.validTo < now) historicalNodes += 1;
+      // Use `<= now` to match the search layer (sqlite.ts), which treats a
+      // node superseded "now" (validTo === now) as historical. `< now` would
+      // miss nodes superseded in the same millisecond as the diagnostics run.
+      if (node.validTo !== null && node.validTo <= now) historicalNodes += 1;
       if (node.expiresAt !== null) {
         nodesWithTTL += 1;
         if (node.expiresAt * 1000 < now) expiredNodes += 1;
