@@ -147,16 +147,16 @@ jobs:
             ${{ matrix.bootstrap }}
             # npm 12 (shipped by Arch) blocks native addon install scripts by
             # default (allow-scripts) and, when run as root, drops privileges for
-            # lifecycle scripts -> EACCES on the build dir. So `npm ci` never
-            # builds better-sqlite3's native .node binary. We compile it directly
-            # with node-gyp (bypassing npm's privilege management) so the
-            # SQLite-backed tests have a working backend.
+            # lifecycle scripts -> EACCES on the build dir. So npm ci never
+            # builds better-sqlite3 native binary. We compile it directly with
+            # node-gyp (bypassing npm privilege management) so the SQLite-backed
+            # tests have a working backend.
             npm ci --prefer-offline
             ( cd node_modules/better-sqlite3 && npx node-gyp rebuild --release )
             npm run typecheck
             npm test -- --runInBand --testPathPatterns=memos.test.ts
             npm run build
-          '
+            '
 
   # ──────────────────────────────────────────────
   # Python: Lint + Test
