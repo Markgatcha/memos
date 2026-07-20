@@ -146,6 +146,11 @@ jobs:
             set -euxo pipefail
             ${{ matrix.bootstrap }}
             npm ci --prefer-offline
+            # Arch/fresh distros ship npm 12+ with allow-scripts blocking native
+            # addon builds by default, so better-sqlite3's prebuilt/node-gyp install
+            # script is skipped and the .node binary is missing -> SQLite tests fail.
+            # `npm rebuild` explicitly compiles the native addon and bypasses that block.
+            npm rebuild better-sqlite3
             npm run typecheck
             npm test -- --runInBand --testPathPatterns=memos.test.ts
             npm run build
