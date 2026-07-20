@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SearchFilter` extended with `source`, `minTrustScore`, `includeHistorical`, `validAt`, and `sortBy: "trustScore"`.
 - New events: `trust:changed`, `validity:changed`, `facts:extracted`.
 - SQLite schema: new columns `valid_from`, `valid_to`, `source`, `trust_score` with migration-safe `ALTER TABLE` and new indexes for temporal/trust queries.
+- **Linter swapped from ESLint to Oxlint** (temporary) — `npm run lint` now runs Oxlint with type-aware rules (powered by `tsgolint`/`typescript-go`), mirroring the previous ESLint rule set (see `.oxlintrc.json`). This keeps linting fast and TS-7-native while `typescript-eslint` / ESLint gain TypeScript 7+ support; planned reversion to ESLint once TS 7.1 ships.
 
 ### Performance
 

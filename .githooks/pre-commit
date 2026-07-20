@@ -1,6 +1,6 @@
 #!/bin/sh
 # Pre-commit hook (memos): auto-format staged .ts with prettier and
-# auto-fix with eslint, then re-stage. Non-blocking — it cleans up the
+# auto-fix with oxlint, then re-stage. Non-blocking — it cleans up the
 # commit but never fails it (CI is the gate for real errors).
 #
 # Activate once with: git config core.hooksPath .githooks
@@ -17,10 +17,10 @@ if [ -z "$staged" ]; then
   exit 0
 fi
 
-# Auto-format with prettier (idempotent), then auto-fix with eslint.
+# Auto-format with prettier (idempotent), then auto-fix with oxlint.
 # Both run only on the staged files to keep the hook fast.
 npx prettier --write $staged >/dev/null 2>&1 || true
-npx eslint --fix $staged >/dev/null 2>&1 || true
+npx oxlint --fix $staged >/dev/null 2>&1 || true
 
 # Re-stage anything the formatters touched.
 echo "$staged" | while IFS= read -r f; do
