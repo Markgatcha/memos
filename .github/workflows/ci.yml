@@ -182,24 +182,7 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
             -v "${{ runner.temp }}/npm:/root/.npm" \
-            -w /repo ${{ matrix.image }} bash -lc '
-            set -euxo pipefail
-            ${{ matrix.bootstrap }}
-            # better-sqlite3 has no prebuilt binary for very new Node majors
-            # (e.g. Node 26, which Arch ships). npm 12 also blocks native addon
-            # install scripts by default (allow-scripts) and, when run as root,
-            # drops privileges for lifecycle scripts -> EACCES on the build dir.
-            # So npm ci never builds the native binary. We compile it directly
-            # with node-gyp (bypassing npm privilege management) so the
-            # SQLite-backed tests have a working backend regardless of Node.
-            # Pin node-gyp@10: it is compatible with both old Node (Debian ships
-            # Node 20, where node-gyp@13's undici crashes) and new Node majors.
-            npm ci --prefer-offline
-            cd node_modules/better-sqlite3 && npx --yes node-gyp@10 rebuild --release && cd /repo
-            npm run typecheck
-            npm test -- --runInBand --testPathPatterns=memos.test.ts
-            npm run build
-            '
+            -w /repo ${{ matrix.image }} bash -lc '${{ matrix.bootstrap }} && bash /repo/scripts/smoke-native.sh'
 
   # ──────────────────────────────────────────────
   # Python: Lint + Test
