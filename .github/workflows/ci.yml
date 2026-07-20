@@ -141,22 +141,24 @@ jobs:
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
-            -v "${{ runner.temp }}/npm:/root/.npm" \
+            -v "${{ runner.temp }}/npm:/home/ci/.npm" \
             -w /repo ${{ matrix.image }} bash -lc '
             set -euxo pipefail
             ${{ matrix.bootstrap }}
-            npm ci --prefer-offline
-            # Arch/fresh distros ship npm 12+ which blocks native addon install
-            # scripts by default (allow-scripts) and, when run as root inside the
-            # container, drops privileges for lifecycle scripts -> EACCES on the
-            # build dir. unsafe-perm keeps the build running as root and rebuild
-            # explicitly compiles better-sqlite3's native .node binary so the
-            # SQLite-backed tests pass on Node versions without a prebuilt.
-            npm config set unsafe-perm true
-            npm rebuild better-sqlite3 --unsafe-perm
-            npm run typecheck
-            npm test -- --runInBand --testPathPatterns=memos.test.ts
-            npm run build
+            # npm 12 (shipped by Arch) blocks native addon install scripts by
+            # default (allow-scripts) AND, when run as root, drops privileges for
+            # lifecycle scripts -> EACCES on the build dir. So we run the npm
+            # steps as a non-root user (no privilege drop, writable HOME) and use
+            # `npm rebuild` to force-compile better-sqlite3's native .node binary,
+            # which it otherwise skips. Tests then get a working SQLite backend.
+            useradd -m ci
+            chown -R ci:ci /repo
+            su ci -lc "cd /repo && \
+              npm ci --prefer-offline && \
+              npm rebuild better-sqlite3 && \
+              npm run typecheck && \
+              npm test -- --runInBand --testPathPatterns=memos.test.ts && \
+              npm run build"
           '
 
   # ──────────────────────────────────────────────
