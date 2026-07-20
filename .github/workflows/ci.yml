@@ -195,7 +195,7 @@ jobs:
             # Pin node-gyp@10: it is compatible with both old Node (Debian ships
             # Node 20, where node-gyp@13's undici crashes) and new Node majors.
             npm ci --prefer-offline
-            ( cd node_modules/better-sqlite3 && npx --yes node-gyp@10 rebuild --release )
+            cd node_modules/better-sqlite3 && npx --yes node-gyp@10 rebuild --release && cd /repo
             npm run typecheck
             npm test -- --runInBand --testPathPatterns=memos.test.ts
             npm run build
