@@ -107,7 +107,7 @@ jobs:
           npm blocking native install scripts on new npm majors)
         run: |
           if [ ! -f node_modules/better-sqlite3/build/Release/better_sqlite3.node ]; then
-            ( cd node_modules/better-sqlite3 && npx node-gyp rebuild --release )
+            ( cd node_modules/better-sqlite3 && npx --yes node-gyp@10 rebuild --release )
           fi
       - name: Test
         run: npm test -- --runInBand --testPathPatterns=memos.test.ts
@@ -192,8 +192,10 @@ jobs:
             # So npm ci never builds the native binary. We compile it directly
             # with node-gyp (bypassing npm privilege management) so the
             # SQLite-backed tests have a working backend regardless of Node.
+            # Pin node-gyp@10: it is compatible with both old Node (Debian ships
+            # Node 20, where node-gyp@13's undici crashes) and new Node majors.
             npm ci --prefer-offline
-            ( cd node_modules/better-sqlite3 && npx node-gyp rebuild --release )
+            ( cd node_modules/better-sqlite3 && npx --yes node-gyp@10 rebuild --release )
             npm run typecheck
             npm test -- --runInBand --testPathPatterns=memos.test.ts
             npm run build
