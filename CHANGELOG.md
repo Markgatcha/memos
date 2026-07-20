@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SearchFilter` extended with `source`, `minTrustScore`, `includeHistorical`, `validAt`, and `sortBy: "trustScore"`.
 - New events: `trust:changed`, `validity:changed`, `facts:extracted`.
 - SQLite schema: new columns `valid_from`, `valid_to`, `source`, `trust_score` with migration-safe `ALTER TABLE` and new indexes for temporal/trust queries.
-- **Linter swapped from ESLint to Oxlint** (temporary) — `npm run lint` now runs Oxlint with type-aware rules (powered by `tsgolint`/`typescript-go`), mirroring the previous ESLint rule set (see `.oxlintrc.json`). This keeps linting fast and TS-7-native while `typescript-eslint` / ESLint gain TypeScript 7+ support; planned reversion to ESLint once TS 7.1 ships.
+- **Linter swapped from ESLint to Oxlint** (temporary) — `npm run lint` now runs Oxlint (with `tsgolint`/`typescript-go` available for type-aware rules) mirroring the previous ESLint rule set (see `.oxlintrc.json`). Config runs in fast non-type-aware mode (all 7 rules are syntactic), so `oxlint src --quiet` finishes in ~12ms on 16 files. This keeps linting fast and TS-7-native while `typescript-eslint` / ESLint gain TypeScript 7+ support; planned reversion to ESLint once TS 7.1 ships.
 
 ### Performance
 
@@ -47,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CI test suite now runs under TypeScript 7** — replaced the `ts-jest` transform with `@swc/jest` in `jest.config.js`. `ts-jest@29` peer-depends on `typescript <7` and crashed loading the tsconfig under the repo's TypeScript 7.0.2, so every test suite failed to start and the CI `Test` step went red. `@swc/jest` is TS-version-agnostic; type-checking is still enforced by `tsc --noEmit` / `npm run build` in CI.
 - **`diagnostics()` historical-node count** — a node is now counted as historical when `validTo <= now` (was `< now`). `supersede()` sets `validTo = now`, so a freshly-superseded node was previously never reported as historical, inconsistent with the documented behavior and with the search layer (which already treats `validTo === now` as historical).
+- **CI hardening against toolchain drift** — added a `TypeScript (rolling Node)` job that runs lint/typecheck/test on the **latest stable Node + npm** every run (via `node-version: current`), catching breakage like the npm-12/Node-26 native-addon failure class before it can silently rot. The native-deps smoke matrix now also compiles `better-sqlite3` directly with `node-gyp` so it builds regardless of npm's native-install-script policy.
+
+### CI
+
+- **Python test matrix extended to 3.14** — the `python` job now tests CPython 3.10 → 3.14 (latest stable), with `requires-python >=3.10` already covering it.
+- **Debian (trixie, latest stable) added to the native-deps matrix** — alongside Fedora, Arch, and openSUSE, so the SQLite native build is exercised on Debian's current stable release.
 
 ## [1.6.26] - 2026-06-17
 

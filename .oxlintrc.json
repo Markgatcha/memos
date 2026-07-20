@@ -20,7 +20,9 @@
     "eqeqeq": ["error", "always"],
     "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }]
   },
-  "options": { "typeAware": true },
+  "options": {
+    "typeAware": false
+  },
   "overrides": [
     {
       "files": ["src/cli.ts"],

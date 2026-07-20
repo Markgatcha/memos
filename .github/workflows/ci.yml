@@ -75,6 +75,43 @@ jobs:
       - name: Test
         run: npm test -- --ci --coverage
 
+  # ──────────────────────────────────────────────
+  # Rolling Node smoke: exercises the LATEST stable Node + npm on every
+  # run so that future breaking changes (e.g. npm 12 blocking native addon
+  # scripts, or a new Node major with no better-sqlite3 prebuilt — the
+  # "Arch" failure class) are caught continuously instead of only via the
+  # distro matrix. This job is allowed to break on its own (not in the
+  # release-gate chain) so it can't silently rot, but it still flags drift.
+  # ──────────────────────────────────────────────
+  typescript-rolling:
+    name: TypeScript (rolling Node)
+    runs-on: ubuntu-latest
+    needs: [verify-lockfile]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup latest Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: current
+          cache: npm
+      - name: Node / npm versions
+        run: node --version && npm --version
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Ensure better-sqlite3 native addon builds (guards against
+          npm blocking native install scripts on new npm majors)
+        run: |
+          if [ ! -f node_modules/better-sqlite3/build/Release/better_sqlite3.node ]; then
+            ( cd node_modules/better-sqlite3 && npx node-gyp rebuild --release )
+          fi
+      - name: Test
+        run: npm test -- --runInBand --testPathPatterns=memos.test.ts
+
   semantic-search-cross-os:
     name: Semantic Search (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -130,6 +167,9 @@ jobs:
           - name: openSUSE
             image: opensuse/tumbleweed:latest
             bootstrap: zypper -n install nodejs npm python3 gcc-c++ make
+          - name: Debian
+            image: debian:trixie
+            bootstrap: apt-get update && apt-get install -y nodejs npm python3 make g++
     steps:
       - uses: actions/checkout@v7
       - name: Cache npm tarballs for in-docker install
@@ -145,12 +185,13 @@ jobs:
             -w /repo ${{ matrix.image }} bash -lc '
             set -euxo pipefail
             ${{ matrix.bootstrap }}
-            # npm 12 (shipped by Arch) blocks native addon install scripts by
-            # default (allow-scripts) and, when run as root, drops privileges for
-            # lifecycle scripts -> EACCES on the build dir. So npm ci never
-            # builds better-sqlite3 native binary. We compile it directly with
-            # node-gyp (bypassing npm privilege management) so the SQLite-backed
-            # tests have a working backend.
+            # better-sqlite3 has no prebuilt binary for very new Node majors
+            # (e.g. Node 26, which Arch ships). npm 12 also blocks native addon
+            # install scripts by default (allow-scripts) and, when run as root,
+            # drops privileges for lifecycle scripts -> EACCES on the build dir.
+            # So npm ci never builds the native binary. We compile it directly
+            # with node-gyp (bypassing npm privilege management) so the
+            # SQLite-backed tests have a working backend regardless of Node.
             npm ci --prefer-offline
             ( cd node_modules/better-sqlite3 && npx node-gyp rebuild --release )
             npm run typecheck
@@ -167,7 +208,7 @@ jobs:
     needs: [verify-lockfile]
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - name: Setup Python ${{ matrix.python-version }}
