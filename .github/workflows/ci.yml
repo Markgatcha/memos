@@ -47,7 +47,7 @@ jobs:
     needs: [verify-lockfile]
     strategy:
       matrix:
-        node-version: [22]
+        node-version: [20, 22, 24]
     steps:
       - uses: actions/checkout@v7
       - name: Setup Node.js ${{ matrix.node-version }}
@@ -170,6 +170,12 @@ jobs:
           - name: Debian
             image: debian:trixie
             bootstrap: apt-get update && apt-get install -y nodejs npm python3 make g++
+          - name: Ubuntu
+            image: ubuntu:24.04
+            bootstrap: apt-get update && apt-get install -y nodejs npm python3 make g++
+          - name: Rocky
+            image: rockylinux:9
+            bootstrap: dnf install -y nodejs npm python3 make gcc-c++
     steps:
       - uses: actions/checkout@v7
       - name: Cache npm tarballs for in-docker install
