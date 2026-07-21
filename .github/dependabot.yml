@@ -4,9 +4,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    # Auto-rebase dependabot branches onto the latest main so they always
-    # inherit the current CI workflow (verify-lockfile + codeql.yml) and never
-    # get stuck on a stale, failing config like the 2026-07 batch did.
+    # Auto-rebase so dependabot branches always inherit the current CI
+    # workflow (verify-lockfile + codeql.yml) and never sit on a stale,
+    # failing config.
     rebase-strategy: "auto"
     # Group all npm dev/runtime bumps into a single PR to cut notification spam
     # and merge-conflict churn.
@@ -14,6 +14,13 @@ updates:
       npm-dependencies:
         patterns:
           - "*"
+    # Ignore major version bumps for packages with known native-build or
+    # breaking-change issues in CI.
+    ignore:
+      - dependency-name: "better-sqlite3"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "oxlint-tsgolint"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 10
     labels:
       - "dependencies"

@@ -96,7 +96,7 @@
     "bench:quality": "tsx scripts/bench-quality.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.1"
+    "better-sqlite3": "^12.11.1"
   },
   "overrides": {
     "brace-expansion@>=4.0.0 <5.0.5": "5.0.5",
@@ -111,7 +111,7 @@
     "@typescript/native": "npm:typescript@^7.0.2",
     "jest": "^30.4.2",
     "oxlint": "^1.74.0",
-    "oxlint-tsgolint": "^7.0.2001",
+    "oxlint-tsgolint": "^0.25.0",
     "prettier": "^3.9.6",
     "tsx": "^4.21.0",
     "typescript": "npm:@typescript/typescript6@^6.0.2"
