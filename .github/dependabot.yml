@@ -19,8 +19,6 @@ updates:
     ignore:
       - dependency-name: "better-sqlite3"
         update-types: ["version-update:semver-major"]
-      - dependency-name: "oxlint-tsgolint"
-        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
