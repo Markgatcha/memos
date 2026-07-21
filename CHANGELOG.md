@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SearchFilter` extended with `source`, `minTrustScore`, `includeHistorical`, `validAt`, and `sortBy: "trustScore"`.
 - New events: `trust:changed`, `validity:changed`, `facts:extracted`.
 - SQLite schema: new columns `valid_from`, `valid_to`, `source`, `trust_score` with migration-safe `ALTER TABLE` and new indexes for temporal/trust queries.
-- **Linter swapped from ESLint to Oxlint** (temporary) — `npm run lint` now runs Oxlint (with `tsgolint`/`typescript-go` available for type-aware rules) mirroring the previous ESLint rule set (see `.oxlintrc.json`). Config runs in fast non-type-aware mode (all 7 rules are syntactic), so `oxlint src --quiet` finishes in ~12ms on 16 files. This keeps linting fast and TS-7-native while `typescript-eslint` / ESLint gain TypeScript 7+ support; planned reversion to ESLint once TS 7.1 ships.
+- **Linter: ESLint → Oxlint (permanent)** — `npm run lint` now runs Oxlint (with `oxlint-tsgolint` for type-aware rules) mirroring the previous ESLint rule set (see `.oxlintrc.json`). Config runs in fast non-type-aware mode (all 7 rules are syntactic), so `oxlint src --quiet` finishes in ~12ms on 16 files. Oxlint supports TypeScript 7 natively (uses its own parser, not the TypeScript compiler), so there's no need to wait for `typescript-eslint` TS 7.1 support. Oxlint is actively maintained by the Oxc project (same team as SWC) and is the permanent linter choice.
 
 ### Performance
 
