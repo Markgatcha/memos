@@ -47,12 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CI test suite now runs under TypeScript 7** — replaced the `ts-jest` transform with `@swc/jest` in `jest.config.js`. `ts-jest@29` peer-depends on `typescript <7` and crashed loading the tsconfig under the repo's TypeScript 7.0.2, so every test suite failed to start and the CI `Test` step went red. `@swc/jest` is TS-version-agnostic; type-checking is still enforced by `tsc --noEmit` / `npm run build` in CI.
 - **`diagnostics()` historical-node count** — a node is now counted as historical when `validTo <= now` (was `< now`). `supersede()` sets `validTo = now`, so a freshly-superseded node was previously never reported as historical, inconsistent with the documented behavior and with the search layer (which already treats `validTo === now` as historical).
-- **CI hardening against toolchain drift** — added a `TypeScript (rolling Node)` job that runs lint/typecheck/test on the **latest stable Node + npm** every run (via `node-version: current`), catching breakage like the npm-12/Node-26 native-addon failure class before it can silently rot. The native-deps smoke matrix now also compiles `better-sqlite3` directly with `node-gyp` so it builds regardless of npm's native-install-script policy.
+- **CI hardening against toolchain drift** — the native-deps smoke matrix compiles `better-sqlite3` directly with `node-gyp` so it builds regardless of npm's native-install-script policy.
 
 ### CI
 
 - **CI minute optimization** — dropped Node 20 from the TypeScript matrix (EOL Apr 2025), reduced the distro Docker smoke from 6 to 3 images (Fedora/Debian/Arch covering all package-manager families), reduced Python from 5 to 3 versions (3.12 LTS, 3.13, 3.14), and removed the redundant semantic-search-cross-os job (now covered by the TypeScript matrix). The rolling Node job was also removed — it was `continue-on-error` and consumed minutes without blocking releases. These changes cut the total job count from ~28 to ~15 per run while preserving OS and LTS coverage.
 - **Python test matrix** — reduced from 5 versions (3.10–3.14) to 3 (3.12 LTS, 3.13, 3.14) to save CI minutes.
+- **Dependabot ignore rules** — added `ignore` entries for `better-sqlite3` and `oxlint-tsgolint` major version bumps, which have known native-build and breaking-change issues in CI.
 - **Debian (trixie, latest stable) added to the native-deps matrix** — alongside Fedora, Arch, and openSUSE, so the SQLite native build is exercised on Debian's current stable release.
 
 ## [1.6.26] - 2026-06-17
