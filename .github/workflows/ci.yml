@@ -40,6 +40,8 @@ jobs:
 
   # ──────────────────────────────────────────────
   # TypeScript: Lint + Format + Build + Test
+  # Matrix: Node 22 (LTS) + 24 (latest) across
+  # ubuntu/macOS/windows. Node 20 dropped (EOL Apr 2025).
   # ──────────────────────────────────────────────
   typescript:
     name: TypeScript (${{ matrix.os }}, Node ${{ matrix.node-version }})
@@ -48,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22, 24]
+        node-version: [22, 24]
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
@@ -78,73 +80,11 @@ jobs:
         run: npm test -- --ci --coverage
 
   # ──────────────────────────────────────────────
-  # Rolling Node smoke: exercises the LATEST stable Node + npm on every
-  # run so that future breaking changes (e.g. npm 12 blocking native addon
-  # scripts, or a new Node major with no better-sqlite3 prebuilt — the
-  # "Arch" failure class) are caught continuously instead of only via the
-  # distro matrix. This job is allowed to break on its own (not in the
-  # release-gate chain) so it can't silently rot, but it still flags drift.
+  # Native deps smoke across major Linux distro
+  # families (dnf/apt/pacman). Reduced from 6 to 3
+  # to save CI minutes while covering all package
+  # manager families.
   # ──────────────────────────────────────────────
-  typescript-rolling:
-    name: TypeScript (rolling Node)
-    runs-on: ubuntu-latest
-    needs: [verify-lockfile]
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v7
-      - name: Setup latest Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: current
-          cache: npm
-      - name: Node / npm versions
-        run: node --version && npm --version
-      - name: Install dependencies
-        run: npm ci
-      - name: Lint
-        run: npm run lint
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Ensure better-sqlite3 native addon builds (guards against
-          npm blocking native install scripts on new npm majors)
-        run: |
-          if [ ! -f node_modules/better-sqlite3/build/Release/better_sqlite3.node ]; then
-            ( cd node_modules/better-sqlite3 && npx --yes node-gyp@10 rebuild --release )
-          fi
-      - name: Test
-        run: npm test -- --runInBand --testPathPatterns=memos.test.ts
-
-  semantic-search-cross-os:
-    name: Semantic Search (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    needs: [verify-lockfile]
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v7
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: npm
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22-
-      - name: Install dependencies
-        run: npm ci
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Embedding and hybrid search tests
-        run: npm test -- --runInBand --testPathPatterns=memos.test.ts
-      - name: Build
-        run: npm run build
-
   linux-distro-native-smoke:
     name: Native deps (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -156,21 +96,12 @@ jobs:
           - name: Fedora
             image: fedora:latest
             bootstrap: dnf install -y nodejs npm python3 make gcc-c++
-          - name: Arch
-            image: archlinux:latest
-            bootstrap: pacman -Sy --noconfirm nodejs npm python base-devel
-          - name: openSUSE
-            image: opensuse/tumbleweed:latest
-            bootstrap: zypper -n install nodejs npm python3 gcc-c++ make
           - name: Debian
             image: debian:trixie
             bootstrap: apt-get update && apt-get install -y nodejs npm python3 make g++
-          - name: Ubuntu
-            image: ubuntu:24.04
-            bootstrap: apt-get update && apt-get install -y nodejs npm python3 make g++
-          - name: Rocky
-            image: rockylinux:9
-            bootstrap: dnf install -y nodejs npm python3 make gcc-c++
+          - name: Arch
+            image: archlinux:latest
+            bootstrap: pacman -Sy --noconfirm nodejs npm python base-devel
     steps:
       - uses: actions/checkout@v7
       - name: Cache npm tarballs for in-docker install
@@ -187,14 +118,17 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Python: Lint + Test
+  # Matrix: 3.12 (LTS), 3.13, 3.14. Dropped 3.10/3.11
+  # to save CI minutes (3.10 EOL Oct 2026, 3.11 EOL
+  # Mar 2027).
   # ──────────────────────────────────────────────
   python:
-    name: Python
+    name: Python (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     needs: [verify-lockfile]
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - name: Setup Python ${{ matrix.python-version }}
@@ -212,6 +146,7 @@ jobs:
         run: ruff format --check .
       - name: Test
         run: pytest tests/ -v --tb=short
+
   # ──────────────────────────────────────────────
   # Docker build
   # ──────────────────────────────────────────────

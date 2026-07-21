@@ -96,14 +96,14 @@
     "bench:quality": "tsx scripts/bench-quality.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^12.10.0"
+    "better-sqlite3": "^13.0.1"
   },
   "overrides": {
     "brace-expansion@>=4.0.0 <5.0.5": "5.0.5",
     "js-yaml": ">=3.15.0"
   },
   "devDependencies": {
-    "@swc/core": "^1.15.43",
+    "@swc/core": "^1.15.46",
     "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^7.6.12",
     "@types/jest": "^30.0.0",
@@ -112,7 +112,7 @@
     "jest": "^30.4.2",
     "oxlint": "^1.74.0",
     "oxlint-tsgolint": "^0.25.0",
-    "prettier": "^3.4.2",
+    "prettier": "^3.9.6",
     "tsx": "^4.21.0",
     "typescript": "npm:@typescript/typescript6@^6.0.2"
   },
