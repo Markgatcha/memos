@@ -100,7 +100,9 @@
   },
   "overrides": {
     "brace-expansion@>=4.0.0 <5.0.5": "5.0.5",
-    "js-yaml": ">=3.15.0"
+    "js-yaml": ">=3.15.0",
+    "glob@>=7.0.0 <10.0.0": "10.5.0",
+    "inflight": "1.0.6"
   },
   "devDependencies": {
     "@swc/core": "^1.15.46",
@@ -111,7 +113,7 @@
     "@typescript/native": "npm:typescript@^7.0.2",
     "jest": "^30.4.2",
     "oxlint": "^1.74.0",
-    "oxlint-tsgolint": "^0.25.0",
+    "oxlint-tsgolint": "^7.0.2001",
     "prettier": "^3.9.6",
     "tsx": "^4.21.0",
     "typescript": "npm:@typescript/typescript6@^6.0.2"
