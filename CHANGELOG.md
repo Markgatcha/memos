@@ -52,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### CI
 
 - **CI minute optimization** — dropped Node 20 from the TypeScript matrix (EOL Apr 2025), reduced the distro Docker smoke from 6 to 3 images (Fedora/Debian/Arch covering all package-manager families), reduced Python from 5 to 3 versions (3.12 LTS, 3.13, 3.14), and removed the redundant semantic-search-cross-os job (now covered by the TypeScript matrix). The rolling Node job was also removed — it was `continue-on-error` and consumed minutes without blocking releases. These changes cut the total job count from ~28 to ~15 per run while preserving OS and LTS coverage.
-- **Python test matrix extended to 3.14** — the `python` job now tests CPython 3.10 → 3.14 (latest stable), with `requires-python >=3.10` already covering it.
+- **Python test matrix** — reduced from 5 versions (3.10–3.14) to 3 (3.12 LTS, 3.13, 3.14) to save CI minutes.
 - **Debian (trixie, latest stable) added to the native-deps matrix** — alongside Fedora, Arch, and openSUSE, so the SQLite native build is exercised on Debian's current stable release.
 
 ## [1.6.26] - 2026-06-17
