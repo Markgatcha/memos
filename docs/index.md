@@ -32,10 +32,10 @@ MemOS gives any LLM, chatbot, or AI agent a memory that survives restarts. It ru
     ```python
     import requests
 
-    requests.post("http://localhost:7400/api/mem/store", json={
-        "content": "User prefers dark mode",
-        "type": "preference"
-    })
+    requests.post(
+        "http://localhost:7400/api/mem/store",
+        json={"content": "User prefers dark mode", "type": "preference"},
+    )
     ```
 
 ## Core concepts

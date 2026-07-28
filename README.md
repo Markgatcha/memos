@@ -260,27 +260,20 @@ import requests
 BASE = "http://localhost:7400/api/mem"
 
 # Store
-requests.post(f"{BASE}/store", json={
-    "content": "User prefers dark mode",
-    "type": "preference"
-})
+requests.post(f"{BASE}/store", json={"content": "User prefers dark mode", "type": "preference"})
 
 # Search
-results = requests.post(f"{BASE}/search", json={
-    "query": "dark mode",
-    "limit": 5
-}).json()
+results = requests.post(f"{BASE}/search", json={"query": "dark mode", "limit": 5}).json()
 
 # Get graph
 graph = requests.get(f"{BASE}/graph").json()
 
 # Import memories
-requests.post(f"{BASE}/import", json={
-    "source": "./memories.json"
-})
+requests.post(f"{BASE}/import", json={"source": "./memories.json"})
 
 # WebSocket for real-time events
 import websocket
+
 ws = websocket.create_connection("ws://localhost:7400/ws")
 ```
 
