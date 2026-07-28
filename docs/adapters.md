@@ -53,12 +53,12 @@ async for token in chat.chat_stream("Tell me a story"):
 from adapters.ollama import OllamaMemory, OllamaConfig
 
 config = OllamaConfig(
-    base_url="http://localhost:11434",   # Ollama server
-    model="llama3",                       # Model name
-    memos_url="http://localhost:7400",    # MemOS server
-    max_context_memories=5,               # Max memories in system prompt
-    auto_store=True,                      # Auto-store user messages
-    store_threshold=20,                   # Min message length to store
+    base_url="http://localhost:11434",  # Ollama server
+    model="llama3",  # Model name
+    memos_url="http://localhost:7400",  # MemOS server
+    max_context_memories=5,  # Max memories in system prompt
+    auto_store=True,  # Auto-store user messages
+    store_threshold=20,  # Min message length to store
 )
 
 chat = OllamaMemory(config=config)
@@ -105,7 +105,7 @@ memory = MemOSMemory(
     max_context_memories=5,
     auto_extract_facts=True,
     min_message_length=15,
-    return_messages=True,    # Return BaseMessage objects or strings
+    return_messages=True,  # Return BaseMessage objects or strings
 )
 ```
 
@@ -127,16 +127,16 @@ class MyAdapter:
     def get_memories(self, query: str, limit: int = 5) -> list[dict]:
         """Retrieve relevant memories for injection."""
         import requests
-        resp = requests.post(f"{self.memos_url}/api/mem/search", json={
-            "query": query, "limit": limit
-        })
+
+        resp = requests.post(
+            f"{self.memos_url}/api/mem/search", json={"query": query, "limit": limit}
+        )
         return resp.json()
 
     def store_memory(self, content: str, **kwargs) -> dict:
         """Store a new memory."""
         import requests
-        resp = requests.post(f"{self.memos_url}/api/mem/store", json={
-            "content": content, **kwargs
-        })
+
+        resp = requests.post(f"{self.memos_url}/api/mem/store", json={"content": content, **kwargs})
         return resp.json()
 ```
