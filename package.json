@@ -100,7 +100,7 @@
   },
   "overrides": {
     "brace-expansion@>=4.0.0 <5.0.5": "5.0.5",
-    "js-yaml": ">=3.15.0"
+    "js-yaml": ">=4.1.0"
   },
   "devDependencies": {
     "@swc/core": "^1.15.46",
@@ -118,5 +118,11 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "allowScripts": {
+    "better-sqlite3": true,
+    "@swc/core": true,
+    "esbuild": true,
+    "unrs-resolver": true
   }
 }
