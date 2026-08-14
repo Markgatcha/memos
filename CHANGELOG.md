@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Dependencies Updated
+
+- `@swc/core` 1.15.46 → 1.16.0 (latest)
+- `@types/better-sqlite3` 7.6.13 → 9.6.0 (latest)
+- `@types/node` 26.1.2 → 26.2.0 (latest)
+- `oxlint` 1.76.0 → 1.78.0 (latest)
+- `tsx` 4.23.1 → 4.23.12 (latest)
+- `better-sqlite3` kept at `^12.11.1` (ignored v13 major bump per Dependabot config — breaking native-build changes)
+
 ### Added
 
 - **Temporal validity** — `validFrom` / `validTo` fields on `MemoryNode`, `memos.setValidity()`, `memos.searchTemporal()`, `memos.supersede()`. Memories with `validTo` in the past are "historical" — excluded from default search, queryable via `searchTemporal(query, atTime)`. `temporal_precedes` edge relation for linking superseded memories to their replacements.
