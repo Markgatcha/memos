@@ -93,7 +93,8 @@
     "prepublishOnly": "npm run clean && npm run build",
     "serve": "node dist/cli.js serve",
     "bench": "tsx scripts/bench.ts",
-    "bench:quality": "tsx scripts/bench-quality.ts"
+    "bench:quality": "tsx scripts/bench-quality.ts",
+    "bench:toon": "tsx scripts/bench-toon-formats.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1"

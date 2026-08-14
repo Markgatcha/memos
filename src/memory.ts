@@ -13,7 +13,12 @@ import { SQLiteStorage } from "./storage/sqlite.js";
 import { defaultDbPath } from "./storage/sqlite.js";
 import { createEmbeddingProvider, cosineSimilarity } from "./embeddings.js";
 import { EmbeddingQueue } from "./embedding-queue.js";
-import { buildContextPack, searchResultsToToon } from "./context-pack.js";
+import {
+  buildContextPack,
+  searchResultsToToon,
+  searchResultsToToonCompact,
+  serializeContextPack,
+} from "./context-pack.js";
 import type { ContextPack } from "./context-pack.js";
 import { decideRetain } from "./retain-filter.js";
 import type {
@@ -58,6 +63,7 @@ import type {
   DiagnosticsResult,
 } from "./types.js";
 import { DEFAULT_TRUST_SCORES } from "./types.js";
+import { INITIAL_CONFIDENCE } from "./confidence-machine.js";
 
 /**
  * Thrown by `store({ filterRetain: true })` when the Hermes-style retain
@@ -402,6 +408,9 @@ export class MemOS {
       validTo: opts.validTo ?? null,
       source,
       trustScore: opts.trustScore ?? DEFAULT_TRUST_SCORES[source],
+      // Initialize confidence state machine values
+      confidence: opts.confidence ?? INITIAL_CONFIDENCE,
+      evidenceCount: opts.evidenceCount ?? 0,
     };
 
     await this.storage.saveNode(node);
@@ -510,20 +519,32 @@ export class MemOS {
 
   /**
    * Search and return results in TOON (Token-Optimized Object Notation)
-   * format — a compact pipe-delimited string that cuts token count by
-   * 40-60% on typical search responses.
+   * format — a compact pipe-delimited string that cuts token count.
    *
    * Format:
    *   # memos.search.v1
    *   # toon:pipe-delimited
    *   # fields: id|score|trust|source|updatedAt|tags|content
-   *   mem_abc|0.950|user_input|user_input|2026-06-18T12:00:00.000Z|preference;ui|User likes dark mode
+   *   mem_abc|0.950|local|user_input|2026-06-18T12:00:00.000Z|preference;ui|User likes dark mode
    *
-   * @returns A TOON-formatted string. Use this for agent-facing output
-   *   where every token counts.
+   * @param opts — If a string, searches with that query. If an object,
+   *   accepts `{ query, format: "toon" | "toon-compact", ...searchOptions }`.
+   *   Default format is "toon-compact" for maximum token savings.
+   * @returns A TOON-formatted string.
    */
-  async searchToon(queryOrFilter: string | SearchFilter): Promise<string> {
-    const results = await this.search(queryOrFilter);
+  async searchToon(
+    opts: string | (SearchFilter & { format?: "toon" | "toon-compact" }),
+  ): Promise<string> {
+    if (typeof opts === "string") {
+      // Legacy: string query uses compact format by default
+      const results = await this.search(opts);
+      return searchResultsToToonCompact(results);
+    }
+    const { format = "toon-compact", ...filter } = opts;
+    const results = await this.search(filter);
+    if (format === "toon-compact") {
+      return searchResultsToToonCompact(results);
+    }
     return searchResultsToToon(results);
   }
 
@@ -1216,7 +1237,9 @@ export class MemOS {
     trust?: string;
     source?: string;
     includeSummary?: boolean;
-  }): Promise<ContextPack> {
+    /** Output format: "json" (default), "toon", or "toon-compact" */
+    format?: "json" | "toon" | "toon-compact";
+  }): Promise<ContextPack | string> {
     this.assertInit();
     const namespace =
       opts.namespace ?? (this.experimental.namespaces ? "default" : "default");
@@ -1235,7 +1258,7 @@ export class MemOS {
     const items = this.embeddingProvider
       ? await this.hybridSearch(filter)
       : await this.storage.queryNodes(filter);
-    return buildContextPack({
+    const pack = buildContextPack({
       query: opts.query,
       namespace,
       tokenBudget: opts.tokenBudget,
@@ -1244,6 +1267,11 @@ export class MemOS {
       source: opts.source,
       includeSummary: opts.includeSummary,
     });
+    // Serialize in the requested format if not "json"
+    if (opts.format && opts.format !== "json") {
+      return serializeContextPack(pack, opts.format);
+    }
+    return pack;
   }
 
   // ---------------------------------------------------------------------------
@@ -1818,6 +1846,9 @@ export class MemOS {
           source: fact.source,
           trustScore: fact.confidence * DEFAULT_TRUST_SCORES[fact.source],
           namespace,
+          // Initialize confidence and evidence count for the new fact
+          confidence: fact.confidence, // Start with extraction confidence
+          evidenceCount: 1, // First evidence event (the extraction itself)
         });
         storedIds.push(node.id);
       }

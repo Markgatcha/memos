@@ -104,6 +104,17 @@ export interface MemoryNode {
    * `memos.setTrust()`.
    */
   trustScore: number;
+  /**
+   * Dynamic confidence score in [0, 1]. Reflects how sure the system
+   * is that this memory is still true, given new observations.
+   * - Reinforced when new observations agree (confidence goes up)
+   * - Revised when new observations partially conflict (confidence goes down)
+   * - Superseded when new facts clearly replace old ones (marked historical)
+   * Stored in metadata as `confidence` and `evidenceCount`.
+   */
+  confidence?: number;
+  /** Number of evidence events (reinforces + revisions) that touched this memory. */
+  evidenceCount?: number;
 }
 
 /**
@@ -130,6 +141,18 @@ export interface CreateMemoryInput {
   source?: MemorySource;
   /** Trust score [0, 1]. Overrides the default for the chosen source. */
   trustScore?: number;
+  /**
+   * Dynamic confidence score [0, 1] for the confidence state machine.
+   * Used to track how sure the system is that this memory is still true.
+   * If omitted, defaults to INITIAL_CONFIDENCE (0.5).
+   */
+  confidence?: number;
+  /**
+   * Evidence count for the confidence state machine.
+   * Number of reinforce/revise events this memory has accumulated.
+   * If omitted, defaults to 0 for manually stored items.
+   */
+  evidenceCount?: number;
   /**
    * When true, apply the Hermes-style retain pre-filter (v1.6.26) before
    * writing: low-signal content (acknowledgements, chit-chat, near-empty

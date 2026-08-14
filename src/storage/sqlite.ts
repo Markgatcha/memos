@@ -320,7 +320,11 @@ export class SQLiteStorage implements StorageAdapter {
       content: node.content,
       summary: node.summary,
       type: node.type,
-      metadata: JSON.stringify(node.metadata),
+      metadata: JSON.stringify({
+        ...node.metadata,
+        confidence: node.confidence,
+        evidenceCount: node.evidenceCount,
+      }),
       importance: node.importance,
       createdAt: node.createdAt,
       updatedAt: node.updatedAt,
@@ -969,12 +973,13 @@ export class SQLiteStorage implements StorageAdapter {
   // -----------------------------------------------------------------------
 
   private rowToNode(row: Record<string, unknown>): MemoryNode {
+    const metadata = JSON.parse((row.metadata as string) || "{}");
     return {
       id: row.id as string,
       content: row.content as string,
       summary: row.summary as string,
       type: row.type as MemoryNode["type"],
-      metadata: JSON.parse((row.metadata as string) || "{}"),
+      metadata,
       importance: row.importance as number,
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
@@ -987,6 +992,9 @@ export class SQLiteStorage implements StorageAdapter {
       validTo: (row.valid_to as number) ?? null,
       source: (row.source as MemoryNode["source"]) || "user_input",
       trustScore: (row.trust_score as number) ?? 1.0,
+      // Load confidence state machine values from metadata
+      confidence: metadata.confidence as number | undefined,
+      evidenceCount: metadata.evidenceCount as number | undefined,
     };
   }
 

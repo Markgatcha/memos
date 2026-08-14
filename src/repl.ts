@@ -30,6 +30,7 @@
 
 import { createInterface } from "node:readline";
 import type { MemOS } from "./memory.js";
+import type { ContextPack } from "./context-pack.js";
 
 /**
  * ReplHandlers — owns the printable output stream and the exit
@@ -189,7 +190,11 @@ export function createReplHandlers(memos: MemOS): ReplHandlers {
           const budgetMatch = args.match(/budget=(\d+)/);
           const query = args.replace(/budget=\d+/, "").trim();
           const tokenBudget = budgetMatch ? parseInt(budgetMatch[1], 10) : 1200;
-          const pack = await memos.contextPack({ query, tokenBudget });
+          const pack = (await memos.contextPack({
+            query,
+            tokenBudget,
+            format: "json",
+          })) as any as ContextPack;
           out.push(
             `Context pack for "${query}" (${pack.items.length} items, ${pack.tokenBudget} token budget):`,
           );

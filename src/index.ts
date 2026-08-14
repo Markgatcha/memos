@@ -52,8 +52,11 @@ export {
   buildContextPack,
   CONTEXT_PACK_SCHEMA,
   packToToon,
+  packToToonCompact,
   searchResultsToToon,
+  searchResultsToToonCompact,
   serializeContextPack,
+  parseToonCompact,
   type ContextPack,
   type ContextPackItem,
   type BuildContextPackOptions,
@@ -103,3 +106,15 @@ export type {
   DiagnosticsResult,
 } from "./types.js";
 export { DEFAULT_TRUST_SCORES } from "./types.js";
+export {
+  applyEvidence,
+  classifyEvidence,
+  confidenceWeight,
+  INITIAL_CONFIDENCE,
+  CONFIDENCE_FLOOR,
+  CONFIDENCE_CAP,
+} from "./confidence-machine.js";
+export type {
+  EvidenceOutcome,
+  ConfidenceUpdate,
+} from "./confidence-machine.js";
