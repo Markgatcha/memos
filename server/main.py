@@ -122,6 +122,22 @@ async def health():
 # ---------------------------------------------------------------------------
 
 
+def _safe_cli_path(path: str) -> str:
+    """Resolve a CLI file path and require it to stay under the current
+    working directory (blocks ../ and absolute-path escapes)."""
+    resolved = os.path.realpath(path)
+    base = os.path.realpath(os.getcwd())
+    try:
+        contained = os.path.commonpath([resolved, base]) == base
+    except ValueError:
+        # Different drives / unreachable roots on Windows
+        contained = False
+    if not contained:
+        print(f"Error: Path must stay inside the working directory: {path}")
+        sys.exit(1)
+    return resolved
+
+
 def _cli_backup(output: str | None = None) -> None:
     """CLI backup subcommand."""
     import json
@@ -135,7 +151,7 @@ def _cli_backup(output: str | None = None) -> None:
 
     timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     default_output = f"./memos-backup-{timestamp}.db"
-    output_path = output or default_output
+    output_path = _safe_cli_path(output or default_output)
 
     shutil.copy2(db_path, output_path)
 
@@ -154,9 +170,15 @@ def _cli_backup(output: str | None = None) -> None:
         "dbSizeBytes": db_size,
     }
 
-    manifest_path = f"{output_path}.manifest.json"
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
+    # Rebuild the manifest path from sanitized components; basename()
+    # strips any directory the resolved path may still carry.
+    manifest_path = _safe_cli_path(
+        os.path.join(
+            os.path.dirname(output_path),
+            os.path.basename(output_path) + ".manifest.json",
+        )
+    )
+    Path(manifest_path).write_text(json.dumps(manifest, indent=2))
 
     print(f"Backup created: {output_path}")
     print(f"  Nodes: {node_count}, Edges: {edge_count}")
@@ -168,7 +190,7 @@ def _cli_restore(path: str) -> None:
     """CLI restore subcommand."""
     import json
 
-    backup_path = path
+    backup_path = _safe_cli_path(path)
     manifest_path = f"{backup_path}.manifest.json"
 
     if not os.path.exists(backup_path):
