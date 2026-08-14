@@ -1,114 +1,170 @@
+import Reveal from "./_components/Reveal";
+import Counter from "./_components/Counter";
+
+const products = [
+  {
+    name: "MemOS",
+    tagline: "Persistent Memory",
+    description:
+      "Universal, local-first, persistent memory layer for AI agents. Graph-native SQLite storage with temporal validity, trust scoring, and compact TOON format.",
+    href: "/memos",
+    icon: "🧠",
+    accent: "text-blue-400",
+    accentClass: "accent-blue",
+    btn: "bg-blue-600 hover:bg-blue-500",
+  },
+  {
+    name: "Universal MCP Toolkit",
+    tagline: "MCP Toolkit",
+    description:
+      "MCP transport, server registry, and tool routing. Works with Ollama, LangChain, CrewAI, and any MCP-compatible client.",
+    href: "/umt",
+    icon: "🔌",
+    accent: "text-purple-400",
+    accentClass: "accent-purple",
+    btn: "bg-purple-600 hover:bg-purple-500",
+  },
+  {
+    name: "LLM Guardian",
+    tagline: "Token Optimization",
+    description:
+      "Token-cost guardian for LLM inference. Compresses prompts, injects MemOS context packs, and optimizes token budgets.",
+    href: "/guardian",
+    icon: "🛡️",
+    accent: "text-green-400",
+    accentClass: "accent-green",
+    btn: "bg-green-600 hover:bg-green-500",
+  },
+];
+
 export default function Home() {
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white">
+    <main className="min-h-screen">
       {/* Hero */}
-      <header className="border-b border-gray-800">
-        <div className="max-w-4xl mx-auto px-6 py-16">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">
-            ContextCore — The Local-First AI Trio
-          </h1>
-          <p className="text-xl text-gray-300 mb-8 max-w-2xl">
-            Memory, tools, and cost control for AI agents — 100% local, zero
-            cloud dependencies, built for production.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4">
-            <a
-              href="/memos"
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition"
-            >
-              MemOS — Persistent Memory
-            </a>
-            <a
-              href="/umt"
-              className="px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-medium transition"
-            >
-              UMT — MCP Toolkit
-            </a>
-            <a
-              href="/guardian"
-              className="px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-medium transition"
-            >
-              Guardian — Token Optimization
-            </a>
-          </div>
+      <section className="max-w-5xl mx-auto px-6 pt-24 pb-20 text-center">
+        <div className="badge inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-white/10 bg-white/5 text-sm text-gray-300 backdrop-blur">
+          <span className="badge-dot w-2 h-2 rounded-full bg-green-400" />
+          100% local · zero cloud dependencies
         </div>
-      </header>
+
+        <h1
+          className="animate-fade-up text-5xl md:text-7xl font-bold tracking-tight mt-8 leading-[1.1]"
+          style={{ animationDelay: "0.15s" }}
+        >
+          The <span className="text-gradient">Local-First</span>
+          <br />
+          AI Trio
+        </h1>
+
+        <p
+          className="animate-fade-up text-xl text-gray-400 mt-6 max-w-2xl mx-auto"
+          style={{ animationDelay: "0.3s" }}
+        >
+          Memory, tools, and cost control for AI agents — built for
+          production, powered entirely by your own machine.
+        </p>
+
+        <div
+          className="animate-fade-up flex flex-col sm:flex-row justify-center gap-4 mt-10"
+          style={{ animationDelay: "0.45s" }}
+        >
+          <a
+            href="#trio"
+            className="btn-cta px-8 py-3.5 rounded-xl font-medium text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600"
+          >
+            Explore the Trio
+          </a>
+          <a
+            href="https://github.com/Markgatcha/memos"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-ghost px-8 py-3.5 rounded-xl font-medium border border-white/10 text-gray-200"
+          >
+            View on GitHub
+          </a>
+        </div>
+      </section>
 
       {/* Key Stats */}
-      <section className="py-12 border-b border-gray-800">
-        <div className="max-w-4xl mx-auto px-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
-            <div>
-              <div className="text-3xl font-bold text-blue-400">95.9%</div>
-              <div className="text-gray-400">BEAM-1M recall (vs Mem0: 64.1%)</div>
+      <section className="max-w-5xl mx-auto px-6 pb-24">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <Reveal delay={0}>
+            <div className="glass-card rounded-2xl p-8 text-center">
+              <div className="card-accent accent-blue" />
+              <div className="text-4xl md:text-5xl font-bold text-blue-400">
+                <Counter value={95.9} decimals={1} suffix="%" />
+              </div>
+              <div className="text-gray-400 mt-2 text-sm">
+                BEAM-1M recall (vs Mem0: 64.1%)
+              </div>
             </div>
-            <div>
-              <div className="text-3xl font-bold text-green-400">77.6%</div>
-              <div className="text-gray-400">Token savings (compact TOON)</div>
+          </Reveal>
+          <Reveal delay={120}>
+            <div className="glass-card rounded-2xl p-8 text-center">
+              <div className="card-accent accent-green" />
+              <div className="text-4xl md:text-5xl font-bold text-green-400">
+                <Counter value={77.6} decimals={1} suffix="%" />
+              </div>
+              <div className="text-gray-400 mt-2 text-sm">
+                Token savings (compact TOON)
+              </div>
             </div>
-            <div>
-              <div className="text-3xl font-bold text-purple-400">100%</div>
-              <div className="text-gray-400">Local-first, zero cloud</div>
+          </Reveal>
+          <Reveal delay={240}>
+            <div className="glass-card rounded-2xl p-8 text-center">
+              <div className="card-accent accent-purple" />
+              <div className="text-4xl md:text-5xl font-bold text-purple-400">
+                <Counter value={100} suffix="%" />
+              </div>
+              <div className="text-gray-400 mt-2 text-sm">
+                Local-first, zero cloud
+              </div>
             </div>
-          </div>
+          </Reveal>
         </div>
       </section>
 
       {/* Three Projects */}
-      <section className="py-16">
-        <div className="max-w-4xl mx-auto px-6">
-          <h2 className="text-2xl font-bold mb-8">The AI Trio</h2>
-          <div className="space-y-8">
-            <div className="border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition">
-              <h3 className="text-xl font-semibold mb-2 text-blue-400">MemOS</h3>
-              <p className="text-gray-300 mb-3">
-                Universal, local-first, persistent memory layer for AI agents.
-                Graph-native SQLite storage with temporal validity, trust
-                scoring, and compact TOON format.
-              </p>
-              <a
-                href="/memos"
-                className="text-blue-400 hover:underline"
-              >
-                Learn more →
+      <section id="trio" className="max-w-5xl mx-auto px-6 pb-28">
+        <Reveal>
+          <h2 className="text-3xl md:text-4xl font-bold text-center mb-4">
+            Meet the <span className="text-gradient">Trio</span>
+          </h2>
+          <p className="text-gray-400 text-center mb-12 max-w-xl mx-auto">
+            Three open-source tools that work independently — or better,
+            together.
+          </p>
+        </Reveal>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {products.map((p, i) => (
+            <Reveal key={p.name} delay={i * 130}>
+              <a href={p.href} className="glass-card rounded-2xl p-7 block h-full">
+                <div className={`card-accent ${p.accentClass}`} />
+                <div className="animate-float text-4xl mb-5 inline-block">
+                  {p.icon}
+                </div>
+                <div className={`text-xs font-semibold uppercase tracking-widest mb-2 ${p.accent}`}>
+                  {p.tagline}
+                </div>
+                <h3 className="text-xl font-semibold mb-3">{p.name}</h3>
+                <p className="text-gray-400 text-sm leading-relaxed mb-5">
+                  {p.description}
+                </p>
+                <span className={`${p.accent} link-underline text-sm font-medium`}>
+                  Learn more →
+                </span>
               </a>
-            </div>
-            <div className="border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition">
-              <h3 className="text-xl font-semibold mb-2 text-purple-400">
-                Universal MCP Toolkit (UMT)
-              </h3>
-              <p className="text-gray-300 mb-3">
-                MCP transport, server registry, and tool routing. Works with
-                Ollama, LangChain, CrewAI, and any MCP-compatible client.
-              </p>
-              <a href="/umt" className="text-purple-400 hover:underline">
-                Learn more →
-              </a>
-            </div>
-            <div className="border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition">
-              <h3 className="text-xl font-semibold mb-2 text-green-400">
-                LLM Guardian
-              </h3>
-              <p className="text-gray-300 mb-3">
-                Token-cost guardian for LLM inference. Compresses prompts,
-                injects MemOS context packs, and optimizes token budgets.
-              </p>
-              <a
-                href="/guardian"
-                className="text-green-400 hover:underline"
-              >
-                Learn more →
-              </a>
-            </div>
-          </div>
+            </Reveal>
+          ))}
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-gray-800 py-8">
-        <div className="max-w-4xl mx-auto px-6 flex justify-between items-center">
-          <p className="text-gray-500">© 2026 ContextCore</p>
-          <div className="flex gap-6">
+      <footer className="border-t border-white/5 py-10">
+        <div className="max-w-5xl mx-auto px-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+          <p className="text-gray-500 text-sm">© 2026 ContextCore</p>
+          <div className="flex gap-8 text-sm">
             <a
               href="https://github.com/Markgatcha/memos"
               className="text-gray-400 hover:text-white transition"
@@ -121,15 +177,12 @@ export default function Home() {
             >
               Discord
             </a>
-            <a
-              href="/support"
-              className="text-gray-400 hover:text-white transition"
-            >
+            <a href="/support" className="text-gray-400 hover:text-white transition">
               Support
             </a>
           </div>
         </div>
       </footer>
-    </div>
+    </main>
   );
 }

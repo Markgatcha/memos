@@ -1,4 +1,7 @@
 import type { Metadata } from "next";
+import "./globals.css";
+import Navbar from "./_components/Navbar";
+import AuroraBackground from "./_components/AuroraBackground";
 
 export const metadata: Metadata = {
   title: "ContextCore — Local-First AI Trio for Memory, Tools, and Cost Control",
@@ -19,7 +22,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-[#0a0a0f] text-white antialiased">
+      <body className="bg-[#050508] text-white antialiased">
+        <AuroraBackground />
+        <Navbar />
         {children}
       </body>
     </html>
