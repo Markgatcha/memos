@@ -22,9 +22,12 @@ Usage:
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -320,8 +323,39 @@ class OllamaMemory:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _validate_url(url: str) -> str:
+        """SSRF guard: require http(s) with a host, and reject requests to
+        link-local / cloud-metadata addresses after DNS resolution.
+
+        Loopback and private ranges are intentionally allowed — this is a
+        local-first product whose services live on the user's own machine.
+        """
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError(
+                f"Unsupported URL (must be http/https with a host): {url!r}"
+            )
+        try:
+            infos = socket.getaddrinfo(
+                parsed.hostname,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+        except socket.gaierror as exc:
+            raise ValueError(f"Cannot resolve host in URL: {url!r}") from exc
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0])
+            if ip.is_link_local:
+                raise ValueError(
+                    f"Refusing request to link-local/metadata address "
+                    f"{ip} (SSRF guard): {url!r}"
+                )
+        return url
+
+    @staticmethod
     def _http_get(url: str) -> dict[str, Any]:
         """Simple GET request."""
+        OllamaMemory._validate_url(url)
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode())
@@ -329,6 +363,7 @@ class OllamaMemory:
     @staticmethod
     def _http_post(url: str, data: dict[str, Any]) -> dict[str, Any]:
         """Simple POST request with JSON body."""
+        OllamaMemory._validate_url(url)
         body = json.dumps(data).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -342,6 +377,7 @@ class OllamaMemory:
     @staticmethod
     def _http_post_stream(url: str, data: dict[str, Any]) -> list[dict[str, Any]]:
         """POST with streamed NDJSON response."""
+        OllamaMemory._validate_url(url)
         body = json.dumps(data).encode("utf-8")
         req = urllib.request.Request(
             url,
