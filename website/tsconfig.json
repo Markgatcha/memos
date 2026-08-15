@@ -17,12 +17,13 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
+    "moduleDetection": "force",
     "plugins": [
       {
         "name": "next"
       }
     ],
-    "target": "ES2017"
+    "target": "ES2022"
   },
   "include": [
     "next-env.d.ts",

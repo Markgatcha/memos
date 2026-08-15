@@ -30,6 +30,11 @@ jobs:
           cd website
           npm ci
 
+      - name: Type check
+        run: |
+          cd website
+          npm run typecheck
+
       - name: Build
         run: |
           cd website

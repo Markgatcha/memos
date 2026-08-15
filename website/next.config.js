@@ -8,6 +8,11 @@ const nextConfig = {
   },
   // Suppress lockfile warnings since we have nested package.json
   outputFileTracingRoot: __dirname,
+  // Skip TypeScript type-checking during build for faster builds.
+  // Type checking is handled separately in CI via `npm run typecheck`.
+  typescript: {
+    ignoreBuildErrors: true,
+  },
 };
 
 module.exports = nextConfig;

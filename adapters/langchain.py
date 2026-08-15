@@ -31,6 +31,10 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from langchain.memory.chat_memory import BaseMemory
+from langchain.schema import AIMessage, BaseMessage, HumanMessage
+from pydantic import Field
+
 
 def _validate_url(url: str) -> str:
     """SSRF guard: require http(s) with a host, and reject requests to
@@ -41,9 +45,7 @@ def _validate_url(url: str) -> str:
     """
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise ValueError(
-            f"Unsupported URL (must be http/https with a host): {url!r}"
-        )
+        raise ValueError(f"Unsupported URL (must be http/https with a host): {url!r}")
     try:
         infos = socket.getaddrinfo(
             parsed.hostname,
@@ -56,14 +58,9 @@ def _validate_url(url: str) -> str:
         ip = ipaddress.ip_address(info[4][0])
         if ip.is_link_local:
             raise ValueError(
-                f"Refusing request to link-local/metadata address "
-                f"{ip} (SSRF guard): {url!r}"
+                f"Refusing request to link-local/metadata address {ip} (SSRF guard): {url!r}"
             )
     return url
-
-from langchain.memory.chat_memory import BaseMemory
-from langchain.schema import AIMessage, BaseMessage, HumanMessage
-from pydantic import Field
 
 
 class MemOSMemory(BaseMemory):

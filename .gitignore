@@ -46,3 +46,6 @@ npm-debug.log*
 
 # MemOS data directory
 .memos/
+
+# Mimosa analysis artifacts
+.mimosa/

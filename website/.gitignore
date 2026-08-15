@@ -1,5 +1,5 @@
 # Build output
-.out/
+out/
 .next/
 dist/
 
@@ -9,3 +9,6 @@ node_modules/
 # Logs
 *.log
 npm-debug.log*
+
+# TypeScript build info
+tsconfig.tsbuildinfo
