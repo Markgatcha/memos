@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import Navbar from "./_components/Navbar";
-import AuroraBackground from "./_components/AuroraBackground";
+import PageBackground from "./_components/PageBackground";
 
 export const metadata: Metadata = {
   title: "ContextCore — Local-First AI Trio for Memory, Tools, and Cost Control",
@@ -21,9 +23,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="bg-[#050508] text-white antialiased">
-        <AuroraBackground />
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      <body className="bg-base text-zinc-100 antialiased font-sans">
+        <PageBackground />
         <Navbar />
         {children}
       </body>

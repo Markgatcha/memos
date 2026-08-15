@@ -1,4 +1,7 @@
+import { Check, ArrowRight } from "lucide-react";
+import GithubIcon from "../_components/GithubIcon";
 import Reveal from "../_components/Reveal";
+import PageHeader from "../_components/PageHeader";
 
 const features = [
   "100% local SQLite-backed storage (no cloud)",
@@ -20,84 +23,89 @@ const benchmarks = [
 export default function MemOSPage() {
   return (
     <main className="min-h-screen">
-      <div className="max-w-4xl mx-auto px-6 py-16">
-        <Reveal>
-          <div className="text-xs font-semibold uppercase tracking-widest text-blue-400 mb-3">
-            Persistent Memory
-          </div>
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">
-            Mem<span className="text-gradient">OS</span>
-          </h1>
-          <p className="text-xl text-gray-400 mb-8 max-w-2xl">
-            Universal, local-first, persistent memory layer for AI agents.
-            Give any LLM a memory that survives restarts — no cloud, no API
-            keys, no vendor lock-in.
-          </p>
-        </Reveal>
+      <div className="max-w-4xl mx-auto px-6 py-16 md:py-20">
+        <PageHeader
+          kicker="persistent memory"
+          title="MemOS"
+          subtitle="Universal, local-first, persistent memory layer for AI agents. Give any LLM a memory that survives restarts — no cloud, no API keys, no vendor lock-in."
+        />
 
-        <Reveal delay={100}>
-          <div className="mb-10">
-            <h2 className="text-2xl font-semibold mb-4">Quick Start</h2>
-            <div className="glass-card rounded-xl p-5 font-mono text-sm text-gray-200 overflow-x-auto">
-              <div className="text-gray-500">$ <span className="text-gray-200">npm install @mem-os/sdk</span></div>
-              <div className="text-gray-500">$ <span className="text-gray-200">npx memos init</span></div>
+        <Reveal className="mb-12">
+          <h2 className="text-sm font-medium text-zinc-200 mb-4">Quick start</h2>
+          <div className="window">
+            <div className="window-bar">
+              <span className="window-dot" />
+              <span className="window-dot" />
+              <span className="window-dot" />
+              <span className="window-title">terminal</span>
+            </div>
+            <div className="p-5 font-mono text-[13px] leading-7">
+              <div>
+                <span className="text-zinc-600 select-none">$ </span>
+                <span className="text-zinc-100">npm install @mem-os/sdk</span>
+              </div>
+              <div>
+                <span className="text-zinc-600 select-none">$ </span>
+                <span className="text-zinc-100">npx memos init</span>
+              </div>
             </div>
           </div>
         </Reveal>
 
-        <Reveal delay={150}>
-          <div className="mb-10">
-            <h2 className="text-2xl font-semibold mb-4">Key Features</h2>
-            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {features.map((f) => (
-                <li key={f} className="flex items-start gap-3 text-gray-300">
-                  <span className="text-blue-400 mt-0.5">✦</span>
-                  {f}
-                </li>
-              ))}
-            </ul>
-          </div>
+        <Reveal className="mb-12" delay={80}>
+          <h2 className="text-sm font-medium text-zinc-200 mb-4">Key features</h2>
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+            {features.map((f) => (
+              <li key={f} className="flex items-start gap-2.5 text-sm text-zinc-400">
+                <Check size={15} className="text-zinc-500 mt-0.5 shrink-0" />
+                {f}
+              </li>
+            ))}
+          </ul>
         </Reveal>
 
-        <Reveal delay={200}>
-          <div className="mb-10">
-            <h2 className="text-2xl font-semibold mb-4">Benchmarks</h2>
-            <div className="glass-card rounded-xl overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 text-gray-400">
-                    <th className="text-left p-4 font-medium">Benchmark</th>
-                    <th className="text-right p-4 font-medium">MemOS</th>
-                    <th className="text-right p-4 font-medium">Mem0</th>
+        <Reveal className="mb-12" delay={120}>
+          <h2 className="text-sm font-medium text-zinc-200 mb-4">Benchmarks</h2>
+          <div className="card overflow-hidden">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Benchmark</th>
+                  <th className="!text-right">MemOS</th>
+                  <th className="!text-right">Mem0</th>
+                </tr>
+              </thead>
+              <tbody>
+                {benchmarks.map((b) => (
+                  <tr key={b.name}>
+                    <td>{b.name}</td>
+                    <td className="!text-right text-zinc-100 font-medium tabular-nums">
+                      {b.memos}
+                    </td>
+                    <td className="!text-right text-zinc-600 tabular-nums">
+                      {b.mem0}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {benchmarks.map((b) => (
-                    <tr key={b.name} className="border-b border-white/5 last:border-0">
-                      <td className="p-4 text-gray-300">{b.name}</td>
-                      <td className="text-right p-4 text-green-400 font-semibold">{b.memos}</td>
-                      <td className="text-right p-4 text-gray-500">{b.mem0}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Reveal>
 
-        <Reveal delay={250}>
-          <div className="flex flex-wrap gap-4">
-            <a
-              href="https://github.com/Markgatcha/memos"
-              className="btn-ghost px-6 py-3 rounded-xl border border-white/10 text-gray-200 font-medium"
-            >
-              View on GitHub →
+        <Reveal delay={160}>
+          <div className="flex flex-wrap gap-3">
+            <a href="/docs" className="btn btn-primary">
+              Read the docs
+              <ArrowRight size={15} />
             </a>
             <a
-              href="/docs"
-              className="btn-cta px-6 py-3 rounded-xl font-medium bg-blue-600 hover:bg-blue-500"
+              href="https://github.com/Markgatcha/memos"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary"
             >
-              Read Docs
+              <GithubIcon size={15} />
+              View on GitHub
             </a>
           </div>
         </Reveal>

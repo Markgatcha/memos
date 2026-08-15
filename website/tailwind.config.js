@@ -7,10 +7,9 @@ module.exports = {
   ],
   theme: {
     extend: {
-      colors: {
-        primary: "#3b82f6",
-        secondary: "#a855f7",
-        success: "#22c55e",
+      fontFamily: {
+        sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
+        mono: ["var(--font-geist-mono)", "ui-monospace", "monospace"],
       },
     },
   },

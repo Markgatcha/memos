@@ -1,36 +1,42 @@
+import { Layers } from "lucide-react";
+import GithubIcon from "./GithubIcon";
+
 export default function Navbar() {
   return (
-    <header className="sticky top-0 z-50 border-b border-white/5 bg-[#050508]/70 backdrop-blur-xl">
-      <nav className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-        <a href="/" className="flex items-center gap-2 group">
-          <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-[#3b82f6] via-[#a855f7] to-[#22c55e] animate-glow" />
-          <span className="font-semibold tracking-tight group-hover:text-white text-gray-200 transition">
+    <header className="sticky top-0 z-50 border-b border-white/[0.06] bg-base/70 backdrop-blur-xl">
+      <nav className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+        <a href="/" className="flex items-center gap-2.5 group">
+          <span className="w-7 h-7 rounded-md bg-zinc-100 text-zinc-950 grid place-items-center group-hover:bg-white transition-colors">
+            <Layers size={14} strokeWidth={2.4} />
+          </span>
+          <span className="font-semibold tracking-tight text-[15px] text-zinc-100">
             ContextCore
           </span>
         </a>
-        <div className="flex items-center gap-5 text-sm">
-          <a href="/memos" className="text-gray-400 hover:text-blue-400 transition">
+        <div className="flex items-center gap-6 text-sm">
+          <a href="/memos" className="text-zinc-400 hover:text-zinc-100 transition-colors">
             MemOS
           </a>
-          <a href="/umt" className="text-gray-400 hover:text-purple-400 transition">
+          <a href="/umt" className="text-zinc-400 hover:text-zinc-100 transition-colors">
             UMT
           </a>
-          <a href="/guardian" className="text-gray-400 hover:text-green-400 transition">
+          <a href="/guardian" className="text-zinc-400 hover:text-zinc-100 transition-colors">
             Guardian
           </a>
-          <a href="/benchmarks" className="hidden sm:inline text-gray-400 hover:text-white transition">
+          <a href="/benchmarks" className="hidden md:inline text-zinc-400 hover:text-zinc-100 transition-colors">
             Benchmarks
           </a>
-          <a href="/docs" className="hidden sm:inline text-gray-400 hover:text-white transition">
+          <a href="/docs" className="hidden md:inline text-zinc-400 hover:text-zinc-100 transition-colors">
             Docs
           </a>
           <a
             href="https://github.com/Markgatcha/memos"
             target="_blank"
             rel="noopener noreferrer"
-            className="btn-ghost px-3 py-1.5 rounded-lg border border-white/10 text-gray-300 hover:text-white"
+            className="btn btn-secondary !px-3 !py-1.5"
           >
-            GitHub
+            <GithubIcon size={15} />
+            <span className="hidden sm:inline">GitHub</span>
           </a>
         </div>
       </nav>
