@@ -8,6 +8,11 @@
  * @module @memos/types
  */
 
+// Type-only import: `ImportanceConfig` is defined in `src/importance.ts`,
+// which itself imports `MemoryNode` from this file. Type-only circular
+// imports are erased at compile time, so there is no runtime cycle.
+import type { ImportanceConfig } from "./importance.js";
+
 // ---------------------------------------------------------------------------
 // Memory Nodes
 // ---------------------------------------------------------------------------
@@ -60,7 +65,13 @@ export interface MemoryNode {
   type: MemoryType;
   /** Arbitrary metadata bag. Must be JSON-serialisable. */
   metadata: Record<string, unknown>;
-  /** Importance score in [0, 1]. Auto-computed from access patterns. */
+  /**
+   * Base importance score in [0, 1]. Set at write time (default 0.5) or
+   * manually via `update`. Lifecycle decisions (eviction, archival)
+   * derive an *effective* importance from this base plus recency decay
+   * and access reinforcement — see `computeEffectiveImportance` in
+   * `src/importance.ts`.
+   */
   importance: number;
   /** Creation timestamp (Unix ms). */
   createdAt: number;
@@ -181,6 +192,10 @@ export interface UpdateMemoryInput {
   source?: MemorySource;
   /** Trust score [0, 1]. */
   trustScore?: number;
+  /** Dynamic confidence [0, 1] — updated by the evidence state machine. */
+  confidence?: number;
+  /** Evidence count — updated by the evidence state machine. */
+  evidenceCount?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +606,27 @@ export interface ExperimentalConfig {
   namespaces?: boolean;
   /** Enable context injection from graph neighbours. */
   contextInjection?: boolean;
+  /**
+   * Run the evidence state machine on every `store()`: similar existing
+   * memories are reinforced, revised, or superseded, and near-duplicates
+   * (similarity >= 0.92) are folded into the existing node instead of
+   * being written again. Default: true.
+   */
+  evidenceOnStore?: boolean;
+  /**
+   * After a node's embedding is persisted, auto-link it to its top
+   * embedding-similarity neighbours (cosine >= 0.6, max 8 edges) in
+   * addition to the bag-of-words links. Only active when an embedding
+   * provider is configured. Default: true.
+   */
+  embeddingAutoLink?: boolean;
+  /**
+   * Apply a gentle recency boost to hybrid search ranking. Off by
+   * default: enabling it makes scores time-dependent, which relaxes the
+   * score-reproducibility guarantee in `docs/ai-trio-contracts.md`.
+   * Default: false.
+   */
+  recencyBoost?: boolean;
 }
 
 /**
@@ -640,6 +676,20 @@ export interface MemOSConfig {
    * Experimental feature flags.
    */
   experimental?: ExperimentalConfig;
+
+  /**
+   * Effective importance model tuning. Controls how recency decay and
+   * access reinforcement modulate the base `importance` for eviction
+   * and archival decisions. See `ImportanceConfig` in `src/importance.ts`.
+   */
+  importance?: ImportanceConfig;
+
+  /**
+   * Half-life (days) for the optional recency boost in hybrid search
+   * ranking. Only used when `experimental.recencyBoost` is enabled.
+   * @default 14
+   */
+  recencyHalfLifeDays?: number;
 
   /**
    * Embedding provider configuration for semantic and hybrid retrieval.

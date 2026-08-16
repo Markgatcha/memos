@@ -34,6 +34,157 @@ export function defaultDbPath(): string {
 }
 
 /**
+ * Minimal function-word stoplist for FTS5 query tokenization.
+ *
+ * Deliberately SMALL: only grammatical glue words. Content words
+ * ("development", "language", "preferences", ...) must survive —
+ * filtering them out destroys the retrieval signal. Words like
+ * "user" are intentionally NOT listed: FTS5's bm25 ranking already
+ * down-weights terms that appear in (nearly) every document.
+ */
+const FTS_STOPWORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "does",
+  "did",
+  "do",
+  "has",
+  "have",
+  "had",
+  "of",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "and",
+  "or",
+  "not",
+  "no",
+  "with",
+  "by",
+  "from",
+  "as",
+  "it",
+  "its",
+  "this",
+  "that",
+  "these",
+  "those",
+  "what",
+  "when",
+  "where",
+  "who",
+  "whom",
+  "which",
+  "how",
+  "why",
+  "can",
+  "could",
+  "will",
+  "would",
+  "should",
+  "shall",
+  "may",
+  "might",
+  "must",
+  "about",
+  "into",
+  "over",
+  "after",
+  "before",
+  "they",
+  "them",
+  "their",
+  "theirs",
+  "he",
+  "she",
+  "his",
+  "her",
+  "hers",
+  "we",
+  "us",
+  "our",
+  "ours",
+  "you",
+  "your",
+  "yours",
+  "i",
+  "me",
+  "my",
+  "mine",
+  "if",
+  "then",
+  "than",
+  "so",
+  "there",
+  "here",
+  "any",
+  "all",
+  "some",
+  "very",
+  "too",
+  "also",
+]);
+
+/**
+ * Tokenize a natural-language query into individually quoted FTS5
+ * terms.
+ *
+ * The query is split on non-alphanumeric boundaries, lowercased, and
+ * function words are dropped. Each surviving term is double-quoted
+ * (escaping any embedded quote) so FTS5 special characters cannot
+ * inject syntax.
+ *
+ * If stopword removal empties the query (e.g. "what is it"), the raw
+ * tokens are used instead so the search never degrades to a
+ * match-everything no-op.
+ *
+ * @param query — Raw user query text.
+ * @returns Quoted FTS5 terms, e.g. `['"dark"', '"mode"']`.
+ */
+export function buildFtsTerms(query: string): string[] {
+  const tokens = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 1);
+  const terms = tokens.filter((t) => !FTS_STOPWORDS.has(t));
+  const effective = terms.length > 0 ? terms : tokens;
+  if (effective.length === 0) {
+    // Nothing tokenizable (e.g. punctuation-only). Quote the raw
+    // string so FTS5 treats it as a literal (likely zero-result)
+    // phrase rather than a syntax error.
+    return [`"${query.replace(/"/g, '""')}"`];
+  }
+  return effective.map((t) => `"${t.replace(/"/g, '""')}"`);
+}
+
+/**
+ * Build an FTS5 MATCH expression from a natural-language query.
+ *
+ * Terms are joined with `operator` — `" AND "` for precision (every
+ * term must appear) or `" OR "` for recall (any term may appear).
+ *
+ * @param query — Raw user query text.
+ * @param operator — Join operator between terms. Default `" AND "`.
+ * @returns An FTS5 MATCH expression, e.g. `"dark" AND "mode"`.
+ */
+export function buildFtsQuery(
+  query: string,
+  operator: " AND " | " OR " = " AND ",
+): string {
+  return buildFtsTerms(query).join(operator);
+}
+
+/**
  * SQLite storage implementation.
  */
 export class SQLiteStorage implements StorageAdapter {
@@ -173,13 +324,18 @@ export class SQLiteStorage implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS idx_nodes_source ON nodes(source);
     `);
 
-    // FTS5 virtual table for full-text search
+    // FTS5 virtual table for full-text search. The `porter unicode61`
+    // tokenizer applies Porter stemming, so word variants match
+    // ("research" finds "researching", "studies" finds "study").
+    // Note: `IF NOT EXISTS` means pre-existing databases keep their
+    // original tokenizer; new databases get stemming.
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
         content,
         summary,
         content='nodes',
-        content_rowid='rowid'
+        content_rowid='rowid',
+        tokenize='porter unicode61'
       );
     `);
 
@@ -609,9 +765,19 @@ export class SQLiteStorage implements StorageAdapter {
     }
 
     if (filter.query) {
-      // Full-text search via FTS5 — escape special characters
-      const safeQuery = filter.query.replace(/"/g, '""');
-      const ftsQuery = `"${safeQuery}"`;
+      // Full-text search via FTS5. The query is tokenized into
+      // individually quoted terms (see `buildFtsTerms`) instead of
+      // being wrapped as a single phrase: a phrase match requires the
+      // exact question text to appear verbatim in stored content,
+      // which never happens for natural-language queries — so phrase
+      // mode silently returned zero keyword results for every query.
+      //
+      // Matching strategy: AND first (every term must appear — keeps
+      // multi-word queries precise), then fall back to OR when the
+      // AND query matches nothing (any term may appear — keeps
+      // paraphrased queries from returning empty). bm25 ranking
+      // (`ORDER BY rank`) puts documents matching more terms first.
+      const ftsTerms = buildFtsTerms(filter.query);
       const tagFilter = this.buildTagFilter(filter.tags, "n");
       const metadata = this.buildMetadataFilter(filter.metadata, "n");
       const namespaceFilter = filter.namespace ? " AND n.namespace = ?" : "";
@@ -631,24 +797,35 @@ export class SQLiteStorage implements StorageAdapter {
            ORDER BY rank
            LIMIT ? OFFSET ?`;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const params: any[] = [ftsQuery];
-      if (filter.tags && filter.tags.length > 0) {
-        for (const tag of filter.tags) {
-          params.push(tag);
+      // Build the parameter list for a given MATCH expression. Order
+      // must mirror the placeholder order in `ftsSql`: MATCH, tags,
+      // metadata, extra filters, namespace, limit, offset.
+      const runFts = (ftsQuery: string): Record<string, unknown>[] => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const params: any[] = [ftsQuery];
+        if (filter.tags && filter.tags.length > 0) {
+          for (const tag of filter.tags) {
+            params.push(tag);
+          }
         }
-      }
-      params.push(...metadata.params);
-      params.push(...extraParams);
-      if (filter.namespace) {
-        params.push(filter.namespace);
-      }
-      params.push(filter.limit ?? 50, filter.offset ?? 0);
+        params.push(...metadata.params);
+        params.push(...extraParams);
+        if (filter.namespace) {
+          params.push(filter.namespace);
+        }
+        params.push(filter.limit ?? 50, filter.offset ?? 0);
+        return this.db.prepare(ftsSql).all(...params) as Record<
+          string,
+          unknown
+        >[];
+      };
 
-      rows = this.db.prepare(ftsSql).all(...params) as Record<
-        string,
-        unknown
-      >[];
+      rows = runFts(ftsTerms.join(" AND "));
+      if (rows.length === 0 && ftsTerms.length > 1) {
+        // AND matched nothing — relax to OR so partial-term matches
+        // still surface instead of an empty result set.
+        rows = runFts(ftsTerms.join(" OR "));
+      }
     } else {
       // Structured query
       const conditions: string[] = [];

@@ -274,6 +274,12 @@ export class MemOS {
       storage: config.storage,
       sweepInterval: config.sweepInterval ?? 60,
       experimental: config.experimental ?? {},
+      // Effective-importance tuning (recency decay + access reinforcement).
+      // Defaults live in `DEFAULT_IMPORTANCE_CONFIG` (src/importance.ts).
+      importance: config.importance ?? {},
+      // Half-life for the optional hybrid-search recency boost
+      // (only consulted when `experimental.recencyBoost` is enabled).
+      recencyHalfLifeDays: config.recencyHalfLifeDays ?? 14,
       embeddings: config.embeddings ?? {},
       embeddingQueue: config.embeddingQueue ?? {},
     };
@@ -2262,33 +2268,58 @@ export class MemOS {
       }),
     ]);
 
-    // Merge keyword + semantic scores, then apply trust weighting.
-    // The trust weight is a gentle multiplier (0.7–1.0) so high-trust
-    // memories get a small boost without dominating pure relevance.
-    const merged = new Map<string, ScoredMemory>();
+    // Reciprocal Rank Fusion (RRF). Each list votes for its candidates
+    // by RANK rather than raw score: rrf = weight / (K + rank). This
+    // makes the two signals directly comparable even though FTS5 bm25
+    // ranks and cosine similarities live on different scales, and it
+    // is robust to score outliers that would dominate a weighted-sum
+    // fusion. K=60 is the standard constant from the RRF paper
+    // (Cormack et al., 2009). The keyword list carries the larger
+    // weight (0.8 vs 0.2): exact term matches are highly reliable for
+    // factoid memory queries, while embeddings rescue paraphrases.
+    const RRF_K = 60;
+    const KEYWORD_WEIGHT = 0.8;
+    const SEMANTIC_WEIGHT = 0.2;
+
+    const merged = new Map<
+      string,
+      { node: MemoryNode; score: number; scores: Record<string, number> }
+    >();
+
     for (const [index, result] of keywordResults.entries()) {
-      const keyword = 1 - index / Math.max(keywordResults.length, 1);
-      const trustWeight = 0.7 + (result.node.trustScore ?? 1.0) * 0.3;
+      const keywordRrf = KEYWORD_WEIGHT / (RRF_K + index + 1);
       merged.set(result.node.id, {
         node: result.node,
-        score: keyword * 0.45 * trustWeight,
-        scores: { keyword },
+        score: keywordRrf,
+        scores: { keyword: 1 - index / Math.max(keywordResults.length, 1) },
       });
     }
 
-    for (const result of semanticResults) {
+    for (const [index, result] of semanticResults.entries()) {
+      const semanticRrf = SEMANTIC_WEIGHT / (RRF_K + index + 1);
       const existing = merged.get(result.node.id);
-      const semantic = Math.max(0, result.score);
-      const keyword = existing?.scores?.keyword ?? 0;
-      const trustWeight = 0.7 + (result.node.trustScore ?? 1.0) * 0.3;
-      // Bias slightly toward embeddings because keyword scores can be sparse,
-      // but keep enough keyword weight for exact terms, tags, and names.
-      const hybrid = (keyword * 0.45 + semantic * 0.55) * trustWeight;
-      merged.set(result.node.id, {
-        node: result.node,
-        score: hybrid,
-        scores: { keyword, semantic, hybrid },
-      });
+      if (existing) {
+        existing.score += semanticRrf;
+        existing.scores.semantic = Math.max(0, result.score);
+        existing.scores.hybrid = existing.score;
+      } else {
+        merged.set(result.node.id, {
+          node: result.node,
+          score: semanticRrf,
+          scores: {
+            keyword: 0,
+            semantic: Math.max(0, result.score),
+            hybrid: semanticRrf,
+          },
+        });
+      }
+    }
+
+    // Trust weighting: a gentle multiplier (0.7–1.0) so high-trust
+    // memories get a small boost without dominating pure relevance.
+    for (const entry of merged.values()) {
+      entry.score *= 0.7 + (entry.node.trustScore ?? 1.0) * 0.3;
+      entry.scores.hybrid = entry.score;
     }
 
     return [...merged.values()]
