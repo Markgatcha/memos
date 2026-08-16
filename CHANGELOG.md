@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Removed vendored LOCOMO `requirements.txt`** — `scripts/dataset/locomo/requirements.txt` was a frozen conda environment export from the upstream [snap-research/locomo](https://github.com/snap-research/locomo) clone (Python 3.9, torch 2.0.1, gradio 3.24.1, transformers 4.35.0, ~300 pinned packages from 2023). Dependabot flagged 312 open pip vulnerability alerts against it. The file is an environment spec for the upstream paper's evaluation code, not a dependency of this project — the memos benchmarks (`bench-locomo.ts`, `bench-locomo-noapi.ts`) only read `scripts/dataset/locomo/data/locomo10.json` and never install or execute the vendored Python environment. Deleting the manifest clears all 312 alerts; the dataset and vendored reference code are unchanged, and anyone needing the upstream environment can recreate it from the original repository.
+
 ### Dependencies Updated
 
 - `@swc/core` 1.15.46 → 1.16.0 (latest)
