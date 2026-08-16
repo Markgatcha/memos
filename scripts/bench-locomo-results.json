@@ -1,0 +1,32 @@
+{
+  "provider": "MemOS",
+  "timestamp": "2026-08-06T03:53:01.868Z",
+  "conversations": 10,
+  "questions": 1986,
+  "topK": 15,
+  "retrievalRecall": 0.9516616314199395,
+  "retrievalPrecision": 0.0634441087613293,
+  "p50Latency": 20,
+  "categories": {
+    "Single-hop": {
+      "recall": 0.9964539007092199,
+      "count": 282
+    },
+    "Temporal": {
+      "recall": 0.9750778816199377,
+      "count": 321
+    },
+    "Open-domain": {
+      "recall": 0.8645833333333334,
+      "count": 96
+    },
+    "Multi-hop": {
+      "recall": 0.9595719381688466,
+      "count": 841
+    },
+    "Adversarial": {
+      "recall": 0.9103139013452914,
+      "count": 446
+    }
+  }
+}

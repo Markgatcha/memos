@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-08-02T19:34:00.160Z",
+  "factCount": 50,
+  "queryCount": 33,
+  "results": [
+    {
+      "operation": "search",
+      "avgTokensPerQuery": 151,
+      "recallAt10": 0.9394,
+      "precisionAt10": 0.097,
+      "p50Latency": 1.33,
+      "p95Latency": 2.48,
+      "p99Latency": 5.59,
+      "sampleCount": 33
+    }
+  ],
+  "aggregate": {
+    "overallRecall": 0.9394,
+    "overallPrecision": 0.097,
+    "overallLatency": 1.51,
+    "tokenEfficiency": 151
+  }
+}

@@ -1,53 +1,53 @@
 # MemOS Retrieval Quality — Local Run
 
-> Generated 2026-08-16T03:45:29.595Z on this machine. Re-run with `npx tsx scripts/bench-quality.ts`.
+> Generated 2026-06-17T16:34:50.399Z on this machine. Re-run with `npx tsx scripts/bench-quality.ts`.
 
 ## Setup
 
 - Provider: `bench-hash` (model: `bench-hash-v1`, 256-d)
 - Dataset: 30 synthetic conversation memories, 19 ground-truth queries
-- Wall time: 49 ms
+- Wall time: 47 ms
 
 ## Aggregate
 
 | Metric | Value |
 |---|---|
-| recall@5 | 89.5% |
-| recall@10 | 89.5% |
-| MRR | 0.754 |
+| recall@5 | 47.4% |
+| recall@10 | 78.9% |
+| MRR | 0.309 |
 
 ## Per category
 
 | Category | Queries | recall@10 | MRR |
 |---|---|---|---|
-| factual | 11 | 90.9% | 0.727 |
-| preference | 5 | 80.0% | 0.800 |
-| temporal | 2 | 100.0% | 0.667 |
-| entity | 1 | 100.0% | 1.000 |
+| factual | 11 | 81.8% | 0.218 |
+| preference | 5 | 80.0% | 0.472 |
+| temporal | 2 | 50.0% | 0.500 |
+| entity | 1 | 100.0% | 0.111 |
 
 ## Per query
 
 | Query | Category | hit@5 | hit@10 | RR |
 |---|---|---|---|---|
-| where does the user live | factual | ✓ | ✓ | 1.000 |
-| what color does the user like | preference | ✓ | ✓ | 1.000 |
-| tell me about Pixel the corgi | entity | ✓ | ✓ | 1.000 |
-| where does the user work and what industry | factual | ✓ | ✓ | 0.500 |
-| when did the user start at their company | temporal | ✓ | ✓ | 0.333 |
+| where does the user live | factual | ✗ | ✗ | 0.000 |
+| what color does the user like | preference | ✗ | ✓ | 0.111 |
+| tell me about Pixel the corgi | entity | ✗ | ✓ | 0.111 |
+| where does the user work and what industry | factual | ✗ | ✓ | 0.143 |
+| when did the user start at their company | temporal | ✗ | ✗ | 0.000 |
 | dark mode preference editor | preference | ✓ | ✓ | 1.000 |
-| what extensions on vscode | factual | ✓ | ✓ | 1.000 |
+| what extensions on vscode | factual | ✓ | ✓ | 0.250 |
 | instrument hobby and how long | factual | ✓ | ✓ | 0.500 |
-| coffee preference and brand | preference | ✓ | ✓ | 1.000 |
+| coffee preference and brand | preference | ✓ | ✓ | 0.250 |
 | exercise routine | factual | ✗ | ✗ | 0.000 |
 | favorite podcast | preference | ✓ | ✓ | 1.000 |
 | last vacation destination and when | temporal | ✓ | ✓ | 1.000 |
-| partner and their job | factual | ✓ | ✓ | 1.000 |
+| partner and their job | factual | ✓ | ✓ | 0.333 |
 | book author preferences | preference | ✗ | ✗ | 0.000 |
-| siblings and where they live | factual | ✓ | ✓ | 0.500 |
-| transportation method and bike | factual | ✓ | ✓ | 1.000 |
+| siblings and where they live | factual | ✗ | ✓ | 0.125 |
+| transportation method and bike | factual | ✓ | ✓ | 0.250 |
 | allergies and health restrictions | factual | ✓ | ✓ | 0.500 |
-| online games and skill level | factual | ✓ | ✓ | 1.000 |
-| language study tool and duration | factual | ✓ | ✓ | 1.000 |
+| online games and skill level | factual | ✗ | ✓ | 0.167 |
+| language study tool and duration | factual | ✗ | ✓ | 0.125 |
 
 ## How to compare against competitors
 

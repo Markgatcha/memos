@@ -1,0 +1,281 @@
+{
+  "memos": {
+    "provider": "MemOS",
+    "timestamp": "2026-08-04T22:25:26.876Z",
+    "factsStored": 50,
+    "queriesRun": 33,
+    "results": [
+      {
+        "operation": "[Dark mode preference] query=\"dark mode\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 5,
+        "p95Latency": 5,
+        "tokenEfficiency": 92
+      },
+      {
+        "operation": "[Music preference] query=\"lo-fi\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 98
+      },
+      {
+        "operation": "[TypeScript preference] query=\"TypeScript\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.4,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 103
+      },
+      {
+        "operation": "[PostgreSQL knowledge] query=\"PostgreSQL\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.4,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 96
+      },
+      {
+        "operation": "[SQLite knowledge] query=\"SQLite\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 94
+      },
+      {
+        "operation": "[Docker knowledge] query=\"Docker\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.3,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 85
+      },
+      {
+        "operation": "[Package manager] query=\"pnpm\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 99
+      },
+      {
+        "operation": "[Editor preference] query=\"Neovim\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 92
+      },
+      {
+        "operation": "[Physics fact] query=\"Higgs boson\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 107
+      },
+      {
+        "operation": "[Math fact] query=\"Pythagorean theorem\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.1,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 111
+      },
+      {
+        "operation": "[Kubernetes knowledge] query=\"Kubernetes\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.1,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 93
+      },
+      {
+        "operation": "[V8 engine] query=\"V8\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 95
+      },
+      {
+        "operation": "[CAP theorem] query=\"CAP theorem\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.1,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 105
+      },
+      {
+        "operation": "[Dietary restriction: lactose] query=\"lactose\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 86
+      },
+      {
+        "operation": "[Dietary restriction: shellfish] query=\"shellfish\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 98
+      },
+      {
+        "operation": "[Editor preference (semantic)] query=\"What editor does the user prefer for coding\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 110
+      },
+      {
+        "operation": "[Database preference (semantic)] query=\"User's preferred database system\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 91
+      },
+      {
+        "operation": "[Color preference (semantic)] query=\"What type of coffee does the user prefer\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 107
+      },
+      {
+        "operation": "[Programming language (semantic)] query=\"User's preferred programming language\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.1,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 93
+      },
+      {
+        "operation": "[Music genre (semantic)] query=\"What music does the user listen to while coding\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 3,
+        "p95Latency": 3,
+        "tokenEfficiency": 98
+      },
+      {
+        "operation": "[Package manager (semantic)] query=\"User's package manager choice\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 90
+      },
+      {
+        "operation": "[Color theme (semantic)] query=\"What color theme does the user like\"",
+        "recallAt10": 0,
+        "precisionAt10": 0,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 95
+      },
+      {
+        "operation": "[Food allergy (semantic)] query=\"What is the user allergic to in seafood\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 84
+      },
+      {
+        "operation": "[Dietary restriction (semantic)] query=\"User's dietary restriction\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 3,
+        "p95Latency": 3,
+        "tokenEfficiency": 94
+      },
+      {
+        "operation": "[SQLite indexing (semantic)] query=\"What database indexing does SQLite use\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 101
+      },
+      {
+        "operation": "[Container isolation (semantic)] query=\"Container isolation technology\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.3,
+        "p50Latency": 18,
+        "p95Latency": 18,
+        "tokenEfficiency": 89
+      },
+      {
+        "operation": "[CERN physics (semantic)] query=\"Particle physics discovered at CERN\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 5,
+        "p95Latency": 5,
+        "tokenEfficiency": 111
+      },
+      {
+        "operation": "[Geometry theorem (semantic)] query=\"What theorem describes right triangle sides\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.1,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 108
+      },
+      {
+        "operation": "[V8 engine (semantic)] query=\"JavaScript engine by Google\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.2,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 101
+      },
+      {
+        "operation": "[Kubernetes etcd (semantic)] query=\"What does Kubernetes use for storage backend\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.1,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 99
+      },
+      {
+        "operation": "[WebAssembly (semantic)] query=\"What web standard allows Rust compilation\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.1,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 96
+      },
+      {
+        "operation": "[Git bisect (semantic)] query=\"What version control tool helps find bugs\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.1,
+        "p50Latency": 2,
+        "p95Latency": 2,
+        "tokenEfficiency": 109
+      },
+      {
+        "operation": "[CAP theorem (semantic)] query=\"What theorem relates Consistency, Availability, Partition tolerance\"",
+        "recallAt10": 1,
+        "precisionAt10": 0.1,
+        "p50Latency": 1,
+        "p95Latency": 1,
+        "tokenEfficiency": 114
+      }
+    ],
+    "aggregate": {
+      "overallRecall": 0.9696969696969697,
+      "overallPrecision": 0.18484848484848487,
+      "overallLatency": 2.242424242424242,
+      "p95Latency": 5,
+      "tokenEfficiency": 98.3030303030303
+    }
+  }
+}

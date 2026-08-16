@@ -94,7 +94,15 @@
     "serve": "node dist/cli.js serve",
     "bench": "tsx scripts/bench.ts",
     "bench:quality": "tsx scripts/bench-quality.ts",
-    "bench:toon": "tsx scripts/bench-toon-formats.ts"
+    "bench:toon": "tsx scripts/bench-toon-formats.ts",
+    "bench:beam": "tsx scripts/bench-beam.ts",
+    "bench:beam:100k": "tsx scripts/bench-beam.ts --scale=100k",
+    "bench:beam:1m": "tsx scripts/bench-beam.ts --scale=1m",
+    "bench:locomo:retrieve": "tsx scripts/bench-locomo-noapi.ts",
+    "bench:locomo": "OPENAI_API_KEY=$OPENAI_API_KEY tsx scripts/bench-locomo.ts",
+    "bench:longmemeval": "OPENAI_API_KEY=$OPENAI_API_KEY tsx scripts/bench-longmemeval.ts",
+    "bench:crossrepo": "tsx scripts/bench-crossrepo.ts",
+    "bench:memory": "tsx scripts/bench-memory.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1"
