@@ -88,21 +88,6 @@ export interface BuildContextPackOptions {
    * duplicates. Default 0.85.
    */
   dedupThreshold?: number;
-  /**
-   * Output format for the pack.
-   * - "json"        — returns the full ContextPack object (default).
-   * - "toon"        — verbose pipe-delimited, ~53% token reduction.
-   * - "toon-compact" — ultra-compact with epoch timestamps, integer
-   *   scores, single-char codes, shortened field names — targets
-   *   65-75% token reduction on typical packs.
-   * All formats include a schema header so the consumer can detect
-   * and decode the format.
-   */
-  format?: "json" | "toon" | "toon-compact";
-  /**
-   * If true, prefix the pack with the AI Trio schema header. Default true.
-   */
-  includeSchemaHeader?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,8 +203,6 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     debloat = true,
     dedup = true,
     dedupThreshold = DEFAULT_DEDUP_THRESHOLD,
-    format = "json",
-    includeSchemaHeader = true,
   } = opts;
 
   // Sort by descending score.

@@ -94,6 +94,7 @@
     "serve": "node dist/cli.js serve",
     "bench": "tsx scripts/bench.ts",
     "bench:quality": "tsx scripts/bench-quality.ts",
+    "bench:quality:local": "tsx scripts/bench-quality.ts --provider=local",
     "bench:toon": "tsx scripts/bench-toon-formats.ts",
     "bench:beam": "tsx scripts/bench-beam.ts",
     "bench:beam:100k": "tsx scripts/bench-beam.ts --scale=100k",
@@ -105,7 +106,7 @@
     "bench:memory": "tsx scripts/bench-memory.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^12.11.1"
+    "better-sqlite3": "^13.0.3"
   },
   "overrides": {
     "brace-expansion@>=4.0.0 <5.0.5": "5.0.5",

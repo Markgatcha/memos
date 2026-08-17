@@ -140,14 +140,11 @@ export function classifyEvidence(
     "left",
     "different",
   ];
-  const existingLower = existingContent.toLowerCase();
   const newLower = newContent.toLowerCase();
 
-  const contradicts = contradictionSignals.some(
-    (word) => newLower.includes(word) && existingLower.includes(word),
-  );
-
-  // If there's a contradiction signal and low similarity, treat as contradicted
+  // If the NEW content carries a contradiction signal and similarity is
+  // low, treat as contradicted (e.g. "user likes coffee" vs "user no
+  // longer likes coffee").
   if (
     contradictionSignals.some((w) => newLower.includes(w)) &&
     similarity < 0.3

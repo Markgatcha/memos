@@ -118,3 +118,11 @@ export type {
   EvidenceOutcome,
   ConfidenceUpdate,
 } from "./confidence-machine.js";
+export {
+  fuseResults,
+  DEFAULT_RRF_K,
+  DEFAULT_KEYWORD_WEIGHT,
+  DEFAULT_SEMANTIC_WEIGHT,
+  DEFAULT_TRUST_FLOOR,
+} from "./retrieval.js";
+export type { FusionOptions } from "./retrieval.js";

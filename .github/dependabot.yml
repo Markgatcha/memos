@@ -15,7 +15,10 @@ updates:
         patterns:
           - "*"
     # Ignore major version bumps for packages with known native-build or
-    # breaking-change issues in CI.
+    # breaking-change issues in CI. better-sqlite3 v13 was verified manually
+    # (bundled prebuilds, no install scripts — immune to the npm-12
+    # allow-scripts failure mode); this rule guards FUTURE majors until
+    # they are verified the same way.
     ignore:
       - dependency-name: "better-sqlite3"
         update-types: ["version-update:semver-major"]

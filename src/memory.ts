@@ -20,6 +20,7 @@ import {
   serializeContextPack,
 } from "./context-pack.js";
 import type { ContextPack } from "./context-pack.js";
+import { fuseResults } from "./retrieval.js";
 import { decideRetain } from "./retain-filter.js";
 import type {
   MemoryNode,
@@ -1247,8 +1248,7 @@ export class MemOS {
     format?: "json" | "toon" | "toon-compact";
   }): Promise<ContextPack | string> {
     this.assertInit();
-    const namespace =
-      opts.namespace ?? (this.experimental.namespaces ? "default" : "default");
+    const namespace = opts.namespace ?? "default";
     const limit =
       opts.limit ??
       Math.min(50, Math.max(8, Math.floor(opts.tokenBudget / 80)));
@@ -2268,63 +2268,12 @@ export class MemOS {
       }),
     ]);
 
-    // Reciprocal Rank Fusion (RRF). Each list votes for its candidates
-    // by RANK rather than raw score: rrf = weight / (K + rank). This
-    // makes the two signals directly comparable even though FTS5 bm25
-    // ranks and cosine similarities live on different scales, and it
-    // is robust to score outliers that would dominate a weighted-sum
-    // fusion. K=60 is the standard constant from the RRF paper
-    // (Cormack et al., 2009). The keyword list carries the larger
-    // weight (0.8 vs 0.2): exact term matches are highly reliable for
-    // factoid memory queries, while embeddings rescue paraphrases.
-    const RRF_K = 60;
-    const KEYWORD_WEIGHT = 0.8;
-    const SEMANTIC_WEIGHT = 0.2;
+    // Fuse the two legs via weighted Reciprocal Rank Fusion + trust
+    // weighting. The fusion logic lives in `src/retrieval.ts` so it can
+    // be unit-tested without storage or embeddings.
+    const fused = fuseResults(keywordResults, semanticResults);
 
-    const merged = new Map<
-      string,
-      { node: MemoryNode; score: number; scores: Record<string, number> }
-    >();
-
-    for (const [index, result] of keywordResults.entries()) {
-      const keywordRrf = KEYWORD_WEIGHT / (RRF_K + index + 1);
-      merged.set(result.node.id, {
-        node: result.node,
-        score: keywordRrf,
-        scores: { keyword: 1 - index / Math.max(keywordResults.length, 1) },
-      });
-    }
-
-    for (const [index, result] of semanticResults.entries()) {
-      const semanticRrf = SEMANTIC_WEIGHT / (RRF_K + index + 1);
-      const existing = merged.get(result.node.id);
-      if (existing) {
-        existing.score += semanticRrf;
-        existing.scores.semantic = Math.max(0, result.score);
-        existing.scores.hybrid = existing.score;
-      } else {
-        merged.set(result.node.id, {
-          node: result.node,
-          score: semanticRrf,
-          scores: {
-            keyword: 0,
-            semantic: Math.max(0, result.score),
-            hybrid: semanticRrf,
-          },
-        });
-      }
-    }
-
-    // Trust weighting: a gentle multiplier (0.7–1.0) so high-trust
-    // memories get a small boost without dominating pure relevance.
-    for (const entry of merged.values()) {
-      entry.score *= 0.7 + (entry.node.trustScore ?? 1.0) * 0.3;
-      entry.scores.hybrid = entry.score;
-    }
-
-    return [...merged.values()]
-      .sort((a, b) => b.score - a.score)
-      .slice(offset, offset + limit);
+    return fused.slice(offset, offset + limit);
   }
 
   /**

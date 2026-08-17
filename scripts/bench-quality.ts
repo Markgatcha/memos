@@ -45,7 +45,12 @@ interface GroundTruthEntry {
 }
 
 interface SyntheticDataset {
-  nodes: Array<{ id: string; content: string; tags: string[]; namespace: string }>;
+  nodes: Array<{
+    id: string;
+    content: string;
+    tags: string[];
+    namespace: string;
+  }>;
   groundTruth: GroundTruthEntry[];
 }
 
@@ -87,60 +92,278 @@ function buildSyntheticDataset(): SyntheticDataset {
   // 30 nodes. Each has a unique keyword anchor in the content,
   // and a unique tag.
   const nodes: SyntheticDataset["nodes"] = [
-    { id: "n-1", content: "User lives in Seattle", tags: ["location"], namespace: "default" },
-    { id: "n-2", content: "User's favorite color is blue", tags: ["preference"], namespace: "default" },
-    { id: "n-3", content: "User has a dog named Pixel", tags: ["pet"], namespace: "default" },
-    { id: "n-4", content: "Pixel is a corgi", tags: ["pet", "breed"], namespace: "default" },
-    { id: "n-5", content: "User works at Acme Corp", tags: ["work"], namespace: "default" },
-    { id: "n-6", content: "Acme is a robotics company", tags: ["work", "industry"], namespace: "default" },
-    { id: "n-7", content: "User started at Acme in March 2023", tags: ["work", "temporal"], namespace: "default" },
-    { id: "n-8", content: "User prefers dark mode in editors", tags: ["preference", "ui"], namespace: "default" },
-    { id: "n-9", content: "User's editor is VS Code", tags: ["tool"], namespace: "default" },
-    { id: "n-10", content: "VS Code extensions: Vim, Copilot", tags: ["tool"], namespace: "default" },
-    { id: "n-11", content: "User plays piano", tags: ["hobby"], namespace: "default" },
-    { id: "n-12", content: "Piano since age 10", tags: ["hobby", "temporal"], namespace: "default" },
-    { id: "n-13", content: "User drinks coffee black", tags: ["preference", "food"], namespace: "default" },
-    { id: "n-14", content: "Coffee brand: Stumptown", tags: ["preference", "food"], namespace: "default" },
-    { id: "n-15", content: "User runs 5k three times a week", tags: ["health"], namespace: "default" },
-    { id: "n-16", content: "Favorite podcast: Hardcore History", tags: ["media"], namespace: "default" },
-    { id: "n-17", content: "Last vacation was in Iceland", tags: ["travel"], namespace: "default" },
-    { id: "n-18", content: "Iceland trip in summer 2024", tags: ["travel", "temporal"], namespace: "default" },
-    { id: "n-19", content: "User's partner is named Sam", tags: ["relationship"], namespace: "default" },
-    { id: "n-20", content: "Sam is a teacher", tags: ["relationship", "work"], namespace: "default" },
-    { id: "n-21", content: "User reads sci-fi, especially Le Guin", tags: ["media", "preference"], namespace: "default" },
-    { id: "n-22", content: "User has a sister named Maya", tags: ["relationship"], namespace: "default" },
-    { id: "n-23", content: "Maya lives in Portland", tags: ["relationship", "location"], namespace: "default" },
-    { id: "n-24", content: "User commutes by bike", tags: ["transport"], namespace: "default" },
-    { id: "n-25", content: "Bike: Trek Domane SL", tags: ["transport"], namespace: "default" },
-    { id: "n-26", content: "User is allergic to peanuts", tags: ["health"], namespace: "default" },
-    { id: "n-27", content: "User plays chess online", tags: ["hobby"], namespace: "default" },
-    { id: "n-28", content: "Chess rating around 1500", tags: ["hobby"], namespace: "default" },
-    { id: "n-29", content: "User uses Anki for Japanese study", tags: ["tool", "hobby"], namespace: "default" },
-    { id: "n-30", content: "Studying Japanese for 3 years", tags: ["hobby", "temporal"], namespace: "default" },
+    {
+      id: "n-1",
+      content: "User lives in Seattle",
+      tags: ["location"],
+      namespace: "default",
+    },
+    {
+      id: "n-2",
+      content: "User's favorite color is blue",
+      tags: ["preference"],
+      namespace: "default",
+    },
+    {
+      id: "n-3",
+      content: "User has a dog named Pixel",
+      tags: ["pet"],
+      namespace: "default",
+    },
+    {
+      id: "n-4",
+      content: "Pixel is a corgi",
+      tags: ["pet", "breed"],
+      namespace: "default",
+    },
+    {
+      id: "n-5",
+      content: "User works at Acme Corp",
+      tags: ["work"],
+      namespace: "default",
+    },
+    {
+      id: "n-6",
+      content: "Acme is a robotics company",
+      tags: ["work", "industry"],
+      namespace: "default",
+    },
+    {
+      id: "n-7",
+      content: "User started at Acme in March 2023",
+      tags: ["work", "temporal"],
+      namespace: "default",
+    },
+    {
+      id: "n-8",
+      content: "User prefers dark mode in editors",
+      tags: ["preference", "ui"],
+      namespace: "default",
+    },
+    {
+      id: "n-9",
+      content: "User's editor is VS Code",
+      tags: ["tool"],
+      namespace: "default",
+    },
+    {
+      id: "n-10",
+      content: "VS Code extensions: Vim, Copilot",
+      tags: ["tool"],
+      namespace: "default",
+    },
+    {
+      id: "n-11",
+      content: "User plays piano",
+      tags: ["hobby"],
+      namespace: "default",
+    },
+    {
+      id: "n-12",
+      content: "Piano since age 10",
+      tags: ["hobby", "temporal"],
+      namespace: "default",
+    },
+    {
+      id: "n-13",
+      content: "User drinks coffee black",
+      tags: ["preference", "food"],
+      namespace: "default",
+    },
+    {
+      id: "n-14",
+      content: "Coffee brand: Stumptown",
+      tags: ["preference", "food"],
+      namespace: "default",
+    },
+    {
+      id: "n-15",
+      content: "User runs 5k three times a week",
+      tags: ["health"],
+      namespace: "default",
+    },
+    {
+      id: "n-16",
+      content: "Favorite podcast: Hardcore History",
+      tags: ["media"],
+      namespace: "default",
+    },
+    {
+      id: "n-17",
+      content: "Last vacation was in Iceland",
+      tags: ["travel"],
+      namespace: "default",
+    },
+    {
+      id: "n-18",
+      content: "Iceland trip in summer 2024",
+      tags: ["travel", "temporal"],
+      namespace: "default",
+    },
+    {
+      id: "n-19",
+      content: "User's partner is named Sam",
+      tags: ["relationship"],
+      namespace: "default",
+    },
+    {
+      id: "n-20",
+      content: "Sam is a teacher",
+      tags: ["relationship", "work"],
+      namespace: "default",
+    },
+    {
+      id: "n-21",
+      content: "User reads sci-fi, especially Le Guin",
+      tags: ["media", "preference"],
+      namespace: "default",
+    },
+    {
+      id: "n-22",
+      content: "User has a sister named Maya",
+      tags: ["relationship"],
+      namespace: "default",
+    },
+    {
+      id: "n-23",
+      content: "Maya lives in Portland",
+      tags: ["relationship", "location"],
+      namespace: "default",
+    },
+    {
+      id: "n-24",
+      content: "User commutes by bike",
+      tags: ["transport"],
+      namespace: "default",
+    },
+    {
+      id: "n-25",
+      content: "Bike: Trek Domane SL",
+      tags: ["transport"],
+      namespace: "default",
+    },
+    {
+      id: "n-26",
+      content: "User is allergic to peanuts",
+      tags: ["health"],
+      namespace: "default",
+    },
+    {
+      id: "n-27",
+      content: "User plays chess online",
+      tags: ["hobby"],
+      namespace: "default",
+    },
+    {
+      id: "n-28",
+      content: "Chess rating around 1500",
+      tags: ["hobby"],
+      namespace: "default",
+    },
+    {
+      id: "n-29",
+      content: "User uses Anki for Japanese study",
+      tags: ["tool", "hobby"],
+      namespace: "default",
+    },
+    {
+      id: "n-30",
+      content: "Studying Japanese for 3 years",
+      tags: ["hobby", "temporal"],
+      namespace: "default",
+    },
   ];
 
   // 15 ground-truth queries spanning the four LoCoMo-style
   // categories. Each query expects 1-2 relevant node ids.
   const groundTruth: GroundTruthEntry[] = [
-    { query: "where does the user live", relevant: ["n-1"], category: "factual" },
-    { query: "what color does the user like", relevant: ["n-2"], category: "preference" },
-    { query: "tell me about Pixel the corgi", relevant: ["n-3", "n-4"], category: "entity" },
-    { query: "where does the user work and what industry", relevant: ["n-5", "n-6"], category: "factual" },
-    { query: "when did the user start at their company", relevant: ["n-7"], category: "temporal" },
-    { query: "dark mode preference editor", relevant: ["n-8", "n-9"], category: "preference" },
-    { query: "what extensions on vscode", relevant: ["n-10"], category: "factual" },
-    { query: "instrument hobby and how long", relevant: ["n-11", "n-12"], category: "hobby" === "hobby" ? "factual" : "temporal" } as never,
-    { query: "coffee preference and brand", relevant: ["n-13", "n-14"], category: "preference" },
+    {
+      query: "where does the user live",
+      relevant: ["n-1"],
+      category: "factual",
+    },
+    {
+      query: "what color does the user like",
+      relevant: ["n-2"],
+      category: "preference",
+    },
+    {
+      query: "tell me about Pixel the corgi",
+      relevant: ["n-3", "n-4"],
+      category: "entity",
+    },
+    {
+      query: "where does the user work and what industry",
+      relevant: ["n-5", "n-6"],
+      category: "factual",
+    },
+    {
+      query: "when did the user start at their company",
+      relevant: ["n-7"],
+      category: "temporal",
+    },
+    {
+      query: "dark mode preference editor",
+      relevant: ["n-8", "n-9"],
+      category: "preference",
+    },
+    {
+      query: "what extensions on vscode",
+      relevant: ["n-10"],
+      category: "factual",
+    },
+    {
+      query: "instrument hobby and how long",
+      relevant: ["n-11", "n-12"],
+      category: "factual",
+    },
+    {
+      query: "coffee preference and brand",
+      relevant: ["n-13", "n-14"],
+      category: "preference",
+    },
     { query: "exercise routine", relevant: ["n-15"], category: "factual" },
     { query: "favorite podcast", relevant: ["n-16"], category: "preference" },
-    { query: "last vacation destination and when", relevant: ["n-17", "n-18"], category: "temporal" },
-    { query: "partner and their job", relevant: ["n-19", "n-20"], category: "factual" },
-    { query: "book author preferences", relevant: ["n-21"], category: "preference" },
-    { query: "siblings and where they live", relevant: ["n-22", "n-23"], category: "factual" },
-    { query: "transportation method and bike", relevant: ["n-24", "n-25"], category: "factual" },
-    { query: "allergies and health restrictions", relevant: ["n-26"], category: "factual" },
-    { query: "online games and skill level", relevant: ["n-27", "n-28"], category: "factual" },
-    { query: "language study tool and duration", relevant: ["n-29", "n-30"], category: "factual" },
+    {
+      query: "last vacation destination and when",
+      relevant: ["n-17", "n-18"],
+      category: "temporal",
+    },
+    {
+      query: "partner and their job",
+      relevant: ["n-19", "n-20"],
+      category: "factual",
+    },
+    {
+      query: "book author preferences",
+      relevant: ["n-21"],
+      category: "preference",
+    },
+    {
+      query: "siblings and where they live",
+      relevant: ["n-22", "n-23"],
+      category: "factual",
+    },
+    {
+      query: "transportation method and bike",
+      relevant: ["n-24", "n-25"],
+      category: "factual",
+    },
+    {
+      query: "allergies and health restrictions",
+      relevant: ["n-26"],
+      category: "factual",
+    },
+    {
+      query: "online games and skill level",
+      relevant: ["n-27", "n-28"],
+      category: "factual",
+    },
+    {
+      query: "language study tool and duration",
+      relevant: ["n-29", "n-30"],
+      category: "factual",
+    },
   ];
 
   return { nodes, groundTruth };
@@ -196,7 +419,17 @@ async function main(): Promise<void> {
   const repoRoot = join(here, "..");
   const dataset = buildSyntheticDataset();
 
-  const provider = new HashEmbeddingProvider();
+  // Provider selection:
+  //   (default)        — bench-hash: naive deterministic hash baseline.
+  //                      Kept as the stable historical reference point.
+  //   --provider=local — LocalHashEmbeddingProvider: the provider that
+  //                      actually ships with MemOS (synonym lexicon +
+  //                      character n-grams). Use this to measure what
+  //                      users get out of the box.
+  const useLocal = process.argv.includes("--provider=local");
+  const provider: EmbeddingProvider = useLocal
+    ? new LocalHashEmbeddingProvider()
+    : new HashEmbeddingProvider();
   const storage = new SQLiteStorage(":memory:", true);
   const memos = new MemOS({
     storage,
@@ -228,8 +461,12 @@ async function main(): Promise<void> {
       return r.node.id;
     });
     const expectedRelevant = gt.relevant;
-    const hitAt5 = expectedRelevant.some((id) => retrievedIds.slice(0, 5).includes(id));
-    const hitAt10 = expectedRelevant.some((id) => retrievedIds.slice(0, 10).includes(id));
+    const hitAt5 = expectedRelevant.some((id) =>
+      retrievedIds.slice(0, 5).includes(id),
+    );
+    const hitAt10 = expectedRelevant.some((id) =>
+      retrievedIds.slice(0, 10).includes(id),
+    );
     let reciprocalRank = 0;
     for (let rank = 0; rank < retrievedIds.length; rank += 1) {
       if (expectedRelevant.includes(retrievedIds[rank])) {
@@ -272,8 +509,15 @@ async function main(): Promise<void> {
     startedAt: new Date(start).toISOString(),
     finishedAt: new Date().toISOString(),
     durationMs: Date.now() - start,
-    provider: { id: provider.id, model: provider.model, dimensions: provider.dimensions },
-    dataset: { nodes: dataset.nodes.length, queries: dataset.groundTruth.length },
+    provider: {
+      id: provider.id,
+      model: provider.model,
+      dimensions: provider.dimensions,
+    },
+    dataset: {
+      nodes: dataset.nodes.length,
+      queries: dataset.groundTruth.length,
+    },
     metrics: { recallAt5, recallAt10, mrr, perCategory },
     perQuery,
   };
@@ -287,7 +531,8 @@ async function main(): Promise<void> {
   // Print markdown summary.
   const md = renderMarkdown(result);
   const mdPath = join(repoRoot, "docs", "benchmark-quality.md");
-  if (!existsSync(dirname(mdPath))) mkdirSync(dirname(mdPath), { recursive: true });
+  if (!existsSync(dirname(mdPath)))
+    mkdirSync(dirname(mdPath), { recursive: true });
   writeFileSync(mdPath, md);
   // Also write to scripts/ so the existing benchmark tooling picks it up.
   writeFileSync(join(outDir, "bench-quality.md"), md);
@@ -304,12 +549,18 @@ function renderMarkdown(r: BenchResult): string {
   const lines: string[] = [];
   lines.push("# MemOS Retrieval Quality — Local Run");
   lines.push("");
-  lines.push(`> Generated ${r.finishedAt} on this machine. Re-run with \`npx tsx scripts/bench-quality.ts\`.`);
+  lines.push(
+    `> Generated ${r.finishedAt} on this machine. Re-run with \`npx tsx scripts/bench-quality.ts\`.`,
+  );
   lines.push("");
   lines.push("## Setup");
   lines.push("");
-  lines.push(`- Provider: \`${r.provider.id}\` (model: \`${r.provider.model}\`, ${r.provider.dimensions}-d)`);
-  lines.push(`- Dataset: ${r.dataset.nodes} synthetic conversation memories, ${r.dataset.queries} ground-truth queries`);
+  lines.push(
+    `- Provider: \`${r.provider.id}\` (model: \`${r.provider.model}\`, ${r.provider.dimensions}-d)`,
+  );
+  lines.push(
+    `- Dataset: ${r.dataset.nodes} synthetic conversation memories, ${r.dataset.queries} ground-truth queries`,
+  );
   lines.push(`- Wall time: ${r.durationMs} ms`);
   lines.push("");
   lines.push("## Aggregate");
@@ -325,7 +576,9 @@ function renderMarkdown(r: BenchResult): string {
   lines.push("| Category | Queries | recall@10 | MRR |");
   lines.push("|---|---|---|---|");
   for (const [cat, m] of Object.entries(r.metrics.perCategory)) {
-    lines.push(`| ${cat} | ${m.queries} | ${fmt(m.recallAt10)} | ${m.mrr.toFixed(3)} |`);
+    lines.push(
+      `| ${cat} | ${m.queries} | ${fmt(m.recallAt10)} | ${m.mrr.toFixed(3)} |`,
+    );
   }
   lines.push("");
   lines.push("## Per query");

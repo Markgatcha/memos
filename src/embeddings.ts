@@ -20,18 +20,94 @@ function stripTrailingSlashes(url: string): string {
 const DEFAULT_DIMENSIONS = 384;
 
 const SYNONYMS: Record<string, readonly string[]> = {
+  // Preference language
   prefer: ["like", "favor", "preference"],
   prefers: ["like", "likes", "preference"],
   preference: ["prefer", "like", "likes"],
+  preferences: ["prefer", "likes", "favorite"],
   likes: ["prefer", "preference", "favorite"],
+  favorite: ["favourite", "preferred", "likes"],
+  // UI / appearance
   dark: ["night", "black", "dim"],
   theme: ["mode", "ui", "appearance"],
   themes: ["mode", "ui", "appearance"],
   mode: ["theme", "ui", "appearance"],
+  // Memory vocabulary
   remember: ["memory", "recall"],
+  remembers: ["memory", "recall"],
   memories: ["memory", "recall"],
+  // Tasks
   todo: ["task", "action"],
   tasks: ["todo", "action"],
+  // Exercise & fitness — paraphrases like "exercise routine" must reach
+  // memories phrased as "runs 5k three times a week".
+  exercise: ["workout", "training", "fitness", "runs", "running", "gym"],
+  exercises: ["workout", "training", "fitness", "running"],
+  workout: ["exercise", "training", "fitness", "gym"],
+  runs: ["running", "jogging", "exercise"],
+  running: ["runs", "jogging", "exercise"],
+  routine: ["schedule", "habit", "regular"],
+  routines: ["schedule", "habit", "regular"],
+  habit: ["routine", "regular"],
+  habits: ["routine", "regular"],
+  gym: ["workout", "exercise", "fitness"],
+  // Reading & books — "book author preferences" must reach "reads sci-fi,
+  // especially Le Guin".
+  book: ["books", "reads", "reading", "novel", "author", "literature"],
+  books: ["book", "reading", "novel", "literature"],
+  author: ["writer", "novelist", "book", "books"],
+  authors: ["writers", "book", "books"],
+  reads: ["reading", "book", "books"],
+  reading: ["reads", "book", "books"],
+  novel: ["book", "fiction", "literature"],
+  // Media
+  podcast: ["show", "audio", "episode"],
+  music: ["song", "songs", "listening"],
+  // Travel
+  vacation: ["trip", "travel", "holiday"],
+  holiday: ["vacation", "trip", "travel"],
+  trip: ["travel", "vacation", "journey"],
+  travel: ["trip", "vacation", "journey"],
+  // Work
+  job: ["work", "employment", "company", "employer", "career"],
+  works: ["work", "job", "employment"],
+  company: ["employer", "workplace", "business"],
+  employer: ["company", "workplace"],
+  career: ["job", "work", "profession"],
+  // Relationships & family
+  partner: ["spouse", "wife", "husband", "girlfriend", "boyfriend"],
+  siblings: ["sister", "brother", "family"],
+  sibling: ["sister", "brother", "family"],
+  sister: ["sibling", "family"],
+  brother: ["sibling", "family"],
+  // Health
+  allergies: ["allergic", "allergy", "intolerance", "reaction"],
+  allergy: ["allergic", "intolerance"],
+  allergic: ["allergy", "intolerance"],
+  health: ["healthy", "wellness", "medical"],
+  // Transport
+  transportation: ["transport", "commute", "commuting"],
+  commute: ["commuting", "transport"],
+  bike: ["bicycle", "cycling"],
+  bicycle: ["bike", "cycling"],
+  // Hobbies & games
+  hobby: ["hobbies", "pastime", "interest"],
+  hobbies: ["hobby", "pastime", "interests"],
+  games: ["game", "gaming", "playing"],
+  gaming: ["games", "playing"],
+  skill: ["level", "rating", "ability"],
+  rating: ["score", "rank", "level"],
+  // Instruments
+  instrument: ["piano", "guitar", "musical"],
+  piano: ["instrument", "keyboard", "musical"],
+  guitar: ["instrument", "musical"],
+  // Pets
+  dog: ["pet", "puppy"],
+  cat: ["pet", "kitten"],
+  pet: ["dog", "cat", "animal"],
+  // Food & drink
+  coffee: ["espresso", "caffeine"],
+  drinks: ["drink", "beverage"],
 };
 
 function tokenize(text: string): string[] {

@@ -1,7 +1,7 @@
 {
-  "startedAt": "2026-06-17T16:34:50.352Z",
-  "finishedAt": "2026-06-17T16:34:50.399Z",
-  "durationMs": 47,
+  "startedAt": "2026-08-17T22:53:01.596Z",
+  "finishedAt": "2026-08-17T22:53:01.646Z",
+  "durationMs": 50,
   "provider": {
     "id": "bench-hash",
     "model": "bench-hash-v1",
@@ -12,29 +12,29 @@
     "queries": 19
   },
   "metrics": {
-    "recallAt5": 0.47368421052631576,
-    "recallAt10": 0.7894736842105263,
-    "mrr": 0.30868838763575607,
+    "recallAt5": 0.8947368421052632,
+    "recallAt10": 0.8947368421052632,
+    "mrr": 0.7543859649122807,
     "perCategory": {
       "factual": {
         "queries": 11,
-        "recallAt10": 0.8181818181818182,
-        "mrr": 0.21753246753246752
+        "recallAt10": 0.9090909090909091,
+        "mrr": 0.7272727272727273
       },
       "preference": {
         "queries": 5,
         "recallAt10": 0.8,
-        "mrr": 0.4722222222222222
+        "mrr": 0.8
       },
       "temporal": {
         "queries": 2,
-        "recallAt10": 0.5,
-        "mrr": 0.5
+        "recallAt10": 1,
+        "mrr": 0.6666666666666666
       },
       "entity": {
         "queries": 1,
         "recallAt10": 1,
-        "mrr": 0.1111111111111111
+        "mrr": 1
       }
     }
   },
@@ -43,6 +43,7 @@
       "query": "where does the user live",
       "category": "factual",
       "retrievedIds": [
+        "n-1",
         "n-20",
         "n-6",
         "n-24",
@@ -51,12 +52,11 @@
         "n-17",
         "n-16",
         "n-7",
-        "n-15",
-        "n-11"
+        "n-15"
       ],
-      "hitAt5": false,
-      "hitAt10": false,
-      "reciprocalRank": 0,
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-1"
       ]
@@ -65,20 +65,20 @@
       "query": "what color does the user like",
       "category": "preference",
       "retrievedIds": [
-        "n-24",
-        "n-21",
-        "n-4",
-        "n-17",
-        "n-6",
-        "n-16",
-        "n-7",
-        "n-11",
         "n-2",
-        "n-1"
+        "n-11",
+        "n-24",
+        "n-1",
+        "n-13",
+        "n-27",
+        "n-5",
+        "n-26",
+        "n-3",
+        "n-8"
       ],
-      "hitAt5": false,
+      "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.1111111111111111,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-2"
       ]
@@ -87,6 +87,8 @@
       "query": "tell me about Pixel the corgi",
       "category": "entity",
       "retrievedIds": [
+        "n-4",
+        "n-3",
         "n-22",
         "n-9",
         "n-14",
@@ -94,13 +96,11 @@
         "n-20",
         "n-16",
         "n-24",
-        "n-5",
-        "n-4",
-        "n-13"
+        "n-5"
       ],
-      "hitAt5": false,
+      "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.1111111111111111,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-3",
         "n-4"
@@ -110,20 +110,20 @@
       "query": "where does the user work and what industry",
       "category": "factual",
       "retrievedIds": [
-        "n-16",
-        "n-14",
-        "n-24",
-        "n-21",
-        "n-4",
-        "n-17",
-        "n-6",
-        "n-7",
         "n-11",
-        "n-3"
+        "n-5",
+        "n-24",
+        "n-1",
+        "n-13",
+        "n-27",
+        "n-2",
+        "n-26",
+        "n-3",
+        "n-8"
       ],
-      "hitAt5": false,
+      "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.14285714285714285,
+      "reciprocalRank": 0.5,
       "expectedRelevant": [
         "n-5",
         "n-6"
@@ -133,20 +133,20 @@
       "query": "when did the user start at their company",
       "category": "temporal",
       "retrievedIds": [
-        "n-29",
-        "n-10",
+        "n-6",
         "n-1",
-        "n-16",
+        "n-7",
+        "n-11",
         "n-24",
-        "n-17",
-        "n-12",
-        "n-23",
-        "n-21",
-        "n-11"
+        "n-13",
+        "n-27",
+        "n-5",
+        "n-26",
+        "n-2"
       ],
-      "hitAt5": false,
-      "hitAt10": false,
-      "reciprocalRank": 0,
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 0.3333333333333333,
       "expectedRelevant": [
         "n-7"
       ]
@@ -178,10 +178,10 @@
       "query": "what extensions on vscode",
       "category": "factual",
       "retrievedIds": [
+        "n-10",
         "n-18",
         "n-26",
         "n-21",
-        "n-10",
         "n-1",
         "n-2",
         "n-3",
@@ -191,7 +191,7 @@
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.25,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-10"
       ]
@@ -223,20 +223,20 @@
       "query": "coffee preference and brand",
       "category": "preference",
       "retrievedIds": [
+        "n-14",
+        "n-13",
+        "n-8",
         "n-21",
         "n-12",
         "n-15",
-        "n-14",
         "n-22",
-        "n-13",
         "n-3",
         "n-19",
-        "n-1",
-        "n-2"
+        "n-1"
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.25,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-13",
         "n-14"
@@ -313,9 +313,9 @@
       "query": "partner and their job",
       "category": "factual",
       "retrievedIds": [
+        "n-19",
         "n-23",
         "n-27",
-        "n-19",
         "n-20",
         "n-3",
         "n-22",
@@ -326,7 +326,7 @@
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.3333333333333333,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-19",
         "n-20"
@@ -336,6 +336,7 @@
       "query": "book author preferences",
       "category": "preference",
       "retrievedIds": [
+        "n-8",
         "n-29",
         "n-14",
         "n-12",
@@ -344,8 +345,7 @@
         "n-10",
         "n-2",
         "n-3",
-        "n-4",
-        "n-5"
+        "n-4"
       ],
       "hitAt5": false,
       "hitAt10": false,
@@ -358,6 +358,8 @@
       "query": "siblings and where they live",
       "category": "factual",
       "retrievedIds": [
+        "n-1",
+        "n-23",
         "n-8",
         "n-24",
         "n-6",
@@ -365,13 +367,11 @@
         "n-21",
         "n-3",
         "n-5",
-        "n-22",
-        "n-2",
-        "n-19"
+        "n-22"
       ],
-      "hitAt5": false,
+      "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.125,
+      "reciprocalRank": 0.5,
       "expectedRelevant": [
         "n-22",
         "n-23"
@@ -381,11 +381,11 @@
       "query": "transportation method and bike",
       "category": "factual",
       "retrievedIds": [
+        "n-24",
+        "n-25",
         "n-11",
         "n-5",
         "n-4",
-        "n-24",
-        "n-25",
         "n-27",
         "n-3",
         "n-22",
@@ -394,7 +394,7 @@
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.25,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-24",
         "n-25"
@@ -426,20 +426,20 @@
       "query": "online games and skill level",
       "category": "factual",
       "retrievedIds": [
+        "n-27",
         "n-21",
         "n-15",
         "n-29",
         "n-12",
         "n-24",
-        "n-27",
         "n-3",
         "n-22",
         "n-19",
         "n-1"
       ],
-      "hitAt5": false,
+      "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.16666666666666666,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-27",
         "n-28"
@@ -449,6 +449,8 @@
       "query": "language study tool and duration",
       "category": "factual",
       "retrievedIds": [
+        "n-29",
+        "n-30",
         "n-8",
         "n-13",
         "n-25",
@@ -456,13 +458,11 @@
         "n-3",
         "n-22",
         "n-19",
-        "n-29",
-        "n-1",
-        "n-2"
+        "n-1"
       ],
-      "hitAt5": false,
+      "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.125,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-29",
         "n-30"
