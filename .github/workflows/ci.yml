@@ -64,8 +64,14 @@ jobs:
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-${{ matrix.node-version }}-
+          # No restore-keys prefix fallback: a prefix match restores a
+          # node_modules built from a DIFFERENT lockfile. On Windows,
+          # `npm ci` can then hit EPERM while deleting the stale tree and
+          # run a stale package's install script (observed: old
+          # better-sqlite3 v12 install script ran against a v13 lockfile
+          # → node-gyp fallback → "no Visual Studio" failure). Exact-key
+          # only: hit = matching tree, miss = clean install (tarballs are
+          # still warm via the setup-node npm cache above).
       - name: Install dependencies
         run: npm ci
       - name: TypeScript version

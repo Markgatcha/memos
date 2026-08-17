@@ -106,7 +106,7 @@
     "bench:memory": "tsx scripts/bench-memory.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3"
+    "better-sqlite3": "^12.11.1"
   },
   "overrides": {
     "brace-expansion@>=4.0.0 <5.0.5": "5.0.5",

@@ -15,10 +15,11 @@ updates:
         patterns:
           - "*"
     # Ignore major version bumps for packages with known native-build or
-    # breaking-change issues in CI. better-sqlite3 v13 was verified manually
-    # (bundled prebuilds, no install scripts — immune to the npm-12
-    # allow-scripts failure mode); this rule guards FUTURE majors until
-    # they are verified the same way.
+    # breaking-change issues in CI. better-sqlite3 v13 was evaluated and
+    # REJECTED (2026-08-17): it requires Node >=22, which breaks the repo's
+    # engines >=18 contract and the Debian smoke test (trixie ships Node 20;
+    # the v13 binary segfaults on it). This rule guards FUTURE majors until
+    # they are verified against the full CI matrix the same way.
     ignore:
       - dependency-name: "better-sqlite3"
         update-types: ["version-update:semver-major"]

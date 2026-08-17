@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`better-sqlite3` 12.11.1 → 13.0.3** — v13 bundles prebuilds in the npm package and has no install scripts, which removes the node-gyp / npm-12 `allow-scripts` failure mode that previously broke the Arch CI matrix. Verified locally: loads on Node 26, all 178 tests pass.
+- **`better-sqlite3` v13 evaluated and rejected — kept at 12.11.1.** v13.0.3 was installed and verified locally (bundled prebuilds, no install scripts, all tests green), but it raises the minimum Node to **>=22**, which breaks this repo's `engines: >=18` contract and the Debian CI smoke test (Debian trixie ships Node 20.19.2 — the v13 binary segfaults on it, exit 139). Reverted to 12.11.1, which supports Node 20–26. The Dependabot major-bump ignore rule stays in place for future majors.
 
 ### Fixed
 

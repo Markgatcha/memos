@@ -78,6 +78,11 @@ packages = ["server", "adapters"]
 [tool.ruff]
 target-version = "py310"
 line-length = 100
+# scripts/dataset/locomo/ is the vendored upstream snap-research/locomo
+# reference code (dataset generation + evaluation harness). It is kept
+# byte-identical to upstream for provenance, so it is excluded from
+# this project's lint/format rules.
+extend-exclude = ["scripts/dataset/locomo"]
 
 [tool.ruff.lint]
 select = [
