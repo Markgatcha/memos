@@ -1,6 +1,13 @@
 import { ArrowUpRight, FileText } from "lucide-react";
+import type { Metadata } from "next";
 import Reveal from "../_components/Reveal";
 import PageHeader from "../_components/PageHeader";
+
+export const metadata: Metadata = {
+  title: "Documentation",
+  description:
+    "Docs for the AI Trio: MemOS, Universal MCP Toolkit, and LLM Guardian — quick starts, API references, and integration guides.",
+};
 
 const sections = [
   {
@@ -8,13 +15,13 @@ const sections = [
     links: [
       { label: "MemOS Overview & Quick Start", href: "/memos", internal: true },
       {
-        label: "API Reference (GitHub README)",
-        href: "https://github.com/Markgatcha/memos#readme",
-        internal: false,
+        label: "Architecture Guide",
+        href: "/docs/architecture",
+        internal: true,
       },
       {
-        label: "Architecture Guide",
-        href: "https://github.com/Markgatcha/memos/blob/main/ARCHITECTURE.md",
+        label: "API Reference (GitHub README)",
+        href: "https://github.com/Markgatcha/memos#readme",
         internal: false,
       },
     ],

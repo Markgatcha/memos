@@ -1,7 +1,14 @@
 import { Check, ArrowRight } from "lucide-react";
+import type { Metadata } from "next";
 import GithubIcon from "../_components/GithubIcon";
 import Reveal from "../_components/Reveal";
 import PageHeader from "../_components/PageHeader";
+
+export const metadata: Metadata = {
+  title: "Universal MCP Toolkit",
+  description:
+    "MCP transport, server registry, and tool routing for AI agents. stdio + HTTP/SSE, health checks, and zero-config local discovery.",
+};
 
 const features = [
   "MCP transport: stdio + HTTP/SSE",

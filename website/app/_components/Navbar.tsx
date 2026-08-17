@@ -1,7 +1,22 @@
-import { Layers } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { Layers, Menu, X } from "lucide-react";
 import GithubIcon from "./GithubIcon";
 
+const links = [
+  { href: "/memos", label: "MemOS" },
+  { href: "/umt", label: "UMT" },
+  { href: "/guardian", label: "Guardian" },
+  { href: "/benchmarks", label: "Benchmarks" },
+  { href: "/docs", label: "Docs" },
+  { href: "/blog", label: "Blog" },
+  { href: "/support", label: "Support" },
+];
+
 export default function Navbar() {
+  const [open, setOpen] = useState(false);
+
   return (
     <header className="sticky top-0 z-50 border-b border-white/[0.06] bg-base/70 backdrop-blur-xl">
       <nav className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
@@ -13,22 +28,18 @@ export default function Navbar() {
             ContextCore
           </span>
         </a>
-        <div className="flex items-center gap-6 text-sm">
-          <a href="/memos" className="text-zinc-400 hover:text-zinc-100 transition-colors">
-            MemOS
-          </a>
-          <a href="/umt" className="text-zinc-400 hover:text-zinc-100 transition-colors">
-            UMT
-          </a>
-          <a href="/guardian" className="text-zinc-400 hover:text-zinc-100 transition-colors">
-            Guardian
-          </a>
-          <a href="/benchmarks" className="hidden md:inline text-zinc-400 hover:text-zinc-100 transition-colors">
-            Benchmarks
-          </a>
-          <a href="/docs" className="hidden md:inline text-zinc-400 hover:text-zinc-100 transition-colors">
-            Docs
-          </a>
+
+        {/* Desktop links */}
+        <div className="hidden md:flex items-center gap-6 text-sm">
+          {links.slice(0, 5).map((l) => (
+            <a
+              key={l.href}
+              href={l.href}
+              className="text-zinc-400 hover:text-zinc-100 transition-colors"
+            >
+              {l.label}
+            </a>
+          ))}
           <a
             href="https://github.com/Markgatcha/memos"
             target="_blank"
@@ -39,7 +50,46 @@ export default function Navbar() {
             <span className="hidden sm:inline">GitHub</span>
           </a>
         </div>
+
+        {/* Mobile toggle */}
+        <button
+          type="button"
+          aria-label={open ? "Close menu" : "Open menu"}
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          className="md:hidden w-9 h-9 grid place-items-center rounded-lg border border-white/10 text-zinc-300 hover:text-zinc-100 hover:border-white/20 transition-colors"
+        >
+          {open ? <X size={16} /> : <Menu size={16} />}
+        </button>
       </nav>
+
+      {/* Mobile menu */}
+      {open && (
+        <div className="md:hidden border-t border-white/[0.06] bg-base/95 backdrop-blur-xl">
+          <div className="max-w-6xl mx-auto px-6 py-4 flex flex-col gap-1">
+            {links.map((l) => (
+              <a
+                key={l.href}
+                href={l.href}
+                onClick={() => setOpen(false)}
+                className="py-2.5 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+              >
+                {l.label}
+              </a>
+            ))}
+            <a
+              href="https://github.com/Markgatcha/memos"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setOpen(false)}
+              className="mt-2 btn btn-secondary w-fit !px-3 !py-1.5"
+            >
+              <GithubIcon size={15} />
+              GitHub
+            </a>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

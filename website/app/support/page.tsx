@@ -1,6 +1,13 @@
 import { ArrowUpRight, MessageSquare, Bug } from "lucide-react";
+import type { Metadata } from "next";
 import Reveal from "../_components/Reveal";
 import PageHeader from "../_components/PageHeader";
+
+export const metadata: Metadata = {
+  title: "Support",
+  description:
+    "Get help with MemOS, UMT, and LLM Guardian — Discord community and GitHub issues.",
+};
 
 const issueLinks = [
   { label: "MemOS Issues", href: "https://github.com/Markgatcha/memos/issues" },
@@ -33,13 +40,22 @@ export default function Support() {
                 users.
               </p>
               <iframe
-                src="https://discord.com/widget?id=YOUR_DISCORD_GUILD_ID&theme=dark"
+                src="https://discord.com/widget?id=1486822260332298485&theme=dark"
                 width="100%"
                 height="400"
                 frameBorder="0"
                 allowFullScreen
                 title="ContextCore Discord"
               />
+              <a
+                href="https://discord.gg/DyQGgPuueu"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-primary mt-5"
+              >
+                Join the server
+                <ArrowUpRight size={15} />
+              </a>
             </div>
           </div>
         </Reveal>

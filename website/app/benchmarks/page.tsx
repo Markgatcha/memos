@@ -1,5 +1,12 @@
+import type { Metadata } from "next";
 import Reveal from "../_components/Reveal";
 import PageHeader from "../_components/PageHeader";
+
+export const metadata: Metadata = {
+  title: "Benchmarks",
+  description:
+    "Benchmark results for MemOS: BEAM-1M recall, token efficiency of the TOON format, and retrieval quality.",
+};
 
 const beamRows = [
   { category: "Overall (recall@10)", memos: "95.9%", mem0: "64.1%" },

@@ -1,6 +1,13 @@
 import { ArrowRight } from "lucide-react";
+import type { Metadata } from "next";
 import Reveal from "../_components/Reveal";
 import PageHeader from "../_components/PageHeader";
+
+export const metadata: Metadata = {
+  title: "Blog",
+  description:
+    "Engineering posts about the AI Trio, benchmarks, and local-first AI infrastructure.",
+};
 
 export default function Blog() {
   return (
@@ -23,11 +30,13 @@ export default function Blog() {
               benchmarks · Aug 12, 2026
             </div>
             <h2 className="text-xl font-semibold text-zinc-50 mb-2.5 group-hover:text-white transition-colors text-balance">
-              We beat Mem0 on BEAM-1M: 95.9% vs 64.1% recall
+              BEAM-1M results: 95.9% recall with local SQLite and Gemma-300M
+              embeddings
             </h2>
             <p className="text-sm text-zinc-400 leading-relaxed mb-5 max-w-xl">
-              How MemOS achieves superior benchmark performance with local
-              SQLite and Gemma-300M embeddings.
+              How MemOS approaches long-context memory benchmarks with a fully
+              local stack — hybrid retrieval, temporal validity, and trust
+              scoring.
             </p>
             <span className="arrow-link">
               Read the post <ArrowRight size={14} />

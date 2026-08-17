@@ -385,7 +385,9 @@ export default function Home() {
                   </li>
                   <li>
                     <a
-                      href="https://discord.gg/contextcore"
+                      href="https://discord.gg/DyQGgPuueu"
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="text-zinc-400 hover:text-zinc-100 transition-colors"
                     >
                       Discord

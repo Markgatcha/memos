@@ -1,7 +1,14 @@
 import { Check, ArrowRight } from "lucide-react";
+import type { Metadata } from "next";
 import GithubIcon from "../_components/GithubIcon";
 import Reveal from "../_components/Reveal";
 import PageHeader from "../_components/PageHeader";
+
+export const metadata: Metadata = {
+  title: "MemOS — Persistent Memory",
+  description:
+    "Universal, local-first, persistent memory layer for AI agents. Graph-native SQLite storage, temporal validity, trust scoring, and 77.6% token savings with compact TOON.",
+};
 
 const features = [
   "100% local SQLite-backed storage (no cloud)",
