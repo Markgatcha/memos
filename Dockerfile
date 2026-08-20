@@ -14,11 +14,15 @@ RUN npm run build
 FROM python:3.12-slim AS runtime
 WORKDIR /app
 
-# Install system deps
+# Install system deps (make/g++/python3 let better-sqlite3 compile from
+# source if no prebuilt binary matches this Node version)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     nodejs \
     npm \
+    make \
+    g++ \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python source first (needed by hatchling for wheel build)
