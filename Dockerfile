@@ -14,12 +14,18 @@ RUN npm run build
 FROM python:3.12-slim AS runtime
 WORKDIR /app
 
-# Install system deps (make/g++/python3 let better-sqlite3 compile from
-# source if no prebuilt binary matches this Node version)
+# Node.js runtime: reuse the exact Node 22 binary from the build stage.
+# Debian's apt nodejs is too old (no matching better-sqlite3 prebuild)
+# and its node-gyp package is broken (missing 'gyp' python module).
+COPY --from=ts-build /usr/local/bin/node /usr/local/bin/node
+COPY --from=ts-build /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+# Build tools so better-sqlite3 can compile from source as a fallback if
+# no prebuilt binary matches this Node version
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    nodejs \
-    npm \
     make \
     g++ \
     python3 \
