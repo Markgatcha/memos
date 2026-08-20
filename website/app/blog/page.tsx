@@ -1,4 +1,4 @@
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, ArrowUpRight } from "lucide-react";
 import type { Metadata } from "next";
 import Reveal from "../_components/Reveal";
 import PageHeader from "../_components/PageHeader";
@@ -8,6 +8,28 @@ export const metadata: Metadata = {
   description:
     "Engineering posts about the AI Trio, benchmarks, and local-first AI infrastructure.",
 };
+
+const posts = [
+  {
+    date: "Aug 19, 2026",
+    tag: "open source",
+    title: "Why agent memory shouldn't cost $249 a month",
+    excerpt:
+      "Mem0's platform charges $19–$249/month and keeps your memories in their cloud. MemOS is MIT-licensed, runs on a SQLite file on your disk, and includes graph memory for free. Here's the full breakdown — pricing, features, and what 'open source' actually means for each.",
+    href: "/compare/memos-vs-mem0",
+    internal: true,
+  },
+  {
+    date: "Aug 12, 2026",
+    tag: "benchmarks",
+    title:
+      "BEAM-1M results: 95.9% recall with local SQLite and Gemma-300M embeddings",
+    excerpt:
+      "How MemOS approaches long-context memory benchmarks with a fully local stack — hybrid retrieval, temporal validity, and trust scoring.",
+    href: "https://github.com/Markgatcha/memos/blob/main/docs/benchmark-comparison.md",
+    internal: false,
+  },
+];
 
 export default function Blog() {
   return (
@@ -19,30 +41,30 @@ export default function Blog() {
           subtitle="Engineering posts about the AI Trio, benchmarks, and local-first AI infrastructure."
         />
 
-        <Reveal>
-          <a
-            href="https://github.com/Markgatcha/memos/blob/main/docs/benchmark-comparison.md"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="card p-7 block group"
-          >
-            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-3">
-              benchmarks · Aug 12, 2026
-            </div>
-            <h2 className="text-xl font-semibold text-zinc-50 mb-2.5 group-hover:text-white transition-colors text-balance">
-              BEAM-1M results: 95.9% recall with local SQLite and Gemma-300M
-              embeddings
-            </h2>
-            <p className="text-sm text-zinc-400 leading-relaxed mb-5 max-w-xl">
-              How MemOS approaches long-context memory benchmarks with a fully
-              local stack — hybrid retrieval, temporal validity, and trust
-              scoring.
-            </p>
-            <span className="arrow-link">
-              Read the post <ArrowRight size={14} />
-            </span>
-          </a>
-        </Reveal>
+        <div className="space-y-4">
+          {posts.map((p, i) => (
+            <Reveal key={p.title} delay={i * 70}>
+              <a
+                href={p.href}
+                {...(p.internal ? {} : { target: "_blank", rel: "noopener noreferrer" })}
+                className="card p-7 block group"
+              >
+                <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-3">
+                  {p.tag} · {p.date}
+                </div>
+                <h2 className="text-xl font-semibold text-zinc-50 mb-2.5 group-hover:text-white transition-colors text-balance">
+                  {p.title}
+                </h2>
+                <p className="text-sm text-zinc-400 leading-relaxed mb-5 max-w-xl">
+                  {p.excerpt}
+                </p>
+                <span className="arrow-link">
+                  Read the post {p.internal ? <ArrowRight size={14} /> : <ArrowUpRight size={14} />}
+                </span>
+              </a>
+            </Reveal>
+          ))}
+        </div>
       </div>
     </main>
   );

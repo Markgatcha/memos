@@ -1,32 +1,42 @@
-# MemOS Documentation
+# Welcome to MemOS
 
-**Universal, local-first, persistent memory layer for AI agents.**
+**The memory layer your AI agent has been missing.**
 
-MemOS gives any LLM, chatbot, or AI agent a memory that survives restarts. It runs 100% locally with SQLite — no cloud dependencies, no API keys, no vendor lock-in.
+You know that feeling — you tell your AI assistant something important, close the app, and next time it's back to square one. Every conversation starts with "so, what were we working on?" MemOS fixes that. It gives any LLM, chatbot, or agent a memory that **survives restarts**, stored as a plain SQLite file on your own machine.
 
-## Quick start
+No cloud. No API keys. No account. No monthly bill. Just memory that stays yours.
+
+!!! tip "Five minutes to your first memory"
+    If you're new here, start with the [Installation guide](installation.md) — it walks you through everything step by step, and we'll wait right here.
+
+## The 30-second version
 
 === "TypeScript"
 
     ```bash
-    npm install @memos/sdk
+    npm install @mem-os/sdk
     ```
 
     ```typescript
-    import { MemOS } from "@memos/sdk";
+    import { MemOS } from "@mem-os/sdk";
 
     const memos = new MemOS();
     await memos.init();
 
+    // Remember something
     await memos.store("User prefers dark mode", { type: "preference" });
+
+    // Recall it later — even in a brand-new process
     const results = await memos.search("dark mode");
     ```
 
 === "Python"
 
     ```bash
-    pip install memos
-    memos-server
+    git clone https://github.com/Markgatcha/memos.git
+    cd memos
+    pip install -e .
+    memos-server   # → http://localhost:7400
     ```
 
     ```python
@@ -37,6 +47,16 @@ MemOS gives any LLM, chatbot, or AI agent a memory that survives restarts. It ru
         json={"content": "User prefers dark mode", "type": "preference"},
     )
     ```
+
+That's genuinely it. Store a memory, kill the process, start a new one, search — it's still there.
+
+## Why people pick MemOS
+
+- **It's actually local.** Your memories live in one SQLite file you can open, copy, back up, or delete. Nothing phones home.
+- **It's a graph, not a list.** New memories auto-link to related ones, so searching "theme" can surface your "dark mode" preference.
+- **It understands time.** Memories carry validity windows (`validFrom`/`validTo`), so "user lives in Berlin" can gracefully stop being true.
+- **It's cheap to feed to an LLM.** The compact TOON format cuts context tokens by ~77% versus JSON.
+- **It's free.** MIT license, no paid tier, no "graph memory costs extra." Fork it, modify it, ship it.
 
 ## Core concepts
 
@@ -80,8 +100,10 @@ Application → SDK/HTTP → Memory Engine → Graph → SQLite
           FTS5 Search
 ```
 
-## Next steps
+## Where to next?
 
+- [Installation](installation.md) — step-by-step setup for every platform (start here)
 - [API Reference](api-reference.md) — full method documentation
-- [Adapters](adapters.md) — framework integrations (Ollama, LangChain, custom)
-- [GitHub](https://github.com/Markgatcha/memos) — source code and issues
+- [Adapters](adapters.md) — framework integrations (Ollama, LangChain, CrewAI)
+- [Benchmarks](benchmark-comparison.md) — how MemOS measures up (spoiler: 95.9% recall on BEAM-1M)
+- [GitHub](https://github.com/Markgatcha/memos) — source code, issues, and the star button ⭐

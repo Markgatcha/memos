@@ -1,0 +1,39 @@
+# MemOS
+
+> MemOS is a universal, local-first, persistent memory layer for AI agents and LLMs. It gives any LLM a memory that survives restarts — graph-native SQLite storage, temporal validity, trust scoring, and a compact format that cuts context tokens by ~77%. 100% local, no cloud, no API keys, MIT licensed, free forever.
+
+MemOS is part of the AI Trio: [Universal MCP Toolkit](https://github.com/Markgatcha/universal-mcp-toolkit) (MCP transport + tools), MemOS (memory + persistence), and [LLM Guardian](https://github.com/Markgatcha/llm-guardian) (token-cost optimization).
+
+## Install
+
+- TypeScript/Node.js: `npm install @mem-os/sdk`
+- Python (from source): `git clone https://github.com/Markgatcha/memos.git && cd memos && pip install -e .`
+- Docker: `git clone https://github.com/Markgatcha/memos.git && cd memos && docker compose up -d`
+- Start the HTTP server: `memos-server` → http://localhost:7400
+
+## Docs
+
+- [Home / Overview](https://github.com/Markgatcha/memos/blob/main/docs/index.md): core concepts — memory nodes, typed edges, the graph, SQLite storage
+- [Installation](https://github.com/Markgatcha/memos/blob/main/docs/installation.md): step-by-step setup for npm, Python, and Docker, with troubleshooting
+- [API Reference](https://github.com/Markgatcha/memos/blob/main/docs/api-reference.md): every SDK method — store, search, summarize, link, getGraph, getNeighbours
+- [Adapters](https://github.com/Markgatcha/memos/blob/main/docs/adapters.md): Ollama, LangChain, and custom adapter integrations
+- [Benchmarks](https://github.com/Markgatcha/memos/blob/main/docs/benchmark-comparison.md): BEAM-1M recall 95.9% vs Mem0 64.1%; LoCoMo and LongMemEval parity
+- [Benchmark Quality](https://github.com/Markgatcha/memos/blob/main/docs/benchmark-quality.md): methodology and context-pack format spec
+- [AI Trio Contracts](https://github.com/Markgatcha/memos/blob/main/docs/ai-trio-contracts.md): how MemOS, UMT, and LLM Guardian compose
+
+## Key facts
+
+- Storage: SQLite (WAL mode, FTS5) at `~/.memos/memos.db` — configurable via `MEMOS_DB_PATH`
+- Server: HTTP API on port 7400 (`MEMOS_PORT` to change), health at `/health`, docs at `/docs`
+- Embeddings: local (Gemma-300M) by default — no API key required
+- MCP: built-in adapter, stdio + HTTP/SSE (`npx -y @mem-os/sdk mcp`)
+- Memory features: temporal validity (validFrom/validTo), trust scoring, provenance, confidence state machine, compact TOON format (77.6% token savings vs JSON)
+- License: MIT — free to use, modify, and ship; no paid tier
+
+## Website & community
+
+- Website: https://context-core.dev/memos/
+- GitHub: https://github.com/Markgatcha/memos
+- npm: https://www.npmjs.com/package/@mem-os/sdk
+- Discord: https://discord.gg/DyQGgPuueu
+- Twitter/X: https://x.com/Context_Core

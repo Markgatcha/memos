@@ -2,6 +2,7 @@ import { ArrowUpRight, MessageSquare, Bug } from "lucide-react";
 import type { Metadata } from "next";
 import Reveal from "../_components/Reveal";
 import PageHeader from "../_components/PageHeader";
+import XIcon from "../_components/XIcon";
 
 export const metadata: Metadata = {
   title: "Support",
@@ -61,6 +62,41 @@ export default function Support() {
         </Reveal>
 
         <Reveal className="mb-12" delay={80}>
+          <div className="card overflow-hidden">
+            <div className="flex items-center gap-2.5 px-6 py-4 border-b border-white/[0.06]">
+              <XIcon size={15} />
+              <span className="text-sm font-medium text-zinc-100">Twitter / X</span>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-zinc-400 mb-5">
+                Release notes, benchmark drops, and local-first AI takes.
+                Follow the project or the maintainer.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <a
+                  href="https://x.com/Context_Core"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-secondary"
+                >
+                  <XIcon size={14} />
+                  @Context_Core
+                </a>
+                <a
+                  href="https://x.com/hitvdrs_rblx"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-secondary"
+                >
+                  <XIcon size={14} />
+                  @hitvdrs_rblx
+                </a>
+              </div>
+            </div>
+          </div>
+        </Reveal>
+
+        <Reveal className="mb-12" delay={120}>
           <h2 className="flex items-center gap-2.5 text-sm font-medium text-zinc-100 mb-4">
             <Bug size={15} className="text-zinc-500" />
             GitHub issues

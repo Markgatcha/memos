@@ -15,6 +15,8 @@ const pages = [
   "benchmarks",
   "blog",
   "support",
+  "compare/memos-vs-mem0",
+  "compare/umt-vs-mcp-get-supergateway",
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

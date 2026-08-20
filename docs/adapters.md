@@ -16,7 +16,8 @@ Automatic memory for Ollama chat completions. Memories are injected into the sys
 ### Installation
 
 ```bash
-pip install memos
+# From the repo root (the Python package installs from source)
+pip install -e ".[ollama]"
 # Make sure Ollama and MemOS server are running
 ```
 
@@ -71,7 +72,8 @@ Drop-in `BaseMemory` implementation for LangChain chains and agents.
 ### Installation
 
 ```bash
-pip install memos langchain langchain-openai
+# From the repo root
+pip install -e ".[langchain]"
 ```
 
 ### Usage
@@ -111,7 +113,7 @@ memory = MemOSMemory(
 
 ## Building a custom adapter
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full adapter template and checklist.
+See [CONTRIBUTING.md](https://github.com/Markgatcha/memos/blob/main/CONTRIBUTING.md) for the full adapter template and checklist.
 
 The core pattern is:
 

@@ -41,7 +41,12 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Installation: installation.md
   - API Reference: api-reference.md
   - Adapters: adapters.md
-  - Contributing: ../CONTRIBUTING.md
-  - Roadmap: ../ROADMAP.md
+  - Benchmarks: benchmark-comparison.md
+  - Benchmark Quality: benchmark-quality.md
+  - Benchmarking Guide: benchmarking.md
+  - AI Trio Contracts: ai-trio-contracts.md
+  - Contributing: https://github.com/Markgatcha/memos/blob/main/CONTRIBUTING.md
+  - Roadmap: https://github.com/Markgatcha/memos/blob/main/ROADMAP.md

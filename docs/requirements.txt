@@ -1,0 +1,4 @@
+# Docs build dependencies (used by Read the Docs)
+mkdocs>=1.6
+mkdocs-material>=9.5
+pymdown-extensions>=10.0

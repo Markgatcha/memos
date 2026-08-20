@@ -10,14 +10,29 @@
 </p>
 
 <p align="center">
+  <b>English</b> · <a href="translations/README.zh-CN.md">简体中文</a> · <a href="translations/README.es.md">Español</a> · <a href="translations/README.ja.md">日本語</a> · <a href="translations/README.ko.md">한국어</a> · <a href="translations/README.fr.md">Français</a> · <a href="translations/README.de.md">Deutsch</a> · <a href="translations/README.pt-BR.md">Português</a> · <a href="translations/README.ru.md">Русский</a> · <a href="translations/README.hi.md">हिन्दी</a> · <a href="translations/README.ar.md">العربية</a>
+</p>
+
+<p align="center">
   <a href="https://www.npmjs.com/package/@mem-os/sdk"><img src="https://img.shields.io/npm/v/@mem-os/sdk?style=flat-square&color=cb3837" alt="npm"></a>
-  <a href="https://pypi.org/project/mem-os-sdk/"><img src="https://img.shields.io/badge/pypi-v1.6.26-3776ab?style=flat-square" alt="PyPI"></a>
   <a href="https://github.com/Markgatcha/memos/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Markgatcha/memos?style=flat-square&color=green" alt="License"></a>
   <a href="https://github.com/Markgatcha/memos/actions"><img src="https://img.shields.io/github/actions/workflow/status/Markgatcha/memos/ci.yml?style=flat-square" alt="CI"></a>
   <img src="https://img.shields.io/badge/100%25%20local-zero%20cloud%20deps-brightgreen?style=flat-square" alt="100% Local">
+  <a href="https://github.com/Markgatcha/memos/stargazers"><img src="https://img.shields.io/github/stars/Markgatcha/memos?style=flat-square" alt="Stars"></a>
 </p>
 
-> **Release status:** The GitHub source is the canonical, always-current build (v1.6.26). The published npm package (`@mem-os/sdk`) and PyPI package (`mem-os-sdk`) are updated on each tagged release but may briefly lag the source. For the latest features, install [from source](#from-source).
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Markgatcha/memos/main/assets/demo-animated.svg" alt="MemOS demo: store a memory, kill the process, recall it — all local" width="720" />
+</p>
+
+<p align="center">
+  <a href="https://context-core.dev/memos/"><strong>Website</strong></a> ·
+  <a href="https://memos.readthedocs.io"><strong>Docs</strong></a> ·
+  <a href="https://discord.gg/DyQGgPuueu"><strong>Discord</strong></a> ·
+  <a href="https://x.com/Context_Core"><strong>Twitter/X</strong></a>
+</p>
+
+> **Release status:** The GitHub source is the canonical, always-current build (v1.6.26). The npm package (`@mem-os/sdk`) is updated on each tagged release but may briefly lag the source. The Python package currently installs [from source](#from-source). For the latest features, install from source.
 
 ---
 
@@ -638,16 +653,19 @@ MemOS works on **Windows**, **macOS**, and **Linux**. Choose your preferred meth
 npm install @mem-os/sdk
 ```
 
-### PyPI (Python)
+### Python (from source)
+
+The Python package isn't on PyPI yet — install straight from the repo (you get exactly what's on `main`):
 
 ```bash
-pip install mem-os-sdk
+git clone https://github.com/Markgatcha/memos.git
+cd memos
+pip install -e .
 
-# With optional dependencies
-pip install "mem-os-sdk[langchain]"   # LangChain adapter
-pip install "mem-os-sdk[ollama]"      # Ollama adapter
-pip install "mem-os-sdk[crewai]"      # CrewAI adapter
-pip install "mem-os-sdk[all]"         # All adapters
+# With optional framework adapters
+pip install -e ".[langchain]"   # LangChain adapter
+pip install -e ".[ollama]"      # Ollama adapter
+pip install -e ".[all]"         # both adapters
 ```
 
 ### From source
@@ -759,8 +777,21 @@ MemOS is the **memory layer** of the local-first AI stack. It forms an **AI Trio
 | **CLI** | ✅ Full REPL + 20+ commands | ✅ Basic add/search |
 | **Privacy** | ✅ 100% local, zero network calls | ❌ Cloud calls by default |
 | **Diagnostics** | ✅ `diagnostics()` with source/type/namespace breakdown | ❌ |
+| **Price** | ✅ Free forever — MIT, no paid tier | ❌ Platform: free tier capped, $19–$249/mo; graph memory is Pro-only |
+
+> **Free and open source, actually.** MemOS is MIT-licensed: use it, modify it, self-host it, ship it in your product — no account, no usage metering, no paid tier hiding features. Mem0's platform (mem0.ai/pricing) starts at $19/month and charges $249/month for graph memory — a feature MemOS includes by default. Your memories in MemOS are a SQLite file on your disk; on the Mem0 platform they live in their cloud.
 
 ---
+
+## ⭐ Star history
+
+If MemOS earns a place in your stack, the star button is right up there — it helps more than you'd think.
+
+<p align="center">
+  <a href="https://star-history.com/#Markgatcha/memos&Date">
+    <img src="https://api.star-history.com/svg?repos=Markgatcha/memos&type=Date" alt="Star History Chart" width="640" />
+  </a>
+</p>
 
 ---
 

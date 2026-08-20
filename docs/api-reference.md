@@ -9,7 +9,7 @@ Complete reference for the MemOS TypeScript SDK and Python HTTP API.
 Create a new MemOS instance.
 
 ```typescript
-import { MemOS } from "@memos/sdk";
+import { MemOS } from "@mem-os/sdk";
 
 const memos = new MemOS({
   dbPath: "./my-app.db",        // SQLite path (default: ~/.memos/memos.db)

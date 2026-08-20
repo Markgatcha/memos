@@ -63,6 +63,21 @@ const sections = [
       },
     ],
   },
+  {
+    title: "Comparisons",
+    links: [
+      {
+        label: "MemOS vs Mem0 vs Zep vs Letta",
+        href: "/compare/memos-vs-mem0",
+        internal: true,
+      },
+      {
+        label: "UMT vs mcp-get vs supergateway",
+        href: "/compare/umt-vs-mcp-get-supergateway",
+        internal: true,
+      },
+    ],
+  },
 ];
 
 export default function Docs() {

@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  ArrowUpRight,
   Brain,
   Cable,
   Gauge,
@@ -12,7 +11,11 @@ import GithubIcon from "./_components/GithubIcon";
 import Reveal from "./_components/Reveal";
 import Counter from "./_components/Counter";
 import Terminal from "./_components/Terminal";
+import HeroDemo from "./_components/HeroDemo";
 import SpotlightCard from "./_components/SpotlightCard";
+import StarButton from "./_components/StarButton";
+import DiscordIcon from "./_components/DiscordIcon";
+import XIcon from "./_components/XIcon";
 
 const stats = [
   { value: 95.9, decimals: 1, suffix: "%", label: "BEAM-1M recall @10" },
@@ -77,20 +80,12 @@ export default function Home() {
               Explore the stack
               <ArrowRight size={15} />
             </a>
-            <a
-              href="https://github.com/Markgatcha/memos"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-secondary"
-            >
-              <GithubIcon size={15} />
-              View on GitHub
-            </a>
+            <StarButton repo="Markgatcha/memos" label="Star on GitHub" />
           </div>
         </div>
 
         <div className="animate-fade-up mt-16" style={{ animationDelay: "0.45s" }}>
-          <Terminal />
+          <HeroDemo />
         </div>
 
         <div className="mt-14 text-center">
@@ -320,15 +315,10 @@ export default function Home() {
                 Read the docs
                 <ArrowRight size={15} />
               </a>
-              <a
-                href="https://github.com/Markgatcha/memos"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-secondary"
-              >
-                Star on GitHub
-                <ArrowUpRight size={15} />
-              </a>
+              <StarButton repo="Markgatcha/memos" label="Star on GitHub" />
+            </div>
+            <div className="mt-12 text-left">
+              <Terminal />
             </div>
           </Reveal>
         </div>
@@ -378,8 +368,9 @@ export default function Home() {
                       href="https://github.com/Markgatcha/memos"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-zinc-400 hover:text-zinc-100 transition-colors"
+                      className="inline-flex items-center gap-2 text-zinc-400 hover:text-zinc-100 transition-colors"
                     >
+                      <GithubIcon size={13} />
                       GitHub
                     </a>
                   </li>
@@ -388,9 +379,21 @@ export default function Home() {
                       href="https://discord.gg/DyQGgPuueu"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-zinc-400 hover:text-zinc-100 transition-colors"
+                      className="inline-flex items-center gap-2 text-zinc-400 hover:text-zinc-100 transition-colors"
                     >
+                      <DiscordIcon size={13} />
                       Discord
+                    </a>
+                  </li>
+                  <li>
+                    <a
+                      href="https://x.com/Context_Core"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 text-zinc-400 hover:text-zinc-100 transition-colors"
+                    >
+                      <XIcon size={13} />
+                      Twitter / X
                     </a>
                   </li>
                 </ul>
