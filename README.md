@@ -295,7 +295,7 @@ ws = websocket.create_connection("ws://localhost:7400/ws")
 ### Ollama Adapter (Python)
 
 ```python
-from adapters.ollama import OllamaMemory
+from memos.adapters.ollama import OllamaMemory
 
 chat = OllamaMemory(model="llama3")
 await chat.init()
@@ -311,7 +311,7 @@ response = await chat.chat("What theme do I like?")
 ```python
 from langchain_openai import ChatOpenAI
 from langchain.chains import ConversationChain
-from adapters.langchain import MemOSMemory
+from memos.adapters.langchain import MemOSMemory
 
 memory = MemOSMemory()
 chain = ConversationChain(llm=ChatOpenAI(), memory=memory)
@@ -653,19 +653,28 @@ MemOS works on **Windows**, **macOS**, and **Linux**. Choose your preferred meth
 npm install @mem-os/sdk
 ```
 
-### Python (from source)
+### Python (PyPI)
 
-The Python package isn't on PyPI yet — install straight from the repo (you get exactly what's on `main`):
+```bash
+pip install mem-os-sdk
+
+# With optional framework adapters
+pip install "mem-os-sdk[langchain]"   # LangChain adapter
+pip install "mem-os-sdk[ollama]"      # Ollama adapter
+pip install "mem-os-sdk[all]"         # both adapters
+```
+
+The Python package wraps the TypeScript SDK, so **Node.js >= 18 is required**
+at runtime. On first server start it installs the native `better-sqlite3`
+module automatically (via npm).
+
+Or install straight from the repo (you get exactly what's on `main`):
 
 ```bash
 git clone https://github.com/Markgatcha/memos.git
 cd memos
-pip install -e .
-
-# With optional framework adapters
-pip install -e ".[langchain]"   # LangChain adapter
-pip install -e ".[ollama]"      # Ollama adapter
-pip install -e ".[all]"         # both adapters
+npm install && npm run build   # compile the TypeScript SDK
+pip install -e ".[all]"
 ```
 
 ### From source

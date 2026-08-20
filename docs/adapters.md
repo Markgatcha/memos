@@ -24,7 +24,7 @@ pip install -e ".[ollama]"
 ### Usage
 
 ```python
-from adapters.ollama import OllamaMemory
+from memos.adapters.ollama import OllamaMemory
 
 # Create adapter
 chat = OllamaMemory(model="llama3")
@@ -51,7 +51,7 @@ async for token in chat.chat_stream("Tell me a story"):
 ### Configuration
 
 ```python
-from adapters.ollama import OllamaMemory, OllamaConfig
+from memos.adapters.ollama import OllamaMemory, OllamaConfig
 
 config = OllamaConfig(
     base_url="http://localhost:11434",  # Ollama server
@@ -81,7 +81,7 @@ pip install -e ".[langchain]"
 ```python
 from langchain_openai import ChatOpenAI
 from langchain.chains import ConversationChain
-from adapters.langchain import MemOSMemory
+from memos.adapters.langchain import MemOSMemory
 
 # Create memory
 memory = MemOSMemory()

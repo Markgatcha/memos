@@ -4,7 +4,7 @@ Let's get MemOS running on your machine. Pick your path below — every one of t
 
 !!! info "What you'll need"
     - **TypeScript path:** Node.js 18+ and npm
-    - **Python path:** Python 3.10+ and pip
+    - **Python path:** Python 3.11+ and pip (plus Node.js 18+ — the Python server drives the TypeScript SDK)
     - **Docker path:** Docker and Docker Compose
     - About 5 minutes and zero API keys
 
@@ -44,39 +44,41 @@ node memory.mjs
 
 Run it again. And again. The memory is still there every time — it's in `~/.memos/memos.db`, a plain SQLite file you own.
 
-## Option 2 — Python (from source)
+## Option 2 — Python (PyPI)
 
-The Python package is installed from source right now, which has a nice side effect: you always get exactly what's on `main`.
+The Python package lives on PyPI as **`mem-os-sdk`** (matching npm's `@mem-os/sdk`). It wraps the TypeScript SDK, so you'll also need Node.js 18+ on your PATH.
 
-**Step 1. Clone the repo**
-
-```bash
-git clone https://github.com/Markgatcha/memos.git
-cd memos
-```
-
-**Step 2. Install in editable mode**
+**Step 1. Install from PyPI**
 
 ```bash
-pip install -e .
+pip install mem-os-sdk
 ```
 
 Want the framework adapters too? Grab them in one go:
 
 ```bash
-pip install -e ".[langchain]"   # LangChain adapter
-pip install -e ".[ollama]"      # Ollama adapter
-pip install -e ".[all]"         # both of the above
+pip install "mem-os-sdk[langchain]"   # LangChain adapter
+pip install "mem-os-sdk[ollama]"      # Ollama adapter
+pip install "mem-os-sdk[all]"         # both of the above
 ```
 
-**Step 3. Start the memory server**
+Prefer living on the bleeding edge? Install from source instead:
+
+```bash
+git clone https://github.com/Markgatcha/memos.git
+cd memos
+npm install && npm run build   # compile the TypeScript SDK
+pip install -e ".[all]"
+```
+
+**Step 2. Start the memory server**
 
 ```bash
 memos-server
 # → Listening on http://localhost:7400
 ```
 
-**Step 4. Store and recall**
+**Step 3. Store and recall**
 
 From another terminal:
 
@@ -100,7 +102,7 @@ requests.post(f"{BASE}/store", json={"content": "User prefers dark mode", "type"
 print(requests.post(f"{BASE}/search", json={"query": "dark mode", "limit": 5}).json())
 ```
 
-**Step 5. Check the health endpoint**
+**Step 4. Check the health endpoint**
 
 ```bash
 curl http://localhost:7400/health
@@ -145,7 +147,7 @@ If step 3 finds it, MemOS is working. That's the whole promise — memory that s
 ## Troubleshooting
 
 **`memos-server: command not found`**
-The pip install didn't put scripts on your PATH. Try `python -m server.main` from the repo root, or reinstall with `pip install -e .` inside a virtualenv.
+The pip install didn't put scripts on your PATH. Try `python -m memos.server.main` from the repo root, or reinstall with `pip install -e .` inside a virtualenv.
 
 **Port 7400 already in use**
 Something else is on that port. Set a different one via the `MEMOS_PORT` environment variable: `MEMOS_PORT=7500 memos-server`.

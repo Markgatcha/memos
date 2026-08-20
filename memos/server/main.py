@@ -7,14 +7,15 @@ over HTTP. The server wraps a headless Node.js subprocess that
 runs the TypeScript SDK.
 
 Usage:
-    python -m server.main            # Default: localhost:7400
-    MEMOS_PORT=8080 python -m server.main
-    memos-server backup              # Backup the database
-    memos-server restore <path>      # Restore from backup
+    python -m memos.server.main    # Default: localhost:7400
+    MEMOS_PORT=8080 python -m memos.server.main
+    memos-server backup            # Backup the database
+    memos-server restore <path>    # Restore from backup
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -25,6 +26,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .. import __version__
 from .routes import router
 
 # ---------------------------------------------------------------------------
@@ -36,12 +38,15 @@ MEMOS_HOST = os.environ.get("MEMOS_HOST", "0.0.0.0")
 MEMOS_DB_PATH = os.environ.get("MEMOS_DB_PATH", str(Path.home() / ".memos" / "memos.db"))
 MEMOS_LOG_LEVEL = os.environ.get("MEMOS_LOG_LEVEL", "info").lower()
 
+# better-sqlite3 is a native Node module, so it cannot ship inside the
+# Python wheel — it is installed via npm on first server start when the
+# bundled SDK copy is used (see _ensure_runtime_sdk below).
+_BETTER_SQLITE3_SPEC = "better-sqlite3@^12.11.1"
+
 
 # ---------------------------------------------------------------------------
-# Lifespan — start/stop Node.js subprocess
+# Node.js SDK resolution
 # ---------------------------------------------------------------------------
-
-_node_process: subprocess.Popen | None = None
 
 
 def _find_node_binary() -> str:
@@ -55,9 +60,127 @@ def _find_node_binary() -> str:
     return node
 
 
+def _native_binding_present(pkg_dir: Path) -> bool:
+    """True if better-sqlite3's native binding was actually built/installed.
+
+    A bare ``node_modules/better-sqlite3`` folder is not enough — if npm's
+    install scripts were blocked, the folder exists but the ``.node`` binary
+    is missing and ``require()`` crashes at runtime.
+    """
+    if (pkg_dir / "build" / "Release" / "better_sqlite3.node").is_file():
+        return True
+    # prebuild-install layout: prebuilds/<platform-arch>/*.node
+    prebuilds = pkg_dir / "prebuilds"
+    if prebuilds.is_dir():
+        for sub in prebuilds.iterdir():
+            if sub.is_dir() and any(sub.glob("*.node")):
+                return True
+    return False
+
+
+def _better_sqlite3_in(node_modules: Path) -> bool:
+    """True if better-sqlite3 sits in THIS node_modules with a native binding.
+
+    Deliberately does not walk up the directory tree: ancestor node_modules
+    (e.g. a stray one in the user's home directory) may hold a broken copy
+    that Node would resolve and crash on.
+    """
+    pkg = node_modules / "better-sqlite3"
+    return pkg.is_dir() and _native_binding_present(pkg)
+
+
+def _ensure_runtime_sdk() -> Path:
+    """Return a directory containing index.js plus a working better-sqlite3.
+
+    Two layouts are supported:
+
+    1. **Source checkout** — the compiled ``dist/`` sits below the repo's
+       ``node_modules`` (from ``npm install``), so it is used directly.
+    2. **pip-installed wheel** — the compiled SDK is bundled at
+       ``memos/_js``. It is staged into ``~/.memos/runtime/js`` and
+       better-sqlite3 is npm-installed there on first run (the native
+       module cannot ship inside a wheel).
+    """
+    here = Path(__file__).resolve().parent  # memos/server/
+    pkg_root = here.parent  # memos/
+    repo_root = pkg_root.parent  # repository root (dev layout)
+
+    # Layout 1: source checkout with a working repo-level better-sqlite3
+    checkout_dist = repo_root / "dist"
+    if (checkout_dist / "index.js").is_file() and _better_sqlite3_in(repo_root / "node_modules"):
+        return checkout_dist
+
+    # Layout 2: bundled wheel SDK
+    bundled = pkg_root / "_js"
+    if not (bundled / "index.js").is_file():
+        raise RuntimeError(
+            "MemOS TypeScript SDK not found. Build it first:\n"
+            "  npm install && npm run build\n"
+            "(looked for dist/index.js in the source checkout and the bundled copy)"
+        )
+
+    # Stage the bundled SDK into a writable runtime directory. A version
+    # marker keeps the staged copy in sync across package upgrades.
+    runtime = Path(
+        os.environ.get("MEMOS_RUNTIME_DIR", str(Path.home() / ".memos" / "runtime" / "js"))
+    )
+    marker = runtime / ".memos-sdk-version"
+    needs_copy = (
+        not marker.is_file()
+        or marker.read_text(encoding="utf-8").strip() != __version__
+        or not (runtime / "index.js").is_file()
+    )
+    if needs_copy:
+        runtime.mkdir(parents=True, exist_ok=True)
+        for item in bundled.iterdir():
+            if item.name == "node_modules":
+                continue
+            dest = runtime / item.name
+            if item.is_dir():
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(item, dest)
+            else:
+                shutil.copy2(item, dest)
+        marker.write_text(__version__, encoding="utf-8")
+
+    if not _better_sqlite3_in(runtime / "node_modules"):
+        npm = shutil.which("npm")
+        if npm is None:
+            raise RuntimeError(
+                "better-sqlite3 is missing and npm was not found to install it.\n"
+                f"  Run manually: cd {runtime} && npm install {_BETTER_SQLITE3_SPEC}"
+            )
+        # npm 11+ gates install scripts behind package.json "allowScripts".
+        # Without this, better-sqlite3's prebuild-install step is blocked
+        # and the native binding never lands. "type": "module" also keeps
+        # Node from reparsing the ESM bridge files.
+        runtime_pkg = runtime / "package.json"
+        if not runtime_pkg.exists():
+            runtime_pkg.write_text(
+                json.dumps(
+                    {
+                        "name": "memos-runtime",
+                        "private": True,
+                        "type": "module",
+                        "allowScripts": {"better-sqlite3": True},
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        print(f"  First run: installing {_BETTER_SQLITE3_SPEC} into {runtime} ...")
+        subprocess.run(
+            [npm, "install", "--no-audit", "--no-fund", _BETTER_SQLITE3_SPEC],
+            cwd=str(runtime),
+            check=True,
+        )
+    return runtime
+
+
 def _start_node_server() -> subprocess.Popen:
     """Start the Node.js MemOS server as a subprocess."""
-    sdk_dir = Path(__file__).resolve().parent.parent / "src"
+    sdk_dir = _ensure_runtime_sdk()
     bridge_script = sdk_dir / "_bridge.mjs"
 
     # Write bridge script if it doesn't exist
@@ -73,6 +196,13 @@ def _start_node_server() -> subprocess.Popen:
         text=True,
     )
     return proc
+
+
+# ---------------------------------------------------------------------------
+# Lifespan — start/stop Node.js subprocess
+# ---------------------------------------------------------------------------
+
+_node_process: subprocess.Popen | None = None
 
 
 @asynccontextmanager
@@ -96,7 +226,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MemOS",
     description="Universal memory layer for AI agents — REST API",
-    version="1.5.0-beta.1",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -114,7 +244,7 @@ app.include_router(router, prefix="/api/mem")
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "service": "memos", "version": "1.5.0-beta.1"}
+    return {"status": "ok", "service": "memos", "version": __version__}
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +294,7 @@ def _cli_backup(output: str | None = None) -> None:
 
     manifest = {
         "timestamp": datetime.now().isoformat(),
-        "version": "1.5.0-beta.1",
+        "version": __version__,
         "nodeCount": node_count,
         "edgeCount": edge_count,
         "dbSizeBytes": db_size,
@@ -253,7 +383,7 @@ def main():
     print(f"  Docs: http://{MEMOS_HOST}:{MEMOS_PORT}/docs")
 
     uvicorn.run(
-        "server.main:app",
+        "memos.server.main:app",
         host=MEMOS_HOST,
         port=MEMOS_PORT,
         log_level=MEMOS_LOG_LEVEL,

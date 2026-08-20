@@ -51,13 +51,13 @@
 npm install @mem-os/sdk
 ```
 
-### Python（ソースから）
+### Python（PyPI）
+
+PyPIのパッケージ名は **`mem-os-sdk`**（npmの`@mem-os/sdk`に対応）。TypeScript SDKをラップしているので、Node.js 18+も必要です。
 
 ```bash
-git clone https://github.com/Markgatcha/memos.git
-cd memos
-pip install -e .
-pip install -e ".[all]"   # オプション：LangChain + Ollama アダプター
+pip install mem-os-sdk
+pip install "mem-os-sdk[all]"   # + LangChain/Ollama adapters
 ```
 
 ### Docker

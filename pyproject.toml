@@ -3,12 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "memos"
-version = "1.5.0b1"
+# NOTE: the PyPI name is "mem-os-sdk" (matching npm's @mem-os/sdk). The
+# plain name "memos" is already taken on PyPI by an unrelated project.
+name = "mem-os-sdk"
+version = "1.6.26"
 description = "Universal, local-first, persistent memory layer for AI agents, LLM apps, and chatbots."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Markgatcha" },
 ]
@@ -30,10 +32,10 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -53,7 +55,7 @@ ollama = [
     "ollama>=0.6.2",
 ]
 all = [
-    "memos[langchain,ollama]",
+    "mem-os-sdk[langchain,ollama]",
 ]
 dev = [
     "ruff>=0.16.3",
@@ -64,25 +66,52 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Markgatcha/memos"
+Homepage = "https://context-core.dev/memos/"
 Repository = "https://github.com/Markgatcha/memos"
 Issues = "https://github.com/Markgatcha/memos/issues"
 Documentation = "https://memos.readthedocs.io"
+Changelog = "https://github.com/Markgatcha/memos/blob/main/CHANGELOG.md"
 
 [project.scripts]
-memos-server = "server.main:main"
+memos-server = "memos.server.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["server", "adapters"]
+packages = ["memos"]
+
+# Bundle the compiled TypeScript SDK into the wheel so a pip install can
+# run the memory engine without cloning the repo. `dist/` must exist when
+# the wheel is built — run `npm install && npm run build` first (the
+# publish workflow does this automatically). The native better-sqlite3
+# module cannot be bundled; the server installs it via npm on first run.
+[tool.hatch.build.targets.wheel.force-include]
+"dist" = "memos/_js"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "memos",
+    "src",
+    "tests",
+    "docs",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 100
 # scripts/dataset/locomo/ is the vendored upstream snap-research/locomo
 # reference code (dataset generation + evaluation harness). It is kept
 # byte-identical to upstream for provenance, so it is excluded from
 # this project's lint/format rules.
-extend-exclude = ["scripts/dataset/locomo"]
+# translations/ holds localized READMEs; their inline Python snippets
+# are documentation, not source, so they are excluded too (ruff 0.16+
+# format-checks markdown code fences and would flag them).
+extend-exclude = ["scripts/dataset/locomo", "translations"]
 
 [tool.ruff.lint]
 select = [
@@ -101,14 +130,14 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["server", "adapters"]
+known-first-party = ["memos"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

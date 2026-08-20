@@ -51,13 +51,13 @@
 npm install @mem-os/sdk
 ```
 
-### Python (소스에서)
+### Python (PyPI)
+
+PyPI 패키지 이름은 **`mem-os-sdk`**입니다(npm의 `@mem-os/sdk`에 대응). TypeScript SDK를 래핑하므로 Node.js 18+도 필요합니다.
 
 ```bash
-git clone https://github.com/Markgatcha/memos.git
-cd memos
-pip install -e .
-pip install -e ".[all]"   # 선택: LangChain + Ollama 어댑터
+pip install mem-os-sdk
+pip install "mem-os-sdk[all]"   # + LangChain/Ollama adapters
 ```
 
 ### Docker

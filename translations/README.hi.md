@@ -51,13 +51,13 @@
 npm install @mem-os/sdk
 ```
 
-### Python (सोर्स से)
+### Python (PyPI)
+
+PyPI par package ka naam **`mem-os-sdk`** hai (npm ke `@mem-os/sdk` ke anuroop). Yah TypeScript SDK ko wrap karta hai, isliye Node.js 18+ bhi chahiye.
 
 ```bash
-git clone https://github.com/Markgatcha/memos.git
-cd memos
-pip install -e .
-pip install -e ".[all]"   # वैकल्पिक: LangChain + Ollama एडाप्टर
+pip install mem-os-sdk
+pip install "mem-os-sdk[all]"   # + LangChain/Ollama adapters
 ```
 
 ### Docker

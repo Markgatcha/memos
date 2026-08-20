@@ -7,7 +7,7 @@ MemOS is part of the AI Trio: [Universal MCP Toolkit](https://github.com/Markgat
 ## Install
 
 - TypeScript/Node.js: `npm install @mem-os/sdk`
-- Python (from source): `git clone https://github.com/Markgatcha/memos.git && cd memos && pip install -e .`
+- Python (PyPI): `pip install mem-os-sdk` (requires Node.js 18+ at runtime)
 - Docker: `git clone https://github.com/Markgatcha/memos.git && cd memos && docker compose up -d`
 - Start the HTTP server: `memos-server` → http://localhost:7400
 

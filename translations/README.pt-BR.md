@@ -51,13 +51,13 @@ Todo LLM esquece tudo no momento em que a conversa termina. O MemOS muda isso:
 npm install @mem-os/sdk
 ```
 
-### Python (a partir do código-fonte)
+### Python (PyPI)
+
+O pacote no PyPI se chama **`mem-os-sdk`** (igual ao `@mem-os/sdk` no npm). Ele encapsula o SDK TypeScript, então você também precisa do Node.js 18+.
 
 ```bash
-git clone https://github.com/Markgatcha/memos.git
-cd memos
-pip install -e .
-pip install -e ".[all]"   # opcional: adaptadores LangChain + Ollama
+pip install mem-os-sdk
+pip install "mem-os-sdk[all]"   # + LangChain/Ollama adapters
 ```
 
 ### Docker

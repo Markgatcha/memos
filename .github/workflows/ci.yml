@@ -124,9 +124,9 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Python: Lint + Test
-  # Matrix: 3.12 (LTS), 3.13, 3.14. Dropped 3.10/3.11
-  # to save CI minutes (3.10 EOL Oct 2026, 3.11 EOL
-  # Mar 2027).
+  # Matrix: 3.11, 3.12 (LTS), 3.13, 3.14. Dropped 3.10
+  # (EOL Oct 2026) to save CI minutes; 3.11 is kept
+  # since it receives updates until Mar 2027.
   # ──────────────────────────────────────────────
   python:
     name: Python (${{ matrix.python-version }})
@@ -134,7 +134,7 @@ jobs:
     needs: [verify-lockfile]
     strategy:
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - name: Setup Python ${{ matrix.python-version }}
