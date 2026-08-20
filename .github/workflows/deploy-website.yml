@@ -53,7 +53,7 @@ jobs:
           publish_dir: website/out
 
       - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
       # --- Option B: gh-pages branch (fallback) ---
       # Uncomment if you prefer the gh-pages branch approach:
