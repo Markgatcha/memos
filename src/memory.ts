@@ -64,7 +64,12 @@ import type {
   DiagnosticsResult,
 } from "./types.js";
 import { DEFAULT_TRUST_SCORES } from "./types.js";
-import { INITIAL_CONFIDENCE } from "./confidence-machine.js";
+import {
+  INITIAL_CONFIDENCE,
+  applyEvidence,
+  classifyEvidence,
+  sharesSubject,
+} from "./confidence-machine.js";
 
 /**
  * Thrown by `store({ filterRetain: true })` when the Hermes-style retain
@@ -396,6 +401,33 @@ export class MemOS {
       ? (opts.namespace ?? "default")
       : "default";
     const source: MemorySource = opts.source ?? "user_input";
+
+    // Evidence state machine (opt-in via `evidenceLearning`, default
+    // OFF — append-always remains the default write semantics, matching
+    // the dedupe()/consolidate() contract where near-duplicates are
+    // merged EXPLICITLY in a background pass rather than at write time).
+    // When enabled:
+    //   - confirmed  → reinforce that memory (confidence ↑, evidenceCount
+    //     ↑) and return it — no duplicate node is written, which keeps
+    //     the store small and context packs lean;
+    //   - contradicted → mark the old memory historical (validTo = now)
+    //     and fall through to write the new version;
+    //   - partial_conflict / unrelated → fall through (new node).
+    // Matching uses the same embedding space as retrieval when available,
+    // falling back to bag-of-words similarity otherwise.
+    if (opts.evidenceLearning === true) {
+      const evidence = await this.applyStoreEvidence(
+        content,
+        namespace,
+        source,
+      );
+      if (evidence.action === "reinforced") {
+        return { node: evidence.node, links: [] };
+      }
+      // "superseded": the old version was marked historical by
+      // applyStoreEvidence — continue below to persist the replacement.
+      // "new": fall through and write the node.
+    }
 
     const node: MemoryNode = {
       id: generateId(),
@@ -2133,6 +2165,153 @@ export class MemOS {
       await this.forget(victim.id);
       this.emit("eviction", victim);
     }
+  }
+
+  /**
+   * Evidence state machine hook for `store()` (opt-in via
+   * `{ evidenceLearning: true }`). Compares the incoming content against
+   * the most similar existing memory in the namespace and applies the
+   * outcome:
+   *
+   *   - `{ action: "reinforced", node }`: an existing memory was
+   *     confirmed — its confidence and evidence count were bumped and
+   *     the caller should NOT write a duplicate node. The returned node
+   *     is the freshly-updated version.
+   *   - `{ action: "superseded" }`: an existing memory was contradicted —
+   *     it has been marked historical (validTo = now) and the caller
+   *     SHOULD write the new version.
+   *   - `{ action: "new" }`: no decisive match; the caller writes a
+   *     fresh node.
+   *
+   * Candidate selection reuses the search index (top-8 by hybrid rank);
+   * classification uses content-to-content pair similarity via
+   * {@link classifyEvidence}, with a shared-subject guard so a negation
+   * can only supersede a memory that is actually about the same thing.
+   */
+  private async applyStoreEvidence(
+    content: string,
+    namespace: string,
+    source: MemorySource,
+  ): Promise<
+    | { action: "reinforced"; node: MemoryNode }
+    | { action: "superseded" }
+    | { action: "new" }
+  > {
+    void source; // reserved: per-source thresholds may differ later
+
+    try {
+      // Pull a small candidate pool via the existing search index. This
+      // is ONE search — not a full scan — so the evidence pass adds only
+      // a few ms to an opted-in store() call.
+      const candidates = this.embeddingProvider
+        ? await this.hybridSearch({
+            query: content,
+            namespace,
+            limit: 8,
+          })
+        : await this.storage.queryNodes({
+            query: content,
+            namespace,
+            limit: 8,
+          });
+
+      let bestPairSimilarity = 0;
+      let bestNode: MemoryNode | null = null;
+      for (const candidate of candidates) {
+        if (candidate.node.validTo !== null) continue; // historical
+        const similarity = await this.pairSimilarity(
+          candidate.node.content,
+          content,
+        );
+        if (similarity > bestPairSimilarity) {
+          bestPairSimilarity = similarity;
+          bestNode = candidate.node;
+        }
+      }
+      if (!bestNode) return { action: "new" };
+
+      // Reinforce ONLY on a genuine confirmation: pair similarity in the
+      // confirmed band. `classifyEvidence` also returns "confirmed" as
+      // its NEUTRAL fallthrough for unrelated content (similarity < 0.3,
+      // no signal words) — that case must fall through to a normal write.
+      const outcome = classifyEvidence(
+        bestNode.content,
+        content,
+        bestPairSimilarity,
+      );
+      const isGenuineConfirm =
+        bestPairSimilarity >= 0.5 && outcome === "confirmed";
+
+      if (isGenuineConfirm) {
+        const update = applyEvidence(
+          bestNode.confidence ?? INITIAL_CONFIDENCE,
+          bestNode.evidenceCount ?? 0,
+          "confirmed",
+        );
+        // updateNode stamps `updatedAt` itself, which also refreshes the
+        // embedding-freshness check (info.updatedAt >= node.updatedAt).
+        const updated = await this.storage.updateNode(bestNode.id, {
+          confidence: update.confidence,
+          evidenceCount: update.evidenceCount,
+        });
+        // Refresh the in-memory graph copy with the post-update version.
+        if (updated) this.graph.addNode(updated);
+        this.invalidateSearchCache();
+        this.emit("memory:reinforced", {
+          nodeId: bestNode.id,
+          confidence: update.confidence,
+          evidenceCount: update.evidenceCount,
+        });
+        return {
+          action: "reinforced",
+          node: updated ?? { ...bestNode, ...update },
+        };
+      }
+
+      if (
+        outcome === "contradicted" &&
+        sharesSubject(bestNode.content, content)
+      ) {
+        // Mark the old version historical; the new version is written by
+        // the caller as a fresh node. `supersede` preserves validFrom
+        // and records a temporal_precedes edge.
+        await this.supersede(bestNode.id);
+        this.invalidateSearchCache();
+        this.emit("memory:superseded", {
+          nodeId: bestNode.id,
+          by: content,
+        });
+        return { action: "superseded" };
+      }
+
+      // partial_conflict or unrelated: keep both versions — the
+      // confidence-aware ranking pass demotes the weaker one naturally.
+      return { action: "new" };
+    } catch {
+      // Evidence matching is best-effort: any failure means "write the
+      // node normally" rather than blocking the store.
+      return { action: "new" };
+    }
+  }
+
+  /** Cosine similarity over embeddings with a bag-of-words fallback. */
+  private async pairSimilarity(a: string, b: string): Promise<number> {
+    if (this.embeddingProvider) {
+      try {
+        const [va, vb] = await Promise.all([
+          this.embeddingProvider.embed(a),
+          this.embeddingProvider.embed(b),
+        ]);
+        let dot = 0;
+        for (let i = 0; i < Math.min(va.length, vb.length); i += 1) {
+          dot += va[i]! * vb[i]!;
+        }
+        return dot; // providers return normalized vectors
+      } catch {
+        // fall through to text similarity
+      }
+    }
+    return textSimilarity(a, b);
   }
 
   private async persistEmbedding(node: MemoryNode): Promise<void> {

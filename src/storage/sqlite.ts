@@ -621,7 +621,14 @@ export class SQLiteStorage implements StorageAdapter {
         content: updated.content,
         summary: updated.summary,
         type: updated.type,
-        metadata: JSON.stringify(updated.metadata),
+        metadata: JSON.stringify({
+          ...updated.metadata,
+          // Keep the node-level evidence state in sync with the persisted
+          // metadata blob — rowToNode reads confidence/evidenceCount back
+          // from here, so omitting this silently drops reinforcement.
+          confidence: updated.confidence,
+          evidenceCount: updated.evidenceCount,
+        }),
         importance: updated.importance,
         updatedAt: updated.updatedAt,
         tags: JSON.stringify(updated.tags),
@@ -797,9 +804,11 @@ export class SQLiteStorage implements StorageAdapter {
            ORDER BY rank
            LIMIT ? OFFSET ?`;
 
-      // Build the parameter list for a given MATCH expression. Order
-      // must mirror the placeholder order in `ftsSql`: MATCH, tags,
-      // metadata, extra filters, namespace, limit, offset.
+      // Statement cache keyed by the built SQL text: `whereExtra` /
+      // `namespaceFilter` vary with the caller's filter combination, and
+      // better-sqlite3 charges ~20-60µs of parse/plan time per
+      // `db.prepare()` call. Reusing the prepared object for repeated
+      // identical shapes removes that cost from the hot search path.
       const runFts = (ftsQuery: string): Record<string, unknown>[] => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const params: any[] = [ftsQuery];
@@ -814,10 +823,9 @@ export class SQLiteStorage implements StorageAdapter {
           params.push(filter.namespace);
         }
         params.push(filter.limit ?? 50, filter.offset ?? 0);
-        return this.db.prepare(ftsSql).all(...params) as Record<
-          string,
-          unknown
-        >[];
+        return this.getPreparedStatement(`fts::${ftsSql}`, ftsSql).all(
+          ...params,
+        ) as Record<string, unknown>[];
       };
 
       rows = runFts(ftsTerms.join(" AND "));
@@ -888,11 +896,13 @@ export class SQLiteStorage implements StorageAdapter {
       const sortField = this.mapSortField(filter.sortBy);
       const order = filter.sortOrder ?? "desc";
 
-      rows = this.db
-        .prepare(
-          `SELECT * FROM nodes ${where} ORDER BY ${sortField} ${order} LIMIT ? OFFSET ?`,
-        )
-        .all(...params, filter.limit ?? 50, filter.offset ?? 0) as Record<
+      // Cache the prepared statement by its built SQL — the shape varies
+      // with the filter combination, so the key must include the text.
+      const structuredSql = `SELECT * FROM nodes ${where} ORDER BY ${sortField} ${order} LIMIT ? OFFSET ?`;
+      rows = this.getPreparedStatement(
+        `structured::${structuredSql}`,
+        structuredSql,
+      ).all(...params, filter.limit ?? 50, filter.offset ?? 0) as Record<
         string,
         unknown
       >[];
@@ -1001,30 +1011,54 @@ export class SQLiteStorage implements StorageAdapter {
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const rows = this.db
-      .prepare(
-        `SELECT n.*, e.vector
-         FROM embeddings e
-         JOIN nodes n ON n.id = e.node_id
-         ${where}`,
-      )
-      .all(...params) as Record<string, unknown>[];
 
-    const scored: ScoredMemory[] = [];
+    // Lazy hydration: score every candidate vector, but fully hydrate
+    // (JSON.parse metadata + tags + timestamps) ONLY the top-`limit` rows.
+    // The previous implementation called `rowToNode()` for every row —
+    // O(N) JSON parses per query, of which all but `limit` were thrown
+    // away. Cosine scoring still touches every vector (unavoidable
+    // without a vector index), but the expensive per-row hydration now
+    // runs at most `limit` times instead of N times.
+    //
+    // Statement cache key includes the built WHERE clause: the filter
+    // composition above varies the SQL text, and reusing one prepared
+    // statement across different SQL would return wrong results.
+    const rows = this.getPreparedStatement(
+      `querySimilarEmbeddingsVectors::${where}`,
+      `SELECT e.node_id, e.vector
+       FROM embeddings e
+       JOIN nodes n ON n.id = e.node_id
+       ${where}`,
+    ).all(...params) as Array<{
+      node_id: string;
+      vector: Record<string, unknown>;
+    }>;
+
+    // Score first — (nodeId, score) pairs only, no node hydration.
+    const scoredPairs: Array<{ nodeId: string; score: number }> = [];
     for (const row of rows) {
       const storedVector = this.parseEmbedding(row.vector);
       const score = cosineSimilarity(vector, storedVector);
       if (score >= threshold) {
-        scored.push({
-          node: this.rowToNode(row),
-          score,
-          scores: { semantic: score },
-        });
+        scoredPairs.push({ nodeId: row.node_id, score });
       }
     }
 
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit);
+    scoredPairs.sort((a, b) => b.score - a.score);
+    const top = scoredPairs.slice(0, limit);
+
+    // Hydrate only the survivors, preserving score order.
+    const results: ScoredMemory[] = [];
+    for (const { nodeId, score } of top) {
+      const node = await this.getNode(nodeId);
+      if (!node) continue; // node deleted between the two queries
+      results.push({
+        node,
+        score,
+        scores: { semantic: score },
+      });
+    }
+    return results;
   }
 
   async queryEdges(

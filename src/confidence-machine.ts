@@ -27,6 +27,22 @@ export const INITIAL_CONFIDENCE = 0.5;
 export const CONFIDENCE_CAP = 1.0;
 
 /**
+ * Keyword signals that mark new content as a negation/update of an
+ * existing fact ("no longer", "moved", …). Exported so the store-path
+ * evidence wiring (src/memory.ts) uses the SAME word list as
+ * {@link classifyEvidence} instead of duplicating it.
+ */
+export const CONTRADICTION_SIGNALS = [
+  "not",
+  "never",
+  "no longer",
+  "changed",
+  "moved",
+  "left",
+  "different",
+] as const;
+
+/**
  * The outcome of comparing a new observation against an existing memory.
  */
 export type EvidenceOutcome = "confirmed" | "partial_conflict" | "contradicted";
@@ -131,29 +147,103 @@ export function classifyEvidence(
 
   // Low similarity (< 0.5) → check if they contradict
   // Simple keyword-based contradiction detection
-  const contradictionSignals = [
-    "not",
-    "never",
-    "no longer",
-    "changed",
-    "moved",
-    "left",
-    "different",
-  ];
   const newLower = newContent.toLowerCase();
 
   // If the NEW content carries a contradiction signal and similarity is
   // low, treat as contradicted (e.g. "user likes coffee" vs "user no
   // longer likes coffee").
   if (
-    contradictionSignals.some((w) => newLower.includes(w)) &&
+    CONTRADICTION_SIGNALS.some((w) => newLower.includes(w)) &&
     similarity < 0.3
   ) {
     return "contradicted";
   }
 
-  // Very low similarity and no contradiction → unrelated (no change)
-  return "confirmed"; // treat unrelated as neutral (no-op)
+  // Very low similarity and no contradiction → unrelated (no change).
+  // NOTE for callers: this is the NEUTRAL fallthrough, not a positive
+  // confirmation — unrelated content must NOT reinforce a memory. The
+  // store-path wiring (src/memory.ts) distinguishes the two by requiring
+  // pair similarity >= 0.85 before treating "confirmed" as a reinforce.
+  return "confirmed";
+}
+
+/**
+ * Do two texts talk about the same SUBJECT?
+ *
+ * Guard used by the store-path evidence wiring before a contradiction is
+ * allowed to supersede a memory: the texts must share at least one
+ * meaningful content word (length > 2, not a stop word). This prevents
+ * "User no longer drinks coffee" from nuking an unrelated memory that
+ * merely happens to contain a signal word.
+ */
+export function sharesSubject(a: string, b: string): boolean {
+  const STOP = new Set([
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "if",
+    "then",
+    "else",
+    "when",
+    "at",
+    "by",
+    "for",
+    "with",
+    "about",
+    "into",
+    "through",
+    "during",
+    "to",
+    "from",
+    "in",
+    "on",
+    "of",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "can",
+    "could",
+    "should",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "user",
+    "prefers",
+    "likes",
+    "not",
+    "no",
+    "longer",
+  ]);
+  const words = (t: string) =>
+    new Set(
+      t
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length > 2 && !STOP.has(w)),
+    );
+  const setA = words(a);
+  const setB = words(b);
+  for (const w of setA) {
+    if (setB.has(w)) return true;
+  }
+  return false;
 }
 
 /**

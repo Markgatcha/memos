@@ -11,6 +11,18 @@
 import type { MemoryNode, MemoryEdge, CreateEdgeInput } from "./types.js";
 
 /**
+ * Default per-node cap on edges created by `autoLink()`.
+ *
+ * Without a cap, a corpus of similar memories converges to a complete
+ * graph (K_N): every new node links to every existing one, so edge
+ * writes grow quadratically and dominate ingestion time. 16 links is
+ * enough to preserve local cluster structure for `findClusters()` /
+ * `injectContext()` while keeping bulk ingestion near-linear. Pass `0`
+ * to `autoLink()` to restore uncapped (legacy) behavior.
+ */
+export const DEFAULT_AUTO_LINK_CAP = 16;
+
+/**
  * Bag-of-words cosine similarity between two strings.
  *
  * This is intentionally lightweight — no external embedding model needed.
@@ -283,26 +295,53 @@ export class GraphEngine {
   /**
    * Attempt to auto-link a node to existing nodes based on text similarity.
    *
+   * Cost control: linking is O(N) per store, and every accepted link is a
+   * persisted row. Without a per-node cap a repetitive corpus converges to
+   * a complete graph — K_N edges for N nodes (measured: 100 similar nodes
+   * → 4,950 edges, and 300 stores took 2.7s vs 0.1s with linking off).
+   * The cap keeps the most similar `maxLinksPerNode` edges and skips the
+   * long tail, which preserves cluster structure (`findClusters`,
+   * `injectContext`) while making ingestion cost linear-ish in practice.
+   *
    * @param node     — The node to link.
    * @param threshold — Minimum similarity score to create an edge [0, 1].
+   * @param maxLinksPerNode — Hard cap on edges created per call.
+   *   `0` disables the cap (legacy complete-graph behavior).
    * @returns Array of created edges.
    */
-  autoLink(node: MemoryNode, threshold: number): MemoryEdge[] {
+  autoLink(
+    node: MemoryNode,
+    threshold: number,
+    maxLinksPerNode = DEFAULT_AUTO_LINK_CAP,
+  ): MemoryEdge[] {
     const created: MemoryEdge[] = [];
+    // Collect candidates first so the cap keeps the BEST links (highest
+    // similarity) rather than whichever happened to be iterated first.
+    const candidates: Array<{ id: string; sim: number }> = [];
 
     for (const [id, existing] of this.nodes) {
       if (id === node.id) continue;
 
       const sim = textSimilarity(node.content, existing.content);
       if (sim >= threshold) {
-        const edge = this.addEdge({
-          sourceId: node.id,
-          targetId: existing.id,
-          relation: "relates_to",
-          weight: sim,
-        });
-        created.push(edge);
+        candidates.push({ id, sim });
       }
+    }
+
+    // Cap AFTER collecting, keeping the strongest links.
+    const selected =
+      maxLinksPerNode > 0 && candidates.length > maxLinksPerNode
+        ? candidates.sort((a, b) => b.sim - a.sim).slice(0, maxLinksPerNode)
+        : candidates;
+
+    for (const { id, sim } of selected) {
+      const edge = this.addEdge({
+        sourceId: node.id,
+        targetId: id,
+        relation: "relates_to",
+        weight: sim,
+      });
+      created.push(edge);
     }
 
     return created;

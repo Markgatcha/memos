@@ -171,6 +171,14 @@ export interface CreateMemoryInput {
    * later bloat context-packs. Default: false (write always).
    */
   filterRetain?: boolean;
+  /**
+   * When true, run the evidence state machine before writing:
+   * content that confirms an existing memory reinforces it (confidence ↑)
+   * instead of writing a duplicate node, and content that contradicts it
+   * supersedes the old version. Default: false — store() appends a new
+   * node every time (use dedupe()/consolidate() for explicit merging).
+   */
+  evidenceLearning?: boolean;
 }
 
 /**
@@ -787,7 +795,9 @@ export type MemOSEvent =
   | "consolidation:complete"
   | "trust:changed"
   | "validity:changed"
-  | "facts:extracted";
+  | "facts:extracted"
+  | "memory:reinforced"
+  | "memory:superseded";
 
 /** Event listener signature. */
 export type MemOSEventListener = (data: unknown) => void;

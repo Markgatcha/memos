@@ -1,28 +1,28 @@
 # MemOS Retrieval Quality — Local Run
 
-> Generated 2026-08-17T22:53:01.646Z on this machine. Re-run with `npx tsx scripts/bench-quality.ts`.
+> Generated 2026-08-21T22:23:53.889Z on this machine. Re-run with `npx tsx scripts/bench-quality.ts`.
 
 ## Setup
 
-- Provider: `bench-hash` (model: `bench-hash-v1`, 256-d)
+- Provider: `local-hash` (model: `local-hash-384`, 384-d)
 - Dataset: 30 synthetic conversation memories, 19 ground-truth queries
-- Wall time: 50 ms
+- Wall time: 49 ms
 
 ## Aggregate
 
 | Metric | Value |
 |---|---|
-| recall@5 | 89.5% |
-| recall@10 | 89.5% |
-| MRR | 0.754 |
+| recall@5 | 100.0% |
+| recall@10 | 100.0% |
+| MRR | 0.868 |
 
 ## Per category
 
 | Category | Queries | recall@10 | MRR |
 |---|---|---|---|
-| factual | 11 | 90.9% | 0.727 |
-| preference | 5 | 80.0% | 0.800 |
-| temporal | 2 | 100.0% | 0.667 |
+| factual | 11 | 100.0% | 0.864 |
+| preference | 5 | 100.0% | 0.900 |
+| temporal | 2 | 100.0% | 0.750 |
 | entity | 1 | 100.0% | 1.000 |
 
 ## Per query
@@ -32,17 +32,17 @@
 | where does the user live | factual | ✓ | ✓ | 1.000 |
 | what color does the user like | preference | ✓ | ✓ | 1.000 |
 | tell me about Pixel the corgi | entity | ✓ | ✓ | 1.000 |
-| where does the user work and what industry | factual | ✓ | ✓ | 0.500 |
-| when did the user start at their company | temporal | ✓ | ✓ | 0.333 |
+| where does the user work and what industry | factual | ✓ | ✓ | 1.000 |
+| when did the user start at their company | temporal | ✓ | ✓ | 0.500 |
 | dark mode preference editor | preference | ✓ | ✓ | 1.000 |
 | what extensions on vscode | factual | ✓ | ✓ | 1.000 |
-| instrument hobby and how long | factual | ✓ | ✓ | 0.500 |
+| instrument hobby and how long | factual | ✓ | ✓ | 1.000 |
 | coffee preference and brand | preference | ✓ | ✓ | 1.000 |
-| exercise routine | factual | ✗ | ✗ | 0.000 |
+| exercise routine | factual | ✓ | ✓ | 0.500 |
 | favorite podcast | preference | ✓ | ✓ | 1.000 |
 | last vacation destination and when | temporal | ✓ | ✓ | 1.000 |
 | partner and their job | factual | ✓ | ✓ | 1.000 |
-| book author preferences | preference | ✗ | ✗ | 0.000 |
+| book author preferences | preference | ✓ | ✓ | 0.500 |
 | siblings and where they live | factual | ✓ | ✓ | 0.500 |
 | transportation method and bike | factual | ✓ | ✓ | 1.000 |
 | allergies and health restrictions | factual | ✓ | ✓ | 0.500 |
