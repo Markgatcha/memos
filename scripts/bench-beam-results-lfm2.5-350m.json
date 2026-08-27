@@ -1,0 +1,83 @@
+{
+  "benchmark": "BEAM-1M",
+  "timestamp": "2026-08-19T19:29:04.367Z",
+  "conversations": 10,
+  "questions": 200,
+  "skippedAbstention": 20,
+  "topK": 15,
+  "overallRecall": 1,
+  "p50Latency": 201,
+  "totalLatency": 112413,
+  "categories": {
+    "preference_following": {
+      "name": "Preference Following",
+      "recall": 1,
+      "hits": 20,
+      "total": 20,
+      "p50": 216
+    },
+    "instruction_following": {
+      "name": "Instruction Following",
+      "recall": 1,
+      "hits": 20,
+      "total": 20,
+      "p50": 173
+    },
+    "information_extraction": {
+      "name": "Information Extraction",
+      "recall": 1,
+      "hits": 20,
+      "total": 20,
+      "p50": 188
+    },
+    "knowledge_update": {
+      "name": "Knowledge Update",
+      "recall": 1,
+      "hits": 20,
+      "total": 20,
+      "p50": 189
+    },
+    "multi_session_reasoning": {
+      "name": "Multi-Session Reasoning",
+      "recall": 1,
+      "hits": 20,
+      "total": 20,
+      "p50": 496
+    },
+    "summarization": {
+      "name": "Summarization",
+      "recall": 1,
+      "hits": 20,
+      "total": 20,
+      "p50": 240
+    },
+    "temporal_reasoning": {
+      "name": "Temporal Reasoning",
+      "recall": 1,
+      "hits": 20,
+      "total": 20,
+      "p50": 208
+    },
+    "event_ordering": {
+      "name": "Event Ordering",
+      "recall": 1,
+      "hits": 20,
+      "total": 20,
+      "p50": 245
+    },
+    "abstention": {
+      "name": "Abstention",
+      "recall": 1,
+      "hits": 20,
+      "total": 20,
+      "p50": 191
+    },
+    "contradiction_resolution": {
+      "name": "Contradiction Resolution",
+      "recall": 1,
+      "hits": 20,
+      "total": 20,
+      "p50": 179
+    }
+  }
+}

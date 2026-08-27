@@ -11,6 +11,8 @@
  *   npx tsx scripts/bench-toon-formats.ts
  */
 
+import { createHash } from "node:crypto";
+
 import { MemOS } from "../src/memory";
 import { estimateTokens } from "../src/context-pack";
 import type { ScoredMemory } from "../src/types";
@@ -192,10 +194,22 @@ const fixtures: {
 // Synthetic search results (mimic what search() returns)
 // ---------------------------------------------------------------------------
 
+/**
+ * Deterministic production-shaped ID: a dashed UUID derived from the
+ * fixture content (same shape as what `generateId()` produces in storage).
+ */
+function realisticId(content: string): string {
+  const h = createHash("md5").update(content).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 function makeScoredResults(items: typeof fixtures): ScoredMemory[] {
   return items.map((item, i) => ({
     node: {
-      id: `mem_${Buffer.from(item.content.slice(0, 8)).toString("hex")}`,
+      // Production-shaped ID: MemOS.storage generates bare dashed UUIDs
+      // (src/memory.ts generateId()). Synthetic mem_<hex> IDs would
+      // understate the wire cost that the compact format actually targets.
+      id: realisticId(item.content),
       content: item.content,
       summary: item.content.slice(0, 80) + "...",
       type: item.type as any,

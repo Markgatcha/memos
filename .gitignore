@@ -69,3 +69,6 @@ site/
 .tmp-*.db-shm
 mcp-smoke.db
 .hermes/
+
+# Large benchmark datasets (regenerate via scripts)
+scripts/dataset/**/*.parquet

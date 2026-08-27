@@ -1,32 +1,32 @@
 {
   "provider": "MemOS",
-  "timestamp": "2026-08-06T03:53:01.868Z",
-  "conversations": 10,
-  "questions": 1986,
+  "timestamp": "2026-08-21T22:25:14.423Z",
+  "conversations": 2,
+  "questions": 304,
   "topK": 15,
-  "retrievalRecall": 0.9516616314199395,
-  "retrievalPrecision": 0.0634441087613293,
-  "p50Latency": 20,
+  "retrievalRecall": 0.9835526315789473,
+  "retrievalPrecision": 0.06557017543859649,
+  "p50Latency": 8,
   "categories": {
     "Single-hop": {
-      "recall": 0.9964539007092199,
-      "count": 282
+      "recall": 0.9767441860465116,
+      "count": 43
     },
     "Temporal": {
-      "recall": 0.9750778816199377,
-      "count": 321
+      "recall": 0.9841269841269841,
+      "count": 63
     },
     "Open-domain": {
-      "recall": 0.8645833333333334,
-      "count": 96
+      "recall": 0.8461538461538461,
+      "count": 13
     },
     "Multi-hop": {
-      "recall": 0.9595719381688466,
-      "count": 841
+      "recall": 0.9912280701754386,
+      "count": 114
     },
     "Adversarial": {
-      "recall": 0.9103139013452914,
-      "count": 446
+      "recall": 1,
+      "count": 71
     }
   }
 }

@@ -9,9 +9,13 @@ import {
   debloatContent,
   CONTEXT_PACK_SCHEMA,
 } from "../src/context-pack";
-import type { ScoredMemory, MemoryNode } from "../src/types";
+import type { EmbeddingVector, ScoredMemory, MemoryNode } from "../src/types";
 
-function makeNode(id: string, content: string, tags: string[] = []): MemoryNode {
+function makeNode(
+  id: string,
+  content: string,
+  tags: string[] = [],
+): MemoryNode {
   return {
     id,
     content,
@@ -43,7 +47,8 @@ describe("estimateTokens", () => {
   });
 
   test("approximates GPT token counts within 20%", () => {
-    const text = "The quick brown fox jumps over the lazy dog near the river bank.";
+    const text =
+      "The quick brown fox jumps over the lazy dog near the river bank.";
     const estimate = estimateTokens(text);
     // Real tiktoken count is ~14-15 tokens. Our estimate should be close.
     expect(estimate).toBeGreaterThan(10);
@@ -84,7 +89,10 @@ describe("debloatContent", () => {
 
 describe("buildContextPack token savings", () => {
   test("reports tokensSaved > 0 when debloating removes content", () => {
-    const longContent = "This is a memory.   \n\n\n\n" + "This is a memory.   \n".repeat(10) + "End.";
+    const longContent =
+      "This is a memory.   \n\n\n\n" +
+      "This is a memory.   \n".repeat(10) +
+      "End.";
     const items = [scored(makeNode("n1", longContent), 0.9)];
     const pack = buildContextPack({
       query: "test",
@@ -165,5 +173,93 @@ describe("buildContextPack token savings", () => {
       dedup: false,
     });
     expect(pack.tokensSaved).toBe(0);
+  });
+
+  test("summary elision drops a restating summary and keeps the content", () => {
+    // makeNode sets summary = content, so every item's summary is a
+    // verbatim copy — exactly what elision targets.
+    const items = [scored(makeNode("n1", "User prefers dark mode"), 0.9)];
+    const pack = buildContextPack({
+      query: "test",
+      namespace: "default",
+      tokenBudget: 500,
+      items,
+    });
+    expect(pack.items).toHaveLength(1);
+    expect(pack.items[0].content).toBe("User prefers dark mode");
+    expect(pack.items[0].summary).toBeNull();
+  });
+
+  test("a genuinely compact summary survives elision", () => {
+    const content =
+      "The release is blocked by three items: the flaky auth test in " +
+      "CI needs a retry policy, the migration script fails on Postgres " +
+      "15 because of the removed function signature, and the docs site " +
+      "build still references the deprecated theme package that was " +
+      "renamed last sprint.";
+    const node = makeNode("n1", content);
+    node.summary = "Release blocked by CI, migration, docs";
+    const pack = buildContextPack({
+      query: "release blockers",
+      namespace: "default",
+      tokenBudget: 500,
+      items: [scored(node, 0.9)],
+    });
+    // Summary is far shorter than half the content and lexically
+    // distinct enough — it stays.
+    expect(pack.items[0].summary).toBe(
+      "Release blocked by CI, migration, docs",
+    );
+  });
+
+  test("semantic dedup drops paraphrased duplicates when vectors are supplied", () => {
+    const embeddings = new Map<string, EmbeddingVector>([
+      ["n1", [1, 0, 0, 0]],
+      // Nearly parallel to n1 -> paraphrase.
+      ["n2", [0.98, 0.199, 0, 0]],
+      // Orthogonal to n1 -> distinct fact.
+      ["n3", [0, 0, 1, 0]],
+    ]);
+    const items = [
+      scored(makeNode("n1", "User prefers dark theme"), 0.9),
+      scored(makeNode("n2", "dark mode is their preference"), 0.8),
+      scored(makeNode("n3", "Completely unrelated fact"), 0.7),
+    ];
+    const pack = buildContextPack({
+      query: "preferences",
+      namespace: "default",
+      tokenBudget: 500,
+      items,
+      embeddings,
+      includeSummary: false,
+    });
+    const ids = pack.items.map((i) => i.id);
+    expect(ids).toContain("n1");
+    // n2 has near-zero lexical overlap with n1 (lexical Jaccard won't
+    // catch it), but its vector is a near-duplicate.
+    expect(ids).not.toContain("n2");
+    expect(ids).toContain("n3");
+    expect(pack.tokensSaved).toBeGreaterThan(0);
+  });
+
+  test("semantic dedup keeps items without vectors and respects threshold", () => {
+    const embeddings = new Map<string, EmbeddingVector>([
+      ["n1", [1, 0, 0, 0]],
+      // Only moderately similar — below the 0.90 default.
+      ["n2", [0.8, 0.6, 0, 0]],
+    ]);
+    const pack = buildContextPack({
+      query: "q",
+      namespace: "default",
+      tokenBudget: 500,
+      items: [
+        scored(makeNode("n1", "alpha"), 0.9),
+        scored(makeNode("n2", "beta"), 0.8),
+        scored(makeNode("n3", "gamma"), 0.7), // no vector at all
+      ],
+      embeddings,
+      includeSummary: false,
+    });
+    expect(pack.items.map((i) => i.id)).toEqual(["n1", "n2", "n3"]);
   });
 });

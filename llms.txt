@@ -1,6 +1,6 @@
 # MemOS
 
-> MemOS is a universal, local-first, persistent memory layer for AI agents and LLMs. It gives any LLM a memory that survives restarts — graph-native SQLite storage, temporal validity, trust scoring, and a compact format that cuts context tokens by ~77%. 100% local, no cloud, no API keys, MIT licensed, free forever.
+> MemOS is a universal, local-first, persistent memory layer for AI agents and LLMs. It gives any LLM a memory that survives restarts — graph-native SQLite storage, temporal validity, trust scoring, and a compact format that cuts context tokens by ~78%. 100% local, no cloud, no API keys, MIT licensed, free forever.
 
 MemOS is part of the AI Trio: [Universal MCP Toolkit](https://github.com/Markgatcha/universal-mcp-toolkit) (MCP transport + tools), MemOS (memory + persistence), and [LLM Guardian](https://github.com/Markgatcha/llm-guardian) (token-cost optimization).
 
@@ -27,7 +27,7 @@ MemOS is part of the AI Trio: [Universal MCP Toolkit](https://github.com/Markgat
 - Server: HTTP API on port 7400 (`MEMOS_PORT` to change), health at `/health`, docs at `/docs`
 - Embeddings: local (Gemma-300M) by default — no API key required
 - MCP: built-in adapter, stdio + HTTP/SSE (`npx -y @mem-os/sdk mcp`)
-- Memory features: temporal validity (validFrom/validTo), trust scoring, provenance, confidence state machine, compact TOON format (77.6% token savings vs JSON)
+- Memory features: temporal validity (validFrom/validTo), trust scoring, provenance, confidence state machine, compact TOON format (77.7% token savings vs JSON)
 - License: MIT — free to use, modify, and ship; no paid tier
 
 ## Website & community

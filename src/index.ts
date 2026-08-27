@@ -57,6 +57,8 @@ export {
   searchResultsToToonCompact,
   serializeContextPack,
   parseToonCompact,
+  encodeCompactId,
+  decodeCompactId,
   type ContextPack,
   type ContextPackItem,
   type BuildContextPackOptions,

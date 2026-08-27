@@ -1,35 +1,35 @@
 {
-  "startedAt": "2026-08-17T22:53:01.596Z",
-  "finishedAt": "2026-08-17T22:53:01.646Z",
-  "durationMs": 50,
+  "startedAt": "2026-08-22T00:28:08.893Z",
+  "finishedAt": "2026-08-22T00:28:08.942Z",
+  "durationMs": 49,
   "provider": {
-    "id": "bench-hash",
-    "model": "bench-hash-v1",
-    "dimensions": 256
+    "id": "local-hash",
+    "model": "local-hash-384",
+    "dimensions": 384
   },
   "dataset": {
     "nodes": 30,
     "queries": 19
   },
   "metrics": {
-    "recallAt5": 0.8947368421052632,
-    "recallAt10": 0.8947368421052632,
-    "mrr": 0.7543859649122807,
+    "recallAt5": 1,
+    "recallAt10": 1,
+    "mrr": 0.868421052631579,
     "perCategory": {
       "factual": {
         "queries": 11,
-        "recallAt10": 0.9090909090909091,
-        "mrr": 0.7272727272727273
+        "recallAt10": 1,
+        "mrr": 0.8636363636363636
       },
       "preference": {
         "queries": 5,
-        "recallAt10": 0.8,
-        "mrr": 0.8
+        "recallAt10": 1,
+        "mrr": 0.9
       },
       "temporal": {
         "queries": 2,
         "recallAt10": 1,
-        "mrr": 0.6666666666666666
+        "mrr": 0.75
       },
       "entity": {
         "queries": 1,
@@ -44,14 +44,14 @@
       "category": "factual",
       "retrievedIds": [
         "n-1",
-        "n-20",
-        "n-6",
-        "n-24",
-        "n-21",
-        "n-4",
-        "n-17",
-        "n-16",
+        "n-5",
         "n-7",
+        "n-8",
+        "n-13",
+        "n-11",
+        "n-27",
+        "n-29",
+        "n-24",
         "n-15"
       ],
       "hitAt5": true,
@@ -67,14 +67,14 @@
       "retrievedIds": [
         "n-2",
         "n-11",
-        "n-24",
-        "n-1",
         "n-13",
+        "n-1",
+        "n-24",
         "n-27",
         "n-5",
+        "n-8",
         "n-26",
-        "n-3",
-        "n-8"
+        "n-3"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -89,14 +89,14 @@
       "retrievedIds": [
         "n-4",
         "n-3",
-        "n-22",
-        "n-9",
-        "n-14",
-        "n-17",
-        "n-20",
         "n-16",
-        "n-24",
-        "n-5"
+        "n-7",
+        "n-14",
+        "n-19",
+        "n-8",
+        "n-13",
+        "n-6",
+        "n-12"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -110,20 +110,20 @@
       "query": "where does the user work and what industry",
       "category": "factual",
       "retrievedIds": [
-        "n-11",
         "n-5",
-        "n-24",
-        "n-1",
+        "n-11",
         "n-13",
+        "n-1",
+        "n-24",
         "n-27",
-        "n-2",
+        "n-8",
         "n-26",
-        "n-3",
-        "n-8"
+        "n-2",
+        "n-9"
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.5,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-5",
         "n-6"
@@ -134,19 +134,19 @@
       "category": "temporal",
       "retrievedIds": [
         "n-6",
-        "n-1",
         "n-7",
         "n-11",
-        "n-24",
         "n-13",
-        "n-27",
+        "n-1",
+        "n-24",
         "n-5",
+        "n-27",
         "n-26",
         "n-2"
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.3333333333333333,
+      "reciprocalRank": 0.5,
       "expectedRelevant": [
         "n-7"
       ]
@@ -156,15 +156,15 @@
       "category": "preference",
       "retrievedIds": [
         "n-8",
-        "n-15",
-        "n-1",
-        "n-24",
-        "n-21",
-        "n-28",
-        "n-12",
         "n-9",
-        "n-2",
-        "n-3"
+        "n-25",
+        "n-13",
+        "n-30",
+        "n-26",
+        "n-21",
+        "n-19",
+        "n-16",
+        "n-10"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -179,15 +179,15 @@
       "category": "factual",
       "retrievedIds": [
         "n-10",
-        "n-18",
-        "n-26",
-        "n-21",
-        "n-1",
+        "n-11",
+        "n-27",
         "n-2",
-        "n-3",
-        "n-4",
-        "n-5",
-        "n-6"
+        "n-6",
+        "n-29",
+        "n-28",
+        "n-26",
+        "n-25",
+        "n-7"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -200,20 +200,20 @@
       "query": "instrument hobby and how long",
       "category": "factual",
       "retrievedIds": [
-        "n-5",
+        "n-12",
         "n-11",
-        "n-16",
         "n-27",
-        "n-3",
-        "n-22",
+        "n-9",
+        "n-14",
         "n-19",
         "n-1",
-        "n-2",
-        "n-4"
+        "n-16",
+        "n-7",
+        "n-17"
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.5,
+      "reciprocalRank": 1,
       "expectedRelevant": [
         "n-11",
         "n-12"
@@ -224,15 +224,15 @@
       "category": "preference",
       "retrievedIds": [
         "n-14",
-        "n-13",
         "n-8",
-        "n-21",
-        "n-12",
-        "n-15",
-        "n-22",
-        "n-3",
+        "n-13",
+        "n-10",
         "n-19",
-        "n-1"
+        "n-9",
+        "n-4",
+        "n-1",
+        "n-16",
+        "n-15"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -246,20 +246,20 @@
       "query": "exercise routine",
       "category": "factual",
       "retrievedIds": [
-        "n-16",
-        "n-24",
-        "n-17",
-        "n-1",
-        "n-21",
-        "n-25",
         "n-10",
+        "n-15",
+        "n-16",
         "n-2",
-        "n-3",
-        "n-4"
+        "n-21",
+        "n-26",
+        "n-9",
+        "n-24",
+        "n-1",
+        "n-8"
       ],
-      "hitAt5": false,
-      "hitAt10": false,
-      "reciprocalRank": 0,
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 0.5,
       "expectedRelevant": [
         "n-15"
       ]
@@ -269,15 +269,15 @@
       "category": "preference",
       "retrievedIds": [
         "n-16",
-        "n-27",
         "n-2",
-        "n-1",
-        "n-3",
         "n-4",
-        "n-5",
+        "n-8",
+        "n-21",
         "n-6",
+        "n-13",
         "n-7",
-        "n-8"
+        "n-26",
+        "n-23"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -291,15 +291,15 @@
       "category": "temporal",
       "retrievedIds": [
         "n-17",
-        "n-13",
-        "n-12",
-        "n-23",
-        "n-3",
-        "n-26",
+        "n-18",
+        "n-16",
         "n-22",
-        "n-19",
-        "n-1",
-        "n-2"
+        "n-20",
+        "n-30",
+        "n-21",
+        "n-15",
+        "n-12",
+        "n-26"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -314,15 +314,15 @@
       "category": "factual",
       "retrievedIds": [
         "n-19",
-        "n-23",
-        "n-27",
+        "n-12",
         "n-20",
-        "n-3",
-        "n-22",
-        "n-18",
-        "n-1",
+        "n-5",
+        "n-25",
+        "n-8",
+        "n-6",
+        "n-16",
         "n-2",
-        "n-4"
+        "n-11"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -337,19 +337,19 @@
       "category": "preference",
       "retrievedIds": [
         "n-8",
-        "n-29",
-        "n-14",
-        "n-12",
-        "n-7",
-        "n-1",
-        "n-10",
+        "n-21",
         "n-2",
-        "n-3",
-        "n-4"
+        "n-4",
+        "n-16",
+        "n-15",
+        "n-10",
+        "n-25",
+        "n-17",
+        "n-13"
       ],
-      "hitAt5": false,
-      "hitAt10": false,
-      "reciprocalRank": 0,
+      "hitAt5": true,
+      "hitAt10": true,
+      "reciprocalRank": 0.5,
       "expectedRelevant": [
         "n-21"
       ]
@@ -360,14 +360,14 @@
       "retrievedIds": [
         "n-1",
         "n-23",
-        "n-8",
-        "n-24",
-        "n-6",
-        "n-28",
-        "n-21",
-        "n-3",
+        "n-7",
+        "n-18",
+        "n-17",
         "n-5",
-        "n-22"
+        "n-6",
+        "n-8",
+        "n-22",
+        "n-16"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -384,13 +384,13 @@
         "n-24",
         "n-25",
         "n-11",
-        "n-5",
-        "n-4",
         "n-27",
-        "n-3",
-        "n-22",
-        "n-19",
-        "n-1"
+        "n-16",
+        "n-12",
+        "n-7",
+        "n-5",
+        "n-2",
+        "n-14"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -404,16 +404,16 @@
       "query": "allergies and health restrictions",
       "category": "factual",
       "retrievedIds": [
-        "n-3",
+        "n-10",
         "n-26",
+        "n-18",
         "n-30",
-        "n-22",
-        "n-19",
-        "n-1",
-        "n-2",
-        "n-4",
-        "n-5",
-        "n-6"
+        "n-25",
+        "n-21",
+        "n-8",
+        "n-27",
+        "n-24",
+        "n-17"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -427,15 +427,15 @@
       "category": "factual",
       "retrievedIds": [
         "n-27",
-        "n-21",
-        "n-15",
-        "n-29",
+        "n-28",
         "n-12",
-        "n-24",
+        "n-13",
+        "n-8",
+        "n-15",
+        "n-23",
+        "n-21",
         "n-3",
-        "n-22",
-        "n-19",
-        "n-1"
+        "n-26"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -449,16 +449,16 @@
       "query": "language study tool and duration",
       "category": "factual",
       "retrievedIds": [
-        "n-29",
         "n-30",
-        "n-8",
-        "n-13",
+        "n-29",
         "n-25",
-        "n-23",
-        "n-3",
-        "n-22",
-        "n-19",
-        "n-1"
+        "n-27",
+        "n-8",
+        "n-17",
+        "n-15",
+        "n-9",
+        "n-10",
+        "n-11"
       ],
       "hitAt5": true,
       "hitAt10": true,

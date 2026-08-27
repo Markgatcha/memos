@@ -1,6 +1,6 @@
 # MemOS Retrieval Quality — Local Run
 
-> Generated 2026-08-21T22:23:53.889Z on this machine. Re-run with `npx tsx scripts/bench-quality.ts`.
+> Generated 2026-08-22T00:28:08.942Z on this machine. Re-run with `npx tsx scripts/bench-quality.ts`.
 
 ## Setup
 

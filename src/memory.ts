@@ -1278,6 +1278,14 @@ export class MemOS {
     includeSummary?: boolean;
     /** Output format: "json" (default), "toon", or "toon-compact" */
     format?: "json" | "toon" | "toon-compact";
+    /**
+     * Opt-in semantic dedup: drop pack items whose stored embedding is a
+     * near-duplicate (cosine >= 0.90) of an already-selected item's.
+     * Catches paraphrased memories that lexical dedup misses. Costs one
+     * pass over stored embedding rows (filtered to the candidate set);
+     * off by default.
+     */
+    semanticDedup?: boolean;
   }): Promise<ContextPack | string> {
     this.assertInit();
     const namespace = opts.namespace ?? "default";
@@ -1296,6 +1304,19 @@ export class MemOS {
     const items = this.embeddingProvider
       ? await this.hybridSearch(filter)
       : await this.storage.queryNodes(filter);
+
+    // Semantic dedup needs each candidate's stored vector. Pull them in
+    // one pass over the embedding table filtered to the candidate ids —
+    // no new embedding compute, just a lookup of vectors we already have.
+    let embeddings: Map<string, EmbeddingVector> | undefined;
+    if (opts.semanticDedup && this.storage.getAllEmbeddings) {
+      const wanted = new Set(items.map((i) => i.node.id));
+      embeddings = new Map();
+      for (const row of await this.storage.getAllEmbeddings()) {
+        if (wanted.has(row.nodeId)) embeddings.set(row.nodeId, row.vector);
+      }
+    }
+
     const pack = buildContextPack({
       query: opts.query,
       namespace,
@@ -1304,6 +1325,7 @@ export class MemOS {
       trust: opts.trust,
       source: opts.source,
       includeSummary: opts.includeSummary,
+      embeddings,
     });
     // Serialize in the requested format if not "json"
     if (opts.format && opts.format !== "json") {
