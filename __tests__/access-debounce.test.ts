@@ -11,6 +11,13 @@ import { MemOS } from "../src/memory";
 import type { MemoryNode } from "../src/types";
 import { existsSync, unlinkSync } from "node:fs";
 
+function cleanupDb(dbPath: string): void {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const p = dbPath + suffix;
+    if (existsSync(p)) unlinkSync(p);
+  }
+}
+
 function makeNode(id: string, content: string): MemoryNode {
   return {
     id,
@@ -53,7 +60,7 @@ describe("SQLiteStorage access-count debounce", () => {
     expect(reloaded.accessCount).toBe(100);
 
     await memos.close();
-    if (existsSync(path)) unlinkSync(path);
+    cleanupDb(path);
   });
 
   test("flushAccessCounts is a no-op when nothing is buffered", async () => {
@@ -76,7 +83,7 @@ describe("SQLiteStorage access-count debounce", () => {
     expect(row.access_count).toBe(0);
 
     await memos.close();
-    if (existsSync(path)) unlinkSync(path);
+    cleanupDb(path);
   });
 
   test("close() flushes any pending access counts", async () => {
@@ -101,6 +108,6 @@ describe("SQLiteStorage access-count debounce", () => {
     probe.close();
     expect(row.access_count).toBe(5);
 
-    if (existsSync(path)) unlinkSync(path);
+    cleanupDb(path);
   });
 });

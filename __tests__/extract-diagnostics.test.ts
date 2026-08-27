@@ -13,6 +13,13 @@ function tmpDb(): string {
   return `${process.cwd()}/.tmp-extract-diag-${dbCounter}-${Date.now()}.db`;
 }
 
+function cleanupDb(dbPath: string): void {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const p = dbPath + suffix;
+    if (existsSync(p)) unlinkSync(p);
+  }
+}
+
 function makeMemos(dbPath?: string): MemOS {
   return new MemOS({
     dbPath: dbPath ?? tmpDb(),
@@ -25,12 +32,16 @@ async function withMemos<T>(
   fn: (memos: MemOS) => Promise<T>,
   dbPath?: string,
 ): Promise<T> {
-  const memos = makeMemos(dbPath);
+  const path = dbPath ?? tmpDb();
+  const memos = makeMemos(path);
   await memos.init();
   try {
     return await fn(memos);
   } finally {
     await memos.close();
+    // Remove auto-generated temp DBs (and WAL/SHM sidecars). Explicitly
+    // passed paths are managed by the caller.
+    if (dbPath === undefined) cleanupDb(path);
   }
 }
 

@@ -62,3 +62,10 @@ npm-debug.log*
 
 # mkdocs build output
 site/
+
+# Leaked temp SQLite test artifacts
+.tmp-*.db
+.tmp-*.db-wal
+.tmp-*.db-shm
+mcp-smoke.db
+.hermes/
