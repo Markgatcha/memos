@@ -26,7 +26,7 @@ MemOS is part of the AI Trio: [Universal MCP Toolkit](https://github.com/Markgat
 - Storage: SQLite (WAL mode, FTS5) at `~/.memos/memos.db` — configurable via `MEMOS_DB_PATH`
 - Server: HTTP API on port 7400 (`MEMOS_PORT` to change), health at `/health`, docs at `/docs`
 - Embeddings: local (Gemma-300M) by default — no API key required
-- MCP: built-in adapter, stdio + HTTP/SSE (`npx -y @mem-os/sdk mcp`)
+- MCP: built-in adapter, stdio only (`npx -y @mem-os/sdk mcp`), speaks the 2026-07-28 protocol revision with legacy 2025-era fallback
 - Memory features: temporal validity (validFrom/validTo), trust scoring, provenance, confidence state machine, compact TOON format (77.7% token savings vs JSON)
 - License: MIT — free to use, modify, and ship; no paid tier
 

@@ -495,26 +495,39 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
   }
 
   /**
-   * Lazily resolve the @xenova/transformers pipeline. We use a
-   * dynamic import so the optional dep is only paid for when (and if)
-   * the user installs it. Any failure to load silently falls back to
-   * the local hash.
+   * Lazily resolve the transformers pipeline. We use a dynamic import so
+   * the optional dep is only paid for when (and if) the user installs it.
+   * Any failure to load silently falls back to the local hash.
+   *
+   * Tries `@huggingface/transformers` (the maintained successor) first,
+   * then falls back to the abandoned `@xenova/transformers` for users who
+   * still have it installed.
    */
   private async resolve(): Promise<void> {
     if (this.resolved) return;
     this.resolved = true;
     try {
-      // The @xenova/transformers package is an optional peer dep —
-      // users opt in by `npm install @xenova/transformers`. We use a
-      // dynamic import so it's only paid for when installed. Types are
-      // declared in `src/xenova-transformers.d.ts`.
-      const mod = (await import("@xenova/transformers" as string).catch(
+      // Both packages are optional peer deps — users opt in by installing
+      // one of them. We use dynamic imports so they're only paid for when
+      // installed. Types are declared in `src/xenova-transformers.d.ts`.
+      const mod = (await import("@huggingface/transformers" as string).catch(
         () => null,
       )) as {
         pipeline: (task: string, model: string) => Promise<unknown>;
       } | null;
-      if (!mod) return;
-      const pipeline = await mod.pipeline("feature-extraction", this.model);
+      const legacyMod = mod
+        ? null
+        : ((await import("@xenova/transformers" as string).catch(
+            () => null,
+          )) as {
+            pipeline: (task: string, model: string) => Promise<unknown>;
+          } | null);
+      const resolved = mod ?? legacyMod;
+      if (!resolved) return;
+      const pipeline = await resolved.pipeline(
+        "feature-extraction",
+        this.model,
+      );
       this.pipeline = pipeline as FastEmbedEmbeddingProvider["pipeline"];
     } catch {
       // Fall through to the local hash.

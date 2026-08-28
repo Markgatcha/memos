@@ -122,9 +122,8 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 | Performance benchmarks | ✅ |
 | Background embedding queue | ✅ v1.6.26 |
 | AI Trio context pack (LLM Guardian compat) | ✅ v1.6.26 |
-| MCP 2025-06-18 protocol | ✅ v1.6.26 |
+| MCP 2026-07-28 protocol | ✅ v1.6.26 |
 | Memory consolidation ("dreaming") | ✅ v1.6.26 |
-| HTTP+SSE MCP transport | ✅ v1.6.26 |
 | Voyage / Cohere / FastEmbed providers | ✅ v1.6.26 |
 | `memos repl` interactive shell | ✅ v1.6.26 |
 | Retrieval-quality benchmark | ✅ v1.6.26 |
@@ -779,7 +778,7 @@ MemOS is the **memory layer** of the local-first AI stack. It forms an **AI Trio
 | **Trust & provenance** | ✅ `source`, `trustScore`, trust-weighted search | ❌ Not available |
 | **Memory consolidation** | ✅ `dedupe()`, `archive()`, `summarizeCluster()` | ❌ ADD-only (no UPDATE/DELETE) |
 | **Fact extraction** | ✅ Local rule-based (`extractFacts()`) | ✅ LLM-based (requires API calls) |
-| **MCP native** | ✅ stdio + HTTP+SSE | ❌ |
+| **MCP native** | ✅ stdio (2026-07-28 spec) | ❌ |
 | **Graph edges** | ✅ First-class (`derived_from`, `temporal_precedes`, etc.) | ✅ Entity linking (Apr 2026) |
 | **Embedding providers** | ✅ 6 (local-hash, Ollama, OpenAI, Voyage, Cohere, FastEmbed) | ✅ OpenAI, Qwen |
 | **Background queue** | ✅ Bounded concurrency, retry, backpressure | ❌ |

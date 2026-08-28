@@ -25,6 +25,7 @@
  */
 
 import { MemOS } from "./memory.js";
+import { getSdkVersion } from "./version.js";
 import { resolve, dirname, join } from "path";
 import {
   existsSync,
@@ -487,7 +488,7 @@ async function main(): Promise<void> {
 
         const manifest = {
           timestamp: new Date().toISOString(),
-          version: "1.5.0-beta.1",
+          version: getSdkVersion(),
           nodeCount: graph.nodes.length,
           edgeCount: graph.edges.length,
           dbSizeBytes: dbStat.size,

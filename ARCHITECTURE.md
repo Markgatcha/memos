@@ -19,7 +19,7 @@
 │   │ Python HTTP Server    │ │  MCP Server     │ │ TypeScript SDK │ │
 │   │ (FastAPI — server/)   │ │  (src/mcp.ts)   │ │ (direct)       │ │
 │   │                       │ │                 │ │                │ │
-│   │ POST /api/mem/store   │ │ stdio + HTTP/SSE│ │ memos.store()  │ │
+│   │ POST /api/mem/store   │ │ stdio (MCP 2026)│ │ memos.store()  │ │
 │   │ POST /api/mem/retrieve│ │ tools: store,   │ │ memos.search() │ │
 │   │ POST /api/mem/search  │ │ search, forget, │ │ memos.context- │ │
 │   │ POST /api/mem/forget  │ │ contextPack ... │ │ Pack() ...     │ │
@@ -191,7 +191,7 @@ MemoryEdge {
 | `embeddings.ts` | Embedding providers (local hash default, transformers optional) | `types.ts` |
 | `importance.ts` | Effective importance (recency decay + access reinforcement) | `types.ts` |
 | `retain-filter.ts` | Low-signal content filtering | `types.ts` |
-| `mcp.ts` | MCP server exposing MemOS tools (stdio + HTTP/SSE) | `memory.ts` |
+| `mcp.ts` | MCP server exposing MemOS tools (stdio, MCP 2026-07-28 spec) | `memory.ts` |
 | `cli.ts` / `repl.ts` | Command-line interface and REPL | `memory.ts` |
 | `index.ts` | Package entry point | `memory.ts`, `types.ts` |
 | `server/main.py` | HTTP server (FastAPI) | TS SDK via REST or subprocess |
