@@ -1,0 +1,16 @@
+{
+  "name": "memos-marketplace",
+  "owner": {
+    "name": "Markgatcha",
+    "url": "https://github.com/Markgatcha/memos"
+  },
+  "plugins": [
+    {
+      "name": "memos",
+      "source": "./plugin",
+      "description": "MemOS — local-first persistent memory for Claude Code. Store and recall durable facts across sessions without any cloud.",
+      "version": "1.6.26",
+      "keywords": ["memory", "mcp", "local-first", "sqlite"]
+    }
+  ]
+}

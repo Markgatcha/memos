@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "memos": {
+      "command": "npx",
+      "args": ["-y", "@mem-os/sdk", "mcp"],
+      "env": {}
+    }
+  }
+}
