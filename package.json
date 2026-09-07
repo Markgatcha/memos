@@ -103,11 +103,13 @@
     "bench:locomo": "OPENAI_API_KEY=$OPENAI_API_KEY tsx scripts/bench-locomo.ts",
     "bench:longmemeval": "OPENAI_API_KEY=$OPENAI_API_KEY tsx scripts/bench-longmemeval.ts",
     "bench:crossrepo": "tsx scripts/bench-crossrepo.ts",
-    "bench:memory": "tsx scripts/bench-memory.ts"
+    "bench:memory": "tsx scripts/bench-memory.ts",
+    "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
+    "bench:longmemeval:retrieve": "tsx scripts/bench-longmemeval.ts --retrieve-only"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "better-sqlite3": "^13.0.3",
+    "better-sqlite3": "^12.11.1",
     "zod": "^4.2.0"
   },
   "peerDependencies": {
@@ -127,6 +129,7 @@
     "js-yaml": ">=4.1.0"
   },
   "devDependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@swc/core": "^1.16.0",
     "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^9.6.0",

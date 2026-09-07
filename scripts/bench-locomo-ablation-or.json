@@ -1,0 +1,6893 @@
+{
+  "schemaVersion": 2,
+  "timestamp": "2026-09-06T15:39:05.558Z",
+  "git": {
+    "sha": "00afdb496c0376e58b232c5cb439ef218f05ac64",
+    "dirty": true
+  },
+  "nodeVersion": "v26.7.0",
+  "os": {
+    "platform": "win32",
+    "release": "10.0.26220"
+  },
+  "dataset": {
+    "name": "locomo10",
+    "path": "scripts/dataset/locomo/data/locomo10.json",
+    "sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4"
+  },
+  "embedding": {
+    "requestedProvider": "openai-compatible",
+    "resolvedProvider": "openai-compatible",
+    "requestedModel": "LFM2.5-Embedding-350M-BF16",
+    "resolvedModel": "LFM2.5-Embedding-350M-BF16",
+    "modelRevision": null,
+    "requestedDimensions": 1024,
+    "observedDimensions": null,
+    "fallbackActive": false,
+    "fallbackReason": null,
+    "providerKind": "openai-compatible",
+    "queryPrefix": "query: ",
+    "documentPrefix": "document: "
+  },
+  "retrieval": {
+    "keywordWeight": 0.8,
+    "semanticWeight": 0.2,
+    "rrfK": 60,
+    "trustFloor": 0.7,
+    "confidenceWeightStrength": 0.35,
+    "ftsOperator": "OR",
+    "sessionExpansion": false,
+    "graphExpansion": false,
+    "embedText": "summary+content",
+    "groupTurns": false,
+    "candidateDepth": 200,
+    "rerank": "http://127.0.0.1:8081",
+    "rerankCandidates": 200
+  },
+  "benchmark": "locomo-retrieval-only",
+  "conversations": 2,
+  "questions": 304,
+  "topK": 10,
+  "durationMs": 893535,
+  "ingestionMs": 9170,
+  "metrics": {
+    "at5": {
+      "hitRate": 0.7549668874172185,
+      "evidenceRecall": 0.7050772626931566,
+      "evidenceRecallMicro": 0.6404199475065617,
+      "allEvidenceRecall": 0.6589403973509934,
+      "precision": 0.1615894039735103,
+      "precisionMicro": 0.16158940397350993,
+      "mrr": 0.5949779249448125,
+      "ndcg": 0.6086314135337721,
+      "questionCount": 302
+    },
+    "at10": {
+      "hitRate": 0.8013245033112583,
+      "evidenceRecall": 0.7412251655629138,
+      "evidenceRecallMicro": 0.6902887139107612,
+      "allEvidenceRecall": 0.6854304635761589,
+      "precision": 0.08708609271523207,
+      "precisionMicro": 0.0870860927152318,
+      "mrr": 0.6008948281299274,
+      "ndcg": 0.6220085462193676,
+      "questionCount": 302
+    }
+  },
+  "diagnostics": {
+    "note": "fuzzyOverlapRate replicates the pre-evidence-ID scoring rule (term-overlap heuristic) as a labeled diagnostic only. It is NOT evidence recall and must not be cited as one.",
+    "fuzzyOverlapRate": 0.9835526315789473
+  },
+  "perQuestion": [
+    {
+      "questionId": "conv0_q0",
+      "category": "temporal",
+      "relevantIds": [
+        "D1:3"
+      ],
+      "retrievedIds": [
+        "D10:3",
+        "D4:13",
+        "D1:3",
+        "D7:1",
+        "D10:5",
+        "D5:1",
+        "D9:2",
+        "D2:12",
+        "D15:3",
+        "D1:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1171
+    },
+    {
+      "questionId": "conv0_q1",
+      "category": "temporal",
+      "relevantIds": [
+        "D1:12"
+      ],
+      "retrievedIds": [
+        "D1:14",
+        "D14:7",
+        "D8:6",
+        "D14:8",
+        "D17:14",
+        "D14:6",
+        "D14:30",
+        "D16:8",
+        "D9:16",
+        "D16:13"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 8717
+    },
+    {
+      "questionId": "conv0_q2",
+      "category": "open_domain",
+      "relevantIds": [
+        "D1:9",
+        "D1:11"
+      ],
+      "retrievedIds": [
+        "D4:11",
+        "D1:9",
+        "D7:7",
+        "D4:14",
+        "D5:12",
+        "D14:24",
+        "D1:10",
+        "D5:4",
+        "D4:13",
+        "D4:18"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1228
+    },
+    {
+      "questionId": "conv0_q3",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D2:8"
+      ],
+      "retrievedIds": [
+        "D2:8",
+        "D17:8",
+        "D17:7",
+        "D7:5",
+        "D1:17",
+        "D1:11",
+        "D17:26",
+        "D7:21",
+        "D4:14",
+        "D17:19"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 11177
+    },
+    {
+      "questionId": "conv0_q4",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D1:5"
+      ],
+      "retrievedIds": [
+        "D11:12",
+        "D17:19",
+        "D16:9",
+        "D13:13",
+        "D17:23",
+        "D3:3",
+        "D11:10",
+        "D19:15",
+        "D14:19",
+        "D13:14"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 11971
+    },
+    {
+      "questionId": "conv0_q5",
+      "category": "temporal",
+      "relevantIds": [
+        "D2:1"
+      ],
+      "retrievedIds": [
+        "D2:1",
+        "D2:2",
+        "D7:22",
+        "D7:20",
+        "D7:23",
+        "D2:5",
+        "D3:16",
+        "D8:30",
+        "D2:3",
+        "D3:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1250
+    },
+    {
+      "questionId": "conv0_q6",
+      "category": "temporal",
+      "relevantIds": [
+        "D2:7"
+      ],
+      "retrievedIds": [
+        "D2:7",
+        "D10:12",
+        "D16:2",
+        "D10:14",
+        "D18:19",
+        "D8:32",
+        "D4:6",
+        "D6:16",
+        "D9:1",
+        "D8:34"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8722
+    },
+    {
+      "questionId": "conv0_q7",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D3:13",
+        "D2:14"
+      ],
+      "retrievedIds": [
+        "D9:7",
+        "D16:15",
+        "D10:2",
+        "D4:10",
+        "D2:17",
+        "D19:2",
+        "D8:28",
+        "D19:1",
+        "D8:31",
+        "D1:2"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1207
+    },
+    {
+      "questionId": "conv0_q8",
+      "category": "temporal",
+      "relevantIds": [
+        "D3:1"
+      ],
+      "retrievedIds": [
+        "D3:1",
+        "D12:9",
+        "D3:3",
+        "D3:7",
+        "D5:1",
+        "D19:5",
+        "D13:1",
+        "D2:10",
+        "D1:18",
+        "D14:19"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 707
+    },
+    {
+      "questionId": "conv0_q9",
+      "category": "temporal",
+      "relevantIds": [
+        "D3:11"
+      ],
+      "retrievedIds": [
+        "D3:11",
+        "D16:5",
+        "D7:1",
+        "D19:9",
+        "D2:10",
+        "D6:11",
+        "D9:4",
+        "D3:13",
+        "D9:2",
+        "D9:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 834
+    },
+    {
+      "questionId": "conv0_q10",
+      "category": "temporal",
+      "relevantIds": [
+        "D3:13"
+      ],
+      "retrievedIds": [
+        "D3:13",
+        "D3:16",
+        "D16:15",
+        "D6:11",
+        "D10:6",
+        "D10:3",
+        "D1:7",
+        "D3:11",
+        "D10:5",
+        "D4:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 768
+    },
+    {
+      "questionId": "conv0_q11",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D3:13",
+        "D4:3"
+      ],
+      "retrievedIds": [
+        "D3:13",
+        "D5:1",
+        "D7:8",
+        "D7:1",
+        "D1:7",
+        "D13:2",
+        "D6:2",
+        "D1:2",
+        "D14:19",
+        "D1:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 722
+    },
+    {
+      "questionId": "conv0_q12",
+      "category": "temporal",
+      "relevantIds": [
+        "D4:5"
+      ],
+      "retrievedIds": [
+        "D4:5",
+        "D3:16",
+        "D11:1",
+        "D7:1",
+        "D16:7",
+        "D3:1",
+        "D13:2",
+        "D4:18",
+        "D6:4",
+        "D19:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 737
+    },
+    {
+      "questionId": "conv0_q13",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D4:13",
+        "D1:11"
+      ],
+      "retrievedIds": [
+        "D4:11",
+        "D7:7",
+        "D1:9",
+        "D7:5",
+        "D4:14",
+        "D1:11",
+        "D1:10",
+        "D5:12",
+        "D19:2",
+        "D14:12"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 733
+    },
+    {
+      "questionId": "conv0_q14",
+      "category": "open_domain",
+      "relevantIds": [
+        "D4:15",
+        "D3:5"
+      ],
+      "retrievedIds": [
+        "D7:7",
+        "D7:5",
+        "D4:15",
+        "D4:11",
+        "D19:9",
+        "D5:3",
+        "D6:15",
+        "D4:14",
+        "D1:7",
+        "D1:11"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 845
+    },
+    {
+      "questionId": "conv0_q15",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D5:4",
+        "D9:1",
+        "D1:12",
+        "D1:18"
+      ],
+      "retrievedIds": [
+        "D8:34",
+        "D10:5",
+        "D5:4",
+        "D10:12",
+        "D9:2",
+        "D16:8",
+        "D15:26",
+        "D15:10",
+        "D7:23",
+        "D15:4"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 721
+    },
+    {
+      "questionId": "conv0_q16",
+      "category": "temporal",
+      "relevantIds": [
+        "D5:4"
+      ],
+      "retrievedIds": [
+        "D5:4",
+        "D14:4",
+        "D8:2",
+        "D16:8",
+        "D5:5",
+        "D5:6",
+        "D5:10",
+        "D12:3",
+        "D16:9",
+        "D17:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 10570
+    },
+    {
+      "questionId": "conv0_q17",
+      "category": "temporal",
+      "relevantIds": [
+        "D5:13"
+      ],
+      "retrievedIds": [
+        "D5:13",
+        "D7:1",
+        "D4:13",
+        "D9:6",
+        "D17:19",
+        "D9:12",
+        "D14:19",
+        "D3:1",
+        "D14:12",
+        "D1:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 11522
+    },
+    {
+      "questionId": "conv0_q18",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D6:16",
+        "D4:6",
+        "D8:32"
+      ],
+      "retrievedIds": [
+        "D6:16",
+        "D8:32",
+        "D4:6",
+        "D10:12",
+        "D10:14",
+        "D16:2",
+        "D18:19",
+        "D8:34",
+        "D9:1",
+        "D2:7"
+      ],
+      "relevantRetrievedAt5": 3,
+      "relevantRetrievedAt10": 3,
+      "latencyMs": 9263
+    },
+    {
+      "questionId": "conv0_q19",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D6:6",
+        "D4:8"
+      ],
+      "retrievedIds": [
+        "D8:4",
+        "D4:8",
+        "D18:17",
+        "D15:2",
+        "D8:34",
+        "D9:17",
+        "D19:4",
+        "D10:10",
+        "D3:14",
+        "D11:1"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 11118
+    },
+    {
+      "questionId": "conv0_q20",
+      "category": "temporal",
+      "relevantIds": [
+        "D6:4"
+      ],
+      "retrievedIds": [
+        "D6:4",
+        "D16:8",
+        "D18:17",
+        "D13:15",
+        "D11:12",
+        "D14:22",
+        "D14:26",
+        "D14:24",
+        "D13:14",
+        "D4:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1331
+    },
+    {
+      "questionId": "conv0_q21",
+      "category": "temporal",
+      "relevantIds": [
+        "D6:11"
+      ],
+      "retrievedIds": [
+        "D6:11",
+        "D18:17",
+        "D18:16",
+        "D10:8",
+        "D18:18",
+        "D8:35",
+        "D16:19",
+        "D18:23",
+        "D3:11",
+        "D10:13"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9974
+    },
+    {
+      "questionId": "conv0_q22",
+      "category": "open_domain",
+      "relevantIds": [
+        "D6:9"
+      ],
+      "retrievedIds": [
+        "D6:7",
+        "D14:24",
+        "D18:11",
+        "D17:10",
+        "D4:5",
+        "D7:9",
+        "D7:8",
+        "D12:18",
+        "D7:20",
+        "D2:12"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1222
+    },
+    {
+      "questionId": "conv0_q23",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D7:8",
+        "D6:10"
+      ],
+      "retrievedIds": [
+        "D6:10",
+        "D6:8",
+        "D17:10",
+        "D7:8",
+        "D15:28",
+        "D7:10",
+        "D2:5",
+        "D11:12",
+        "D7:22",
+        "D14:20"
+      ],
+      "relevantRetrievedAt5": 2,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 10922
+    },
+    {
+      "questionId": "conv0_q24",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D7:22",
+        "D5:4"
+      ],
+      "retrievedIds": [
+        "D7:20",
+        "D7:22",
+        "D1:16",
+        "D18:15",
+        "D15:26",
+        "D18:19",
+        "D7:23",
+        "D16:8",
+        "D18:14",
+        "D8:34"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9579
+    },
+    {
+      "questionId": "conv0_q25",
+      "category": "temporal",
+      "relevantIds": [
+        "D7:1"
+      ],
+      "retrievedIds": [
+        "D7:1",
+        "D5:13",
+        "D4:13",
+        "D1:3",
+        "D5:1",
+        "D3:2",
+        "D11:6",
+        "D10:3",
+        "D2:12",
+        "D10:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1235
+    },
+    {
+      "questionId": "conv0_q26",
+      "category": "temporal",
+      "relevantIds": [
+        "D7:8"
+      ],
+      "retrievedIds": [
+        "D7:8",
+        "D17:10",
+        "D6:10",
+        "D2:5",
+        "D3:16",
+        "D10:22",
+        "D2:3",
+        "D10:12",
+        "D16:8",
+        "D9:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 772
+    },
+    {
+      "questionId": "conv0_q27",
+      "category": "open_domain",
+      "relevantIds": [
+        "D7:5",
+        "D7:9"
+      ],
+      "retrievedIds": [
+        "D1:9",
+        "D7:7",
+        "D4:11",
+        "D3:10",
+        "D7:8",
+        "D8:28",
+        "D4:18",
+        "D18:11",
+        "D16:10",
+        "D1:10"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 741
+    },
+    {
+      "questionId": "conv0_q28",
+      "category": "temporal",
+      "relevantIds": [
+        "D8:9"
+      ],
+      "retrievedIds": [
+        "D8:9",
+        "D19:1",
+        "D2:8",
+        "D13:1",
+        "D2:12",
+        "D17:7",
+        "D17:1",
+        "D19:3",
+        "D19:2",
+        "D2:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 749
+    },
+    {
+      "questionId": "conv0_q29",
+      "category": "temporal",
+      "relevantIds": [
+        "D8:2"
+      ],
+      "retrievedIds": [
+        "D8:2",
+        "D14:4",
+        "D16:8",
+        "D5:4",
+        "D5:5",
+        "D5:10",
+        "D5:6",
+        "D17:8",
+        "D12:3",
+        "D17:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 765
+    },
+    {
+      "questionId": "conv0_q30",
+      "category": "open_domain",
+      "relevantIds": [],
+      "retrievedIds": [
+        "D3:2",
+        "D9:2",
+        "D10:5",
+        "D14:34",
+        "D3:1",
+        "D13:15",
+        "D9:16",
+        "D5:2",
+        "D3:4",
+        "D9:11"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 808
+    },
+    {
+      "questionId": "conv0_q31",
+      "category": "temporal",
+      "relevantIds": [
+        "D4:8"
+      ],
+      "retrievedIds": [
+        "D10:14",
+        "D10:12",
+        "D16:2",
+        "D8:32",
+        "D9:1",
+        "D18:19",
+        "D2:7",
+        "D4:6",
+        "D6:16",
+        "D8:34"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 819
+    },
+    {
+      "questionId": "conv0_q32",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D5:1",
+        "D8:17",
+        "D3:1",
+        "D1:3"
+      ],
+      "retrievedIds": [
+        "D5:1",
+        "D9:6",
+        "D4:13",
+        "D10:5",
+        "D15:3",
+        "D1:3",
+        "D3:1",
+        "D3:2",
+        "D16:5",
+        "D5:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 3,
+      "latencyMs": 757
+    },
+    {
+      "questionId": "conv0_q33",
+      "category": "temporal",
+      "relevantIds": [
+        "D5:1"
+      ],
+      "retrievedIds": [
+        "D11:4",
+        "D10:7",
+        "D5:1",
+        "D8:17",
+        "D9:8",
+        "D9:6",
+        "D14:23",
+        "D12:15",
+        "D5:2",
+        "D17:21"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 775
+    },
+    {
+      "questionId": "conv0_q34",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D9:2",
+        "D3:3"
+      ],
+      "retrievedIds": [
+        "D9:6",
+        "D10:6",
+        "D11:2",
+        "D9:2",
+        "D19:6",
+        "D3:1",
+        "D9:8",
+        "D2:9",
+        "D18:8",
+        "D10:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 774
+    },
+    {
+      "questionId": "conv0_q35",
+      "category": "temporal",
+      "relevantIds": [
+        "D9:1"
+      ],
+      "retrievedIds": [
+        "D10:14",
+        "D10:12",
+        "D16:2",
+        "D8:32",
+        "D9:1",
+        "D18:19",
+        "D2:7",
+        "D4:6",
+        "D6:16",
+        "D8:34"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 764
+    },
+    {
+      "questionId": "conv0_q36",
+      "category": "temporal",
+      "relevantIds": [
+        "D9:2"
+      ],
+      "retrievedIds": [
+        "D9:2",
+        "D1:7",
+        "D3:11",
+        "D14:12",
+        "D4:14",
+        "D3:8",
+        "D2:12",
+        "D10:3",
+        "D9:10",
+        "D10:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 11346
+    },
+    {
+      "questionId": "conv0_q37",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D8:6; D9:17"
+      ],
+      "retrievedIds": [
+        "D14:30",
+        "D8:6",
+        "D13:8",
+        "D1:14",
+        "D14:7",
+        "D16:8",
+        "D17:14",
+        "D16:13",
+        "D11:12",
+        "D1:15"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 8408
+    },
+    {
+      "questionId": "conv0_q38",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D8:4",
+        "D8:6",
+        "D9:1",
+        "D6:4",
+        "D1:18",
+        "D3:14"
+      ],
+      "retrievedIds": [
+        "D3:20",
+        "D10:12",
+        "D8:34",
+        "D4:8",
+        "D18:19",
+        "D8:32",
+        "D8:6",
+        "D3:22",
+        "D8:28",
+        "D8:29"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1171
+    },
+    {
+      "questionId": "conv0_q39",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D10:3",
+        "D5:1",
+        "D9:12",
+        "D9:2"
+      ],
+      "retrievedIds": [
+        "D16:5",
+        "D10:5",
+        "D10:3",
+        "D4:13",
+        "D9:2",
+        "D3:2",
+        "D14:34",
+        "D11:8",
+        "D7:1",
+        "D3:1"
+      ],
+      "relevantRetrievedAt5": 2,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 831
+    },
+    {
+      "questionId": "conv0_q40",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D10:8",
+        "D6:16"
+      ],
+      "retrievedIds": [
+        "D10:10",
+        "D3:16",
+        "D14:8",
+        "D10:8",
+        "D10:12",
+        "D18:19",
+        "D1:18",
+        "D10:22",
+        "D18:23",
+        "D4:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 782
+    },
+    {
+      "questionId": "conv0_q41",
+      "category": "temporal",
+      "relevantIds": [
+        "D10:3"
+      ],
+      "retrievedIds": [
+        "D10:3",
+        "D10:5",
+        "D14:12",
+        "D10:4",
+        "D1:3",
+        "D10:6",
+        "D9:2",
+        "D1:7",
+        "D2:12",
+        "D14:14"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 10057
+    },
+    {
+      "questionId": "conv0_q42",
+      "category": "open_domain",
+      "relevantIds": [
+        "D10:12",
+        "D10:14"
+      ],
+      "retrievedIds": [
+        "D15:2",
+        "D18:19",
+        "D12:18",
+        "D18:22",
+        "D17:26",
+        "D10:22",
+        "D18:23",
+        "D3:14",
+        "D13:8",
+        "D12:20"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1190
+    },
+    {
+      "questionId": "conv0_q43",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D11:12",
+        "D11:8",
+        "D9:14"
+      ],
+      "retrievedIds": [
+        "D14:29",
+        "D13:11",
+        "D11:10",
+        "D16:11",
+        "D1:16",
+        "D11:11",
+        "D5:10",
+        "D12:6",
+        "D11:8",
+        "D17:14"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 785
+    },
+    {
+      "questionId": "conv0_q44",
+      "category": "temporal",
+      "relevantIds": [
+        "D11:1"
+      ],
+      "retrievedIds": [
+        "D11:1",
+        "D5:16",
+        "D13:18",
+        "D6:2",
+        "D1:2",
+        "D18:23",
+        "D3:16",
+        "D4:18",
+        "D6:14",
+        "D4:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9266
+    },
+    {
+      "questionId": "conv0_q45",
+      "category": "temporal",
+      "relevantIds": [
+        "D11:4"
+      ],
+      "retrievedIds": [
+        "D11:4",
+        "D10:7",
+        "D5:1",
+        "D8:17",
+        "D9:8",
+        "D9:6",
+        "D14:23",
+        "D12:15",
+        "D5:2",
+        "D14:15"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1086
+    },
+    {
+      "questionId": "conv0_q46",
+      "category": "open_domain",
+      "relevantIds": [],
+      "retrievedIds": [
+        "D3:4",
+        "D3:1",
+        "D3:2",
+        "D14:12",
+        "D14:34",
+        "D9:2",
+        "D3:3",
+        "D10:5",
+        "D9:16",
+        "D13:15"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 799
+    },
+    {
+      "questionId": "conv0_q47",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D12:1",
+        "D3:11"
+      ],
+      "retrievedIds": [
+        "D3:13",
+        "D16:15",
+        "D12:1",
+        "D7:8",
+        "D8:31",
+        "D6:13",
+        "D19:13",
+        "D19:11",
+        "D8:32",
+        "D3:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 758
+    },
+    {
+      "questionId": "conv0_q48",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D12:14",
+        "D8:4",
+        "D5:6"
+      ],
+      "retrievedIds": [
+        "D8:2",
+        "D16:8",
+        "D5:10",
+        "D16:9",
+        "D14:4",
+        "D5:6",
+        "D8:4",
+        "D5:8",
+        "D4:5",
+        "D5:5"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 813
+    },
+    {
+      "questionId": "conv0_q49",
+      "category": "temporal",
+      "relevantIds": [
+        "D12:15"
+      ],
+      "retrievedIds": [
+        "D11:4",
+        "D12:15",
+        "D9:8",
+        "D8:17",
+        "D5:1",
+        "D9:6",
+        "D10:7",
+        "D4:8",
+        "D10:5",
+        "D8:23"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 841
+    },
+    {
+      "questionId": "conv0_q50",
+      "category": "open_domain",
+      "relevantIds": [
+        "D12:1"
+      ],
+      "retrievedIds": [
+        "D7:21",
+        "D1:10",
+        "D1:3",
+        "D3:2",
+        "D7:20",
+        "D18:11",
+        "D2:12",
+        "D17:23",
+        "D17:19",
+        "D10:15"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 785
+    },
+    {
+      "questionId": "conv0_q51",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D13:8",
+        "D8:6",
+        "D1:12"
+      ],
+      "retrievedIds": [
+        "D14:30",
+        "D1:14",
+        "D8:6",
+        "D17:14",
+        "D16:8",
+        "D4:5",
+        "D14:7",
+        "D9:16",
+        "D1:15",
+        "D16:13"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9497
+    },
+    {
+      "questionId": "conv0_q52",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D13:4",
+        "D7:18"
+      ],
+      "retrievedIds": [
+        "D7:16",
+        "D13:4",
+        "D13:2",
+        "D7:14",
+        "D13:6",
+        "D13:3",
+        "D5:16",
+        "D13:16",
+        "D18:11",
+        "D6:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1185
+    },
+    {
+      "questionId": "conv0_q53",
+      "category": "temporal",
+      "relevantIds": [
+        "D13:1"
+      ],
+      "retrievedIds": [
+        "D13:1",
+        "D19:1",
+        "D2:8",
+        "D2:10",
+        "D17:7",
+        "D8:9",
+        "D2:12",
+        "D19:2",
+        "D13:16",
+        "D17:1"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9359
+    },
+    {
+      "questionId": "conv0_q54",
+      "category": "temporal",
+      "relevantIds": [
+        "D13:11"
+      ],
+      "retrievedIds": [
+        "D13:11",
+        "D17:23",
+        "D4:5",
+        "D16:13",
+        "D13:13",
+        "D14:19",
+        "D11:12",
+        "D17:22",
+        "D11:10",
+        "D17:13"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1179
+    },
+    {
+      "questionId": "conv0_q55",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D14:5",
+        "D8:6"
+      ],
+      "retrievedIds": [
+        "D8:8",
+        "D8:6",
+        "D11:12",
+        "D16:13",
+        "D17:14",
+        "D9:16",
+        "D1:16",
+        "D1:15",
+        "D14:7",
+        "D11:11"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 810
+    },
+    {
+      "questionId": "conv0_q56",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D14:15",
+        "D4:1"
+      ],
+      "retrievedIds": [
+        "D14:15",
+        "D11:8",
+        "D18:5",
+        "D14:21",
+        "D6:11",
+        "D6:16",
+        "D7:26",
+        "D17:23",
+        "D12:9",
+        "D16:13"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 10522
+    },
+    {
+      "questionId": "conv0_q57",
+      "category": "temporal",
+      "relevantIds": [
+        "D14:1"
+      ],
+      "retrievedIds": [
+        "D12:1",
+        "D14:1",
+        "D12:2",
+        "D4:8",
+        "D15:3",
+        "D16:2",
+        "D15:5",
+        "D7:1",
+        "D7:8",
+        "D7:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1151
+    },
+    {
+      "questionId": "conv0_q58",
+      "category": "temporal",
+      "relevantIds": [
+        "D14:4"
+      ],
+      "retrievedIds": [
+        "D14:4",
+        "D8:2",
+        "D14:3",
+        "D16:8",
+        "D5:4",
+        "D5:6",
+        "D5:8",
+        "D5:10",
+        "D12:3",
+        "D16:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 822
+    },
+    {
+      "questionId": "conv0_q59",
+      "category": "open_domain",
+      "relevantIds": [
+        "D14:19",
+        "D12:1"
+      ],
+      "retrievedIds": [
+        "D17:19",
+        "D12:1",
+        "D14:19",
+        "D19:15",
+        "D3:10",
+        "D17:26",
+        "D11:10",
+        "D13:16",
+        "D13:15",
+        "D14:34"
+      ],
+      "relevantRetrievedAt5": 2,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 759
+    },
+    {
+      "questionId": "conv0_q60",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D15:26",
+        "D2:5"
+      ],
+      "retrievedIds": [
+        "D15:26",
+        "D15:25",
+        "D15:18",
+        "D2:5",
+        "D15:20",
+        "D5:5",
+        "D15:28",
+        "D15:16",
+        "D15:12",
+        "D16:8"
+      ],
+      "relevantRetrievedAt5": 2,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 8739
+    },
+    {
+      "questionId": "conv0_q61",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D15:16",
+        "D11:3"
+      ],
+      "retrievedIds": [
+        "D15:28",
+        "D15:12",
+        "D11:1",
+        "D15:14",
+        "D18:9",
+        "D15:18",
+        "D15:26",
+        "D11:3",
+        "D13:15",
+        "D18:11"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1231
+    },
+    {
+      "questionId": "conv0_q62",
+      "category": "temporal",
+      "relevantIds": [
+        "D15:2"
+      ],
+      "retrievedIds": [
+        "D15:2",
+        "D10:12",
+        "D10:10",
+        "D18:19",
+        "D18:23",
+        "D10:8",
+        "D18:17",
+        "D18:22",
+        "D14:8",
+        "D8:34"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 865
+    },
+    {
+      "questionId": "conv0_q63",
+      "category": "temporal",
+      "relevantIds": [
+        "D15:11"
+      ],
+      "retrievedIds": [
+        "D15:11",
+        "D14:33",
+        "D15:9",
+        "D9:12",
+        "D15:3",
+        "D14:35",
+        "D15:12",
+        "D14:24",
+        "D14:34",
+        "D9:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 822
+    },
+    {
+      "questionId": "conv0_q64",
+      "category": "open_domain",
+      "relevantIds": [
+        "D15:28"
+      ],
+      "retrievedIds": [
+        "D15:28",
+        "D15:24",
+        "D13:8",
+        "D12:18",
+        "D5:14",
+        "D10:22",
+        "D15:22",
+        "D15:26",
+        "D18:19",
+        "D19:12"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 845
+    },
+    {
+      "questionId": "conv0_q65",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D16:15",
+        "D11:14"
+      ],
+      "retrievedIds": [
+        "D6:15",
+        "D8:25",
+        "D11:14",
+        "D16:9",
+        "D19:9",
+        "D16:15",
+        "D6:11",
+        "D16:16",
+        "D3:1",
+        "D7:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 832
+    },
+    {
+      "questionId": "conv0_q66",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D16:4",
+        "D10:12"
+      ],
+      "retrievedIds": [
+        "D8:34",
+        "D4:8",
+        "D10:12",
+        "D18:19",
+        "D3:20",
+        "D16:2",
+        "D18:5",
+        "D18:22",
+        "D8:32",
+        "D10:22"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8416
+    },
+    {
+      "questionId": "conv0_q67",
+      "category": "temporal",
+      "relevantIds": [
+        "D16:1"
+      ],
+      "retrievedIds": [
+        "D16:2",
+        "D16:1",
+        "D13:7",
+        "D18:17",
+        "D14:1",
+        "D3:11",
+        "D3:13",
+        "D6:11",
+        "D8:35",
+        "D16:15"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1199
+    },
+    {
+      "questionId": "conv0_q68",
+      "category": "temporal",
+      "relevantIds": [
+        "D16:8"
+      ],
+      "retrievedIds": [
+        "D16:6",
+        "D16:8",
+        "D4:5",
+        "D8:6",
+        "D14:16",
+        "D14:30",
+        "D12:8",
+        "D14:10",
+        "D16:10",
+        "D15:26"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 833
+    },
+    {
+      "questionId": "conv0_q69",
+      "category": "open_domain",
+      "relevantIds": [
+        "D16:18",
+        "D13:16",
+        "D7:4"
+      ],
+      "retrievedIds": [
+        "D7:14",
+        "D13:16",
+        "D2:17",
+        "D19:8",
+        "D12:12",
+        "D4:16",
+        "D2:9",
+        "D19:4",
+        "D8:28",
+        "D10:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 840
+    },
+    {
+      "questionId": "conv0_q70",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D17:19",
+        "D15:13"
+      ],
+      "retrievedIds": [
+        "D9:6",
+        "D3:1",
+        "D17:19",
+        "D4:13",
+        "D5:13",
+        "D1:3",
+        "D10:5",
+        "D1:5",
+        "D3:2",
+        "D9:12"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 804
+    },
+    {
+      "questionId": "conv0_q71",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D7:11",
+        "D17:10"
+      ],
+      "retrievedIds": [
+        "D17:10",
+        "D7:8",
+        "D6:10",
+        "D11:12",
+        "D5:10",
+        "D14:18",
+        "D17:9",
+        "D7:20",
+        "D7:24",
+        "D19:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 916
+    },
+    {
+      "questionId": "conv0_q72",
+      "category": "temporal",
+      "relevantIds": [
+        "D17:3"
+      ],
+      "retrievedIds": [
+        "D17:4",
+        "D2:9",
+        "D19:2",
+        "D13:16",
+        "D8:38",
+        "D10:24",
+        "D19:1",
+        "D19:4",
+        "D3:18",
+        "D12:14"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 825
+    },
+    {
+      "questionId": "conv0_q73",
+      "category": "temporal",
+      "relevantIds": [
+        "D17:8"
+      ],
+      "retrievedIds": [
+        "D17:8",
+        "D18:3",
+        "D8:20",
+        "D3:16",
+        "D13:6",
+        "D14:2",
+        "D17:10",
+        "D18:7",
+        "D18:17",
+        "D16:15"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 808
+    },
+    {
+      "questionId": "conv0_q74",
+      "category": "temporal",
+      "relevantIds": [
+        "D18:1"
+      ],
+      "retrievedIds": [
+        "D10:12",
+        "D18:1",
+        "D8:32",
+        "D18:17",
+        "D18:5",
+        "D4:8",
+        "D18:3",
+        "D18:19",
+        "D12:16",
+        "D3:20"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 876
+    },
+    {
+      "questionId": "conv0_q75",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D18:1",
+        "D18:7"
+      ],
+      "retrievedIds": [
+        "D3:14",
+        "D11:1",
+        "D9:17",
+        "D2:15",
+        "D1:18",
+        "D3:16",
+        "D13:2",
+        "D1:2",
+        "D18:3",
+        "D10:23"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 823
+    },
+    {
+      "questionId": "conv0_q76",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D18:17"
+      ],
+      "retrievedIds": [
+        "D4:8",
+        "D18:17",
+        "D18:1",
+        "D8:34",
+        "D16:2",
+        "D18:19",
+        "D12:2",
+        "D10:12",
+        "D17:26",
+        "D18:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 877
+    },
+    {
+      "questionId": "conv0_q77",
+      "category": "open_domain",
+      "relevantIds": [
+        "D18:3",
+        "D18:1"
+      ],
+      "retrievedIds": [
+        "D18:1",
+        "D8:32",
+        "D18:17",
+        "D18:19",
+        "D10:12",
+        "D17:26",
+        "D1:18",
+        "D18:3",
+        "D8:18",
+        "D12:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 864
+    },
+    {
+      "questionId": "conv0_q78",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D19:2",
+        "D7:18"
+      ],
+      "retrievedIds": [
+        "D4:5",
+        "D4:4",
+        "D19:2",
+        "D8:12",
+        "D6:8",
+        "D16:8",
+        "D5:10",
+        "D7:22",
+        "D13:8",
+        "D7:20"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 835
+    },
+    {
+      "questionId": "conv0_q79",
+      "category": "temporal",
+      "relevantIds": [
+        "D19:1"
+      ],
+      "retrievedIds": [
+        "D19:1",
+        "D8:9",
+        "D19:2",
+        "D2:8",
+        "D2:10",
+        "D19:3",
+        "D2:12",
+        "D13:1",
+        "D17:1",
+        "D17:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 10140
+    },
+    {
+      "questionId": "conv0_q80",
+      "category": "temporal",
+      "relevantIds": [
+        "D19:2"
+      ],
+      "retrievedIds": [
+        "D19:2",
+        "D4:5",
+        "D3:16",
+        "D7:20",
+        "D5:10",
+        "D12:8",
+        "D8:12",
+        "D17:4",
+        "D2:11",
+        "D18:17"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1389
+    },
+    {
+      "questionId": "conv0_q81",
+      "category": "open_domain",
+      "relevantIds": [
+        "D19:1",
+        "D19:3"
+      ],
+      "retrievedIds": [
+        "D3:13",
+        "D4:3",
+        "D1:18",
+        "D3:10",
+        "D2:17",
+        "D5:16",
+        "D2:10",
+        "D12:21",
+        "D8:25",
+        "D19:3"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 836
+    },
+    {
+      "questionId": "conv0_q82",
+      "category": "single_hop",
+      "relevantIds": [
+        "D2:2"
+      ],
+      "retrievedIds": [
+        "D2:2",
+        "D2:1",
+        "D7:1",
+        "D3:2",
+        "D11:6",
+        "D14:19",
+        "D2:3",
+        "D7:2",
+        "D2:12",
+        "D10:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1722
+    },
+    {
+      "questionId": "conv0_q83",
+      "category": "single_hop",
+      "relevantIds": [
+        "D2:3"
+      ],
+      "retrievedIds": [
+        "D2:1",
+        "D2:3",
+        "D18:5",
+        "D18:9",
+        "D2:2",
+        "D10:22",
+        "D8:20",
+        "D7:23",
+        "D18:3",
+        "D16:15"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 912
+    },
+    {
+      "questionId": "conv0_q84",
+      "category": "single_hop",
+      "relevantIds": [
+        "D2:5"
+      ],
+      "retrievedIds": [
+        "D2:4",
+        "D7:25",
+        "D2:3",
+        "D1:18",
+        "D13:18",
+        "D4:15",
+        "D7:14",
+        "D17:8",
+        "D19:14",
+        "D7:26"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 8728
+    },
+    {
+      "questionId": "conv0_q85",
+      "category": "single_hop",
+      "relevantIds": [
+        "D2:8"
+      ],
+      "retrievedIds": [
+        "D2:7",
+        "D12:17",
+        "D16:2",
+        "D10:11",
+        "D14:33",
+        "D1:9",
+        "D9:12",
+        "D1:18",
+        "D11:1",
+        "D12:18"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 11200
+    },
+    {
+      "questionId": "conv0_q86",
+      "category": "single_hop",
+      "relevantIds": [
+        "D2:12"
+      ],
+      "retrievedIds": [
+        "D2:12",
+        "D2:10",
+        "D2:8",
+        "D4:13",
+        "D19:4",
+        "D10:5",
+        "D17:7",
+        "D2:13",
+        "D19:1",
+        "D18:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1382
+    },
+    {
+      "questionId": "conv0_q87",
+      "category": "single_hop",
+      "relevantIds": [
+        "D2:12"
+      ],
+      "retrievedIds": [
+        "D2:12",
+        "D2:8",
+        "D2:10",
+        "D13:1",
+        "D19:1",
+        "D19:3",
+        "D8:9",
+        "D17:7",
+        "D2:11",
+        "D13:16"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 793
+    },
+    {
+      "questionId": "conv0_q88",
+      "category": "single_hop",
+      "relevantIds": [
+        "D2:14"
+      ],
+      "retrievedIds": [
+        "D2:13",
+        "D19:1",
+        "D2:8",
+        "D19:3",
+        "D17:3",
+        "D13:16",
+        "D2:10",
+        "D17:1",
+        "D8:9",
+        "D17:7"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 10109
+    },
+    {
+      "questionId": "conv0_q89",
+      "category": "single_hop",
+      "relevantIds": [
+        "D2:15"
+      ],
+      "retrievedIds": [
+        "D19:2",
+        "D13:16",
+        "D19:4",
+        "D19:3",
+        "D2:9",
+        "D8:10",
+        "D19:10",
+        "D13:2",
+        "D7:14",
+        "D2:13"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 7443
+    },
+    {
+      "questionId": "conv0_q90",
+      "category": "single_hop",
+      "relevantIds": [
+        "D3:16"
+      ],
+      "retrievedIds": [
+        "D3:15",
+        "D3:13",
+        "D3:16",
+        "D10:21",
+        "D16:8",
+        "D6:1",
+        "D16:17",
+        "D8:33",
+        "D7:1",
+        "D1:1"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1381
+    },
+    {
+      "questionId": "conv0_q91",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:3"
+      ],
+      "retrievedIds": [
+        "D4:3",
+        "D17:23",
+        "D14:21",
+        "D4:2",
+        "D14:19",
+        "D14:15",
+        "D9:17",
+        "D4:4",
+        "D17:22",
+        "D19:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 827
+    },
+    {
+      "questionId": "conv0_q92",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:3"
+      ],
+      "retrievedIds": [
+        "D4:3",
+        "D3:13",
+        "D11:16",
+        "D19:1",
+        "D13:2",
+        "D10:23",
+        "D19:11",
+        "D13:17",
+        "D6:2",
+        "D10:1"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9041
+    },
+    {
+      "questionId": "conv0_q93",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:3"
+      ],
+      "retrievedIds": [
+        "D4:3",
+        "D5:10",
+        "D19:11",
+        "D1:16",
+        "D14:26",
+        "D4:2",
+        "D13:14",
+        "D4:4",
+        "D12:9",
+        "D14:19"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9550
+    },
+    {
+      "questionId": "conv0_q94",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:5"
+      ],
+      "retrievedIds": [
+        "D4:5",
+        "D8:12",
+        "D16:13",
+        "D16:9",
+        "D15:14",
+        "D10:18",
+        "D19:2",
+        "D4:3",
+        "D9:17",
+        "D17:23"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9663
+    },
+    {
+      "questionId": "conv0_q95",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:8"
+      ],
+      "retrievedIds": [
+        "D10:12",
+        "D4:8",
+        "D3:20",
+        "D8:32",
+        "D10:14",
+        "D18:19",
+        "D16:2",
+        "D9:1",
+        "D8:34",
+        "D4:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1272
+    },
+    {
+      "questionId": "conv0_q96",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:13"
+      ],
+      "retrievedIds": [
+        "D4:11",
+        "D4:12",
+        "D1:11",
+        "D7:7",
+        "D4:13",
+        "D6:3",
+        "D7:5",
+        "D5:3",
+        "D4:15",
+        "D4:14"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 888
+    },
+    {
+      "questionId": "conv0_q97",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:13"
+      ],
+      "retrievedIds": [
+        "D4:13",
+        "D8:2",
+        "D9:2",
+        "D18:16",
+        "D13:1",
+        "D13:11",
+        "D17:8",
+        "D1:3",
+        "D5:13",
+        "D1:16"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 906
+    },
+    {
+      "questionId": "conv0_q98",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:13"
+      ],
+      "retrievedIds": [
+        "D4:13",
+        "D9:2",
+        "D3:1",
+        "D1:3",
+        "D3:2",
+        "D15:3",
+        "D7:1",
+        "D17:19",
+        "D16:5",
+        "D3:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 983
+    },
+    {
+      "questionId": "conv0_q99",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:15"
+      ],
+      "retrievedIds": [
+        "D4:14",
+        "D7:7",
+        "D5:3",
+        "D4:11",
+        "D4:15",
+        "D4:13",
+        "D1:11",
+        "D7:6",
+        "D7:5",
+        "D6:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9299
+    },
+    {
+      "questionId": "conv0_q100",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:15"
+      ],
+      "retrievedIds": [
+        "D4:15",
+        "D8:9",
+        "D19:5",
+        "D4:13",
+        "D6:7",
+        "D4:11",
+        "D15:4",
+        "D17:19",
+        "D3:6",
+        "D15:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1321
+    },
+    {
+      "questionId": "conv0_q101",
+      "category": "single_hop",
+      "relevantIds": [
+        "D5:8"
+      ],
+      "retrievedIds": [
+        "D5:8",
+        "D5:7",
+        "D4:5",
+        "D14:28",
+        "D16:9",
+        "D14:3",
+        "D8:4",
+        "D5:6",
+        "D12:6",
+        "D17:12"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 860
+    },
+    {
+      "questionId": "conv0_q102",
+      "category": "single_hop",
+      "relevantIds": [
+        "D6:9"
+      ],
+      "retrievedIds": [
+        "D6:8",
+        "D6:9",
+        "D6:7",
+        "D7:10",
+        "D14:24",
+        "D7:9",
+        "D5:10",
+        "D17:10",
+        "D13:14",
+        "D7:20"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 846
+    },
+    {
+      "questionId": "conv0_q103",
+      "category": "single_hop",
+      "relevantIds": [
+        "D6:10"
+      ],
+      "retrievedIds": [
+        "D6:10",
+        "D6:9",
+        "D14:20",
+        "D7:8",
+        "D5:10",
+        "D11:12",
+        "D14:30",
+        "D15:26",
+        "D15:28",
+        "D7:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 911
+    },
+    {
+      "questionId": "conv0_q104",
+      "category": "single_hop",
+      "relevantIds": [
+        "D7:11"
+      ],
+      "retrievedIds": [
+        "D11:12",
+        "D17:10",
+        "D7:8",
+        "D5:10",
+        "D17:9",
+        "D19:3",
+        "D7:10",
+        "D7:20",
+        "D12:8",
+        "D13:15"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 6739
+    },
+    {
+      "questionId": "conv0_q105",
+      "category": "single_hop",
+      "relevantIds": [
+        "D7:13"
+      ],
+      "retrievedIds": [
+        "D7:11",
+        "D7:8",
+        "D14:19",
+        "D7:7",
+        "D7:14",
+        "D7:9",
+        "D17:10",
+        "D11:14",
+        "D19:15",
+        "D3:6"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1369
+    },
+    {
+      "questionId": "conv0_q106",
+      "category": "single_hop",
+      "relevantIds": [
+        "D7:19"
+      ],
+      "retrievedIds": [
+        "D7:18",
+        "D7:20",
+        "D17:8",
+        "D18:9",
+        "D6:2",
+        "D7:12",
+        "D10:2",
+        "D4:5",
+        "D1:2",
+        "D7:24"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 915
+    },
+    {
+      "questionId": "conv0_q107",
+      "category": "single_hop",
+      "relevantIds": [
+        "D7:21"
+      ],
+      "retrievedIds": [
+        "D7:23",
+        "D7:20",
+        "D7:21",
+        "D7:22",
+        "D3:14",
+        "D2:5",
+        "D2:11",
+        "D18:11",
+        "D8:28",
+        "D18:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 950
+    },
+    {
+      "questionId": "conv0_q108",
+      "category": "single_hop",
+      "relevantIds": [
+        "D7:24"
+      ],
+      "retrievedIds": [
+        "D7:22",
+        "D7:20",
+        "D7:23",
+        "D7:24",
+        "D2:5",
+        "D8:32",
+        "D18:19",
+        "D15:26",
+        "D8:30",
+        "D7:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 926
+    },
+    {
+      "questionId": "conv0_q109",
+      "category": "single_hop",
+      "relevantIds": [
+        "D8:2"
+      ],
+      "retrievedIds": [
+        "D8:2",
+        "D14:4",
+        "D8:4",
+        "D14:17",
+        "D8:3",
+        "D16:9",
+        "D5:8",
+        "D12:5",
+        "D5:6",
+        "D14:27"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1030
+    },
+    {
+      "questionId": "conv0_q110",
+      "category": "single_hop",
+      "relevantIds": [
+        "D8:4"
+      ],
+      "retrievedIds": [
+        "D8:4",
+        "D8:2",
+        "D14:17",
+        "D12:5",
+        "D8:3",
+        "D5:10",
+        "D5:8",
+        "D16:9",
+        "D14:21",
+        "D4:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 972
+    },
+    {
+      "questionId": "conv0_q111",
+      "category": "single_hop",
+      "relevantIds": [
+        "D8:5"
+      ],
+      "retrievedIds": [
+        "D8:5",
+        "D8:33",
+        "D8:2",
+        "D14:25",
+        "D8:35",
+        "D12:3",
+        "D14:27",
+        "D5:5",
+        "D14:29",
+        "D5:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 961
+    },
+    {
+      "questionId": "conv0_q112",
+      "category": "single_hop",
+      "relevantIds": [
+        "D8:6"
+      ],
+      "retrievedIds": [
+        "D8:6",
+        "D8:7",
+        "D14:17",
+        "D14:31",
+        "D17:13",
+        "D9:17",
+        "D1:14",
+        "D14:27",
+        "D17:16",
+        "D14:30"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 958
+    },
+    {
+      "questionId": "conv0_q113",
+      "category": "single_hop",
+      "relevantIds": [
+        "D8:9"
+      ],
+      "retrievedIds": [
+        "D8:9",
+        "D19:3",
+        "D2:8",
+        "D2:12",
+        "D9:10",
+        "D19:1",
+        "D15:5",
+        "D13:16",
+        "D19:2",
+        "D17:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 894
+    },
+    {
+      "questionId": "conv0_q114",
+      "category": "single_hop",
+      "relevantIds": [
+        "D8:11"
+      ],
+      "retrievedIds": [
+        "D8:11",
+        "D17:23",
+        "D14:15",
+        "D8:12",
+        "D14:21",
+        "D9:17",
+        "D11:8",
+        "D14:26",
+        "D11:12",
+        "D2:12"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 838
+    },
+    {
+      "questionId": "conv0_q115",
+      "category": "single_hop",
+      "relevantIds": [
+        "D8:12"
+      ],
+      "retrievedIds": [
+        "D8:12",
+        "D8:11",
+        "D14:26",
+        "D8:8",
+        "D10:22",
+        "D18:5",
+        "D2:4",
+        "D18:9",
+        "D7:26",
+        "D16:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8587
+    },
+    {
+      "questionId": "conv0_q116",
+      "category": "single_hop",
+      "relevantIds": [
+        "D9:16"
+      ],
+      "retrievedIds": [
+        "D9:15",
+        "D9:14",
+        "D14:18",
+        "D16:13",
+        "D16:5",
+        "D16:12",
+        "D11:12",
+        "D14:7",
+        "D9:16",
+        "D8:8"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1281
+    },
+    {
+      "questionId": "conv0_q117",
+      "category": "single_hop",
+      "relevantIds": [
+        "D10:10"
+      ],
+      "retrievedIds": [
+        "D10:10",
+        "D10:8",
+        "D18:19",
+        "D10:12",
+        "D1:18",
+        "D14:8",
+        "D6:16",
+        "D1:2",
+        "D3:14",
+        "D4:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8701
+    },
+    {
+      "questionId": "conv0_q118",
+      "category": "single_hop",
+      "relevantIds": [
+        "D10:14"
+      ],
+      "retrievedIds": [
+        "D10:14",
+        "D4:8",
+        "D10:12",
+        "D8:32",
+        "D4:6",
+        "D6:16",
+        "D18:19",
+        "D16:2",
+        "D10:10",
+        "D3:20"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1293
+    },
+    {
+      "questionId": "conv0_q119",
+      "category": "single_hop",
+      "relevantIds": [
+        "D10:18"
+      ],
+      "retrievedIds": [
+        "D10:16",
+        "D10:14",
+        "D8:20",
+        "D10:22",
+        "D2:3",
+        "D14:8",
+        "D14:10",
+        "D3:16",
+        "D18:7",
+        "D11:5"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 943
+    },
+    {
+      "questionId": "conv0_q120",
+      "category": "single_hop",
+      "relevantIds": [
+        "D11:1"
+      ],
+      "retrievedIds": [
+        "D11:1",
+        "D8:14",
+        "D10:8",
+        "D17:26",
+        "D4:18",
+        "D5:16",
+        "D7:14",
+        "D17:2",
+        "D18:23",
+        "D3:22"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 993
+    },
+    {
+      "questionId": "conv0_q121",
+      "category": "single_hop",
+      "relevantIds": [
+        "D11:3"
+      ],
+      "retrievedIds": [
+        "D11:1",
+        "D11:3",
+        "D5:16",
+        "D2:3",
+        "D18:23",
+        "D5:14",
+        "D15:12",
+        "D18:13",
+        "D10:24",
+        "D3:18"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 987
+    },
+    {
+      "questionId": "conv0_q122",
+      "category": "single_hop",
+      "relevantIds": [
+        "D12:6"
+      ],
+      "retrievedIds": [
+        "D16:9",
+        "D17:16",
+        "D4:5",
+        "D16:13",
+        "D5:6",
+        "D1:15",
+        "D12:5",
+        "D5:5",
+        "D16:8",
+        "D5:10"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1023
+    },
+    {
+      "questionId": "conv0_q123",
+      "category": "single_hop",
+      "relevantIds": [
+        "D13:3"
+      ],
+      "retrievedIds": [
+        "D7:15",
+        "D13:2",
+        "D13:3",
+        "D7:17",
+        "D7:14",
+        "D8:31",
+        "D12:21",
+        "D19:1",
+        "D7:13",
+        "D5:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 11169
+    },
+    {
+      "questionId": "conv0_q124",
+      "category": "single_hop",
+      "relevantIds": [
+        "D13:4"
+      ],
+      "retrievedIds": [
+        "D7:16",
+        "D13:2",
+        "D7:14",
+        "D13:3",
+        "D17:4",
+        "D7:15",
+        "D13:9",
+        "D13:6",
+        "D3:14",
+        "D19:1"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 8635
+    },
+    {
+      "questionId": "conv0_q125",
+      "category": "single_hop",
+      "relevantIds": [
+        "D13:6"
+      ],
+      "retrievedIds": [
+        "D13:6",
+        "D13:5",
+        "D13:4",
+        "D7:18",
+        "D6:6",
+        "D8:25",
+        "D17:16",
+        "D5:1",
+        "D14:33",
+        "D18:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 479
+    },
+    {
+      "questionId": "conv0_q126",
+      "category": "single_hop",
+      "relevantIds": [
+        "D13:7"
+      ],
+      "retrievedIds": [
+        "D13:7",
+        "D5:4",
+        "D15:21",
+        "D8:35",
+        "D1:18",
+        "D17:8",
+        "D1:16",
+        "D13:13",
+        "D4:6",
+        "D15:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 881
+    },
+    {
+      "questionId": "conv0_q127",
+      "category": "single_hop",
+      "relevantIds": [
+        "D14:17"
+      ],
+      "retrievedIds": [
+        "D14:19",
+        "D17:21",
+        "D5:8",
+        "D16:5",
+        "D15:9",
+        "D12:6",
+        "D5:7",
+        "D9:16",
+        "D14:21",
+        "D19:7"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 869
+    },
+    {
+      "questionId": "conv0_q128",
+      "category": "single_hop",
+      "relevantIds": [
+        "D14:23"
+      ],
+      "retrievedIds": [
+        "D14:23",
+        "D14:14",
+        "D14:13",
+        "D12:9",
+        "D14:24",
+        "D7:13",
+        "D7:14",
+        "D14:25",
+        "D9:16",
+        "D12:11"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 885
+    },
+    {
+      "questionId": "conv0_q129",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:23"
+      ],
+      "retrievedIds": [
+        "D15:23",
+        "D15:24",
+        "D3:10",
+        "D8:25",
+        "D1:7",
+        "D3:6",
+        "D8:26",
+        "D18:11",
+        "D3:11",
+        "D5:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 972
+    },
+    {
+      "questionId": "conv0_q130",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:28"
+      ],
+      "retrievedIds": [
+        "D15:28",
+        "D15:12",
+        "D15:26",
+        "D15:18",
+        "D15:22",
+        "D5:14",
+        "D18:11",
+        "D11:3",
+        "D6:10",
+        "D18:19"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 942
+    },
+    {
+      "questionId": "conv0_q131",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:28"
+      ],
+      "retrievedIds": [
+        "D15:28",
+        "D5:6",
+        "D15:12",
+        "D5:14",
+        "D18:11",
+        "D15:26",
+        "D15:24",
+        "D11:3",
+        "D12:8",
+        "D12:18"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 920
+    },
+    {
+      "questionId": "conv0_q132",
+      "category": "single_hop",
+      "relevantIds": [
+        "D16:7"
+      ],
+      "retrievedIds": [
+        "D16:6",
+        "D16:8",
+        "D4:5",
+        "D14:16",
+        "D16:9",
+        "D8:6",
+        "D14:30",
+        "D17:14",
+        "D14:10",
+        "D11:9"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 9449
+    },
+    {
+      "questionId": "conv0_q133",
+      "category": "single_hop",
+      "relevantIds": [
+        "D16:16"
+      ],
+      "retrievedIds": [
+        "D16:18",
+        "D16:16",
+        "D13:18",
+        "D16:17",
+        "D5:16",
+        "D7:25",
+        "D6:2",
+        "D18:3",
+        "D17:20",
+        "D1:18"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1353
+    },
+    {
+      "questionId": "conv0_q134",
+      "category": "single_hop",
+      "relevantIds": [
+        "D17:7"
+      ],
+      "retrievedIds": [
+        "D17:7",
+        "D17:6",
+        "D2:8",
+        "D19:3",
+        "D13:1",
+        "D13:16",
+        "D2:10",
+        "D17:3",
+        "D8:9",
+        "D17:1"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1106
+    },
+    {
+      "questionId": "conv0_q135",
+      "category": "single_hop",
+      "relevantIds": [
+        "D17:8"
+      ],
+      "retrievedIds": [
+        "D17:8",
+        "D18:3",
+        "D16:15",
+        "D17:10",
+        "D8:32",
+        "D18:5",
+        "D2:3",
+        "D18:9",
+        "D18:7",
+        "D14:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1130
+    },
+    {
+      "questionId": "conv0_q136",
+      "category": "single_hop",
+      "relevantIds": [
+        "D17:10"
+      ],
+      "retrievedIds": [
+        "D17:8",
+        "D17:10",
+        "D8:2",
+        "D17:9",
+        "D16:8",
+        "D15:26",
+        "D5:4",
+        "D5:10",
+        "D14:4",
+        "D5:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1138
+    },
+    {
+      "questionId": "conv0_q137",
+      "category": "single_hop",
+      "relevantIds": [
+        "D17:12"
+      ],
+      "retrievedIds": [
+        "D11:12",
+        "D16:13",
+        "D8:8",
+        "D9:16",
+        "D16:12",
+        "D17:14",
+        "D1:16",
+        "D9:17",
+        "D16:14",
+        "D9:15"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1053
+    },
+    {
+      "questionId": "conv0_q138",
+      "category": "single_hop",
+      "relevantIds": [
+        "D17:14"
+      ],
+      "retrievedIds": [
+        "D11:12",
+        "D16:13",
+        "D8:8",
+        "D17:14",
+        "D9:16",
+        "D14:7",
+        "D1:16",
+        "D16:12",
+        "D16:9",
+        "D1:15"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1211
+    },
+    {
+      "questionId": "conv0_q139",
+      "category": "single_hop",
+      "relevantIds": [
+        "D17:18"
+      ],
+      "retrievedIds": [
+        "D17:19",
+        "D17:17",
+        "D13:1",
+        "D14:19",
+        "D5:10",
+        "D17:26",
+        "D17:10",
+        "D7:9",
+        "D7:8",
+        "D4:18"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 953
+    },
+    {
+      "questionId": "conv0_q140",
+      "category": "single_hop",
+      "relevantIds": [
+        "D17:19"
+      ],
+      "retrievedIds": [
+        "D17:21",
+        "D17:19",
+        "D17:20",
+        "D17:17",
+        "D8:12",
+        "D5:10",
+        "D2:3",
+        "D7:8",
+        "D7:2",
+        "D8:14"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1004
+    },
+    {
+      "questionId": "conv0_q141",
+      "category": "single_hop",
+      "relevantIds": [
+        "D17:23"
+      ],
+      "retrievedIds": [
+        "D17:22",
+        "D17:23",
+        "D14:15",
+        "D9:17",
+        "D16:13",
+        "D14:21",
+        "D14:19",
+        "D11:10",
+        "D1:16",
+        "D16:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 915
+    },
+    {
+      "questionId": "conv0_q142",
+      "category": "single_hop",
+      "relevantIds": [
+        "D17:25"
+      ],
+      "retrievedIds": [
+        "D3:8",
+        "D17:26",
+        "D4:15",
+        "D4:8",
+        "D19:11",
+        "D12:10",
+        "D8:36",
+        "D19:9",
+        "D8:32",
+        "D2:3"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 949
+    },
+    {
+      "questionId": "conv0_q143",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:1"
+      ],
+      "retrievedIds": [
+        "D18:1",
+        "D18:3",
+        "D18:4",
+        "D18:17",
+        "D18:7",
+        "D10:14",
+        "D13:6",
+        "D18:2",
+        "D17:26",
+        "D5:16"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 952
+    },
+    {
+      "questionId": "conv0_q144",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:6",
+        "D18:7"
+      ],
+      "retrievedIds": [
+        "D18:6",
+        "D18:1",
+        "D18:3",
+        "D18:7",
+        "D18:4",
+        "D18:5",
+        "D18:2",
+        "D16:15",
+        "D18:17",
+        "D8:26"
+      ],
+      "relevantRetrievedAt5": 2,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 963
+    },
+    {
+      "questionId": "conv0_q145",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:5"
+      ],
+      "retrievedIds": [
+        "D18:5",
+        "D18:3",
+        "D3:22",
+        "D18:1",
+        "D8:32",
+        "D10:24",
+        "D10:22",
+        "D16:15",
+        "D8:20",
+        "D2:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 961
+    },
+    {
+      "questionId": "conv0_q146",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:7"
+      ],
+      "retrievedIds": [
+        "D18:6",
+        "D18:3",
+        "D18:5",
+        "D18:7",
+        "D18:1",
+        "D18:17",
+        "D1:18",
+        "D8:29",
+        "D8:32",
+        "D16:15"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 911
+    },
+    {
+      "questionId": "conv0_q147",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:5"
+      ],
+      "retrievedIds": [
+        "D18:5",
+        "D8:20",
+        "D18:3",
+        "D18:1",
+        "D16:15",
+        "D2:3",
+        "D17:10",
+        "D3:22",
+        "D3:16",
+        "D18:17"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 922
+    },
+    {
+      "questionId": "conv0_q148",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:5"
+      ],
+      "retrievedIds": [
+        "D18:5",
+        "D18:17",
+        "D18:23",
+        "D4:9",
+        "D10:8",
+        "D6:4",
+        "D17:26",
+        "D18:7",
+        "D10:22",
+        "D18:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 982
+    },
+    {
+      "questionId": "conv0_q149",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:9"
+      ],
+      "retrievedIds": [
+        "D10:24",
+        "D4:3",
+        "D18:5",
+        "D18:9",
+        "D8:32",
+        "D3:20",
+        "D18:12",
+        "D10:12",
+        "D19:4",
+        "D8:29"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9862
+    },
+    {
+      "questionId": "conv0_q150",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:13"
+      ],
+      "retrievedIds": [
+        "D8:29",
+        "D8:32",
+        "D8:30",
+        "D18:5",
+        "D16:15",
+        "D3:22",
+        "D7:2",
+        "D10:24",
+        "D6:14",
+        "D19:9"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1556
+    },
+    {
+      "questionId": "conv0_q151",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:17"
+      ],
+      "retrievedIds": [
+        "D18:17",
+        "D1:16",
+        "D15:26",
+        "D10:12",
+        "D18:19",
+        "D9:1",
+        "D10:14",
+        "D8:34",
+        "D18:3",
+        "D17:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8022
+    },
+    {
+      "questionId": "conv0_q152",
+      "category": "adversarial",
+      "relevantIds": [
+        "D2:3"
+      ],
+      "retrievedIds": [
+        "D2:1",
+        "D2:3",
+        "D2:2",
+        "D8:25",
+        "D7:7",
+        "D7:23",
+        "D9:10",
+        "D1:7",
+        "D18:18",
+        "D7:21"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1328
+    },
+    {
+      "questionId": "conv0_q153",
+      "category": "adversarial",
+      "relevantIds": [
+        "D2:8"
+      ],
+      "retrievedIds": [
+        "D2:7",
+        "D19:3",
+        "D12:16",
+        "D10:12",
+        "D19:2",
+        "D19:1",
+        "D17:4",
+        "D19:5",
+        "D13:16",
+        "D17:3"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1010
+    },
+    {
+      "questionId": "conv0_q154",
+      "category": "adversarial",
+      "relevantIds": [
+        "D2:12"
+      ],
+      "retrievedIds": [
+        "D10:5",
+        "D19:4",
+        "D2:13",
+        "D19:1",
+        "D7:14",
+        "D19:3",
+        "D13:1",
+        "D13:16",
+        "D17:4",
+        "D9:2"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1210
+    },
+    {
+      "questionId": "conv0_q155",
+      "category": "adversarial",
+      "relevantIds": [
+        "D2:12"
+      ],
+      "retrievedIds": [
+        "D2:11",
+        "D13:1",
+        "D19:1",
+        "D19:3",
+        "D2:12",
+        "D17:4",
+        "D17:3",
+        "D19:4",
+        "D2:10",
+        "D2:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1049
+    },
+    {
+      "questionId": "conv0_q156",
+      "category": "adversarial",
+      "relevantIds": [
+        "D2:14"
+      ],
+      "retrievedIds": [
+        "D2:13",
+        "D19:1",
+        "D17:3",
+        "D19:3",
+        "D13:4",
+        "D17:4",
+        "D13:16",
+        "D19:2",
+        "D5:12",
+        "D19:4"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 9069
+    },
+    {
+      "questionId": "conv0_q157",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:3"
+      ],
+      "retrievedIds": [
+        "D4:3",
+        "D17:23",
+        "D8:12",
+        "D4:2",
+        "D14:21",
+        "D11:12",
+        "D12:13",
+        "D4:4",
+        "D9:17",
+        "D17:22"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1251
+    },
+    {
+      "questionId": "conv0_q158",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:3"
+      ],
+      "retrievedIds": [
+        "D4:3",
+        "D1:2",
+        "D3:18",
+        "D17:2",
+        "D18:23",
+        "D10:24",
+        "D6:2",
+        "D8:32",
+        "D14:20",
+        "D17:26"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 7969
+    },
+    {
+      "questionId": "conv0_q159",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:3"
+      ],
+      "retrievedIds": [
+        "D4:3",
+        "D8:12",
+        "D5:10",
+        "D14:26",
+        "D4:5",
+        "D13:14",
+        "D19:11",
+        "D10:24",
+        "D1:16",
+        "D12:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8400
+    },
+    {
+      "questionId": "conv0_q160",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:3"
+      ],
+      "retrievedIds": [
+        "D4:3",
+        "D5:10",
+        "D11:3",
+        "D14:17",
+        "D14:19",
+        "D4:2",
+        "D4:4",
+        "D12:9",
+        "D19:11",
+        "D8:31"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1330
+    },
+    {
+      "questionId": "conv0_q161",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:5"
+      ],
+      "retrievedIds": [
+        "D4:5",
+        "D16:13",
+        "D16:9",
+        "D9:17",
+        "D19:2",
+        "D4:3",
+        "D5:7",
+        "D10:7",
+        "D15:7",
+        "D14:17"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 10949
+    },
+    {
+      "questionId": "conv0_q162",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:8"
+      ],
+      "retrievedIds": [
+        "D4:8",
+        "D8:32",
+        "D16:2",
+        "D9:1",
+        "D18:20",
+        "D4:6",
+        "D6:16",
+        "D10:12",
+        "D8:35",
+        "D18:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1479
+    },
+    {
+      "questionId": "conv0_q163",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:13"
+      ],
+      "retrievedIds": [
+        "D4:12",
+        "D4:15",
+        "D4:14",
+        "D7:5",
+        "D7:25",
+        "D2:1",
+        "D9:2",
+        "D1:12",
+        "D7:26",
+        "D7:22"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1163
+    },
+    {
+      "questionId": "conv0_q164",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:13"
+      ],
+      "retrievedIds": [
+        "D9:2",
+        "D4:12",
+        "D8:2",
+        "D4:13",
+        "D5:4",
+        "D13:1",
+        "D17:8",
+        "D4:15",
+        "D2:3",
+        "D1:12"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1238
+    },
+    {
+      "questionId": "conv0_q165",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:15"
+      ],
+      "retrievedIds": [
+        "D4:14",
+        "D4:15",
+        "D4:12",
+        "D3:10",
+        "D3:14",
+        "D1:12",
+        "D18:11",
+        "D14:12",
+        "D5:3",
+        "D2:11"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8412
+    },
+    {
+      "questionId": "conv0_q166",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:15"
+      ],
+      "retrievedIds": [
+        "D4:15",
+        "D19:5",
+        "D2:15",
+        "D15:4",
+        "D4:12",
+        "D3:6",
+        "D17:16",
+        "D10:5",
+        "D13:15",
+        "D12:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1349
+    },
+    {
+      "questionId": "conv0_q167",
+      "category": "adversarial",
+      "relevantIds": [
+        "D5:8"
+      ],
+      "retrievedIds": [
+        "D5:7",
+        "D5:8",
+        "D4:5",
+        "D16:9",
+        "D14:3",
+        "D12:5",
+        "D14:21",
+        "D5:9",
+        "D12:6",
+        "D14:20"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1171
+    },
+    {
+      "questionId": "conv0_q168",
+      "category": "adversarial",
+      "relevantIds": [
+        "D7:19"
+      ],
+      "retrievedIds": [
+        "D7:20",
+        "D17:8",
+        "D7:18",
+        "D18:24",
+        "D6:2",
+        "D10:2",
+        "D1:2",
+        "D10:15",
+        "D4:5",
+        "D13:7"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1169
+    },
+    {
+      "questionId": "conv0_q169",
+      "category": "adversarial",
+      "relevantIds": [
+        "D7:21"
+      ],
+      "retrievedIds": [
+        "D7:21",
+        "D7:20",
+        "D7:23",
+        "D2:12",
+        "D2:2",
+        "D14:12",
+        "D7:7",
+        "D18:11",
+        "D1:7",
+        "D3:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1098
+    },
+    {
+      "questionId": "conv0_q170",
+      "category": "adversarial",
+      "relevantIds": [
+        "D7:24"
+      ],
+      "retrievedIds": [
+        "D7:20",
+        "D7:23",
+        "D7:24",
+        "D7:21",
+        "D2:2",
+        "D8:32",
+        "D7:3",
+        "D12:1",
+        "D7:22",
+        "D6:11"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1031
+    },
+    {
+      "questionId": "conv0_q171",
+      "category": "adversarial",
+      "relevantIds": [
+        "D8:9"
+      ],
+      "retrievedIds": [
+        "D8:9",
+        "D19:3",
+        "D19:2",
+        "D13:16",
+        "D19:6",
+        "D17:4",
+        "D2:13",
+        "D19:1",
+        "D2:15",
+        "D2:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1063
+    },
+    {
+      "questionId": "conv0_q172",
+      "category": "adversarial",
+      "relevantIds": [
+        "D9:16"
+      ],
+      "retrievedIds": [
+        "D14:8",
+        "D8:6",
+        "D9:15",
+        "D11:12",
+        "D17:16",
+        "D16:12",
+        "D16:13",
+        "D17:12",
+        "D17:14",
+        "D1:15"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1068
+    },
+    {
+      "questionId": "conv0_q173",
+      "category": "adversarial",
+      "relevantIds": [
+        "D9:16"
+      ],
+      "retrievedIds": [
+        "D14:18",
+        "D16:5",
+        "D17:21",
+        "D14:20",
+        "D9:14",
+        "D9:15",
+        "D12:7",
+        "D14:19",
+        "D1:5",
+        "D8:23"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1007
+    },
+    {
+      "questionId": "conv0_q174",
+      "category": "adversarial",
+      "relevantIds": [
+        "D10:10"
+      ],
+      "retrievedIds": [
+        "D10:9",
+        "D10:10",
+        "D10:8",
+        "D10:11",
+        "D1:18",
+        "D6:16",
+        "D1:2",
+        "D4:8",
+        "D16:2",
+        "D8:35"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1001
+    },
+    {
+      "questionId": "conv0_q175",
+      "category": "adversarial",
+      "relevantIds": [
+        "D10:14"
+      ],
+      "retrievedIds": [
+        "D4:8",
+        "D10:14",
+        "D8:32",
+        "D4:6",
+        "D16:2",
+        "D6:16",
+        "D18:12",
+        "D16:4",
+        "D8:35",
+        "D6:11"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1101
+    },
+    {
+      "questionId": "conv0_q176",
+      "category": "adversarial",
+      "relevantIds": [
+        "D10:18"
+      ],
+      "retrievedIds": [
+        "D10:16",
+        "D10:14",
+        "D14:9",
+        "D10:17",
+        "D13:2",
+        "D13:12",
+        "D5:1",
+        "D17:15",
+        "D9:10",
+        "D8:3"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1019
+    },
+    {
+      "questionId": "conv0_q177",
+      "category": "adversarial",
+      "relevantIds": [
+        "D12:6"
+      ],
+      "retrievedIds": [
+        "D16:9",
+        "D12:5",
+        "D2:12",
+        "D4:5",
+        "D16:13",
+        "D14:20",
+        "D1:15",
+        "D14:17",
+        "D12:3",
+        "D17:8"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1101
+    },
+    {
+      "questionId": "conv0_q178",
+      "category": "adversarial",
+      "relevantIds": [
+        "D13:3"
+      ],
+      "retrievedIds": [
+        "D13:4",
+        "D13:3",
+        "D7:14",
+        "D17:4",
+        "D13:2",
+        "D19:2",
+        "D19:1",
+        "D13:6",
+        "D18:5",
+        "D13:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1001
+    },
+    {
+      "questionId": "conv0_q179",
+      "category": "adversarial",
+      "relevantIds": [
+        "D13:6"
+      ],
+      "retrievedIds": [
+        "D13:6",
+        "D13:3",
+        "D13:4",
+        "D6:6",
+        "D13:5",
+        "D8:25",
+        "D17:16",
+        "D6:12",
+        "D5:1",
+        "D18:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 177
+    },
+    {
+      "questionId": "conv0_q180",
+      "category": "adversarial",
+      "relevantIds": [
+        "D13:7"
+      ],
+      "retrievedIds": [
+        "D8:34",
+        "D10:12",
+        "D13:7",
+        "D15:26",
+        "D5:4",
+        "D14:10",
+        "D18:19",
+        "D16:8",
+        "D8:6",
+        "D5:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1026
+    },
+    {
+      "questionId": "conv0_q181",
+      "category": "adversarial",
+      "relevantIds": [
+        "D14:17"
+      ],
+      "retrievedIds": [
+        "D14:19",
+        "D12:6",
+        "D14:3",
+        "D5:8",
+        "D8:4",
+        "D5:6",
+        "D14:28",
+        "D8:6",
+        "D12:3",
+        "D17:14"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1018
+    },
+    {
+      "questionId": "conv0_q182",
+      "category": "adversarial",
+      "relevantIds": [
+        "D14:23"
+      ],
+      "retrievedIds": [
+        "D14:22",
+        "D16:8",
+        "D14:24",
+        "D14:14",
+        "D14:23",
+        "D14:26",
+        "D8:34",
+        "D12:2",
+        "D8:26",
+        "D7:14"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1063
+    },
+    {
+      "questionId": "conv0_q183",
+      "category": "adversarial",
+      "relevantIds": [
+        "D15:23"
+      ],
+      "retrievedIds": [
+        "D15:24",
+        "D3:10",
+        "D8:26",
+        "D18:11",
+        "D3:6",
+        "D3:14",
+        "D15:23",
+        "D6:10",
+        "D15:16",
+        "D3:8"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1020
+    },
+    {
+      "questionId": "conv0_q184",
+      "category": "adversarial",
+      "relevantIds": [
+        "D15:26"
+      ],
+      "retrievedIds": [
+        "D15:19",
+        "D15:21",
+        "D15:25",
+        "D5:5",
+        "D15:18",
+        "D15:26",
+        "D15:17",
+        "D5:10",
+        "D15:20",
+        "D2:5"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 981
+    },
+    {
+      "questionId": "conv0_q185",
+      "category": "adversarial",
+      "relevantIds": [
+        "D15:28"
+      ],
+      "retrievedIds": [
+        "D15:27",
+        "D15:28",
+        "D11:3",
+        "D8:31",
+        "D15:24",
+        "D17:25",
+        "D15:19",
+        "D12:19",
+        "D18:11",
+        "D3:21"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1175
+    },
+    {
+      "questionId": "conv0_q186",
+      "category": "adversarial",
+      "relevantIds": [
+        "D15:28"
+      ],
+      "retrievedIds": [
+        "D15:28",
+        "D15:17",
+        "D15:12",
+        "D11:3",
+        "D12:21",
+        "D12:19",
+        "D10:17",
+        "D12:11",
+        "D15:19",
+        "D8:35"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1039
+    },
+    {
+      "questionId": "conv0_q187",
+      "category": "adversarial",
+      "relevantIds": [
+        "D16:16"
+      ],
+      "retrievedIds": [
+        "D16:16",
+        "D16:17",
+        "D7:25",
+        "D9:10",
+        "D14:21",
+        "D13:18",
+        "D16:18",
+        "D5:16",
+        "D17:23",
+        "D10:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1112
+    },
+    {
+      "questionId": "conv0_q188",
+      "category": "adversarial",
+      "relevantIds": [
+        "D17:8"
+      ],
+      "retrievedIds": [
+        "D17:8",
+        "D12:1",
+        "D4:10",
+        "D18:16",
+        "D3:6",
+        "D10:8",
+        "D14:2",
+        "D16:17",
+        "D17:10",
+        "D12:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1097
+    },
+    {
+      "questionId": "conv0_q189",
+      "category": "adversarial",
+      "relevantIds": [
+        "D17:10"
+      ],
+      "retrievedIds": [
+        "D17:8",
+        "D17:10",
+        "D8:2",
+        "D17:9",
+        "D8:5",
+        "D5:4",
+        "D16:9",
+        "D5:10",
+        "D16:11",
+        "D1:16"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1042
+    },
+    {
+      "questionId": "conv0_q190",
+      "category": "adversarial",
+      "relevantIds": [
+        "D17:18"
+      ],
+      "retrievedIds": [
+        "D6:10",
+        "D17:19",
+        "D15:28",
+        "D11:12",
+        "D2:3",
+        "D14:20",
+        "D7:8",
+        "D5:10",
+        "D14:26",
+        "D17:26"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1090
+    },
+    {
+      "questionId": "conv0_q191",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:1"
+      ],
+      "retrievedIds": [
+        "D18:1",
+        "D18:2",
+        "D18:3",
+        "D18:4",
+        "D18:17",
+        "D18:5",
+        "D12:21",
+        "D18:6",
+        "D18:18",
+        "D8:31"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1043
+    },
+    {
+      "questionId": "conv0_q192",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:6",
+        "D18:7"
+      ],
+      "retrievedIds": [
+        "D18:6",
+        "D18:2",
+        "D18:1",
+        "D18:4",
+        "D18:5",
+        "D18:3",
+        "D18:8",
+        "D16:15",
+        "D8:31",
+        "D9:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1046
+    },
+    {
+      "questionId": "conv0_q193",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:5"
+      ],
+      "retrievedIds": [
+        "D18:5",
+        "D18:2",
+        "D18:6",
+        "D18:1",
+        "D16:15",
+        "D3:22",
+        "D18:18",
+        "D3:23",
+        "D8:32",
+        "D2:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1011
+    },
+    {
+      "questionId": "conv0_q194",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:7"
+      ],
+      "retrievedIds": [
+        "D18:6",
+        "D18:2",
+        "D18:8",
+        "D18:1",
+        "D18:5",
+        "D18:17",
+        "D8:3",
+        "D16:15",
+        "D18:3",
+        "D2:16"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1141
+    },
+    {
+      "questionId": "conv0_q195",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:5"
+      ],
+      "retrievedIds": [
+        "D18:5",
+        "D18:18",
+        "D18:2",
+        "D18:1",
+        "D16:15",
+        "D13:2",
+        "D1:7",
+        "D18:6",
+        "D5:1",
+        "D18:17"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1040
+    },
+    {
+      "questionId": "conv0_q196",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:5"
+      ],
+      "retrievedIds": [
+        "D18:5",
+        "D4:8",
+        "D8:3",
+        "D16:19",
+        "D4:9",
+        "D8:35",
+        "D18:17",
+        "D18:18",
+        "D10:17",
+        "D18:23"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1067
+    },
+    {
+      "questionId": "conv0_q197",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:17"
+      ],
+      "retrievedIds": [
+        "D18:17",
+        "D18:18",
+        "D1:16",
+        "D1:17",
+        "D1:18",
+        "D8:27",
+        "D17:9",
+        "D17:10",
+        "D17:14",
+        "D17:26"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 10473
+    },
+    {
+      "questionId": "conv0_q198",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:21"
+      ],
+      "retrievedIds": [
+        "D18:20",
+        "D4:8",
+        "D6:16",
+        "D8:32",
+        "D4:6",
+        "D3:22",
+        "D16:2",
+        "D8:35",
+        "D9:1",
+        "D3:23"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1673
+    },
+    {
+      "questionId": "conv1_q0",
+      "category": "temporal",
+      "relevantIds": [
+        "D1:2"
+      ],
+      "retrievedIds": [
+        "D1:2",
+        "D5:10",
+        "D17:4",
+        "D16:8",
+        "D6:11",
+        "D17:20",
+        "D11:3",
+        "D6:4",
+        "D9:3",
+        "D1:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 7716
+    },
+    {
+      "questionId": "conv1_q1",
+      "category": "temporal",
+      "relevantIds": [
+        "D1:3"
+      ],
+      "retrievedIds": [
+        "D6:4",
+        "D1:3",
+        "D1:2",
+        "D14:8",
+        "D6:11",
+        "D10:4",
+        "D9:3",
+        "D7:1",
+        "D18:2",
+        "D4:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 7333
+    },
+    {
+      "questionId": "conv1_q2",
+      "category": "single_hop",
+      "relevantIds": [
+        "D1:7",
+        "D1:6"
+      ],
+      "retrievedIds": [
+        "D11:7",
+        "D8:6",
+        "D11:6",
+        "D1:7",
+        "D2:11",
+        "D9:9",
+        "D9:7",
+        "D9:10",
+        "D5:4",
+        "D17:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1727
+    },
+    {
+      "questionId": "conv1_q3",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D1:2",
+        "D1:3",
+        "D1:4",
+        "D2:1"
+      ],
+      "retrievedIds": [
+        "D14:12",
+        "D5:21",
+        "D17:7",
+        "D18:5",
+        "D5:4",
+        "D9:9",
+        "D5:8",
+        "D5:17",
+        "D18:20",
+        "D14:8"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1109
+    },
+    {
+      "questionId": "conv1_q4",
+      "category": "single_hop",
+      "relevantIds": [
+        "D1:2",
+        "D1:4"
+      ],
+      "retrievedIds": [
+        "D1:4",
+        "D1:6",
+        "D11:3",
+        "D11:9",
+        "D5:4",
+        "D13:5",
+        "D5:20",
+        "D8:13",
+        "D11:12",
+        "D16:4"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1113
+    },
+    {
+      "questionId": "conv1_q5",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D1:20",
+        "D2:4",
+        "D2:8"
+      ],
+      "retrievedIds": [
+        "D2:4",
+        "D1:20",
+        "D9:2",
+        "D2:8",
+        "D2:6",
+        "D18:14",
+        "D4:10",
+        "D4:9",
+        "D18:1",
+        "D8:13"
+      ],
+      "relevantRetrievedAt5": 3,
+      "relevantRetrievedAt10": 3,
+      "latencyMs": 1062
+    },
+    {
+      "questionId": "conv1_q6",
+      "category": "temporal",
+      "relevantIds": [
+        "D1:24"
+      ],
+      "retrievedIds": [
+        "D1:24",
+        "D1:26",
+        "D5:2",
+        "D8:17",
+        "D4:13",
+        "D1:12",
+        "D1:13",
+        "D15:19",
+        "D18:16",
+        "D18:20"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8509
+    },
+    {
+      "questionId": "conv1_q7",
+      "category": "temporal",
+      "relevantIds": [
+        "D2:1"
+      ],
+      "retrievedIds": [
+        "D2:1",
+        "D8:12",
+        "D18:5",
+        "D7:2",
+        "D3:2",
+        "D8:4",
+        "D6:6",
+        "D8:21",
+        "D3:3",
+        "D5:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 7237
+    },
+    {
+      "questionId": "conv1_q8",
+      "category": "temporal",
+      "relevantIds": [
+        "D2:4"
+      ],
+      "retrievedIds": [
+        "D2:4",
+        "D2:5",
+        "D15:1",
+        "D1:1",
+        "D15:15",
+        "D18:8",
+        "D1:24",
+        "D9:14",
+        "D8:20",
+        "D15:17"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8676
+    },
+    {
+      "questionId": "conv1_q9",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D2:5",
+        "D15:1"
+      ],
+      "retrievedIds": [
+        "D2:5",
+        "D15:1",
+        "D2:4",
+        "D18:3",
+        "D1:2",
+        "D10:1",
+        "D11:7",
+        "D9:9",
+        "D14:10",
+        "D1:20"
+      ],
+      "relevantRetrievedAt5": 2,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 779
+    },
+    {
+      "questionId": "conv1_q10",
+      "category": "temporal",
+      "relevantIds": [
+        "D5:5"
+      ],
+      "retrievedIds": [
+        "D5:5",
+        "D5:7",
+        "D11:14",
+        "D16:1",
+        "D16:5",
+        "D3:6",
+        "D8:10",
+        "D6:8",
+        "D18:5",
+        "D18:15"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8487
+    },
+    {
+      "questionId": "conv1_q11",
+      "category": "temporal",
+      "relevantIds": [
+        "D5:15"
+      ],
+      "retrievedIds": [
+        "D5:15",
+        "D5:13",
+        "D1:15",
+        "D17:21",
+        "D5:7",
+        "D15:20",
+        "D16:5",
+        "D11:16",
+        "D15:4",
+        "D17:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1560
+    },
+    {
+      "questionId": "conv1_q12",
+      "category": "temporal",
+      "relevantIds": [
+        "D6:1"
+      ],
+      "retrievedIds": [
+        "D6:1",
+        "D1:6",
+        "D11:5",
+        "D16:4",
+        "D14:10",
+        "D1:13",
+        "D1:4",
+        "D14:5",
+        "D1:12",
+        "D13:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9116
+    },
+    {
+      "questionId": "conv1_q13",
+      "category": "temporal",
+      "relevantIds": [
+        "D6:6"
+      ],
+      "retrievedIds": [
+        "D6:6",
+        "D10:2",
+        "D14:8",
+        "D7:2",
+        "D15:4",
+        "D2:1",
+        "D18:2",
+        "D3:2",
+        "D8:4",
+        "D5:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 6957
+    },
+    {
+      "questionId": "conv1_q14",
+      "category": "temporal",
+      "relevantIds": [
+        "D8:13"
+      ],
+      "retrievedIds": [
+        "D8:13",
+        "D18:13",
+        "D18:14",
+        "D18:10",
+        "D14:5",
+        "D18:11",
+        "D19:7",
+        "D18:1",
+        "D5:4",
+        "D17:4"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1424
+    },
+    {
+      "questionId": "conv1_q15",
+      "category": "temporal",
+      "relevantIds": [
+        "D8:13"
+      ],
+      "retrievedIds": [
+        "D8:13",
+        "D1:16",
+        "D4:13",
+        "D9:10",
+        "D13:7",
+        "D1:6",
+        "D1:24",
+        "D7:7",
+        "D5:20",
+        "D5:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8536
+    },
+    {
+      "questionId": "conv1_q16",
+      "category": "temporal",
+      "relevantIds": [
+        "D10:1"
+      ],
+      "retrievedIds": [
+        "D10:1",
+        "D18:13",
+        "D8:13",
+        "D18:10",
+        "D18:12",
+        "D8:12",
+        "D11:3",
+        "D1:6",
+        "D2:4",
+        "D5:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1515
+    },
+    {
+      "questionId": "conv1_q17",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D6:8",
+        "D1:3"
+      ],
+      "retrievedIds": [
+        "D2:1",
+        "D14:8",
+        "D7:2",
+        "D10:8",
+        "D6:8",
+        "D18:5",
+        "D10:2",
+        "D3:2",
+        "D6:12",
+        "D1:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1039
+    },
+    {
+      "questionId": "conv1_q18",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D1:4",
+        "D6:8"
+      ],
+      "retrievedIds": [
+        "D9:1",
+        "D10:8",
+        "D14:8",
+        "D9:2",
+        "D7:2",
+        "D5:4",
+        "D1:3",
+        "D1:2",
+        "D2:1",
+        "D8:6"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1089
+    },
+    {
+      "questionId": "conv1_q19",
+      "category": "temporal",
+      "relevantIds": [
+        "D11:14"
+      ],
+      "retrievedIds": [
+        "D11:14",
+        "D12:2",
+        "D12:1",
+        "D12:3",
+        "D6:8",
+        "D16:5",
+        "D11:15",
+        "D17:21",
+        "D6:4",
+        "D8:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 7337
+    },
+    {
+      "questionId": "conv1_q20",
+      "category": "temporal",
+      "relevantIds": [
+        "D12:1"
+      ],
+      "retrievedIds": [
+        "D12:1",
+        "D11:14",
+        "D12:2",
+        "D17:21",
+        "D12:3",
+        "D16:5",
+        "D6:8",
+        "D14:10",
+        "D6:4",
+        "D8:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1382
+    },
+    {
+      "questionId": "conv1_q21",
+      "category": "temporal",
+      "relevantIds": [
+        "D12:6"
+      ],
+      "retrievedIds": [
+        "D12:6",
+        "D12:8",
+        "D16:4",
+        "D17:4",
+        "D13:13",
+        "D18:8",
+        "D14:12",
+        "D14:10",
+        "D15:17",
+        "D13:17"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1058
+    },
+    {
+      "questionId": "conv1_q22",
+      "category": "temporal",
+      "relevantIds": [
+        "D13:4"
+      ],
+      "retrievedIds": [
+        "D13:4",
+        "D6:8",
+        "D5:7",
+        "D18:5",
+        "D5:2",
+        "D8:8",
+        "D8:10",
+        "D5:1",
+        "D11:22",
+        "D16:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 7401
+    },
+    {
+      "questionId": "conv1_q23",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D5:5",
+        "D16:3",
+        "D8:4",
+        "D13:4"
+      ],
+      "retrievedIds": [
+        "D2:1",
+        "D3:2",
+        "D18:5",
+        "D14:4",
+        "D8:12",
+        "D8:10",
+        "D7:2",
+        "D18:2",
+        "D14:8",
+        "D8:4"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1388
+    },
+    {
+      "questionId": "conv1_q24",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D10:1",
+        "D16:6",
+        "D8:4"
+      ],
+      "retrievedIds": [
+        "D16:6",
+        "D5:22",
+        "D16:7",
+        "D10:1",
+        "D14:3",
+        "D18:6",
+        "D5:20",
+        "D17:2",
+        "D18:8",
+        "D11:3"
+      ],
+      "relevantRetrievedAt5": 2,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 1069
+    },
+    {
+      "questionId": "conv1_q25",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D13:7",
+        "D8:13"
+      ],
+      "retrievedIds": [
+        "D13:7",
+        "D8:13",
+        "D5:17",
+        "D8:17",
+        "D11:12",
+        "D18:13",
+        "D8:12",
+        "D5:4",
+        "D1:4",
+        "D17:7"
+      ],
+      "relevantRetrievedAt5": 2,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 9431
+    },
+    {
+      "questionId": "conv1_q26",
+      "category": "temporal",
+      "relevantIds": [
+        "D14:1"
+      ],
+      "retrievedIds": [
+        "D5:22",
+        "D18:10",
+        "D14:2",
+        "D17:4",
+        "D17:7",
+        "D12:12",
+        "D14:3",
+        "D18:8",
+        "D17:2",
+        "D14:10"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1679
+    },
+    {
+      "questionId": "conv1_q27",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D1:14",
+        "D14:14",
+        "D1:16",
+        "D1:17",
+        "D9:10"
+      ],
+      "retrievedIds": [
+        "D8:13",
+        "D1:16",
+        "D9:10",
+        "D1:17",
+        "D9:5",
+        "D8:17",
+        "D9:9",
+        "D11:7",
+        "D18:18",
+        "D10:6"
+      ],
+      "relevantRetrievedAt5": 3,
+      "relevantRetrievedAt10": 3,
+      "latencyMs": 1125
+    },
+    {
+      "questionId": "conv1_q28",
+      "category": "temporal",
+      "relevantIds": [
+        "D15:1"
+      ],
+      "retrievedIds": [
+        "D15:1",
+        "D18:3",
+        "D2:5",
+        "D15:15",
+        "D1:1",
+        "D15:17",
+        "D8:20",
+        "D18:8",
+        "D9:14",
+        "D18:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 6431
+    },
+    {
+      "questionId": "conv1_q29",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D2:4",
+        "D15:1"
+      ],
+      "retrievedIds": [
+        "D2:5",
+        "D15:1",
+        "D15:15",
+        "D16:4",
+        "D15:17",
+        "D13:19",
+        "D17:20",
+        "D8:20",
+        "D1:24",
+        "D18:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1877
+    },
+    {
+      "questionId": "conv1_q30",
+      "category": "temporal",
+      "relevantIds": [
+        "D15:5"
+      ],
+      "retrievedIds": [
+        "D1:6",
+        "D15:3",
+        "D11:3",
+        "D3:1",
+        "D15:5",
+        "D8:12",
+        "D13:5",
+        "D15:4",
+        "D4:9",
+        "D5:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1196
+    },
+    {
+      "questionId": "conv1_q31",
+      "category": "multi_hop",
+      "relevantIds": [
+        "D1:2",
+        "D15:13"
+      ],
+      "retrievedIds": [
+        "D13:5",
+        "D15:5",
+        "D11:3",
+        "D10:1",
+        "D15:3",
+        "D3:1",
+        "D5:4",
+        "D2:4",
+        "D4:10",
+        "D8:13"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1192
+    },
+    {
+      "questionId": "conv1_q32",
+      "category": "temporal",
+      "relevantIds": [
+        "D16:3"
+      ],
+      "retrievedIds": [
+        "D16:3",
+        "D16:5",
+        "D8:10",
+        "D15:4",
+        "D5:7",
+        "D17:21",
+        "D1:19",
+        "D11:14",
+        "D15:20",
+        "D6:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1161
+    },
+    {
+      "questionId": "conv1_q33",
+      "category": "temporal",
+      "relevantIds": [
+        "D16:6"
+      ],
+      "retrievedIds": [
+        "D16:6",
+        "D16:7",
+        "D18:6",
+        "D18:5",
+        "D18:7",
+        "D5:2",
+        "D18:8",
+        "D2:2",
+        "D7:6",
+        "D10:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1087
+    },
+    {
+      "questionId": "conv1_q34",
+      "category": "temporal",
+      "relevantIds": [
+        "D17:1"
+      ],
+      "retrievedIds": [
+        "D17:1",
+        "D17:2",
+        "D12:1",
+        "D5:2",
+        "D12:2",
+        "D5:7",
+        "D8:12",
+        "D6:8",
+        "D12:3",
+        "D17:21"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1129
+    },
+    {
+      "questionId": "conv1_q35",
+      "category": "temporal",
+      "relevantIds": [
+        "D17:4"
+      ],
+      "retrievedIds": [
+        "D17:4",
+        "D18:13",
+        "D13:13",
+        "D14:5",
+        "D16:4",
+        "D18:10",
+        "D14:10",
+        "D14:3",
+        "D12:8",
+        "D12:14"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 9472
+    },
+    {
+      "questionId": "conv1_q36",
+      "category": "temporal",
+      "relevantIds": [
+        "D18:18"
+      ],
+      "retrievedIds": [
+        "D18:13",
+        "D18:18",
+        "D8:13",
+        "D5:4",
+        "D11:11",
+        "D14:5",
+        "D17:8",
+        "D8:17",
+        "D9:7",
+        "D8:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1575
+    },
+    {
+      "questionId": "conv1_q37",
+      "category": "temporal",
+      "relevantIds": [
+        "D19:4"
+      ],
+      "retrievedIds": [
+        "D19:4",
+        "D17:21",
+        "D1:19",
+        "D6:18",
+        "D17:1",
+        "D2:15",
+        "D12:1",
+        "D3:2",
+        "D9:8",
+        "D5:15"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1157
+    },
+    {
+      "questionId": "conv1_q38",
+      "category": "temporal",
+      "relevantIds": [
+        "D19:6"
+      ],
+      "retrievedIds": [
+        "D19:6",
+        "D9:8",
+        "D9:9",
+        "D1:17",
+        "D15:16",
+        "D8:6",
+        "D1:9",
+        "D13:8",
+        "D1:11",
+        "D7:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 10207
+    },
+    {
+      "questionId": "conv1_q39",
+      "category": "single_hop",
+      "relevantIds": [
+        "D1:9"
+      ],
+      "retrievedIds": [
+        "D1:8",
+        "D1:7",
+        "D1:9",
+        "D8:6",
+        "D1:23",
+        "D9:8",
+        "D1:17",
+        "D2:9",
+        "D9:10",
+        "D8:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1582
+    },
+    {
+      "questionId": "conv1_q40",
+      "category": "single_hop",
+      "relevantIds": [
+        "D1:8"
+      ],
+      "retrievedIds": [
+        "D1:7",
+        "D1:8",
+        "D1:24",
+        "D8:6",
+        "D11:7",
+        "D11:9",
+        "D9:10",
+        "D1:6",
+        "D5:20",
+        "D11:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1162
+    },
+    {
+      "questionId": "conv1_q41",
+      "category": "single_hop",
+      "relevantIds": [
+        "D1:17"
+      ],
+      "retrievedIds": [
+        "D1:17",
+        "D9:8",
+        "D8:6",
+        "D9:9",
+        "D9:10",
+        "D15:14",
+        "D9:7",
+        "D11:7",
+        "D14:16",
+        "D1:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1235
+    },
+    {
+      "questionId": "conv1_q42",
+      "category": "single_hop",
+      "relevantIds": [
+        "D1:19"
+      ],
+      "retrievedIds": [
+        "D1:17",
+        "D1:18",
+        "D1:19",
+        "D1:9",
+        "D1:16",
+        "D1:8",
+        "D5:2",
+        "D9:10",
+        "D2:9",
+        "D6:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1497
+    },
+    {
+      "questionId": "conv1_q43",
+      "category": "single_hop",
+      "relevantIds": [
+        "D1:25"
+      ],
+      "retrievedIds": [
+        "D5:15",
+        "D9:10",
+        "D7:7",
+        "D14:15",
+        "D9:8",
+        "D8:6",
+        "D14:16",
+        "D11:8",
+        "D13:5",
+        "D9:7"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1136
+    },
+    {
+      "questionId": "conv1_q44",
+      "category": "single_hop",
+      "relevantIds": [
+        "D1:26"
+      ],
+      "retrievedIds": [
+        "D2:9",
+        "D9:8",
+        "D8:14",
+        "D9:6",
+        "D19:6",
+        "D1:25",
+        "D11:18",
+        "D1:27",
+        "D8:13",
+        "D9:10"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1229
+    },
+    {
+      "questionId": "conv1_q45",
+      "category": "single_hop",
+      "relevantIds": [
+        "D1:28"
+      ],
+      "retrievedIds": [
+        "D5:2",
+        "D1:24",
+        "D1:28",
+        "D1:26",
+        "D5:18",
+        "D4:13",
+        "D9:7",
+        "D11:4",
+        "D11:7",
+        "D11:11"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1412
+    },
+    {
+      "questionId": "conv1_q46",
+      "category": "single_hop",
+      "relevantIds": [
+        "D2:8"
+      ],
+      "retrievedIds": [
+        "D2:8",
+        "D2:6",
+        "D2:4",
+        "D5:20",
+        "D18:20",
+        "D4:10",
+        "D4:9",
+        "D8:12",
+        "D11:1",
+        "D18:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1264
+    },
+    {
+      "questionId": "conv1_q47",
+      "category": "single_hop",
+      "relevantIds": [
+        "D3:2"
+      ],
+      "retrievedIds": [
+        "D5:1",
+        "D6:6",
+        "D3:3",
+        "D8:6",
+        "D2:1",
+        "D18:2",
+        "D18:5",
+        "D3:6",
+        "D3:2",
+        "D14:8"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1172
+    },
+    {
+      "questionId": "conv1_q48",
+      "category": "single_hop",
+      "relevantIds": [
+        "D3:4"
+      ],
+      "retrievedIds": [
+        "D3:6",
+        "D3:4",
+        "D16:5",
+        "D5:1",
+        "D8:6",
+        "D5:5",
+        "D18:5",
+        "D3:3",
+        "D18:2",
+        "D8:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 6458
+    },
+    {
+      "questionId": "conv1_q49",
+      "category": "single_hop",
+      "relevantIds": [
+        "D3:6",
+        "D3:8"
+      ],
+      "retrievedIds": [
+        "D3:8",
+        "D3:6",
+        "D8:10",
+        "D5:5",
+        "D3:4",
+        "D15:10",
+        "D8:12",
+        "D3:10",
+        "D6:8",
+        "D3:2"
+      ],
+      "relevantRetrievedAt5": 2,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 8081
+    },
+    {
+      "questionId": "conv1_q50",
+      "category": "single_hop",
+      "relevantIds": [
+        "D3:3"
+      ],
+      "retrievedIds": [
+        "D5:2",
+        "D2:2",
+        "D3:3",
+        "D3:2",
+        "D4:1",
+        "D18:2",
+        "D7:3",
+        "D16:2",
+        "D10:2",
+        "D4:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1617
+    },
+    {
+      "questionId": "conv1_q51",
+      "category": "single_hop",
+      "relevantIds": [
+        "D3:6"
+      ],
+      "retrievedIds": [
+        "D3:6",
+        "D3:5",
+        "D18:5",
+        "D6:8",
+        "D3:3",
+        "D8:6",
+        "D8:8",
+        "D3:8",
+        "D16:1",
+        "D16:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1251
+    },
+    {
+      "questionId": "conv1_q52",
+      "category": "single_hop",
+      "relevantIds": [
+        "D3:9"
+      ],
+      "retrievedIds": [
+        "D3:9",
+        "D3:11",
+        "D7:5",
+        "D5:7",
+        "D3:10",
+        "D3:7",
+        "D18:1",
+        "D3:8",
+        "D11:11",
+        "D12:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1180
+    },
+    {
+      "questionId": "conv1_q53",
+      "category": "single_hop",
+      "relevantIds": [
+        "D3:8"
+      ],
+      "retrievedIds": [
+        "D3:8",
+        "D3:10",
+        "D5:7",
+        "D3:4",
+        "D8:10",
+        "D3:6",
+        "D18:1",
+        "D3:9",
+        "D8:12",
+        "D7:4"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1185
+    },
+    {
+      "questionId": "conv1_q54",
+      "category": "single_hop",
+      "relevantIds": [
+        "D4:2"
+      ],
+      "retrievedIds": [
+        "D7:4",
+        "D4:2",
+        "D4:1",
+        "D7:1",
+        "D7:3",
+        "D6:10",
+        "D18:2",
+        "D5:2",
+        "D2:2",
+        "D16:1"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8241
+    },
+    {
+      "questionId": "conv1_q55",
+      "category": "single_hop",
+      "relevantIds": [
+        "D5:15"
+      ],
+      "retrievedIds": [
+        "D5:15",
+        "D16:5",
+        "D16:14",
+        "D5:13",
+        "D14:16",
+        "D17:21",
+        "D17:16",
+        "D16:15",
+        "D19:4",
+        "D12:17"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1669
+    },
+    {
+      "questionId": "conv1_q56",
+      "category": "single_hop",
+      "relevantIds": [
+        "D6:15",
+        "D6:16"
+      ],
+      "retrievedIds": [
+        "D14:12",
+        "D7:2",
+        "D18:5",
+        "D14:8",
+        "D5:8",
+        "D8:4",
+        "D9:1",
+        "D10:1",
+        "D4:3",
+        "D10:4"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1196
+    },
+    {
+      "questionId": "conv1_q57",
+      "category": "single_hop",
+      "relevantIds": [
+        "D7:5"
+      ],
+      "retrievedIds": [
+        "D18:5",
+        "D14:10",
+        "D10:8",
+        "D14:12",
+        "D19:2",
+        "D7:4",
+        "D10:1",
+        "D7:2",
+        "D9:2",
+        "D3:14"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1258
+    },
+    {
+      "questionId": "conv1_q58",
+      "category": "single_hop",
+      "relevantIds": [
+        "D8:1"
+      ],
+      "retrievedIds": [
+        "D8:1",
+        "D17:20",
+        "D1:2",
+        "D19:13",
+        "D18:22",
+        "D17:10",
+        "D8:2",
+        "D16:4",
+        "D17:4",
+        "D14:19"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 7496
+    },
+    {
+      "questionId": "conv1_q59",
+      "category": "single_hop",
+      "relevantIds": [
+        "D8:8"
+      ],
+      "retrievedIds": [
+        "D8:7",
+        "D8:8",
+        "D6:8",
+        "D8:6",
+        "D3:2",
+        "D5:19",
+        "D5:2",
+        "D17:8",
+        "D5:5",
+        "D17:2"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1527
+    },
+    {
+      "questionId": "conv1_q60",
+      "category": "single_hop",
+      "relevantIds": [
+        "D9:5"
+      ],
+      "retrievedIds": [
+        "D9:5",
+        "D5:20",
+        "D17:8",
+        "D5:17",
+        "D11:7",
+        "D9:7",
+        "D11:5",
+        "D17:7",
+        "D5:10",
+        "D9:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1257
+    },
+    {
+      "questionId": "conv1_q61",
+      "category": "single_hop",
+      "relevantIds": [
+        "D9:10"
+      ],
+      "retrievedIds": [
+        "D9:10",
+        "D1:17",
+        "D1:15",
+        "D17:8",
+        "D8:13",
+        "D5:15",
+        "D14:16",
+        "D1:16",
+        "D9:7",
+        "D14:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1231
+    },
+    {
+      "questionId": "conv1_q62",
+      "category": "single_hop",
+      "relevantIds": [
+        "D10:8"
+      ],
+      "retrievedIds": [
+        "D10:8",
+        "D10:1",
+        "D14:12",
+        "D14:10",
+        "D13:20",
+        "D17:2",
+        "D18:5",
+        "D18:2",
+        "D13:4",
+        "D7:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8865
+    },
+    {
+      "questionId": "conv1_q63",
+      "category": "single_hop",
+      "relevantIds": [
+        "D12:1"
+      ],
+      "retrievedIds": [
+        "D12:1",
+        "D1:15",
+        "D11:14",
+        "D12:3",
+        "D6:8",
+        "D1:9",
+        "D13:5",
+        "D6:4",
+        "D4:10",
+        "D3:8"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1717
+    },
+    {
+      "questionId": "conv1_q64",
+      "category": "single_hop",
+      "relevantIds": [
+        "D12:3"
+      ],
+      "retrievedIds": [
+        "D12:2",
+        "D12:3",
+        "D12:1",
+        "D11:14",
+        "D6:8",
+        "D17:2",
+        "D8:12",
+        "D17:21",
+        "D5:7",
+        "D6:4"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 7072
+    },
+    {
+      "questionId": "conv1_q65",
+      "category": "single_hop",
+      "relevantIds": [
+        "D12:6"
+      ],
+      "retrievedIds": [
+        "D12:6",
+        "D12:8",
+        "D11:7",
+        "D5:17",
+        "D5:16",
+        "D1:8",
+        "D16:4",
+        "D2:16",
+        "D13:10",
+        "D18:20"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1947
+    },
+    {
+      "questionId": "conv1_q66",
+      "category": "single_hop",
+      "relevantIds": [
+        "D13:7"
+      ],
+      "retrievedIds": [
+        "D13:7",
+        "D8:13",
+        "D17:6",
+        "D13:9",
+        "D8:17",
+        "D5:4",
+        "D11:13",
+        "D13:5",
+        "D1:24",
+        "D11:12"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8581
+    },
+    {
+      "questionId": "conv1_q67",
+      "category": "single_hop",
+      "relevantIds": [
+        "D13:11"
+      ],
+      "retrievedIds": [
+        "D13:11",
+        "D13:13",
+        "D13:10",
+        "D13:19",
+        "D19:13",
+        "D18:10",
+        "D15:15",
+        "D2:16",
+        "D12:12",
+        "D15:17"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1671
+    },
+    {
+      "questionId": "conv1_q68",
+      "category": "single_hop",
+      "relevantIds": [
+        "D14:17"
+      ],
+      "retrievedIds": [
+        "D13:23",
+        "D4:19",
+        "D19:2",
+        "D17:14",
+        "D8:1",
+        "D17:16",
+        "D19:11",
+        "D1:2",
+        "D16:13",
+        "D7:15"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1246
+    },
+    {
+      "questionId": "conv1_q69",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:1"
+      ],
+      "retrievedIds": [
+        "D15:1",
+        "D2:5",
+        "D18:3",
+        "D16:4",
+        "D18:8",
+        "D16:6",
+        "D1:2",
+        "D15:15",
+        "D4:13",
+        "D4:10"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1394
+    },
+    {
+      "questionId": "conv1_q70",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:3"
+      ],
+      "retrievedIds": [
+        "D15:3",
+        "D15:5",
+        "D18:10",
+        "D4:11",
+        "D11:1",
+        "D3:1",
+        "D13:5",
+        "D15:19",
+        "D14:2",
+        "D19:1"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8706
+    },
+    {
+      "questionId": "conv1_q71",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:6"
+      ],
+      "retrievedIds": [
+        "D15:6",
+        "D13:5",
+        "D9:2",
+        "D5:4",
+        "D17:7",
+        "D11:12",
+        "D18:3",
+        "D8:13",
+        "D3:1",
+        "D15:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1868
+    },
+    {
+      "questionId": "conv1_q72",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:7"
+      ],
+      "retrievedIds": [
+        "D15:5",
+        "D13:5",
+        "D8:13",
+        "D15:19",
+        "D8:17",
+        "D5:4",
+        "D18:2",
+        "D11:3",
+        "D11:9",
+        "D15:6"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1641
+    },
+    {
+      "questionId": "conv1_q73",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:8"
+      ],
+      "retrievedIds": [
+        "D15:8",
+        "D5:2",
+        "D9:5",
+        "D9:10",
+        "D17:8",
+        "D9:8",
+        "D5:17",
+        "D1:17",
+        "D8:6",
+        "D11:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1463
+    },
+    {
+      "questionId": "conv1_q74",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:9"
+      ],
+      "retrievedIds": [
+        "D15:13",
+        "D13:5",
+        "D8:13",
+        "D8:12",
+        "D1:6",
+        "D18:10",
+        "D11:9",
+        "D5:10",
+        "D13:7",
+        "D15:5"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1330
+    },
+    {
+      "questionId": "conv1_q75",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:12"
+      ],
+      "retrievedIds": [
+        "D15:6",
+        "D2:2",
+        "D5:2",
+        "D14:10",
+        "D18:3",
+        "D9:2",
+        "D4:1",
+        "D7:8",
+        "D4:2",
+        "D3:2"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1342
+    },
+    {
+      "questionId": "conv1_q76",
+      "category": "single_hop",
+      "relevantIds": [
+        "D15:18",
+        "D15:19"
+      ],
+      "retrievedIds": [
+        "D15:18",
+        "D15:19",
+        "D15:13",
+        "D1:14",
+        "D15:5",
+        "D15:6",
+        "D1:27",
+        "D2:10",
+        "D6:6",
+        "D15:20"
+      ],
+      "relevantRetrievedAt5": 2,
+      "relevantRetrievedAt10": 2,
+      "latencyMs": 1309
+    },
+    {
+      "questionId": "conv1_q77",
+      "category": "single_hop",
+      "relevantIds": [
+        "D16:3"
+      ],
+      "retrievedIds": [
+        "D16:3",
+        "D3:6",
+        "D5:7",
+        "D16:5",
+        "D19:4",
+        "D1:15",
+        "D6:8",
+        "D5:15",
+        "D17:21",
+        "D1:19"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1237
+    },
+    {
+      "questionId": "conv1_q78",
+      "category": "single_hop",
+      "relevantIds": [
+        "D17:7"
+      ],
+      "retrievedIds": [
+        "D17:7",
+        "D14:12",
+        "D14:10",
+        "D5:21",
+        "D10:8",
+        "D7:8",
+        "D4:16",
+        "D4:18",
+        "D5:8",
+        "D12:15"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1256
+    },
+    {
+      "questionId": "conv1_q79",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:2"
+      ],
+      "retrievedIds": [
+        "D18:2",
+        "D1:2",
+        "D11:3",
+        "D5:10",
+        "D6:4",
+        "D4:10",
+        "D12:1",
+        "D14:8",
+        "D17:4",
+        "D1:3"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1359
+    },
+    {
+      "questionId": "conv1_q80",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:10"
+      ],
+      "retrievedIds": [
+        "D18:9",
+        "D18:10",
+        "D18:6",
+        "D16:6",
+        "D18:8",
+        "D18:5",
+        "D1:2",
+        "D16:7",
+        "D12:12",
+        "D14:11"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1318
+    },
+    {
+      "questionId": "conv1_q81",
+      "category": "single_hop",
+      "relevantIds": [
+        "D18:13"
+      ],
+      "retrievedIds": [
+        "D8:13",
+        "D14:5",
+        "D18:13",
+        "D19:2",
+        "D18:14",
+        "D6:4",
+        "D17:15",
+        "D18:21",
+        "D18:12",
+        "D15:12"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1320
+    },
+    {
+      "questionId": "conv1_q82",
+      "category": "adversarial",
+      "relevantIds": [
+        "D1:8"
+      ],
+      "retrievedIds": [
+        "D1:7",
+        "D1:8",
+        "D16:4",
+        "D5:21",
+        "D15:17",
+        "D5:17",
+        "D19:13",
+        "D8:9",
+        "D1:13",
+        "D4:16"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1284
+    },
+    {
+      "questionId": "conv1_q83",
+      "category": "adversarial",
+      "relevantIds": [
+        "D1:17"
+      ],
+      "retrievedIds": [
+        "D9:9",
+        "D9:10",
+        "D11:7",
+        "D9:7",
+        "D1:7",
+        "D8:6",
+        "D5:2",
+        "D17:8",
+        "D9:5",
+        "D5:17"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1302
+    },
+    {
+      "questionId": "conv1_q84",
+      "category": "adversarial",
+      "relevantIds": [
+        "D1:19"
+      ],
+      "retrievedIds": [
+        "D1:18",
+        "D1:24",
+        "D1:16",
+        "D1:8",
+        "D5:2",
+        "D9:10",
+        "D7:7",
+        "D2:8",
+        "D9:7",
+        "D8:17"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1399
+    },
+    {
+      "questionId": "conv1_q85",
+      "category": "adversarial",
+      "relevantIds": [
+        "D1:28"
+      ],
+      "retrievedIds": [
+        "D5:2",
+        "D11:4",
+        "D15:16",
+        "D11:8",
+        "D5:18",
+        "D11:7",
+        "D5:19",
+        "D1:27",
+        "D6:8",
+        "D9:7"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1331
+    },
+    {
+      "questionId": "conv1_q86",
+      "category": "adversarial",
+      "relevantIds": [
+        "D2:8"
+      ],
+      "retrievedIds": [
+        "D2:7",
+        "D2:8",
+        "D2:9",
+        "D2:4",
+        "D18:20",
+        "D12:7",
+        "D19:6",
+        "D4:10",
+        "D15:3",
+        "D8:12"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1379
+    },
+    {
+      "questionId": "conv1_q87",
+      "category": "adversarial",
+      "relevantIds": [
+        "D3:2"
+      ],
+      "retrievedIds": [
+        "D5:1",
+        "D3:3",
+        "D18:2",
+        "D2:1",
+        "D8:6",
+        "D7:2",
+        "D3:2",
+        "D3:7",
+        "D18:5",
+        "D5:2"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1357
+    },
+    {
+      "questionId": "conv1_q88",
+      "category": "adversarial",
+      "relevantIds": [
+        "D3:4"
+      ],
+      "retrievedIds": [
+        "D5:1",
+        "D3:7",
+        "D18:5",
+        "D3:11",
+        "D8:6",
+        "D16:1",
+        "D3:3",
+        "D2:1",
+        "D5:2",
+        "D5:6"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1253
+    },
+    {
+      "questionId": "conv1_q89",
+      "category": "adversarial",
+      "relevantIds": [
+        "D3:6",
+        "D3:8"
+      ],
+      "retrievedIds": [
+        "D3:9",
+        "D3:7",
+        "D2:2",
+        "D7:5",
+        "D5:2",
+        "D3:3",
+        "D3:11",
+        "D11:11",
+        "D5:1",
+        "D3:8"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1295
+    },
+    {
+      "questionId": "conv1_q90",
+      "category": "adversarial",
+      "relevantIds": [
+        "D3:6"
+      ],
+      "retrievedIds": [
+        "D3:5",
+        "D3:7",
+        "D18:5",
+        "D16:4",
+        "D3:3",
+        "D16:1",
+        "D3:9",
+        "D10:3",
+        "D8:6",
+        "D3:6"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1491
+    },
+    {
+      "questionId": "conv1_q91",
+      "category": "adversarial",
+      "relevantIds": [
+        "D4:2"
+      ],
+      "retrievedIds": [
+        "D4:2",
+        "D4:1",
+        "D7:3",
+        "D16:1",
+        "D5:2",
+        "D5:1",
+        "D7:2",
+        "D18:2",
+        "D2:2",
+        "D3:7"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8060
+    },
+    {
+      "questionId": "conv1_q92",
+      "category": "adversarial",
+      "relevantIds": [
+        "D5:15"
+      ],
+      "retrievedIds": [
+        "D16:14",
+        "D5:14",
+        "D5:15",
+        "D17:16",
+        "D9:11",
+        "D4:16",
+        "D13:1",
+        "D9:10",
+        "D13:10",
+        "D15:15"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1676
+    },
+    {
+      "questionId": "conv1_q93",
+      "category": "adversarial",
+      "relevantIds": [
+        "D8:1"
+      ],
+      "retrievedIds": [
+        "D8:1",
+        "D17:21",
+        "D1:2",
+        "D12:17",
+        "D15:20",
+        "D14:8",
+        "D6:12",
+        "D1:15",
+        "D13:20",
+        "D15:22"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 8266
+    },
+    {
+      "questionId": "conv1_q94",
+      "category": "adversarial",
+      "relevantIds": [
+        "D8:8"
+      ],
+      "retrievedIds": [
+        "D8:7",
+        "D5:20",
+        "D8:6",
+        "D1:4",
+        "D3:2",
+        "D5:2",
+        "D1:6",
+        "D11:3",
+        "D17:2",
+        "D9:7"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 2092
+    },
+    {
+      "questionId": "conv1_q95",
+      "category": "adversarial",
+      "relevantIds": [
+        "D9:10"
+      ],
+      "retrievedIds": [
+        "D9:10",
+        "D1:17",
+        "D1:15",
+        "D17:8",
+        "D8:13",
+        "D5:15",
+        "D14:16",
+        "D1:16",
+        "D9:7",
+        "D14:6"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1262
+    },
+    {
+      "questionId": "conv1_q96",
+      "category": "adversarial",
+      "relevantIds": [
+        "D12:1"
+      ],
+      "retrievedIds": [
+        "D12:1",
+        "D4:10",
+        "D1:2",
+        "D17:6",
+        "D14:10",
+        "D13:5",
+        "D11:13",
+        "D3:2",
+        "D4:13",
+        "D3:9"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1468
+    },
+    {
+      "questionId": "conv1_q97",
+      "category": "adversarial",
+      "relevantIds": [
+        "D12:3"
+      ],
+      "retrievedIds": [
+        "D12:2",
+        "D12:1",
+        "D11:14",
+        "D12:3",
+        "D6:4",
+        "D17:21",
+        "D7:1",
+        "D3:3",
+        "D15:1",
+        "D15:20"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1257
+    },
+    {
+      "questionId": "conv1_q98",
+      "category": "adversarial",
+      "relevantIds": [
+        "D12:3"
+      ],
+      "retrievedIds": [
+        "D12:2",
+        "D12:1",
+        "D17:2",
+        "D17:1",
+        "D6:4",
+        "D5:7",
+        "D5:2",
+        "D15:1",
+        "D3:3",
+        "D8:6"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 7839
+    },
+    {
+      "questionId": "conv1_q99",
+      "category": "adversarial",
+      "relevantIds": [
+        "D12:6"
+      ],
+      "retrievedIds": [
+        "D1:19",
+        "D19:12",
+        "D19:4",
+        "D17:21",
+        "D12:6",
+        "D11:7",
+        "D1:9",
+        "D5:17",
+        "D5:16",
+        "D12:17"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1596
+    },
+    {
+      "questionId": "conv1_q100",
+      "category": "adversarial",
+      "relevantIds": [
+        "D13:11"
+      ],
+      "retrievedIds": [
+        "D17:21",
+        "D13:10",
+        "D16:11",
+        "D16:5",
+        "D14:4",
+        "D12:17",
+        "D13:16",
+        "D17:19",
+        "D15:20",
+        "D18:15"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1330
+    },
+    {
+      "questionId": "conv1_q101",
+      "category": "adversarial",
+      "relevantIds": [
+        "D15:1"
+      ],
+      "retrievedIds": [
+        "D15:1",
+        "D18:8",
+        "D4:13",
+        "D16:6",
+        "D1:2",
+        "D11:7",
+        "D12:12",
+        "D16:4",
+        "D4:10",
+        "D11:5"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1317
+    },
+    {
+      "questionId": "conv1_q102",
+      "category": "adversarial",
+      "relevantIds": [
+        "D16:3"
+      ],
+      "retrievedIds": [
+        "D16:3",
+        "D5:7",
+        "D16:4",
+        "D11:7",
+        "D3:9",
+        "D17:4",
+        "D18:20",
+        "D5:14",
+        "D15:5",
+        "D2:16"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1299
+    },
+    {
+      "questionId": "conv1_q103",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:2"
+      ],
+      "retrievedIds": [
+        "D18:2",
+        "D1:2",
+        "D12:3",
+        "D6:4",
+        "D14:8",
+        "D12:1",
+        "D10:4",
+        "D1:3",
+        "D4:10",
+        "D11:14"
+      ],
+      "relevantRetrievedAt5": 1,
+      "relevantRetrievedAt10": 1,
+      "latencyMs": 1446
+    },
+    {
+      "questionId": "conv1_q104",
+      "category": "adversarial",
+      "relevantIds": [
+        "D18:10"
+      ],
+      "retrievedIds": [
+        "D18:9",
+        "D8:12",
+        "D18:5",
+        "D16:6",
+        "D16:7",
+        "D14:10",
+        "D18:7",
+        "D12:4",
+        "D14:4",
+        "D1:3"
+      ],
+      "relevantRetrievedAt5": 0,
+      "relevantRetrievedAt10": 0,
+      "latencyMs": 1326
+    }
+  ],
+  "perCategory": {
+    "adversarial": {
+      "questionCount": 71,
+      "hitAt10": 0.704225352112676,
+      "evidenceRecallAt10": 0.6901408450704225,
+      "allEvidenceRecallAt10": 0.676056338028169,
+      "precisionAt10": 0.07042253521126758,
+      "mrr": 0.48947015425888657,
+      "ndcgAt10": 0.53427513004517
+    },
+    "multi_hop": {
+      "questionCount": 43,
+      "hitAt10": 0.8372093023255814,
+      "evidenceRecallAt10": 0.5120155038759691,
+      "allEvidenceRecallAt10": 0.20930232558139536,
+      "precisionAt10": 0.12093023255813956,
+      "mrr": 0.4576504245108897,
+      "ndcgAt10": 0.4039573538474085
+    },
+    "open_domain": {
+      "questionCount": 11,
+      "hitAt10": 0.6363636363636364,
+      "evidenceRecallAt10": 0.43939393939393945,
+      "allEvidenceRecallAt10": 0.2727272727272727,
+      "precisionAt10": 0.08181818181818182,
+      "mrr": 0.35757575757575755,
+      "ndcgAt10": 0.3333406910333804
+    },
+    "single_hop": {
+      "questionCount": 114,
+      "hitAt10": 0.7894736842105263,
+      "evidenceRecallAt10": 0.7807017543859649,
+      "allEvidenceRecallAt10": 0.7719298245614035,
+      "precisionAt10": 0.08157894736842092,
+      "mrr": 0.6187621832358675,
+      "ndcgAt10": 0.6551396405155011
+    },
+    "temporal": {
+      "questionCount": 63,
+      "hitAt10": 0.9365079365079365,
+      "evidenceRecallAt10": 0.9365079365079365,
+      "allEvidenceRecallAt10": 0.9365079365079365,
+      "precisionAt10": 0.09365079365079357,
+      "mrr": 0.8343915343915345,
+      "ndcgAt10": 0.8601621252296712
+    }
+  }
+}

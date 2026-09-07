@@ -3,50 +3,69 @@
  * ─── LongMemEval Benchmark for MemOS ──────────────────────────────────────────
  *
  * Runs the LongMemEval benchmark (xiaowu0162/longmemeval) against MemOS.
- * Uses the same LLM-judge methodology as Mem0, Zep, and Memobase.
  *
- * The benchmark:
- * 1. Loads questions from the LongMemEval-S dataset (500 questions)
- * 2. Stores haystack sessions as MemOS memories (namespaced per question)
- * 3. For each question, searches MemOS for relevant memories
- * 4. Uses LLM to answer the question from retrieved context
- * 5. Uses LLM as judge to score answer correctness (1=yes, 0=no)
- * 6. Reports LLM Judge Score by question type and overall
+ * Two modes:
+ *   --retrieve-only (no API key): scores retrieval by DIRECT session-ID
+ *     comparison — retrieved memories' `sessionId` metadata vs the official
+ *     `answer_session_ids`. Deterministic metrics (Hit@K, Evidence Recall@K,
+ *     All-Evidence Recall@K, Precision@K, MRR, nDCG@K) via the shared
+ *     metrics module. No LLM anywhere.
+ *   default (requires OPENAI_API_KEY): retrieves evidence, answers with an
+ *     LLM, and judges with an LLM (the same methodology Mem0/Zep publish).
+ *     Clearly labeled LLM-judge numbers — never compare them to
+ *     retrieval-only scores.
  *
- * For retrieval-only testing (no API key), use bench-locomo-noapi.ts which
- * also supports LongMemEval data — or set BENCH_NO_API=1 here.
+ * Ingestion fix (v2): every haystack session is stored with its OWN
+ * `haystack_dates[i]` timestamp, `sessionId`, chronological position,
+ * and the question date — NOT the question date as the session
+ * timestamp (the v1 bug that made every session appear to occur at
+ * question time and destroyed temporal ordering).
+ *
+ * Results are written to scripts/bench-longmemeval-results.json — a
+ * SEPARATE file from the LoCoMo results (they previously overwrote each
+ * other).
  *
  * Usage:
- *   npx tsx scripts/bench-longmemeval.ts --topk 10 --max-questions=30
+ *   npx tsx scripts/bench-longmemeval.ts --topk=10 --max-questions=30 --retrieve-only
+ *   npx tsx scripts/bench-longmemeval.ts --topk=10 --max-questions=30
+ *
+ * Provider flags: see scripts/lib/bench-common.ts (parseProviderArgs).
  *
  * Prerequisites:
- *   - Download the LongMemEval-S dataset:
- *     git clone --depth 1 https://github.com/xiaowu0162/LongMemEval.git scripts/dataset/longmemeval
- *     (the -S variant is 500 Qs; full corpus is 266MB and not vendored in git)
- *   - Set OPENAI_API_KEY env var (b.ai, bluesminds, or bynara API key)
- *   - Model: agnes-2.0-flash (set BENCH_ANSWER_MODEL to override)
- *
- * Results written to: scripts/bench-locomo-results.json
+ *   git clone --depth 1 https://github.com/xiaowu0162/LongMemEval.git scripts/dataset/longmemeval
+ *   (then place longmemeval_s.json under scripts/dataset/longmemeval/)
+ *   LLM mode: set OPENAI_API_KEY (+ optional OPENAI_BASE_URL,
+ *   BENCH_ANSWER_MODEL, BENCH_JUDGE_MODEL).
  */
 
 import { MemOS } from "../src/memory.ts";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import {
+  parseProviderArgs,
+  buildProvider,
+  assertNoFallback,
+  benchMetadata,
+  type BenchProviderArgs,
+} from "./lib/bench-common.ts";
+import type { EmbeddingRuntimeInfo } from "../src/types.ts";
+import {
+  aggregateMetrics,
+  dedupeRankedIds,
+  type EvalQueryResult,
+  type MetricsReport,
+} from "./lib/bench-metrics.ts";
 
-// ─── API setup ──────────────────────────────────────────────────────────────────
-// Set your API key via the OPENAI_API_KEY environment variable.
-// The default endpoint is the bynara router (https://router.bynara.id/v1).
-// Override with OPENAI_BASE_URL if using a different provider.
+// ─── LLM helpers (optional end-to-end mode) ──────────────────────────────────
+
 const B_AI_API_KEY = process.env.OPENAI_API_KEY || "";
 const B_AI_BASE_URL =
   process.env.OPENAI_BASE_URL || "https://router.bynara.id/v1";
 const ANSWER_MODEL = process.env.BENCH_ANSWER_MODEL || "agnes-2.0-flash";
 const JUDGE_MODEL = process.env.BENCH_JUDGE_MODEL || "agnes-2.0-flash";
 
-/**
- * Call the bynara chat completions API using raw fetch.
- * Includes retry logic for rate limiting (429) and payment errors (402).
- */
-async function callBAI(
+async function callLLM(
   model: string,
   messages: Array<{ role: string; content: string }>,
   maxTokens: number = 256,
@@ -55,8 +74,7 @@ async function callBAI(
   if (!B_AI_API_KEY) {
     throw new Error(
       "OPENAI_API_KEY environment variable is not set. " +
-        "Please set it before running the LLM-judge benchmark. " +
-        "Example: OPENAI_API_KEY=your-key npx tsx scripts/bench-longmemeval.ts --max-questions=10",
+        "For retrieval-only scoring (no API), pass --retrieve-only.",
     );
   }
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -77,24 +95,25 @@ async function callBAI(
     if (!resp.ok) {
       const errText = await resp.text();
       const errMsg = errText.substring(0, 200);
-
-      // Rate limited or payment required — wait and retry
       if (
         (resp.status === 429 || resp.status === 402 || resp.status === 403) &&
         attempt < maxRetries
       ) {
-        const delay = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s
+        const delay = Math.pow(2, attempt) * 2000;
         console.error(
-          `[bench-LoCoMo] API error ${resp.status}, retrying in ${delay}ms... (${attempt + 1}/${maxRetries})`,
+          `[bench-longmemeval] API error ${resp.status}, retrying in ${delay}ms... (${attempt + 1}/${maxRetries})`,
         );
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
-
       throw new Error(`HTTP ${resp.status}: ${errMsg}`);
     }
 
-    const data = (await resp.json()) as any;
+    const data = (await resp.json()) as {
+      choices?: Array<{
+        message?: { content?: string; reasoning_content?: string };
+      }>;
+    };
     const choice = data.choices?.[0]?.message;
     return (choice?.content || choice?.reasoning_content || "").trim();
   }
@@ -102,10 +121,6 @@ async function callBAI(
   throw new Error("Max retries exceeded");
 }
 
-/**
- * Answer a question using the retrieved memory context.
- * Uses the LLM answerer model to extract the answer from retrieved memory context.
- */
 async function answerQuestion(
   question: string,
   memories: Array<{ content: string; timestamp: string }>,
@@ -124,23 +139,19 @@ Question: ${question}
 Answer (be concise, 1-5 words if possible):`;
 
   try {
-    return await callBAI(
+    return await callLLM(
       ANSWER_MODEL,
       [{ role: "user", content: prompt }],
       256,
     );
-  } catch (e: any) {
+  } catch (e) {
     console.error(
-      `[bench-LoCoMo] Answer error: ${e.message?.substring(0, 100)}`,
+      `[bench-longmemeval] Answer error: ${String(e).substring(0, 100)}`,
     );
     return "";
   }
 }
 
-/**
- * Judge whether a predicted answer matches the ground truth.
- * Uses LLM as judge (score 1=yes, 0=no).
- */
 async function judgeAnswer(
   question: string,
   groundTruth: string,
@@ -159,20 +170,22 @@ Score: 1 if the predicted answer is correct (matches or is a valid paraphrase of
 Only output a single digit: 1 or 0.`;
 
   try {
-    const text = await callBAI(
+    const text = await callLLM(
       JUDGE_MODEL,
       [{ role: "user", content: prompt }],
       256,
     );
     const match = text.match(/[01]/);
-    return match ? parseInt(match[0], 10) : 0;
-  } catch (e: any) {
+    return match ? parseInt(match[0] ?? "0", 10) : 0;
+  } catch (e) {
     console.error(
-      `[bench-LoCoMo] Judge error: ${e.message?.substring(0, 100)}`,
+      `[bench-longmemeval] Judge error: ${String(e).substring(0, 100)}`,
     );
     return 0;
   }
 }
+
+// ─── Dataset types ────────────────────────────────────────────────────────────
 
 interface LongMemEvalQuestion {
   question_id: string;
@@ -186,37 +199,11 @@ interface LongMemEvalQuestion {
   answer_session_ids: string[];
 }
 
-interface LongMemEvalResult {
-  provider: string;
-  timestamp: string;
-  questions: number;
-  topK: number;
-  useEmbeddings: boolean;
-  categories: Record<string, { score: number; count: number }>;
-  overallScore: number;
-  p50Latency: number;
-  results: Array<{
-    question: string;
-    answer: string;
-    predicted: string;
-    category: string;
-    llmScore: number;
-    latency: number;
-    topResults: string[];
-  }>;
-}
-
-function categoryName(type: string): string {
-  return type;
-}
-
-/**
- * Load LongMemEval dataset.
- */
 function loadLongMemEval(path: string): LongMemEvalQuestion[] {
   if (!existsSync(path)) {
     throw new Error(
-      `LongMemEval dataset not found at ${path}. Please download it first.`,
+      `LongMemEval dataset not found at ${path}. Download it first:\n` +
+        `  git clone --depth 1 https://github.com/xiaowu0162/LongMemEval.git scripts/dataset/longmemeval`,
     );
   }
   const data = JSON.parse(readFileSync(path, "utf-8"));
@@ -225,30 +212,38 @@ function loadLongMemEval(path: string): LongMemEvalQuestion[] {
 
 /**
  * Store LongMemEval haystack sessions as MemOS memories.
- * Each session is stored as a single memory with all messages concatenated.
+ *
+ * Every session carries its OWN metadata:
+ *   - sessionId  — the official haystack_session_ids[i] (used for
+ *     evidence-ID scoring against answer_session_ids)
+ *   - timestamp  — the session's OWN haystack_dates[i] date (NOT the
+ *     question date — that destroyed temporal ordering before)
+ *   - questionDate, chronological position, benchmark instance id
  */
 async function storeSessions(
   memos: MemOS,
   q: LongMemEvalQuestion,
-  questionId: string,
 ): Promise<number> {
   let memoryCount = 0;
 
-  // Store each haystack session as a memory
-  for (const session of q.haystack_sessions) {
+  for (const [position, session] of q.haystack_sessions.entries()) {
     if (!Array.isArray(session) || session.length === 0) continue;
 
-    // Concatenate all messages in the session
     const content = session
       .map((msg) => `${msg.role}: ${msg.content}`)
       .join("\n");
 
     await memos.store(content, {
-      namespace: `longmemeval_${questionId}`,
+      namespace: `longmemeval_${q.question_id}`,
       metadata: {
-        qid: questionId,
+        qid: q.question_id,
         type: "haystack_session",
-        question_date: q.question_date,
+        benchmark: "longmemeval",
+        instanceId: `longmemeval_${q.question_id}`,
+        sessionId: q.haystack_session_ids[position] ?? `session_${position}`,
+        timestamp: q.haystack_dates[position] ?? "",
+        questionDate: q.question_date,
+        position,
       },
     });
     memoryCount++;
@@ -257,274 +252,301 @@ async function storeSessions(
   return memoryCount;
 }
 
-/**
- * Run the LongMemEval benchmark.
- */
-async function runLongMemEvalBenchmark(opts: {
-  topK: number;
-  useEmbeddings: boolean;
-  maxQuestions?: number;
-  delayMs?: number;
-  noApi?: boolean;
-}): Promise<LongMemEvalResult> {
-  // Load dataset
-  const datasetPath = "scripts/dataset/longmemeval/longmemeval_s.json";
-  const questions = loadLongMemEval(datasetPath);
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
-  // Limit questions if specified
-  const limited = opts.maxQuestions
-    ? questions.slice(0, opts.maxQuestions)
-    : questions;
+async function main() {
+  const args = process.argv.slice(2);
+
+  // Two-stage reranking + candidate-depth ablation flags.
+  const depthArg = args.find((a) => a.startsWith("--candidate-depth="));
+  const candidateDepth = depthArg
+    ? parseInt(depthArg.split("=")[1] ?? "", 10)
+    : undefined;
+  const rerankUrl = args
+    .find((a) => a.startsWith("--rerank-url="))
+    ?.split("=")[1];
+  const rerankModelArg = args.find((a) => a.startsWith("--rerank-model="));
+  const topK =
+    parseInt(
+      args.find((a) => a.startsWith("--topk="))?.split("=")[1] ?? "10",
+      10,
+    ) || 10;
+  const maxQuestionsArg = args.find((a) => a.startsWith("--max-questions="));
+  const maxQuestions = maxQuestionsArg
+    ? parseInt(maxQuestionsArg.split("=")[1] ?? "0", 10)
+    : undefined;
+  const retrieveOnly = args.includes("--retrieve-only") || !B_AI_API_KEY;
+  const delayMs = args.find((a) => a.startsWith("--delay="))
+    ? parseInt(
+        args.find((a) => a.startsWith("--delay="))!.split("=")[1] ?? "0",
+        10,
+      )
+    : 0;
+
+  const providerArgs: BenchProviderArgs = parseProviderArgs(args);
+  const datasetPath =
+    args.find((a) => a.startsWith("--dataset="))?.split("=")[1] ??
+    "scripts/dataset/longmemeval/longmemeval_s.json";
+
+  const questions = loadLongMemEval(datasetPath);
+  const limited = maxQuestions ? questions.slice(0, maxQuestions) : questions;
 
   console.log(
-    `[bench-LoCoMo] Loaded ${limited.length}/${questions.length} LongMemEval questions`,
+    `[bench-longmemeval] Loaded ${limited.length}/${questions.length} questions | mode: ${retrieveOnly ? "retrieval-only (deterministic session-ID scoring)" : "LLM answer + judge"}`,
   );
 
-  // Create MemOS instance
-  const dbPath = `/tmp/bench-longmemeval-${Date.now()}.db`;
+  const provider = buildProvider(providerArgs);
+  const runtimeInfo = await assertNoFallback(provider, providerArgs);
+
+  const dbPath = join(tmpdir(), `bench-longmemeval-${Date.now()}.db`);
   const memos = new MemOS({
     dbPath,
     wal: false,
     autoLinkThreshold: 0,
-    experimental: { namespaces: true },
-    ...(opts.useEmbeddings
-      ? {
-          embeddings: {
-            enabled: true,
-            provider: "fastembed",
-            model: "Xenova/gemma-300m-e5-it-v1",
-            dimensions: 768,
-          },
-          embeddingQueue: {
-            concurrency: 1,
-            batchSize: 32,
-            maxQueueSize: 60000,
-          },
-          experimental: { semanticSearch: true, namespaces: true },
-        }
-      : {}),
+    experimental: {
+      namespaces: true,
+      semanticSearch: true,
+      ...(rerankUrl
+        ? {
+            rerank: {
+              endpoint: rerankUrl,
+              ...(rerankModelArg
+                ? { model: rerankModelArg.split("=")[1] }
+                : {}),
+            },
+          }
+        : {}),
+    },
+    embeddings: {
+      enabled: true,
+      provider,
+      ...(providerArgs.model ? { model: providerArgs.model } : {}),
+      ...(providerArgs.dimensions
+        ? { dimensions: providerArgs.dimensions }
+        : {}),
+    },
+    embeddingQueue: { concurrency: 4, batchSize: 16, maxQueueSize: 60000 },
   });
 
   await memos.init();
 
-  // ─── Phase 1: Store sessions ────────────────────────────────────────────────
+  // ─── Phase 1: Store sessions (per-question namespace) ───────────────────
   const storeStart = Date.now();
   let totalMemories = 0;
-  for (let i = 0; i < limited.length; i++) {
-    const count = await storeSessions(
-      memos,
-      limited[i],
-      limited[i].question_id,
-    );
-    totalMemories += count;
-    if ((i + 1) % 50 === 0) {
+  for (const [i, q] of limited.entries()) {
+    totalMemories += await storeSessions(memos, q);
+    if ((i + 1) % 10 === 0) {
+      await memos.flushEmbeddings();
       console.log(
         `  Stored ${i + 1}/${limited.length} questions, ${totalMemories} memories`,
       );
     }
-    // Flush embeddings periodically to avoid queue overflow
-    if (opts.useEmbeddings && (i + 1) % 10 === 0) {
-      await memos.flushEmbeddings();
-    }
   }
-  if (opts.useEmbeddings) {
-    await memos.flushEmbeddings();
-  }
-  const storeTime = Date.now() - storeStart;
+  await memos.flushEmbeddings();
+  const ingestionMs = Date.now() - storeStart;
   console.log(
-    `[bench-LoCoMo] Stored ${totalMemories} memories in ${storeTime}ms`,
+    `[bench-longmemeval] Stored ${totalMemories} memories in ${ingestionMs}ms`,
   );
 
-  // ─── Phase 2: Run QA pairs ──────────────────────────────────────────────────
-  console.log("[bench-LoCoMo] Running QA retrieval + LLM answer + judge...");
+  // ─── Phase 2: Retrieval (+ optional LLM answer/judge) ──────────────────
+  const benchStart = Date.now();
+  const evalQueries: EvalQueryResult[] = [];
+  const llmScores: Array<{
+    questionId: string;
+    category: string;
+    score: number;
+  }> = [];
 
-  const perQueryResults: LongMemEvalResult["results"] = [];
-  const categoryStats: Record<string, { scores: number[]; latency: number[] }> =
-    {};
-  const latencies: number[] = [];
-  let totalTokens = 0;
-
-  for (let i = 0; i < limited.length; i++) {
-    const q = limited[i];
+  for (const [i, q] of limited.entries()) {
     const namespace = `longmemeval_${q.question_id}`;
-    const query = q.question;
     const startTime = Date.now();
-
-    // Search MemOS
     const results = await memos.search({
-      query,
-      limit: opts.topK,
+      query: q.question,
+      limit: topK,
       namespace,
+      ...(candidateDepth ? { candidateDepth } : {}),
     });
-
-    const searchTime = Date.now() - startTime;
-
-    // Get memory contents with timestamps
-    const memoryObjs = results.map((r) => ({
-      content: r.node.content || "",
-      timestamp:
-        r.node.metadata?.question_date ||
-        r.node.metadata?.timestamp ||
-        "unknown",
-    }));
-
-    // Answer + judge
-    let predicted = "";
-    let llmScore = 0;
-
-    if (!opts.noApi) {
-      predicted = await answerQuestion(query, memoryObjs);
-      llmScore = await judgeAnswer(query, q.answer, predicted);
-    }
-
     const elapsed = Date.now() - startTime;
-    latencies.push(elapsed);
-    totalTokens += (query.length + predicted.length + q.answer.length) / 4;
 
-    if (!categoryStats[q.question_type]) {
-      categoryStats[q.question_type] = { scores: [], latency: [] };
-    }
-    categoryStats[q.question_type].scores.push(llmScore);
-    categoryStats[q.question_type].latency.push(elapsed);
-
-    perQueryResults.push({
-      question: query,
-      answer: q.answer,
-      predicted,
+    // Direct session-ID comparison (deterministic, always computed —
+    // independent of whether the LLM path also runs).
+    const retrievedIds = dedupeRankedIds(
+      results
+        .map((r) => String(r.node.metadata?.sessionId ?? ""))
+        .filter(Boolean),
+    );
+    evalQueries.push({
+      questionId: q.question_id,
+      relevantIds: (q.answer_session_ids ?? []).filter(
+        (s) => typeof s === "string" && s.length > 0,
+      ),
+      retrievedIds,
       category: q.question_type,
-      llmScore,
-      latency: elapsed,
-      topResults: results
-        .slice(0, 3)
-        .map((r) => r.node.content?.substring(0, 80) || ""),
+      latencyMs: elapsed,
     });
+
+    if (!retrieveOnly) {
+      const memoryObjs = results.map((r) => ({
+        content: r.node.content ?? "",
+        timestamp: String(r.node.metadata?.timestamp ?? "unknown"),
+      }));
+      const predicted = await answerQuestion(q.question, memoryObjs);
+      const score = await judgeAnswer(q.question, q.answer, predicted);
+      llmScores.push({
+        questionId: q.question_id,
+        category: q.question_type,
+        score,
+      });
+
+      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+    }
 
     if ((i + 1) % 10 === 0) {
       console.log(`  Processed ${i + 1}/${limited.length} questions`);
-    }
-
-    // Rate limiting
-    if (opts.delayMs && opts.delayMs > 0) {
-      await new Promise((r) => setTimeout(r, opts.delayMs));
     }
   }
 
   await memos.close();
   if (existsSync(dbPath)) unlinkSync(dbPath);
-
-  // ─── Phase 3: Aggregate ─────────────────────────────────────────────────────
-  const avg = (arr: number[]) =>
-    arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-  const p50 = (arr: number[]) => {
-    const sorted = [...arr].sort((a, b) => a - b);
-    return sorted[Math.floor(sorted.length / 2)] || 0;
-  };
-
-  const categories: Record<string, { score: number; count: number }> = {};
-  let totalScore = 0;
-  let totalQ = 0;
-
-  for (const [cat, stats] of Object.entries(categoryStats)) {
-    const score = avg(stats.scores);
-    categories[cat] = { score, count: stats.scores.length };
-    totalScore += score * stats.scores.length;
-    totalQ += stats.scores.length;
+  for (const ext of ["-wal", "-shm"]) {
+    const sidecar = `${dbPath}${ext}`;
+    if (existsSync(sidecar)) unlinkSync(sidecar);
   }
 
-  const overallScore = totalQ > 0 ? totalScore / totalQ : 0;
-  const overallLatency = avg(latencies);
-
-  const report: LongMemEvalResult = {
-    provider: "MemOS",
-    timestamp: new Date().toISOString(),
-    questions: perQueryResults.length,
-    topK: opts.topK,
-    useEmbeddings: opts.useEmbeddings,
-    categories,
-    overallScore,
-    p50Latency: p50(latencies),
-    results: perQueryResults,
-  };
-
-  return report;
-}
-
-// ─── CLI ──────────────────────────────────────────────────────────────────────
-
-async function main() {
-  const args = process.argv.slice(2);
-  const topK = parseInt(
-    args.find((a) => a.startsWith("--topk="))?.split("=")[1] || "10",
-    10,
-  );
-  const maxQuestionsArg = args.find((a) => a.startsWith("--max-questions="))
-    ? parseInt(
-        args.find((a) => a.startsWith("--max-questions="))!.split("=")[1],
-        10,
-      )
-    : undefined;
-  const noApi = args.includes("--no-api");
-  const useEmbeddings = !args.includes("--no-embeddings");
-  const delayMs = args.find((a) => a.startsWith("--delay="))
-    ? parseInt(args.find((a) => a.startsWith("--delay="))!.split("=")[1], 10)
-    : 0;
-
-  console.log("MemOS LongMemEval Benchmark");
-  console.log(`  Dataset: LongMemEval-S (xiaowu0162/longmemeval)`);
-  console.log(
-    `  Top-K: ${topK} | Embeddings: ${useEmbeddings}${noApi ? " | No API (retrieval only)" : ""}${maxQuestionsArg ? ` | Max Qs: ${maxQuestionsArg}` : ""} | Delay: ${delayMs}ms`,
-  );
-  console.log();
-
-  const report = await runLongMemEvalBenchmark({
+  // ─── Phase 3: Score & report ────────────────────────────────────────────
+  const report = aggregateMetrics(evalQueries);
+  const durationMs = Date.now() - benchStart;
+  printReport(report, {
+    retrieveOnly,
     topK,
-    useEmbeddings,
-    maxQuestions: maxQuestionsArg,
-    delayMs,
-    noApi,
+    durationMs,
+    ingestionMs,
+    providerArgs,
+    runtimeInfo,
+    llmScores,
+    questions: limited.length,
   });
 
-  // ─── Output ───────────────────────────────────────────────────────────────────
-  console.log("\n=== Results ===\n");
-  console.log("Category                  LLM Judge Score  Count");
-  console.log("------------------------------------------------------");
+  // SEPARATE results file from the LoCoMo benchmarks.
+  const outPath = "scripts/bench-longmemeval-results.json";
+  writeFileSync(
+    outPath,
+    JSON.stringify(
+      {
+        ...benchMetadata(providerArgs, runtimeInfo, {
+          name: "longmemeval_s",
+          path: datasetPath,
+        }),
+        benchmark: retrieveOnly
+          ? "longmemeval-retrieval-only"
+          : "longmemeval-llm-judge",
+        mode: retrieveOnly ? "retrieval-only" : "llm-answer-judge",
+        questions: evalQueries.length,
+        topK,
+        retrieval: {
+          candidateDepth: candidateDepth ?? Math.max(topK * 4, 20),
+          keywordWeight: 0.8,
+          semanticWeight: 0.2,
+          rrfK: 60,
+          rerank: rerankUrl ?? null,
+        },
+        durationMs,
+        ingestionMs,
+        metrics: { at5: report.at5, at10: report.at10 },
+        perCategory: report.perCategory,
+        perQuestion: report.perQuestion.map((q) => ({
+          questionId: q.questionId,
+          category: q.category,
+          relevantIds: q.relevantIds,
+          retrievedIds: q.retrievedIds.slice(0, topK),
+          relevantRetrievedAt5: q.relevantRetrievedAt5,
+          relevantRetrievedAt10: q.relevantRetrievedAt10,
+          latencyMs: q.latencyMs,
+        })),
+        ...(retrieveOnly
+          ? {}
+          : {
+              llmJudge: {
+                note: "LLM-judge scores are a SEPARATE end-to-end metric; never mix with retrieval metrics.",
+                overall:
+                  llmScores.length > 0
+                    ? llmScores.reduce((s, x) => s + x.score, 0) /
+                      llmScores.length
+                    : 0,
+                perQuestion: llmScores,
+              },
+            }),
+      },
+      null,
+      2,
+    ),
+  );
+  console.log(`\nResults saved to ${outPath}`);
+}
 
-  const avg = (arr: number[]) =>
-    arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+function printReport(
+  report: MetricsReport,
+  ctx: {
+    retrieveOnly: boolean;
+    topK: number;
+    durationMs: number;
+    ingestionMs: number;
+    providerArgs: BenchProviderArgs;
+    runtimeInfo: EmbeddingRuntimeInfo;
+    llmScores: Array<{ questionId: string; category: string; score: number }>;
+    questions: number;
+  },
+): void {
+  const fmt = (x: number): string => (x * 100).toFixed(1).padStart(5) + "%";
+  const num = (x: number): string => x.toFixed(3);
 
-  for (const [cat, stats] of Object.entries(report.categories)) {
-    const pct = Math.round(stats.score * 100);
-    const name = cat.padEnd(25);
+  console.log("\n=== LongMemEval Results ===");
+  console.log(
+    `Mode: ${ctx.retrieveOnly ? "retrieval-only (session-ID evidence matching)" : "LLM answer + judge"}`,
+  );
+  console.log(
+    `Provider: ${ctx.providerArgs.provider} → ${ctx.runtimeInfo.resolvedProvider}` +
+      ` | fallback: ${ctx.runtimeInfo.fallbackActive ? "YES ⚠" : "no"}`,
+  );
+  console.log(
+    `Questions: ${ctx.questions} | Top-K: ${ctx.topK} | Duration: ${ctx.durationMs}ms (ingestion ${ctx.ingestionMs}ms)`,
+  );
+  console.log(`Latency p50/p95: ${report.latency.p50}/${report.latency.p95}ms`);
+
+  if (ctx.retrieveOnly || report.at10.questionCount > 0) {
+    console.log("\nRetrieval metrics (deterministic, session-ID matching):");
+    console.log("Metric                       @5        @10");
+    console.log("─────────────────────────────────────────────────");
     console.log(
-      `${name} ${pct.toString().padStart(3)}%           ${stats.count}`,
+      `Hit rate                     ${fmt(report.at5.hitRate)}  ${fmt(report.at10.hitRate)}`,
+    );
+    console.log(
+      `Evidence recall (per-Q avg)  ${fmt(report.at5.evidenceRecall)}  ${fmt(report.at10.evidenceRecall)}`,
+    );
+    console.log(
+      `Evidence recall (micro)      ${fmt(report.at5.evidenceRecallMicro)}  ${fmt(report.at10.evidenceRecallMicro)}`,
+    );
+    console.log(
+      `All-evidence recall          ${fmt(report.at5.allEvidenceRecall)}  ${fmt(report.at10.allEvidenceRecall)}`,
+    );
+    console.log(
+      `Precision                    ${fmt(report.at5.precision)}  ${fmt(report.at10.precision)}`,
+    );
+    console.log(
+      `MRR                          ${num(report.at5.mrr)}    ${num(report.at10.mrr)}`,
+    );
+    console.log(
+      `nDCG                         ${num(report.at5.ndcg)}    ${num(report.at10.ndcg)}`,
     );
   }
-  console.log("------------------------------------------------------");
-  const overallPct = Math.round(report.overallScore * 100);
-  console.log(
-    `Overall                   ${overallPct}%           ${report.questions}`,
-  );
-  console.log(
-    `p50 latency: ${report.p50Latency}ms | Total: ${Math.round(report.latencies || 0)}ms`,
-  );
 
-  console.log("\n--- Competitor Reference Scores (LongMemEval-S) ---");
-  console.log("Mem0:          94.4% overall");
-  console.log("Zep (independent test): 63.8%");
-  if (!noApi) {
-    console.log("\n--- Summary ---");
-    if (report.overallScore >= 0.638) {
-      console.log(`✅ MemOS beats Zep's independent LongMemEval score (63.8%)`);
-    } else {
-      console.log(
-        `⚠️  MemOS scores ${overallPct}% — Zep scored 63.8% in an independent test, Mem0 published 94.4%`,
-      );
-    }
+  if (!ctx.retrieveOnly && ctx.llmScores.length > 0) {
+    const overall =
+      ctx.llmScores.reduce((s, x) => s + x.score, 0) / ctx.llmScores.length;
+    console.log(
+      `\nLLM-judge score: ${fmt(overall)} (end-to-end QA; NOT comparable to retrieval metrics or to other vendors' retrieval numbers)`,
+    );
   }
-
-  const outputPath = "scripts/bench-locomo-results.json";
-  writeFileSync(outputPath, JSON.stringify(report, null, 2));
-  console.log(`\nResults saved to ${outputPath}`);
 }
 
 main().catch((e) => {
