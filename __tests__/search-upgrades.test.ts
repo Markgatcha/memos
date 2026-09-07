@@ -405,10 +405,33 @@ describe("embedText: content-only embedding", () => {
 // ─── two-stage reranking ─────────────────────────────────────────────────────
 
 describe("experimental.rerank", () => {
-  function makeRerankableMemos(
-    rerankResponse: unknown,
-    fetchImpl?: typeof fetch,
-  ): MemOS {
+  // Hand-rolled fetch mock: jest.fn/jest.spyOn are unavailable in
+  // --experimental-vm-modules ESM test files (CI mode).
+  function createFetchMock(
+    respond: (
+      url: string,
+      body: { query: string; documents: string[] },
+    ) => unknown,
+  ) {
+    const calls: Array<{
+      url: string;
+      body: { query: string; documents: string[] };
+    }> = [];
+    const install = () => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: unknown, init?: unknown) => {
+        const body = JSON.parse((init as { body: string }).body);
+        calls.push({ url: String(url), body });
+        return respond(url as string, body) as unknown as Response;
+      }) as unknown as typeof fetch;
+      return () => {
+        globalThis.fetch = real;
+      };
+    };
+    return { calls, install };
+  }
+
+  function makeRerankableMemos(): MemOS {
     const storage = new SQLiteStorage(":memory:", true);
     return new MemOS({
       storage,
@@ -425,27 +448,21 @@ describe("experimental.rerank", () => {
     });
   }
 
-  afterEach(() => {
-    (global.fetch as unknown as jest.Mock | undefined)?.mockRestore?.();
-    jest.restoreAllMocks();
-  });
-
   test("reorders fused results by cross-encoder score and tags scores.rerank", async () => {
-    // The marker embedder ranks "zebra" content first; the fake reranker
-    // insists the third candidate is the best one.
-    const fetchMock = jest.fn(async (_url: unknown, init: unknown) => ({
+    // The fake reranker insists the LAST candidate is the best one.
+    const { install } = createFetchMock((_url, body) => ({
       ok: true,
       json: async () => ({
-        results: [
-          { index: 2, relevance_score: 5 },
-          { index: 0, relevance_score: 0.5 },
-          { index: 1, relevance_score: -3 },
-        ],
+        results: body.documents.map((_, index) => ({
+          index,
+          relevance_score:
+            index === body.documents.length - 1 ? 5 : 0.5 - index,
+        })),
       }),
     }));
-    jest.spyOn(global, "fetch").mockImplementation(fetchMock as never);
+    const restore = install();
 
-    const memos = makeRerankableMemos(null);
+    const memos = makeRerankableMemos();
     await memos.init();
     await memos.store("zebra sighting at the zoo");
     await memos.store("zebra habitat savanna");
@@ -453,48 +470,49 @@ describe("experimental.rerank", () => {
 
     const results = await memos.search("zebra", { limit: 3 });
     // The reranked head is ordered by the squashed cross-encoder score,
-    // regardless of the fused pre-order (which depends on bm25 internals).
+    // regardless of the fused pre-order (bm25 internals).
     const rerankScores = results.map((r) => r.scores?.rerank);
     expect(rerankScores).toHaveLength(3);
     for (const score of rerankScores) {
       expect(score).toBeDefined();
     }
     expect(
-      [...rerankScores].every((v, i) => i === 0 || v <= rerankScores[i - 1]),
+      [...rerankScores].every(
+        (v, i) => i === 0 || (v as number) <= (rerankScores[i - 1] as number),
+      ),
     ).toBe(true);
     expect(results[0].scores?.rerank).toBeCloseTo(1 / (1 + Math.exp(-5)), 5);
     await memos.close();
+    restore();
   });
 
   test("downed rerank endpoint degrades gracefully to fused order", async () => {
-    const fetchMock = jest.fn(async () => {
+    const { install } = createFetchMock(() => {
       throw new Error("connection refused");
     });
-    jest.spyOn(global, "fetch").mockImplementation(fetchMock as never);
+    const restore = install();
 
-    const memos = makeRerankableMemos(null);
+    const memos = makeRerankableMemos();
     await memos.init();
     await memos.store("zebra sighting at the zoo");
     const results = await memos.search("zebra", { limit: 3 });
     expect(results).toHaveLength(1);
     expect(results[0].scores?.rerank).toBeUndefined();
     await memos.close();
+    restore();
   });
 
   test("submits at most `candidates` documents", async () => {
-    const fetchMock = jest.fn(async (_url: unknown, init: { body: string }) => {
-      const body = JSON.parse(init.body) as { documents: string[] };
-      return {
-        ok: true,
-        json: async () => ({
-          results: body.documents.map((_, index) => ({
-            index,
-            relevance_score: -index,
-          })),
-        }),
-      };
-    });
-    jest.spyOn(global, "fetch").mockImplementation(fetchMock as never);
+    const { calls, install } = createFetchMock((_url, body) => ({
+      ok: true,
+      json: async () => ({
+        results: body.documents.map((_, index) => ({
+          index,
+          relevance_score: -index,
+        })),
+      }),
+    }));
+    const restore = install();
 
     const storage = new SQLiteStorage(":memory:", true);
     const memos = new MemOS({
@@ -509,10 +527,9 @@ describe("experimental.rerank", () => {
     for (let i = 0; i < 8; i += 1) await memos.store(`zebra fact number ${i}`);
     await memos.search("zebra", { limit: 5 });
 
-    const body = JSON.parse(
-      (fetchMock.mock.calls[0]?.[1] as { body: string }).body,
-    ) as { documents: string[] };
-    expect(body.documents).toHaveLength(3);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.documents).toHaveLength(3);
     await memos.close();
+    restore();
   });
 });

@@ -6,6 +6,11 @@
  * instruction ("query: ") and a document-side tag ("document: "); sending
  * raw text silently degrades retrieval. These tests pin which prefix is
  * applied on which path so the two can never cross-wire.
+ *
+ * Fetch mocks are hand-rolled (no jest.fn / jest.spyOn) so the suite runs
+ * identically under CJS jest and `--experimental-vm-modules` ESM jest,
+ * where the `jest` global is not injected into ESM test files. Tests use
+ * async/await with restore() in finally so the mock outlives every fetch.
  */
 
 import {
@@ -14,41 +19,56 @@ import {
   OpenAICompatibleEmbeddingProvider,
 } from "../src/embeddings";
 
-type FetchMock = jest.Mock;
+type FetchArgs = { url: string; init: { body: string } };
+type FetchMock = ((url: unknown, init?: unknown) => unknown) & {
+  calls: FetchArgs[];
+};
 
-/** Install a fetch mock returning one vector per input entry. */
-function mockFetchWithVectors(mock: FetchMock, dim = 2): void {
-  mock.mockImplementation(async (_url: string, init: { body: string }) => {
-    const body = JSON.parse(init.body) as { input: string | string[] };
-    const inputs = Array.isArray(body.input) ? body.input : [body.input];
-    const data = inputs.map((text) => ({ embedding: [text.length, 1] }));
-    return {
-      ok: true,
-      json: async () =>
-        urlIncludes(_url, "/api/embed")
-          ? { embeddings: data.map((d) => d.embedding) }
-          : { data },
+function createFetchMock(
+  respond: (url: string, body: { input: string | string[] }) => unknown,
+): FetchMock & { install: () => () => void } {
+  const calls: FetchArgs[] = [];
+  const fn = ((url: unknown, init?: unknown) => {
+    const args: FetchArgs = {
+      url: String(url),
+      init: init as { body: string },
     };
-  });
+    calls.push(args);
+    return respond(args.url, JSON.parse(args.init.body));
+  }) as FetchMock & { install: () => () => void };
+  fn.calls = calls;
+  fn.install = () => {
+    const real = globalThis.fetch;
+    globalThis.fetch = fn as unknown as typeof fetch;
+    return () => {
+      globalThis.fetch = real;
+    };
+  };
+  return fn;
 }
 
-function urlIncludes(url: string, fragment: string): boolean {
-  return url.includes(fragment);
+/** Mock responder: one vector per input entry, (len, 1). */
+function respondWithVectors(url: string, body: { input: string | string[] }) {
+  const inputs = Array.isArray(body.input) ? body.input : [body.input];
+  const vectors = inputs.map((text) => [text.length, 1]);
+  return {
+    ok: true,
+    json: async () =>
+      url.includes("/api/embed")
+        ? { embeddings: vectors }
+        : { data: vectors.map((v) => ({ embedding: v })) },
+  };
 }
 
-function lastBody(mock: FetchMock): {
-  input: string | string[];
-  model?: string;
-} {
-  const lastCall = mock.mock.calls[mock.mock.calls.length - 1];
-  return JSON.parse((lastCall?.[1] as { body: string }).body);
+function lastBody(mock: FetchMock): { input: string | string[] } {
+  const last = mock.calls[mock.calls.length - 1];
+  return JSON.parse(last.init.body);
 }
 
 describe("OpenAICompatibleEmbeddingProvider prefixes", () => {
   test("embed() applies documentPrefix, embedQuery() applies queryPrefix", async () => {
-    const mock = jest.fn() as FetchMock;
-    mockFetchWithVectors(mock);
-    jest.spyOn(global, "fetch").mockImplementation(mock as never);
+    const mock = createFetchMock(respondWithVectors);
+    const restore = mock.install();
     try {
       const provider = new OpenAICompatibleEmbeddingProvider({
         baseUrl: "http://127.0.0.1:8080/v1",
@@ -64,14 +84,13 @@ describe("OpenAICompatibleEmbeddingProvider prefixes", () => {
       await provider.embedQuery("what does the user like?");
       expect(lastBody(mock).input).toEqual(["query: what does the user like?"]);
     } finally {
-      (global.fetch as unknown as FetchMock).mockRestore();
+      restore();
     }
   });
 
   test("no prefixes configured sends text as-is", async () => {
-    const mock = jest.fn() as FetchMock;
-    mockFetchWithVectors(mock);
-    jest.spyOn(global, "fetch").mockImplementation(mock as never);
+    const mock = createFetchMock(respondWithVectors);
+    const restore = mock.install();
     try {
       const provider = new OpenAICompatibleEmbeddingProvider({
         baseUrl: "http://127.0.0.1:8080/v1",
@@ -80,14 +99,13 @@ describe("OpenAICompatibleEmbeddingProvider prefixes", () => {
       await provider.embedQuery("plain question");
       expect(lastBody(mock).input).toEqual(["plain question"]);
     } finally {
-      (global.fetch as unknown as FetchMock).mockRestore();
+      restore();
     }
   });
 
   test("batchEmbed sends one request with array input, preserving order", async () => {
-    const mock = jest.fn() as FetchMock;
-    mockFetchWithVectors(mock);
-    jest.spyOn(global, "fetch").mockImplementation(mock as never);
+    const mock = createFetchMock(respondWithVectors);
+    const restore = mock.install();
     try {
       const provider = new OpenAICompatibleEmbeddingProvider({
         baseUrl: "http://127.0.0.1:8080/v1",
@@ -95,7 +113,7 @@ describe("OpenAICompatibleEmbeddingProvider prefixes", () => {
       });
       const vectors = await provider.batchEmbed(["a", "bbbb"]);
 
-      expect(mock).toHaveBeenCalledTimes(1);
+      expect(mock.calls).toHaveLength(1);
       expect(lastBody(mock).input).toEqual(["document: a", "document: bbbb"]);
       // Vectors arrive in input order, unit-normalized.
       expect(vectors).toHaveLength(2);
@@ -106,22 +124,23 @@ describe("OpenAICompatibleEmbeddingProvider prefixes", () => {
       // Input order preserved: the longer text has the larger raw component.
       expect(vectors[1][0]).toBeGreaterThan(vectors[0][0]);
     } finally {
-      (global.fetch as unknown as FetchMock).mockRestore();
+      restore();
     }
   });
 
   test("throws on response length mismatch", async () => {
-    const mock = jest.fn() as FetchMock;
-    mock.mockImplementation(async (_url: string, init: { body: string }) => {
-      const body = JSON.parse(init.body) as { input: string[] };
+    const mock = createFetchMock((_url, body) => {
+      const count = Array.isArray(body.input) ? body.input.length : 1;
       return {
         ok: true,
         json: async () => ({
-          data: body.input.map(() => ({ embedding: [1, 0] })).slice(0, 1),
+          data: Array.from({ length: Math.max(1, count - 1) }, () => ({
+            embedding: [1, 0],
+          })),
         }),
       };
     });
-    jest.spyOn(global, "fetch").mockImplementation(mock as never);
+    const restore = mock.install();
     try {
       const provider = new OpenAICompatibleEmbeddingProvider({
         baseUrl: "http://127.0.0.1:8080/v1",
@@ -130,16 +149,15 @@ describe("OpenAICompatibleEmbeddingProvider prefixes", () => {
         /length mismatch/,
       );
     } finally {
-      (global.fetch as unknown as FetchMock).mockRestore();
+      restore();
     }
   });
 });
 
 describe("OllamaEmbeddingProvider prefixes and batching", () => {
   test("embed() applies documentPrefix, embedQuery() applies queryPrefix only", async () => {
-    const mock = jest.fn() as FetchMock;
-    mockFetchWithVectors(mock);
-    jest.spyOn(global, "fetch").mockImplementation(mock as never);
+    const mock = createFetchMock(respondWithVectors);
+    const restore = mock.install();
     try {
       const provider = new OllamaEmbeddingProvider({
         queryPrefix: "query: ",
@@ -152,51 +170,48 @@ describe("OllamaEmbeddingProvider prefixes and batching", () => {
       await provider.embedQuery("a question");
       expect(lastBody(mock).input).toBe("query: a question");
     } finally {
-      (global.fetch as unknown as FetchMock).mockRestore();
+      restore();
     }
   });
 
   test("batchEmbed sends one array-input request to /api/embed", async () => {
-    const mock = jest.fn() as FetchMock;
-    mockFetchWithVectors(mock);
-    jest.spyOn(global, "fetch").mockImplementation(mock as never);
+    const mock = createFetchMock(respondWithVectors);
+    const restore = mock.install();
     try {
       const provider = new OllamaEmbeddingProvider({
         documentPrefix: "document: ",
       });
       const vectors = await provider.batchEmbed(["one", "two"]);
 
-      expect(mock).toHaveBeenCalledTimes(1);
+      expect(mock.calls).toHaveLength(1);
       expect(lastBody(mock).input).toEqual(["document: one", "document: two"]);
       expect(vectors).toHaveLength(2);
     } finally {
-      (global.fetch as unknown as FetchMock).mockRestore();
+      restore();
     }
   });
 
   test("embedDocuments routes multi-text through batchEmbed", async () => {
-    const mock = jest.fn() as FetchMock;
-    mockFetchWithVectors(mock);
-    jest.spyOn(global, "fetch").mockImplementation(mock as never);
+    const mock = createFetchMock(respondWithVectors);
+    const restore = mock.install();
     try {
       const provider = new OllamaEmbeddingProvider({});
       await provider.embedDocuments(["one", "two"]);
-      expect(mock).toHaveBeenCalledTimes(1);
+      expect(mock.calls).toHaveLength(1);
 
       await provider.embedDocuments(["solo"]);
-      expect(mock).toHaveBeenCalledTimes(2);
+      expect(mock.calls).toHaveLength(2);
       expect(lastBody(mock).input).toBe("solo");
     } finally {
-      (global.fetch as unknown as FetchMock).mockRestore();
+      restore();
     }
   });
 });
 
 describe("createEmbeddingProvider forwards prefix config", () => {
   test("openai-compatible provider receives queryPrefix/documentPrefix", async () => {
-    const mock = jest.fn() as FetchMock;
-    mockFetchWithVectors(mock);
-    jest.spyOn(global, "fetch").mockImplementation(mock as never);
+    const mock = createFetchMock(respondWithVectors);
+    const restore = mock.install();
     try {
       const provider = createEmbeddingProvider({
         provider: "openai-compatible",
@@ -208,7 +223,7 @@ describe("createEmbeddingProvider forwards prefix config", () => {
       await provider.embedQuery("q");
       expect(lastBody(mock).input).toEqual(["query: q"]);
     } finally {
-      (global.fetch as unknown as FetchMock).mockRestore();
+      restore();
     }
   });
 });

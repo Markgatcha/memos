@@ -9,10 +9,18 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+
+// Mode-agnostic __dirname: undefined under --experimental-vm-modules ESM.
+const testDir =
+  typeof __dirname !== "undefined"
+    ? __dirname
+    : dirname(fileURLToPath(import.meta.url));
 
 import {
   FastEmbedEmbeddingProvider,
@@ -43,7 +51,7 @@ describe("FastEmbedEmbeddingProvider", () => {
     const dir = mkdtempSync(join(tmpdir(), "fastembed-test-"));
     const script = join(dir, "probe.mts");
     const srcPath = pathToFileURL(
-      join(__dirname, "..", "src", "embeddings.ts"),
+      join(testDir, "..", "src", "embeddings.ts"),
     ).href;
     writeFileSync(
       script,
@@ -64,7 +72,7 @@ describe("FastEmbedEmbeddingProvider", () => {
 
     const result = spawnSync(
       process.execPath,
-      [join(__dirname, "..", "node_modules", "tsx", "dist", "cli.mjs"), script],
+      [join(testDir, "..", "node_modules", "tsx", "dist", "cli.mjs"), script],
       { encoding: "utf8", timeout: 120_000 },
     );
 
