@@ -25,11 +25,15 @@
  */
 
 import { MemOS } from "./memory.js";
+import type { SQLiteStorage } from "./storage/sqlite.js";
 import { getSdkVersion } from "./version.js";
+import type { EmbeddingConfig, EmbeddingProviderKind } from "./types.js";
 import { resolve, dirname, join } from "path";
+import * as os from "os";
 import {
   existsSync,
   copyFileSync,
+  mkdirSync,
   statSync,
   writeFileSync,
   readFileSync,
@@ -70,6 +74,232 @@ function nonFlagArgs(args: string[], startIndex: number): string[] {
   return result;
 }
 
+/**
+ * Build an `EmbeddingConfig` from MEMOS_EMBEDDING_* environment variables.
+ * Returns null when MEMOS_EMBEDDING_PROVIDER is unset so callers keep the
+ * default (local hash) provider.
+ */
+function cliEmbeddingsConfig(): EmbeddingConfig | null {
+  const provider = process.env.MEMOS_EMBEDDING_PROVIDER;
+  if (!provider) return null;
+  const dimensions = process.env.MEMOS_EMBEDDING_DIMENSIONS;
+  return {
+    provider: provider as EmbeddingProviderKind,
+    model: process.env.MEMOS_EMBEDDING_MODEL,
+    baseUrl: process.env.MEMOS_EMBEDDING_BASE_URL,
+    apiKey: process.env.MEMOS_EMBEDDING_API_KEY,
+    dimensions: dimensions ? parseInt(dimensions, 10) : undefined,
+    queryPrefix: process.env.MEMOS_EMBEDDING_QUERY_PREFIX,
+    documentPrefix: process.env.MEMOS_EMBEDDING_DOCUMENT_PREFIX,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// `memos connect` — register the MemOS MCP server with agentic harnesses.
+// ---------------------------------------------------------------------------
+
+interface ConnectTarget {
+  /** Human-readable setup instructions (always printed). */
+  instructions: string;
+  /** Config file to write with --write, when applicable. */
+  configPath?: string;
+  /** File contents for --write. */
+  fileContents?: string;
+}
+
+const MCP_COMMAND = ["npx", "-y", "@mem-os/sdk", "mcp"];
+
+function mcpServerEntry(dbPath?: string): Record<string, unknown> {
+  const env: Record<string, string> = {};
+  if (dbPath) env.MEMOS_DB_PATH = dbPath;
+  if (process.env.MEMOS_EMBEDDING_PROVIDER)
+    env.MEMOS_EMBEDDING_PROVIDER = process.env.MEMOS_EMBEDDING_PROVIDER;
+  if (process.env.MEMOS_EMBEDDING_MODEL)
+    env.MEMOS_EMBEDDING_MODEL = process.env.MEMOS_EMBEDDING_MODEL;
+  if (process.env.MEMOS_EMBEDDING_BASE_URL)
+    env.MEMOS_EMBEDDING_BASE_URL = process.env.MEMOS_EMBEDDING_BASE_URL;
+  if (process.env.MEMOS_EMBEDDING_DIMENSIONS)
+    env.MEMOS_EMBEDDING_DIMENSIONS = process.env.MEMOS_EMBEDDING_DIMENSIONS;
+  if (process.env.MEMOS_EMBEDDING_QUERY_PREFIX)
+    env.MEMOS_EMBEDDING_QUERY_PREFIX = process.env.MEMOS_EMBEDDING_QUERY_PREFIX;
+  if (process.env.MEMOS_EMBEDDING_DOCUMENT_PREFIX)
+    env.MEMOS_EMBEDDING_DOCUMENT_PREFIX =
+      process.env.MEMOS_EMBEDDING_DOCUMENT_PREFIX;
+  return {
+    command: MCP_COMMAND[0],
+    args: MCP_COMMAND.slice(1),
+    ...(Object.keys(env).length > 0 ? { env } : {}),
+  };
+}
+
+function connectTarget(
+  target: string,
+  opts: { dbPath?: string },
+): ConnectTarget | null {
+  const entry = mcpServerEntry(opts.dbPath);
+  const jsonEntry = JSON.stringify({ mcpServers: { memos: entry } }, null, 2);
+  switch (target) {
+    case "claude-code":
+    case "claude":
+    case "claudecode": {
+      const args = MCP_COMMAND.map((a) => `"${a}"`).join(" ");
+      return {
+        instructions: [
+          "Claude Code — pick ONE:",
+          "",
+          "  # User scope (available in every project):",
+          `  claude mcp add memos -s user -- ${MCP_COMMAND.join(" ")}`,
+          "",
+          "  # Project scope (checked into the repo for the whole team):",
+          "  memos connect claude-code --write",
+          "  # → writes ./.mcp.json:",
+          jsonEntry,
+          "",
+          `  Or run inside Claude Code: /plugin marketplace add Markgatcha/memos`,
+          `  then /plugin install memos@memos-marketplace (bundles this MCP`,
+          `  server + /memos, /recall commands + a memory skill).`,
+          "",
+          `  Manual one-liner equivalent: claude mcp add memos -s user -- ${args}`,
+        ].join("\n"),
+        configPath: ".mcp.json",
+        fileContents: jsonEntry + "\n",
+      };
+    }
+    case "cursor": {
+      return {
+        instructions: [
+          "Cursor — MCP config at ~/.cursor/mcp.json:",
+          jsonEntry,
+          "",
+          "Or: memos connect cursor --write  (writes the file; --force overwrites).",
+          "Restart Cursor, then enable the memos server in MCP settings.",
+        ].join("\n"),
+        configPath: join(homeDir(), ".cursor", "mcp.json"),
+        fileContents: jsonEntry + "\n",
+      };
+    }
+    case "windsurf": {
+      return {
+        instructions: [
+          "Windsurf — MCP config at ~/.codeium/windsurf/mcp_config.json:",
+          jsonEntry,
+          "",
+          "Or: memos connect windsurf --write",
+        ].join("\n"),
+        configPath: join(homeDir(), ".codeium", "windsurf", "mcp_config.json"),
+        fileContents: jsonEntry + "\n",
+      };
+    }
+    case "cline": {
+      return {
+        instructions: [
+          "Cline (VS Code) — MCP settings file:",
+          "  Windows: %APPDATA%\\Code\\User\\globalStorage\\saoudrizwan.claude-dev\\settings\\cline_mcp_settings.json",
+          "  macOS:   ~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+          "",
+          "Merge this into the mcpServers object:",
+          jsonEntry,
+        ].join("\n"),
+      };
+    }
+    case "opencode": {
+      return {
+        instructions: [
+          "OpenCode — add to opencode.json (project) or ~/.config/opencode/opencode.json:",
+          JSON.stringify(
+            {
+              mcp: {
+                memos: { type: "local", command: MCP_COMMAND },
+              },
+            },
+            null,
+            2,
+          ),
+          "",
+          "Or: memos connect opencode --write  (writes ./opencode.json).",
+        ].join("\n"),
+        configPath: "opencode.json",
+        fileContents:
+          JSON.stringify(
+            { mcp: { memos: { type: "local", command: MCP_COMMAND } } },
+            null,
+            2,
+          ) + "\n",
+      };
+    }
+    case "codex": {
+      const toml = `[mcp_servers.memos]\ncommand = "${MCP_COMMAND[0]}"\nargs = [${MCP_COMMAND.slice(
+        1,
+      )
+        .map((a) => `"${a}"`)
+        .join(", ")}]\n`;
+      return {
+        instructions: [
+          "Codex CLI — add to ~/.codex/config.toml:",
+          toml,
+          "Or: memos connect codex --write  (appends to the file).",
+        ].join("\n"),
+        configPath: join(homeDir(), ".codex", "config.toml"),
+        fileContents: toml,
+      };
+    }
+    case "gemini": {
+      return {
+        instructions: [
+          "Gemini CLI — MCP config at ~/.gemini/settings.json:",
+          jsonEntry,
+          "",
+          "Or: memos connect gemini --write",
+        ].join("\n"),
+        configPath: join(homeDir(), ".gemini", "settings.json"),
+        fileContents: jsonEntry + "\n",
+      };
+    }
+    case "generic":
+    case "any":
+    case "mcp": {
+      return {
+        instructions: [
+          "Any MCP-capable harness — the MemOS server is a plain stdio MCP",
+          `server. Launch command: ${MCP_COMMAND.join(" ")}`,
+          "",
+          "MCP config shape (mcpServers object):",
+          jsonEntry,
+          "",
+          "The server speaks MCP 2026-07-28 with a legacy-2025 fallback and",
+          "exposes 14 tools: store/search/retrieve/forget/graph/context,",
+          "context_pack (token-budgeted injection), search_temporal,",
+          "set_validity, supersede, set_trust, extract_facts, diagnostics,",
+          "reindex. All data stays in local SQLite.",
+        ].join("\n"),
+      };
+    }
+    default:
+      console.error(
+        "Unknown target. Supported: claude-code, cursor, windsurf, cline, " +
+          "opencode, codex, gemini, generic.",
+      );
+      return null;
+  }
+}
+
+function homeDir(): string {
+  return os.homedir();
+}
+
+function existsSyncSafe(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function writeFileSafe(path: string, contents: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, contents, "utf8");
+}
+
 function printHelp(): void {
   console.log(`
 MemOS — Universal memory layer for AI agents.
@@ -92,6 +322,12 @@ Commands:
   export                  Export memories to file
   backup                  Backup the database
   restore <path>          Restore from a backup
+  doctor                  Health-check the store, embedding config and endpoints
+  connect <target>        Register the MemOS MCP server with a coding harness
+                          (claude-code, cursor, windsurf, cline, opencode,
+                          codex, gemini, generic) — --write saves the config
+  reindex-embeddings      Re-embed all memories with the configured provider
+                          (--purge-stale deletes vectors from other models first)
   mcp                     Start the MemOS MCP stdio server
   serve                   Start the HTTP server
   trio [--up]             Show (or launch) the full AI Trio: MemOS + LLM-Guardian + Universal-MCP-Toolkit
@@ -137,11 +373,29 @@ async function main(): Promise<void> {
 
   if (command === "mcp") {
     const { runMcpServer } = await import("./mcp.js");
-    await runMcpServer({ dbPath });
+    const embeddings = cliEmbeddingsConfig();
+    await runMcpServer({
+      dbPath,
+      ...(embeddings
+        ? { embeddings, experimental: { semanticSearch: true } }
+        : {}),
+    });
     return;
   }
 
-  const memos = new MemOS({ dbPath });
+  // Embedding config via environment (same variables the Python server
+  // and benchmark scripts accept). Without MEMOS_EMBEDDING_PROVIDER the
+  // CLI runs the default local-hash provider.
+  const embeddingsConfig = cliEmbeddingsConfig();
+  const memos = new MemOS({
+    dbPath,
+    ...(embeddingsConfig
+      ? {
+          embeddings: embeddingsConfig,
+          experimental: { semanticSearch: true },
+        }
+      : {}),
+  });
   await memos.init();
 
   try {
@@ -575,6 +829,231 @@ async function main(): Promise<void> {
           console.log(
             `  Nodes: ${graph.nodes.length}, Edges: ${graph.edges.length}`,
           );
+        }
+        break;
+      }
+
+      case "doctor": {
+        const jsonOut = jsonFlag;
+        const report: Record<string, unknown> = {};
+        const problems: string[] = [];
+        const suggestions: string[] = [];
+
+        // 1. Store health.
+        const diag = await memos.diagnostics();
+        report.store = {
+          totalMemories: diag.totalNodes,
+          totalEdges: diag.totalEdges,
+          nodesWithEmbeddings: diag.nodesWithEmbeddings,
+          dbSizeBytes: diag.dbSizeBytes ?? null,
+        };
+        if (jsonOut) {
+          // detailed JSON path prints below
+        } else {
+          console.log(
+            `Store: ${diag.totalNodes} memories, ${diag.totalEdges} edges, ` +
+              `${diag.nodesWithEmbeddings} with embeddings.`,
+          );
+        }
+
+        // 2. Embedding coverage — partial coverage silently weakens the
+        //    semantic leg.
+        if (diag.totalNodes > 0 && diag.nodesWithEmbeddings < diag.totalNodes) {
+          problems.push(
+            `Only ${diag.nodesWithEmbeddings}/${diag.totalNodes} memories have embeddings.`,
+          );
+          suggestions.push(
+            "Run `memos reindex-embeddings` to backfill missing vectors.",
+          );
+        }
+
+        // 3. Embedding model mix — mixed models mean the semantic leg is
+        //    comparing against a subset only.
+        const storage = (memos as unknown as { storage: SQLiteStorage })
+          .storage;
+        if (storage.getEmbeddingModelCounts) {
+          const counts: Array<{ model: string; count: number }> =
+            (await storage.getEmbeddingModelCounts?.()) ?? [];
+          report.embeddingModels = counts;
+          if (counts.length > 1) {
+            problems.push(
+              `Embeddings from ${counts.length} different models: ` +
+                counts
+                  .map(
+                    (c: { model: string; count: number }) =>
+                      `${c.model}×${c.count}`,
+                  )
+                  .join(", ") +
+                " — vectors from different models are never compared.",
+            );
+            suggestions.push(
+              "Run `memos reindex-embeddings --purge-stale` after switching models.",
+            );
+          }
+          if (!jsonOut) {
+            console.log(
+              "Embedding models: " +
+                (counts.length
+                  ? counts
+                      .map(
+                        (c: { model: string; count: number }) =>
+                          `${c.model} (${c.count})`,
+                      )
+                      .join(", ")
+                  : "none stored"),
+            );
+          }
+        }
+
+        // 4. Provider probe — embed one query and report what actually loaded.
+        const embeddings = cliEmbeddingsConfig();
+        if (embeddings?.provider && embeddings.baseUrl) {
+          const started = Date.now();
+          try {
+            const probe = await fetch(
+              `${embeddings.baseUrl.replace(/\/+$/, "")}/models`,
+              { signal: AbortSignal.timeout(4_000) },
+            );
+            report.embeddingEndpoint = {
+              url: embeddings.baseUrl,
+              reachable: probe.ok,
+              ms: Date.now() - started,
+            };
+            if (!jsonOut) {
+              console.log(
+                `Embedding endpoint ${embeddings.baseUrl}: reachable (${probe.status}) in ${Date.now() - started}ms.`,
+              );
+            }
+          } catch (err) {
+            problems.push(
+              `Embedding endpoint ${embeddings.baseUrl} unreachable: ` +
+                `${err instanceof Error ? err.message : String(err)}`,
+            );
+            suggestions.push(
+              "Start llama-server (--embedding) or unset MEMOS_EMBEDDING_* to fall back to the hash embedder.",
+            );
+          }
+        } else if (!jsonOut) {
+          console.log(
+            "Embedding provider: local-hash default (set MEMOS_EMBEDDING_* for real semantic search).",
+          );
+        }
+
+        // 5. Semantic probe — does a search actually come back?
+        const t0 = Date.now();
+        const probeResults = await memos.search({
+          query: "doctor connectivity probe",
+          limit: 1,
+        });
+        report.semanticProbe = {
+          ok: true,
+          ms: Date.now() - t0,
+          hits: probeResults.length,
+        };
+        if (!jsonOut) {
+          console.log(
+            `Semantic search probe: ok (${Date.now() - t0}ms, ${probeResults.length} candidate).`,
+          );
+        }
+
+        // 6. Rerank endpoint probe (when configured).
+        const rerankUrl = process.env.MEMOS_RERANK_URL;
+        if (rerankUrl) {
+          try {
+            const started = Date.now();
+            await fetch(`${rerankUrl.replace(/\/+$/, "")}/health`, {
+              signal: AbortSignal.timeout(4_000),
+            });
+            report.rerank = {
+              url: rerankUrl,
+              reachable: true,
+              ms: Date.now() - started,
+            };
+            if (!jsonOut) {
+              console.log(`Rerank endpoint ${rerankUrl}: reachable.`);
+            }
+          } catch {
+            problems.push(
+              `Rerank endpoint ${rerankUrl} unreachable — reranking will silently fall back.`,
+            );
+          }
+        }
+
+        report.problems = problems;
+        report.suggestions = suggestions;
+        if (jsonOut) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          if (problems.length === 0) {
+            console.log("Doctor: no problems found.");
+          } else {
+            console.log(`Doctor: ${problems.length} problem(s):`);
+            for (const problem of problems) console.log(`  - ${problem}`);
+            for (const suggestion of suggestions)
+              console.log(`  → ${suggestion}`);
+          }
+        }
+        break;
+      }
+
+      case "reindex-embeddings": {
+        const purgeStale = args.includes("--purge-stale");
+        try {
+          const result = await memos.reindexEmbeddings({ purgeStale });
+          if (jsonFlag) {
+            console.log(JSON.stringify(result));
+          } else {
+            console.log(
+              `Re-embedded ${result.reembedded} memories with "${result.model}"` +
+                `${result.purged ? `, purged ${result.purged} stale vectors` : ""}` +
+                `${result.failed ? `, ${result.failed} FAILED` : ""}.`,
+            );
+          }
+        } catch (err) {
+          console.error(
+            `Error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(1);
+        }
+        break;
+      }
+
+      case "connect": {
+        const target = (args[1] ?? "").toLowerCase();
+        const write = args.includes("--write");
+        const force = args.includes("--force");
+        const result = connectTarget(target, { dbPath });
+        if (!result) break;
+        if (!write) {
+          console.log(result.instructions);
+          console.log(
+            "\nRe-run with --write to write the config file directly " +
+              "(add --force to overwrite an existing file).",
+          );
+          break;
+        }
+        if (!result.configPath) {
+          console.log(result.instructions);
+          break;
+        }
+        if (existsSyncSafe(result.configPath) && !force) {
+          console.error(
+            `Error: ${result.configPath} already exists. Re-run with --force to overwrite.`,
+          );
+          process.exit(1);
+        }
+        try {
+          writeFileSafe(result.configPath, result.fileContents ?? "");
+          console.log(`Wrote ${result.configPath}.`);
+          console.log(
+            "Restart the harness so it picks up the new MCP server. " +
+              "All data stays in the local SQLite store.",
+          );
+        } catch (err) {
+          console.error(
+            `Error writing ${result.configPath}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(1);
         }
         break;
       }

@@ -72,6 +72,38 @@ import {
 } from "./confidence-machine.js";
 
 /**
+ * Minimum cosine similarity for a memory to enter the semantic leg of
+ * hybrid search. Zero-similarity rows are unrelated and must not vote
+ * in fusion (nor occupy candidate slots); genuine paraphrase matches
+ * land far above this floor for any real embedder.
+ */
+const SEMANTIC_FUSION_THRESHOLD = 0.05;
+
+/** Squash a cross-encoder logit into [0,1] for score display/ordering. */
+function sigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}
+
+/**
+ * JSON.stringify with object keys recursively sorted, so semantically
+ * identical filter objects always produce the same search-cache key
+ * regardless of property insertion order. Arrays keep their order.
+ */ function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries
+    .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`)
+    .join(",")}}`;
+}
+
+/**
  * Thrown by `store({ filterRetain: true })` when the Hermes-style retain
  * pre-filter decides the content is too low-signal to store (v1.6.26).
  * Catch this to silently skip noise instead of treating it as an error.
@@ -265,6 +297,8 @@ export class MemOS {
   > = new Map();
   private searchCacheMaxEntries = 128;
   private searchCacheTtlMs = 5_000; // 5 seconds
+  /** Warn only once when the rerank endpoint fails (graceful degradation). */
+  private rerankFailureWarned = false;
 
   /**
    * Create a new MemOS instance.
@@ -288,6 +322,8 @@ export class MemOS {
       recencyHalfLifeDays: config.recencyHalfLifeDays ?? 14,
       embeddings: config.embeddings ?? {},
       embeddingQueue: config.embeddingQueue ?? {},
+      fusion: config.fusion ?? {},
+      storageOptions: config.storageOptions ?? {},
     };
 
     this.experimental = this.config.experimental;
@@ -301,7 +337,10 @@ export class MemOS {
     this.graph = new GraphEngine();
     this.storage =
       this.config.storage ??
-      new SQLiteStorage(this.config.dbPath, this.config.wal);
+      new SQLiteStorage(this.config.dbPath, this.config.wal, {
+        vectorCacheEntries:
+          this.config.storageOptions?.vectorCacheEntries ?? 25_000,
+      });
   }
 
   /**
@@ -336,6 +375,7 @@ export class MemOS {
       this.embeddingQueue = new EmbeddingQueue({
         provider: this.embeddingProvider,
         concurrency: this.config.embeddingQueue.concurrency ?? 2,
+        batchSize: this.config.embeddingQueue.batchSize ?? 1,
         maxQueueSize: this.config.embeddingQueue.maxQueueSize ?? 10_000,
         maxRetries: this.config.embeddingQueue.maxRetries ?? 3,
         retryBackoffMs: this.config.embeddingQueue.retryBackoffMs ?? 250,
@@ -520,16 +560,23 @@ export class MemOS {
     // Check the search cache. Only cache text queries (not structured-only
     // queries without a `query` field, since those are cheap).
     if (filter.query) {
-      const cacheKey = `${filter.query}::${filter.namespace ?? ""}::${filter.limit ?? 20}::${filter.tags?.join(",") ?? ""}::${filter.sortBy ?? ""}::${filter.includeHistorical ?? ""}`;
+      const cacheKey = `v2::${stableStringify(filter)}`;
       const cached = this.searchCache.get(cacheKey);
       if (cached && cached.expiry > Date.now()) {
         return cached.results;
       }
-      // Evict expired entries opportunistically.
+      // Evict expired entries opportunistically; when every entry is
+      // still fresh, drop the OLDEST so the cache cannot grow unbounded
+      // under many unique queries (e.g. a benchmark sweep).
       if (this.searchCache.size > this.searchCacheMaxEntries) {
         const now = Date.now();
         for (const [k, v] of this.searchCache) {
           if (v.expiry <= now) this.searchCache.delete(k);
+        }
+        while (this.searchCache.size > this.searchCacheMaxEntries) {
+          const oldest = this.searchCache.keys().next().value;
+          if (oldest === undefined) break;
+          this.searchCache.delete(oldest);
         }
       }
       const results =
@@ -1007,12 +1054,21 @@ export class MemOS {
     }
 
     if (this.embeddingProvider && this.storage.querySimilarEmbeddings) {
-      const queryVector = await this.embeddingProvider.embed(query);
+      // Route queries through `embedQuery` when the provider supports it:
+      // asymmetric retrieval models (Liquid LFM2.5-Embedding / e5) expect
+      // a query-side instruction and silently degrade without it.
+      const provider = this.embeddingProvider;
+      const queryVector = provider.embedQuery
+        ? await provider.embedQuery(query)
+        : await provider.embed(query);
+      // Only compare against vectors produced by the SAME model —
+      // dimension equality alone does not make vectors comparable.
       return this.storage.querySimilarEmbeddings(
         queryVector,
         filter,
         limit,
         threshold,
+        provider.model,
       );
     }
 
@@ -1669,6 +1725,95 @@ export class MemOS {
   }
 
   /**
+   * Re-embed every node with the CURRENTLY configured provider, replacing
+   * stale vectors in place. Required after switching embedding models:
+   * vectors from different models are not comparable (semantic search
+   * filters by stored model), and the embedding table has no automatic
+   * migration.
+   *
+   * @param opts.purgeStale — When true, first delete all embedding rows
+   *   stored by any OTHER model (frees space; without it, old-model rows
+   *   stay on disk until overwritten node-by-node).
+   * @returns Summary counters. `failed` counts nodes whose embedding
+   *   could not be recomputed (their status is marked `failed`).
+   */
+  async reindexEmbeddings(opts: { purgeStale?: boolean } = {}): Promise<{
+    reembedded: number;
+    purged: number;
+    failed: number;
+    model: string;
+  }> {
+    this.assertInit();
+    const provider = this.embeddingProvider;
+    if (!provider || !this.storage.saveEmbedding) {
+      throw new Error(
+        "reindexEmbeddings requires an embedding provider — configure `embeddings` first.",
+      );
+    }
+
+    let purged = 0;
+    if (opts.purgeStale && this.storage.deleteEmbeddingsByModel) {
+      const counts = this.storage.getEmbeddingModelCounts
+        ? await this.storage.getEmbeddingModelCounts()
+        : [];
+      for (const { model, count } of counts) {
+        if (model !== provider.model) {
+          purged += await this.storage.deleteEmbeddingsByModel(model);
+          void count;
+        }
+      }
+    }
+
+    const nodes = await this.storage.queryNodes({ limit: 1_000_000 });
+    const texts = nodes.map((r) => this.embeddedTextFor(r.node));
+
+    let reembedded = 0;
+    let failed = 0;
+    const batchSize = 32;
+    for (let start = 0; start < texts.length; start += batchSize) {
+      const batch = nodes.slice(start, start + batchSize);
+      const batchTexts = texts.slice(start, start + batchSize);
+      try {
+        const vectors = provider.embedDocuments
+          ? await provider.embedDocuments(batchTexts)
+          : await Promise.all(batchTexts.map((t) => provider.embed(t)));
+        for (const [index, result] of batch.entries()) {
+          await this.storage.saveEmbedding(
+            result.node.id,
+            vectors[index],
+            provider.model,
+          );
+          this.recordEmbeddingStatus(result.node.id, "ready", null);
+          reembedded += 1;
+        }
+      } catch {
+        // Fall back to per-node so one bad input cannot fail the batch.
+        for (const [index, result] of batch.entries()) {
+          try {
+            const vector = await provider.embed(batchTexts[index]);
+            await this.storage.saveEmbedding(
+              result.node.id,
+              vector,
+              provider.model,
+            );
+            this.recordEmbeddingStatus(result.node.id, "ready", null);
+            reembedded += 1;
+          } catch (err) {
+            failed += 1;
+            this.recordEmbeddingStatus(
+              result.node.id,
+              "failed",
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+        }
+      }
+    }
+
+    return { reembedded, purged, failed, model: provider.model };
+  }
+
+  /**
    * Per-node embedding status, plus the queue's running/pending counters.
    *
    * @param nodeId — Optional filter; when provided, returns only that node.
@@ -2226,11 +2371,14 @@ export class MemOS {
       // is ONE search — not a full scan — so the evidence pass adds only
       // a few ms to an opted-in store() call.
       const candidates = this.embeddingProvider
-        ? await this.hybridSearch({
-            query: content,
-            namespace,
-            limit: 8,
-          })
+        ? await this.hybridSearch(
+            {
+              query: content,
+              namespace,
+              limit: 8,
+            },
+            { internal: true },
+          )
         : await this.storage.queryNodes({
             query: content,
             namespace,
@@ -2336,9 +2484,21 @@ export class MemOS {
     return textSimilarity(a, b);
   }
 
+  /**
+   * The text that gets embedded for a node. `embeddings.embedText`
+   * selects raw content vs. the historical summary+content blend (the
+   * extractive summary roughly doubles input tokens for short facts).
+   */
+  private embeddedTextFor(node: MemoryNode): string {
+    if (this.config.embeddings?.embedText === "content") {
+      return node.content;
+    }
+    return `${node.summary}\n${node.content}`;
+  }
+
   private async persistEmbedding(node: MemoryNode): Promise<void> {
     if (!this.embeddingProvider || !this.storage.saveEmbedding) return;
-    const text = `${node.summary}\n${node.content}`;
+    const text = this.embeddedTextFor(node);
     const vector = await this.embeddingProvider.embed(text);
     await this.storage.saveEmbedding(
       node.id,
@@ -2362,7 +2522,7 @@ export class MemOS {
       void this.persistEmbedding(node);
       return;
     }
-    const text = `${node.summary}\n${node.content}`;
+    const text = this.embeddedTextFor(node);
     if (this.config.embeddingQueue.synchronous) {
       void (async () => {
         try {
@@ -2447,21 +2607,39 @@ export class MemOS {
     );
   }
 
-  private async hybridSearch(filter: SearchFilter): Promise<ScoredMemory[]> {
+  private async hybridSearch(
+    filter: SearchFilter,
+    opts: { internal?: boolean } = {},
+  ): Promise<ScoredMemory[]> {
     const limit = filter.limit ?? 20;
     const offset = filter.offset ?? 0;
     // Pull a wider candidate set from both retrieval modes, then merge. This
     // keeps exact keyword matches visible while letting embeddings rescue
     // semantically related memories that FTS cannot match lexically.
-    const candidateLimit = Math.max(limit + offset, limit * 4, 20);
+    // `filter.candidateDepth` widens the pool on demand (two-stage reranking
+    // or expansion stages narrow it afterwards).
+    const candidateLimit = Math.max(
+      limit + offset,
+      filter.candidateDepth ?? limit * 4,
+      20,
+    );
 
     // Run keyword and semantic retrieval in parallel for lower latency.
     const [semanticResults, keywordResults] = await Promise.all([
-      this.semanticSearch(filter.query ?? "", candidateLimit, 0, {
-        ...filter,
-        limit: candidateLimit,
-        offset: 0,
-      }),
+      // Threshold floor: cosine-0 memories are unrelated and must not
+      // vote in fusion (nor occupy candidate slots). A small positive
+      // floor keeps genuine paraphrase matches (typically >= 0.3 for real
+      // embedders) while dropping the unrelated tail.
+      this.semanticSearch(
+        filter.query ?? "",
+        candidateLimit,
+        SEMANTIC_FUSION_THRESHOLD,
+        {
+          ...filter,
+          limit: candidateLimit,
+          offset: 0,
+        },
+      ),
       this.storage.queryNodes({
         ...filter,
         limit: candidateLimit,
@@ -2471,10 +2649,269 @@ export class MemOS {
 
     // Fuse the two legs via weighted Reciprocal Rank Fusion + trust
     // weighting. The fusion logic lives in `src/retrieval.ts` so it can
-    // be unit-tested without storage or embeddings.
-    const fused = fuseResults(keywordResults, semanticResults);
+    // be unit-tested without storage or embeddings. Weights come from
+    // `config.fusion` so deployments with a stronger embedding model can
+    // rebalance the legs (defaults: keyword 0.8 / semantic 0.2, tuned
+    // for the hash baseline).
+    const fused = fuseResults(
+      keywordResults,
+      semanticResults,
+      this.config.fusion,
+    );
 
-    return fused.slice(offset, offset + limit);
+    const expanded = await this.applyGraphExpansion(fused);
+    const withSessions = await this.applySessionExpansion(expanded, filter);
+    const reranked = opts.internal
+      ? withSessions
+      : await this.applyRerank(withSessions, filter);
+    const deduped = await this.applySearchDedup(reranked, filter);
+
+    return deduped.slice(offset, offset + limit);
+  }
+
+  /**
+   * Two-stage reranking (`experimental.rerank`, off by default). The first
+   * stage — hybrid retrieval — exists to RECALL candidates; a cross-encoder
+   * (e.g. bge-reranker-v2-m3 served by llama-server) then re-scores the top
+   * `candidates` fused results against the query and the final ranking is
+   * reordered by that score. Cross-encoders read query and document
+   * together, so they are far more precise than bi-encoder similarity —
+   * at O(candidates) cost per query, which is why it only ever runs on the
+   * narrow head of the pool.
+   *
+   * On endpoint failure the fused order is kept unchanged (graceful
+   * degradation) — a downed reranker degrades quality, not availability.
+   */
+  private async applyRerank(
+    results: ScoredMemory[],
+    filter: SearchFilter,
+  ): Promise<ScoredMemory[]> {
+    const cfg = this.experimental.rerank;
+    if (!cfg?.endpoint || results.length < 2 || !filter.query) return results;
+
+    const candidates = Math.min(cfg.candidates ?? 50, results.length);
+    const head = results.slice(0, candidates);
+    const tail = results.slice(candidates);
+
+    let payload: {
+      results?: Array<{
+        index?: number;
+        score?: number;
+        relevance_score?: number;
+      }>;
+    };
+    try {
+      const response = await fetch(
+        `${cfg.endpoint.replace(/\/+$/, "")}/rerank`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
+          },
+          body: JSON.stringify({
+            model: cfg.model ?? "reranker",
+            query: filter.query,
+            documents: head.map((r) =>
+              cfg.maxDocChars && r.node.content.length > cfg.maxDocChars
+                ? r.node.content.slice(0, cfg.maxDocChars)
+                : r.node.content,
+            ),
+          }),
+          signal: AbortSignal.timeout(cfg.timeoutMs ?? 5_000),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`rerank endpoint returned ${response.status}`);
+      }
+      payload = (await response.json()) as typeof payload;
+    } catch (err) {
+      // Graceful degradation: keep the fused order — but say so once, so a
+      // misconfigured/downed endpoint can never silently lower scores.
+      if (!this.rerankFailureWarned) {
+        this.rerankFailureWarned = true;
+        console.error(
+          "[memos] rerank endpoint unreachable or timed out — falling back to fused ranking:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      return results;
+    }
+
+    const scored = (payload.results ?? [])
+      .map((row) => ({
+        index: row.index ?? -1,
+        score: sigmoid(row.relevance_score ?? row.score ?? 0),
+      }))
+      .filter((row) => row.index >= 0 && row.index < head.length)
+      .sort((a, b) => b.score - a.score);
+
+    if (scored.length === 0) return results;
+
+    const reranked = scored.map((row) => ({
+      node: head[row.index].node,
+      score: row.score,
+      scores: { ...head[row.index].scores, rerank: row.score },
+    }));
+    // Candidates the endpoint did not rank keep their fused order behind
+    // the reranked head.
+    const rankedSet = new Set(scored.map((row) => row.index));
+    const unranked = head.filter((_, index) => !rankedSet.has(index));
+    return [...reranked, ...unranked, ...tail];
+  }
+
+  /**
+   * Graph-expansion recall leg (experimental, off by default). Takes the
+   * top `maxSeeds` fused results, follows their graph edges in both
+   * directions, and injects unseen neighbours at `seedScore × scoreFactor`
+   * (halved for each subsequent neighbour of the same seed). Lifts
+   * multi-evidence / multi-hop queries where related facts are connected
+   * by edges but neither retrieval leg surfaces them.
+   */
+  private async applyGraphExpansion(
+    fused: ScoredMemory[],
+  ): Promise<ScoredMemory[]> {
+    const config = this.experimental.graphExpansion;
+    if (!config?.enabled || fused.length === 0) return fused;
+
+    const maxSeeds = config.maxSeeds ?? 3;
+    const maxAdded = config.maxAdded ?? 5;
+    const scoreFactor = config.scoreFactor ?? 0.85;
+
+    const present = new Set(fused.map((r) => r.node.id));
+    const injected = new Map<string, ScoredMemory>();
+
+    for (const seed of fused.slice(0, maxSeeds)) {
+      if (injected.size >= maxAdded) break;
+      let decay = scoreFactor;
+      for (const edge of this.graph.getEdgesForNode(seed.node.id)) {
+        if (injected.size >= maxAdded) break;
+        const neighbourId =
+          edge.sourceId === seed.node.id ? edge.targetId : edge.sourceId;
+        if (present.has(neighbourId)) continue;
+        const neighbour = this.storage.peekNode
+          ? await this.storage.peekNode(neighbourId)
+          : await this.storage.getNode(neighbourId);
+        if (!neighbour) continue;
+        if (neighbour.namespace !== seed.node.namespace) continue;
+        // Historical neighbours follow the seed's visibility: an injected
+        // stale fact must never appear when defaults hide history.
+        const seedHistorical = seed.node.validTo !== null;
+        if ((neighbour.validTo !== null) !== seedHistorical) continue;
+        present.add(neighbourId);
+        injected.set(neighbourId, {
+          node: neighbour,
+          score: seed.score * decay,
+          scores: { ...seed.scores, graph: seed.score * decay },
+        });
+        decay *= scoreFactor;
+      }
+    }
+
+    if (injected.size === 0) return fused;
+    return [...fused, ...injected.values()].sort((a, b) => b.score - a.score);
+  }
+
+  /**
+   * Near-duplicate suppression (opt-in via `filter.semanticDedup`). A
+   * result whose stored embedding is a near-verbatim duplicate (cosine >=
+   * `experimental.searchDedupThreshold`, default 0.95) of an
+   * already-selected result is dropped and the next candidate takes its
+   * slot — multi-evidence questions otherwise lose top-K slots to
+   * restated facts. Similarity comes from the storage vector cache, so
+   * the pass costs a few dot products, not a new embedding call.
+   */
+  private async applySearchDedup(
+    results: ScoredMemory[],
+    filter: SearchFilter,
+  ): Promise<ScoredMemory[]> {
+    if (!filter.semanticDedup || results.length <= 1) return results;
+    if (!this.storage.getAllEmbeddings) return results;
+    const threshold = this.experimental.searchDedupThreshold ?? 0.95;
+
+    // One bulk fetch; the storage-level vector cache makes repeat calls
+    // nearly free.
+    const byId = new Map<string, EmbeddingVector>();
+    for (const record of await this.storage.getAllEmbeddings()) {
+      byId.set(record.nodeId, record.vector);
+    }
+
+    const kept: ScoredMemory[] = [];
+    for (const result of results) {
+      const vector = byId.get(result.node.id);
+      if (!vector) {
+        kept.push(result);
+        continue;
+      }
+      let duplicate = false;
+      for (const chosen of kept) {
+        const chosenVector = byId.get(chosen.node.id);
+        if (!chosenVector) continue;
+        if (cosineSimilarity(vector, chosenVector) >= threshold) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (!duplicate) kept.push(result);
+    }
+    return kept;
+  }
+
+  /**
+   * Session-sibling expansion (opt-in per search via `filter.sessionExpansion`).
+   * Memories recorded from the same conversation (`metadata.sessionId` /
+   * `metadata.instanceId`) are pulled in behind their seed at a decaying
+   * fraction of the seed score. Multi-hop answers typically span many turns
+   * of one session, so recovering the neighbours of a single relevant turn
+   * raises all-evidence recall without another embedding pass.
+   */
+  private async applySessionExpansion(
+    fused: ScoredMemory[],
+    filter: SearchFilter,
+  ): Promise<ScoredMemory[]> {
+    if (!filter.sessionExpansion || fused.length === 0) return fused;
+
+    const maxSeeds = 5;
+    const maxSiblingsPerSeed = 20;
+    const maxInjected = 10;
+    const scoreFactor = 0.85;
+
+    const present = new Set(fused.map((r) => r.node.id));
+    const injected: ScoredMemory[] = [];
+
+    for (const seed of fused.slice(0, maxSeeds)) {
+      if (injected.length >= maxInjected) break;
+      const sessionId =
+        (seed.node.metadata.sessionId as string | undefined) ??
+        (seed.node.metadata.instanceId as string | undefined);
+      if (!sessionId) continue;
+      const sessionKey = seed.node.metadata.sessionId
+        ? "sessionId"
+        : "instanceId";
+      const siblings = await this.storage.queryNodes({
+        metadata: { [sessionKey]: sessionId },
+        limit: maxSiblingsPerSeed,
+        namespace: filter.namespace,
+        includeHistorical: filter.includeHistorical,
+      });
+      let decay = scoreFactor;
+      for (const sibling of siblings) {
+        if (injected.length >= maxInjected) break;
+        if (sibling.node.id === seed.node.id || present.has(sibling.node.id)) {
+          continue;
+        }
+        present.add(sibling.node.id);
+        injected.push({
+          node: sibling.node,
+          score: seed.score * decay,
+          scores: { session: seed.score * decay },
+        });
+        decay *= scoreFactor;
+      }
+    }
+
+    if (injected.length === 0) return fused;
+    return [...fused, ...injected].sort((a, b) => b.score - a.score);
   }
 
   /**

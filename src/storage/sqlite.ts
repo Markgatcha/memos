@@ -210,13 +210,21 @@ export class SQLiteStorage implements StorageAdapter {
    * @param path — Filesystem path to the `.db` file.
    * @param wal  — Enable WAL journal mode (recommended).
    */
-  constructor(path: string, wal = true) {
+  constructor(
+    path: string,
+    wal = true,
+    options: { vectorCacheEntries?: number } = {},
+  ) {
     this.path = path;
     this.wal = wal;
     // 500 ms is the sweet spot — long enough to coalesce rapid reads,
     // short enough that the persisted value is never far behind the
     // in-memory truth.
     this.accessFlushIntervalMs = 500;
+    this.vectorCacheMaxEntries = Math.max(
+      100,
+      options.vectorCacheEntries ?? 25_000,
+    );
   }
 
   /**
@@ -770,6 +778,21 @@ export class SQLiteStorage implements StorageAdapter {
       extraConds.push("(n.valid_to IS NULL OR n.valid_to > ?)");
       extraParams.push(now);
     }
+    // Type and importance filters apply to the FTS path too — without
+    // these, `search({ query, type })` leaked keyword hits of any type
+    // into hybrid results (the structured branch already filtered them).
+    if (filter.type) {
+      extraConds.push("n.type = ?");
+      extraParams.push(filter.type);
+    }
+    if (filter.minImportance !== undefined) {
+      extraConds.push("n.importance >= ?");
+      extraParams.push(filter.minImportance);
+    }
+    if (filter.maxImportance !== undefined) {
+      extraConds.push("n.importance <= ?");
+      extraParams.push(filter.maxImportance);
+    }
 
     if (filter.query) {
       // Full-text search via FTS5. The query is tokenized into
@@ -828,11 +851,22 @@ export class SQLiteStorage implements StorageAdapter {
         ) as Record<string, unknown>[];
       };
 
-      rows = runFts(ftsTerms.join(" AND "));
-      if (rows.length === 0 && ftsTerms.length > 1) {
-        // AND matched nothing — relax to OR so partial-term matches
-        // still surface instead of an empty result set.
+      const operator = filter.ftsOperator ?? "AUTO";
+      const andRows = runFts(ftsTerms.join(" AND "));
+      if (operator === "OR") {
         rows = runFts(ftsTerms.join(" OR "));
+      } else if (
+        operator === "AUTO" &&
+        andRows.length === 0 &&
+        ftsTerms.length > 1
+      ) {
+        // AUTO (default): precision AND first; only when it matches
+        // NOTHING relax to OR so partial-term matches still surface
+        // instead of an empty result set. `ftsOperator: "OR"` forces the
+        // recall-first query (benchmark ablation for multi-evidence work).
+        rows = runFts(ftsTerms.join(" OR "));
+      } else {
+        rows = andRows;
       }
     } else {
       // Structured query
@@ -931,6 +965,7 @@ export class SQLiteStorage implements StorageAdapter {
            updated_at = excluded.updated_at`,
       )
       .run(nodeId, normalized, vector.length, model, Date.now());
+    this.vectorCacheSet(nodeId, this.parseEmbeddingF32(normalized));
   }
 
   async getEmbeddingInfo(nodeId: string): Promise<EmbeddingRecordInfo | null> {
@@ -977,13 +1012,20 @@ export class SQLiteStorage implements StorageAdapter {
     filter: SearchFilter = {},
     limit: number,
     threshold = 0,
+    model?: string,
   ): Promise<ScoredMemory[]> {
     const conditions: string[] = [];
     const params: unknown[] = [vector.length];
 
     // Only compare vectors produced by compatible models/dimensions; cosine
-    // similarity is meaningless when the stored vector length differs.
+    // similarity is meaningless when the stored vector length differs, and
+    // two models can share a dimensionality while producing incomparable
+    // vector spaces — hence the explicit model check when provided.
     conditions.push("e.dimensions = ?");
+    if (model) {
+      conditions.push("e.model = ?");
+      params.push(model);
+    }
     if (filter.type) {
       conditions.push("n.type = ?");
       params.push(filter.type);
@@ -1023,24 +1065,55 @@ export class SQLiteStorage implements StorageAdapter {
     // Statement cache key includes the built WHERE clause: the filter
     // composition above varies the SQL text, and reusing one prepared
     // statement across different SQL would return wrong results.
-    const rows = this.getPreparedStatement(
-      `querySimilarEmbeddingsVectors::${where}`,
-      `SELECT e.node_id, e.vector
+    // Two-phase retrieval: ids are cheap to select; vectors come from the
+    // in-memory cache when warm, so repeat queries skip re-fetching every
+    // BLOB (tens of MB per query on large stores). Statement cache keys
+    // include the WHERE clause — filter composition varies the SQL.
+    const idRows = this.getPreparedStatement(
+      `querySimilarEmbeddingsIds::${where}`,
+      `SELECT e.node_id
        FROM embeddings e
        JOIN nodes n ON n.id = e.node_id
        ${where}`,
-    ).all(...params) as Array<{
-      node_id: string;
-      vector: Record<string, unknown>;
-    }>;
+    ).all(...params) as Array<{ node_id: string }>;
 
-    // Score first — (nodeId, score) pairs only, no node hydration.
+    const candidateIds = idRows.map((r) => r.node_id);
+    const missing = candidateIds.filter((id) => !this.vectorCache.has(id));
+
+    // Chunked fetch for cache misses (SQLite bound-parameter limits).
+    for (let start = 0; start < missing.length; start += 500) {
+      const chunk = missing.slice(start, start + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      const blobRows = this.getPreparedStatement(
+        `querySimilarEmbeddingsBlobs::${placeholders.length}`,
+        `SELECT node_id, vector FROM embeddings WHERE node_id IN (${placeholders})`,
+      ).all(...chunk) as Array<{ node_id: string; vector: unknown }>;
+      for (const row of blobRows) {
+        if (Buffer.isBuffer(row.vector) || row.vector instanceof Uint8Array) {
+          this.vectorCacheSet(
+            row.node_id,
+            this.parseEmbeddingF32(row.vector as Buffer | Uint8Array),
+          );
+        }
+      }
+    }
+
+    // Score — (nodeId, score) pairs only, no node hydration. Warm-cache
+    // hits reuse the parsed Float32Array; legacy JSON-stored rows (never
+    // cached) fall back to `parseEmbedding` per lookup.
     const scoredPairs: Array<{ nodeId: string; score: number }> = [];
-    for (const row of rows) {
-      const storedVector = this.parseEmbedding(row.vector);
-      const score = cosineSimilarity(vector, storedVector);
+    const queryF32 =
+      vector instanceof Float32Array ? vector : Float32Array.from(vector);
+    for (const nodeId of candidateIds) {
+      const cached = this.vectorCacheGet(nodeId);
+      const score = cached
+        ? cosineSimilarity(queryF32, cached)
+        : cosineSimilarity(
+            vector,
+            this.parseEmbedding(this.lookupStoredVector(nodeId)),
+          );
       if (score >= threshold) {
-        scoredPairs.push({ nodeId: row.node_id, score });
+        scoredPairs.push({ nodeId, score });
       }
     }
 
@@ -1059,6 +1132,25 @@ export class SQLiteStorage implements StorageAdapter {
       });
     }
     return results;
+  }
+
+  async getEmbeddingModelCounts(): Promise<
+    Array<{ model: string; count: number }>
+  > {
+    const rows = this.db
+      .prepare(
+        `SELECT model, COUNT(*) as count FROM embeddings GROUP BY model ORDER BY count DESC`,
+      )
+      .all() as Array<{ model: string; count: number }>;
+    return rows;
+  }
+
+  async deleteEmbeddingsByModel(model: string): Promise<number> {
+    const info = this.db
+      .prepare(`DELETE FROM embeddings WHERE model = ?`)
+      .run(model);
+    this.vectorCache.clear();
+    return info.changes;
   }
 
   async queryEdges(
@@ -1157,6 +1249,7 @@ export class SQLiteStorage implements StorageAdapter {
   // -----------------------------------------------------------------------
 
   async deleteAllNodes(): Promise<void> {
+    this.vectorCache.clear();
     this.db.exec("DELETE FROM embeddings");
     this.db.exec("DELETE FROM edges");
     this.db.exec("DELETE FROM nodes");
@@ -1219,6 +1312,61 @@ export class SQLiteStorage implements StorageAdapter {
       metadata: JSON.parse((row.metadata as string) || "{}"),
       createdAt: row.created_at as number,
     };
+  }
+
+  /**
+   * In-process parsed-vector cache (nodeId -> Float32Array). The semantic
+   * leg otherwise re-fetches EVERY stored vector BLOB from SQLite on every
+   * query (tens of MB of memcpy per query on large stores). Writes go
+   * through this class, so invalidation is exact; external writers are not
+   * tracked (single-process deployments are the supported shape — the
+   * Python bridge runs one Node process).
+   */
+  private vectorCache = new Map<string, Float32Array>();
+  private vectorCacheMaxEntries = 25_000;
+
+  private vectorCacheGet(nodeId: string): Float32Array | undefined {
+    return this.vectorCache.get(nodeId);
+  }
+
+  private vectorCacheSet(nodeId: string, vector: Float32Array): void {
+    if (
+      this.vectorCache.size >= this.vectorCacheMaxEntries &&
+      !this.vectorCache.has(nodeId)
+    ) {
+      // FIFO eviction (Map preserves insertion order).
+      const oldest = this.vectorCache.keys().next().value;
+      if (oldest !== undefined) this.vectorCache.delete(oldest);
+    }
+    this.vectorCache.set(nodeId, vector);
+  }
+
+  private lookupStoredVector(nodeId: string): unknown {
+    const row = this.getPreparedStatement(
+      "querySimilarEmbeddingsOneVector",
+      `SELECT vector FROM embeddings WHERE node_id = ?`,
+    ).get(nodeId) as { vector: unknown } | undefined;
+    return row?.vector;
+  }
+
+  /**
+   * Zero-copy Float32Array view over a float32 BLOB. Byte-order and values
+   * are identical to `parseEmbedding`'s BLOB branch; alignment is guarded
+   * (Node Buffers are 8-byte aligned from the pool, but a sliced view may
+   * not be 4-byte aligned — those fall back to `parseEmbedding`).
+   */
+  private parseEmbeddingF32(value: Buffer | Uint8Array): Float32Array {
+    const byteOffset = value.byteOffset;
+    const byteLength = value.byteLength;
+    if (byteOffset % 4 === 0 && byteLength % 4 === 0) {
+      return new Float32Array(value.buffer, byteOffset, byteLength / 4);
+    }
+    const aligned = Buffer.from(value);
+    return new Float32Array(
+      aligned.buffer,
+      aligned.byteOffset,
+      aligned.byteLength / 4,
+    );
   }
 
   private parseEmbedding(value: unknown): EmbeddingVector {

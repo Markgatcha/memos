@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "paths": {},
+    "types": ["node"]
+  },
+  "include": [
+    "scripts/lib/**/*.ts",
+    "scripts/bench-quality.ts",
+    "scripts/bench-locomo-noapi.ts",
+    "scripts/bench-locomo.ts",
+    "scripts/bench-longmemeval.ts"
+  ],
+  "exclude": ["node_modules"]
+}

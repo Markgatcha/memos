@@ -127,24 +127,68 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_search",
     {
       title: "Search Memories",
-      description: "Search local memories by full-text query.",
+      description:
+        "Search local memories by full-text query. Pass compact: true for token-lean output.",
       inputSchema: z.object({
         query: z.string().describe("Search query."),
         limit: z.number().optional().describe("Maximum result count."),
         tags: z.array(z.string()).optional().describe("Optional tag filter."),
         namespace: z.string().optional().describe("Optional namespace filter."),
+        compact: z
+          .boolean()
+          .optional()
+          .describe(
+            "Return trimmed results (id, content, score, type, tags) " +
+              "instead of full node objects — far fewer tokens.",
+          ),
       }),
-      outputSchema: z.object({
-        results: z.array(scoredMemorySchema),
-      }),
+      outputSchema: z.union([
+        z.object({ results: z.array(scoredMemorySchema) }),
+        z.object({
+          results: z.array(
+            z.object({
+              id: z.string(),
+              content: z.string(),
+              score: z.number(),
+              type: z.string().optional(),
+              tags: z.array(z.string()).optional(),
+            }),
+          ),
+          compact: z.literal(true),
+        }),
+      ]),
     },
-    async ({ query, limit, tags, namespace }) => {
+    async ({ query, limit, tags, namespace, compact }) => {
       const found = await memos.search({
         query,
         limit: limit ?? 10,
         ...(tags ? { tags } : {}),
         ...(namespace ? { namespace } : {}),
       });
+      if (compact) {
+        const trimmed = found.map((r) => ({
+          id: r.node.id,
+          content: r.node.content,
+          score: Number(r.score.toFixed(4)),
+          ...(r.node.type ? { type: r.node.type } : {}),
+          ...(r.node.tags.length > 0 ? { tags: r.node.tags } : {}),
+        }));
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text:
+                trimmed
+                  .map(
+                    (r) =>
+                      `[${r.id.slice(0, 8)}] (${r.score}) ${r.type ?? "fact"}: ${r.content}`,
+                  )
+                  .join("\n") || "No memories found.",
+            },
+          ],
+          structuredContent: { results: trimmed, compact: true },
+        };
+      }
       return {
         content: [
           { type: "text" as const, text: `Found ${found.length} memories.` },
@@ -262,6 +306,297 @@ function registerTools(server: McpServer, memos: MemOS): void {
       };
     },
   );
+
+  server.registerTool(
+    "memos_context_pack",
+    {
+      title: "Build Context Pack",
+      description:
+        "Build a token-budgeted, relevance-ranked slice of memories for " +
+        "injection into a prompt. This is the tool to use when you want " +
+        "everything the agent should remember about a topic in one call.",
+      inputSchema: z.object({
+        query: z.string().describe("What to remember about."),
+        tokenBudget: z
+          .number()
+          .optional()
+          .describe("Token budget for the pack (default 2000)."),
+        namespace: z.string().optional(),
+        format: z
+          .enum(["json", "toon", "toon-compact"])
+          .optional()
+          .describe(
+            "Serialization format. Default toon-compact — ~70% fewer " +
+              "tokens than JSON with identical information; pass " +
+              '"json" for human-readable output.',
+          ),
+        includeSummary: z.boolean().optional(),
+        semanticDedup: z
+          .boolean()
+          .optional()
+          .describe("Drop near-duplicate pack items via embedding cosine."),
+      }),
+      outputSchema: z.object({
+        pack: z.unknown(),
+        format: z.string(),
+      }),
+    },
+    async ({
+      query,
+      tokenBudget,
+      namespace,
+      format,
+      includeSummary,
+      semanticDedup,
+    }) => {
+      // Token-lean by default: the pack feeds an LLM, not a human.
+      const chosenFormat = format ?? "toon-compact";
+      const pack = await memos.contextPack({
+        query,
+        tokenBudget: tokenBudget ?? 2000,
+        ...(namespace ? { namespace } : {}),
+        format: chosenFormat,
+        ...(includeSummary !== undefined ? { includeSummary } : {}),
+        ...(semanticDedup !== undefined ? { semanticDedup } : {}),
+      });
+      const text =
+        typeof pack === "string" ? pack : JSON.stringify(pack, null, 2);
+      return {
+        content: [{ type: "text" as const, text }],
+        structuredContent: { pack, format: chosenFormat },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_search_temporal",
+    {
+      title: "Search Memories Valid At a Time",
+      description:
+        "Search memories that were valid at a specific point in time " +
+        "(unix ms). Superseded/historical memories stay queryable here.",
+      inputSchema: z.object({
+        query: z.string(),
+        atTime: z
+          .number()
+          .describe("Unix epoch MILLISECONDS to evaluate validity at."),
+        limit: z.number().optional(),
+        namespace: z.string().optional(),
+      }),
+      outputSchema: z.object({ results: z.array(scoredMemorySchema) }),
+    },
+    async ({ query, atTime, limit, namespace }) => {
+      const results = await memos.searchTemporal(query, atTime, {
+        ...(limit ? { limit } : {}),
+        ...(namespace ? { namespace } : {}),
+      });
+      return {
+        content: [
+          { type: "text" as const, text: `Found ${results.length} memories.` },
+        ],
+        structuredContent: { results },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_set_validity",
+    {
+      title: "Set Memory Validity Window",
+      description:
+        "Mark a memory's temporal validity window (unix ms). A validTo in " +
+        "the past makes the memory historical: excluded from default " +
+        "search, still queryable via memos_search_temporal.",
+      inputSchema: z.object({
+        id: z.string(),
+        validFrom: z.number().nullable().optional(),
+        validTo: z.number().nullable().optional(),
+      }),
+      outputSchema: z.object({ node: memoryNodeSchema.nullable() }),
+    },
+    async ({ id, validFrom, validTo }) => {
+      const node = await memos.setValidity(
+        id,
+        validFrom ?? null,
+        validTo ?? null,
+      );
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: node
+              ? `Updated validity for ${id}.`
+              : `Memory ${id} not found.`,
+          },
+        ],
+        structuredContent: { node },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_supersede",
+    {
+      title: "Supersede Memory",
+      description:
+        "Mark a memory as superseded (historical) and optionally link its " +
+        "replacement with a temporal_precedes edge.",
+      inputSchema: z.object({
+        id: z.string().describe("The outdated memory."),
+        replacementId: z
+          .string()
+          .optional()
+          .describe("The memory that replaces it."),
+      }),
+      outputSchema: z.object({ node: memoryNodeSchema.nullable() }),
+    },
+    async ({ id, replacementId }) => {
+      const node = await memos.supersede(id, replacementId);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: node ? `Superseded ${id}.` : `Memory ${id} not found.`,
+          },
+        ],
+        structuredContent: { node },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_set_trust",
+    {
+      title: "Set Memory Trust",
+      description:
+        "Set the trust score [0,1] of a memory. High-trust memories rank " +
+        "higher in hybrid search.",
+      inputSchema: z.object({
+        id: z.string(),
+        score: z.number().min(0).max(1),
+      }),
+      outputSchema: z.object({ node: memoryNodeSchema.nullable() }),
+    },
+    async ({ id, score }) => {
+      const node = await memos.setTrust(id, score);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: node
+              ? `Trust of ${id} set to ${score}.`
+              : `Memory ${id} not found.`,
+          },
+        ],
+        structuredContent: { node },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_extract_facts",
+    {
+      title: "Extract Facts From Conversation",
+      description:
+        "Rule-based local extraction of preferences, entities and facts " +
+        "from conversation messages, optionally storing them as memories.",
+      inputSchema: z.object({
+        messages: z
+          .array(
+            z.object({
+              role: z.string(),
+              content: z.string(),
+            }),
+          )
+          .describe("Conversation turns to mine."),
+        autoStore: z
+          .boolean()
+          .optional()
+          .describe("Store extracted facts (default false)."),
+        minConfidence: z.number().optional(),
+        namespace: z.string().optional(),
+      }),
+      outputSchema: z.object({
+        facts: z.array(z.unknown()),
+        storedIds: z.array(z.string()),
+      }),
+    },
+    async ({ messages, autoStore, minConfidence, namespace }) => {
+      const result = await memos.extractFacts(
+        messages.map((m) => ({
+          role: m.role as "system" | "user" | "assistant",
+          content: m.content,
+        })),
+        {
+          ...(autoStore !== undefined ? { autoStore } : {}),
+          ...(minConfidence !== undefined ? { minConfidence } : {}),
+          ...(namespace ? { namespace } : {}),
+        },
+      );
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Extracted ${result.facts.length} facts (${result.storedIds.length} stored).`,
+          },
+        ],
+        structuredContent: { facts: result.facts, storedIds: result.storedIds },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_diagnostics",
+    {
+      title: "Memory Diagnostics",
+      description:
+        "Health report: counts, embedding coverage, temporal stats, " +
+        "storage capabilities and database size.",
+      inputSchema: z.object({}),
+      outputSchema: z.object({ diagnostics: z.unknown() }),
+    },
+    async () => {
+      const diagnostics = await memos.diagnostics();
+      return {
+        content: [
+          { type: "text" as const, text: JSON.stringify(diagnostics, null, 2) },
+        ],
+        structuredContent: { diagnostics },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_reindex",
+    {
+      title: "Re-embed All Memories",
+      description:
+        "Re-embed every memory with the currently configured embedding " +
+        "model. Required after switching models. Can be slow on large " +
+        "stores; purgeStale also deletes vectors from other models.",
+      inputSchema: z.object({
+        purgeStale: z.boolean().optional(),
+      }),
+      outputSchema: z.object({
+        reembedded: z.number(),
+        purged: z.number(),
+        failed: z.number(),
+        model: z.string(),
+      }),
+    },
+    async ({ purgeStale }) => {
+      const summary = await memos.reindexEmbeddings({ purgeStale });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Re-embedded ${summary.reembedded} memories (purged ${summary.purged}, failed ${summary.failed}).`,
+          },
+        ],
+        structuredContent: summary,
+      };
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -278,10 +613,14 @@ export function createMcpServer(memos: MemOS): McpServer {
     {
       capabilities: { tools: {} },
       instructions:
-        "MemOS local-first agent memory. Use memos_store to persist memories, " +
-        "memos_search to find them, memos_retrieve/memos_forget for individual " +
-        "records, memos_graph for the full graph, and memos_context for " +
-        "graph-neighbour context around a memory.",
+        "MemOS local-first persistent memory. PROACTIVELY store durable " +
+        "facts (user preferences, project decisions, environment setup, " +
+        "corrections) with memos_store, and recall them with " +
+        "memos_context_pack before answering questions that may depend on " +
+        "prior sessions. memos_search finds raw results; " +
+        "memos_context_pack returns a token-budgeted slice ready for " +
+        "prompt injection. Superseded facts stay queryable via " +
+        "memos_search_temporal. All data stays on this machine.",
       cacheHints: {
         "tools/list": { ttlMs: 300_000, cacheScope: "private" },
         "server/discover": { ttlMs: 600_000, cacheScope: "private" },
@@ -370,7 +709,8 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_search",
-    description: "Search local memories by full-text query.",
+    description:
+      "Search local memories by full-text query. Pass compact: true for token-lean output.",
     inputSchema: z.toJSONSchema(
       z.object({
         query: z.string(),
@@ -428,6 +768,132 @@ const TOOL_METADATA: McpToolInfo[] = [
     ) as Record<string, unknown>,
     outputSchema: z.toJSONSchema(
       z.object({ id: z.string(), context: z.string() }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_context_pack",
+    description:
+      "Build a token-budgeted, relevance-ranked slice of memories for " +
+      "injection into a prompt. This is the tool to use when you want " +
+      "everything the agent should remember about a topic in one call.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        query: z.string(),
+        tokenBudget: z.number().optional(),
+        namespace: z.string().optional(),
+        format: z.enum(["json", "toon", "toon-compact"]).optional(),
+        includeSummary: z.boolean().optional(),
+        semanticDedup: z.boolean().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({ pack: z.unknown(), format: z.string() }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_search_temporal",
+    description:
+      "Search memories that were valid at a specific point in time " +
+      "(unix ms). Superseded/historical memories stay queryable here.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        query: z.string(),
+        atTime: z.number(),
+        limit: z.number().optional(),
+        namespace: z.string().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({ results: z.array(scoredMemorySchema) }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_set_validity",
+    description:
+      "Mark a memory's temporal validity window (unix ms). A validTo in " +
+      "the past makes the memory historical: excluded from default " +
+      "search, still queryable via memos_search_temporal.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        id: z.string(),
+        validFrom: z.number().nullable().optional(),
+        validTo: z.number().nullable().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({ node: memoryNodeSchema.nullable() }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_supersede",
+    description:
+      "Mark a memory as superseded (historical) and optionally link its " +
+      "replacement with a temporal_precedes edge.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        id: z.string(),
+        replacementId: z.string().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({ node: memoryNodeSchema.nullable() }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_set_trust",
+    description:
+      "Set the trust score [0,1] of a memory. High-trust memories rank " +
+      "higher in hybrid search.",
+    inputSchema: z.toJSONSchema(
+      z.object({ id: z.string(), score: z.number().min(0).max(1) }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({ node: memoryNodeSchema.nullable() }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_extract_facts",
+    description:
+      "Rule-based local extraction of preferences, entities and facts " +
+      "from conversation messages, optionally storing them as memories.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        messages: z.array(z.object({ role: z.string(), content: z.string() })),
+        autoStore: z.boolean().optional(),
+        minConfidence: z.number().optional(),
+        namespace: z.string().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({ facts: z.array(z.unknown()), storedIds: z.array(z.string()) }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_diagnostics",
+    description:
+      "Health report: counts, embedding coverage, temporal stats, " +
+      "storage capabilities and database size.",
+    inputSchema: z.toJSONSchema(z.object({})) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({ diagnostics: z.unknown() }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_reindex",
+    description:
+      "Re-embed every memory with the currently configured embedding " +
+      "model. Required after switching models. Can be slow on large " +
+      "stores; purgeStale also deletes vectors from other models.",
+    inputSchema: z.toJSONSchema(
+      z.object({ purgeStale: z.boolean().optional() }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({
+        reembedded: z.number(),
+        purged: z.number(),
+        failed: z.number(),
+        model: z.string(),
+      }),
     ) as Record<string, unknown>,
   },
 ];

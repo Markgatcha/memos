@@ -33,6 +33,14 @@
 
 import { MemOS } from "../src/memory.ts";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import {
+  parseProviderArgs,
+  buildProvider,
+  assertNoFallback,
+  benchMetadata,
+} from "./lib/bench-common.ts";
 
 // ─── API setup ──────────────────────────────────────────────────────────────────
 // We use bynara's API (https://router.bynara.id/v1/chat/completions) to answer
@@ -212,6 +220,8 @@ interface LocoConversation {
 interface LocoBenchmarkResult {
   provider: string;
   timestamp: string;
+  /** Benchmark kind (v2 metadata) — "locomo-llm-judge". */
+  benchmark: string;
   conversations: number;
   questions: number;
   topK: number;
@@ -221,6 +231,7 @@ interface LocoBenchmarkResult {
     multiHop: { recall: number; precision: number; count: number };
     temporal: { recall: number; precision: number; count: number };
     openDomain: { recall: number; precision: number; count: number };
+    adversarial: { recall: number; precision: number; count: number };
   };
   aggregate: {
     llmJudgeScore: number;
@@ -297,13 +308,20 @@ async function storeConversation(
       const text = chat.text;
       const content = `${speaker}: ${text}`;
 
-      // Store with metadata for traceability
+      // Store with metadata for traceability. `dia_id` is the official
+      // LoCoMo evidence unit id — the exact value `qa.evidence` references,
+      // so downstream analysis (and the no-api bench) can score by direct
+      // ID comparison instead of fuzzy text matching.
       await memos.store(content, {
         namespace: `locomo_conv_${convIdx}`,
         metadata: {
           speaker,
           timestamp,
           source: `D${convIdx}:${sessionKey}`,
+          ...(chat.dia_id ? { dia_id: chat.dia_id } : {}),
+          benchmark: "locomo",
+          instanceId: `locomo_conv_${convIdx}`,
+          sessionId: sessionKey,
         },
       });
 
@@ -316,19 +334,19 @@ async function storeConversation(
 
 /**
  * Map LOCOMO category numbers to human-readable names.
- * Based on analysis of actual LOCOMO question content:
- * - Cat 1: "What did Caroline research?" → Single-hop (direct fact recall)
- * - Cat 2: "When did Caroline go to the LGBTQ support group?" → Temporal
- * - Cat 3: "Would Caroline likely have Dr. Seuss books?" → Open-domain (hypothetical)
- * - Cat 4: "What did the charity race raise awareness for?" → Multi-hop (cross-session)
- * - Cat 5: "What did Caroline realize after her charity race?" → Adversarial
+ *
+ * Official LoCoMo mapping (task_eval/evaluation.py): 1 = multi-hop,
+ * 2 = temporal, 3 = open-domain, 4 = single-hop, 5 = adversarial.
+ * The dataset's evidence distribution corroborates (276/282 cat-1
+ * questions carry 2+ evidence ids; 795/841 cat-4 questions exactly 1).
+ * This script previously mapped 1↔4 backwards.
  */
 function categoryName(cat: number): string {
   const names: Record<number, string> = {
-    1: "single_hop",
+    1: "multi_hop",
     2: "temporal",
     3: "open_domain",
-    4: "multi_hop",
+    4: "single_hop",
     5: "adversarial",
   };
   return names[cat] || `unknown_${cat}`;
@@ -343,6 +361,8 @@ async function runLocomoBenchmark(opts: {
   maxConversations?: number;
   maxQuestions?: number;
   delayMs?: number;
+  /** Parsed provider args from the shared loader. */
+  providerArgs: import("./lib/bench-common.ts").BenchProviderArgs;
 }): Promise<LocoBenchmarkResult> {
   const datasetPath = "scripts/dataset/locomo/data/locomo10.json";
   const conversations = loadLocomoData(datasetPath);
@@ -354,23 +374,35 @@ async function runLocomoBenchmark(opts: {
     `[bench-LoCoMo] Loaded ${limited.length}/${conversations.length} conversations`,
   );
 
-  // Create a fresh MemOS instance with embeddings
-  const dbPath = `/tmp/bench-locomo-${Date.now()}.db`;
+  // Create a fresh MemOS instance. Provider comes from the shared loader
+  // (CLI --provider=... > env > default local-hash); the old hardcoded
+  // fastembed config silently fell back to local hash when transformers
+  // was not installed, invalidating results without any warning.
+  const provider = buildProvider(opts.providerArgs);
+  const runtimeInfo = await assertNoFallback(provider, opts.providerArgs);
+  const dbPath = join(tmpdir(), `bench-locomo-${Date.now()}.db`);
   const memos = new MemOS({
     dbPath,
     wal: false,
     autoLinkThreshold: 0,
-    experimental: { namespaces: true },
+    // --no-embeddings keeps this a keyword-only (FTS5) run.
+    experimental: {
+      namespaces: true,
+      ...(opts.useEmbeddings ? { semanticSearch: true } : {}),
+    },
     ...(opts.useEmbeddings
       ? {
           embeddings: {
             enabled: true,
-            provider: "fastembed",
-            model: "Xenova/gemma-300m-e5-it-v1",
-            dimensions: 768,
+            provider,
+            ...(opts.providerArgs.model
+              ? { model: opts.providerArgs.model }
+              : {}),
+            ...(opts.providerArgs.dimensions
+              ? { dimensions: opts.providerArgs.dimensions }
+              : {}),
           },
-          embeddingQueue: { concurrency: 1, batchSize: 32 },
-          experimental: { semanticSearch: true, namespaces: true },
+          embeddingQueue: { concurrency: 1 },
         }
       : {}),
   });
@@ -426,8 +458,9 @@ async function runLocomoBenchmark(opts: {
       // Include timestamps from metadata so temporal questions can be resolved
       const memoryObjs = results.map((r) => ({
         content: r.node.content || "",
-        timestamp:
+        timestamp: String(
           r.node.metadata?.timestamp || r.node.metadata?.ts || "unknown",
+        ),
       }));
       const predicted = await answerQuestion(
         query,
@@ -502,21 +535,35 @@ async function runLocomoBenchmark(opts: {
 
   await memos.close();
   if (existsSync(dbPath)) unlinkSync(dbPath);
+  for (const ext of ["-wal", "-shm"]) {
+    const sidecar = `${dbPath}${ext}`;
+    if (existsSync(sidecar)) unlinkSync(sidecar);
+  }
 
   const overallScore = avg(perQueryResults.map((r) => r.llmScore));
 
   return {
+    // Reproducibility metadata (v2 schema: git SHA, dataset hash,
+    // provider + fallback status, OS/Node). Spread FIRST so the legacy
+    // fields below keep their documented meanings.
+    ...benchMetadata(opts.providerArgs, runtimeInfo, {
+      name: "locomo10",
+      path: datasetPath,
+    }),
     provider: "MemOS",
     timestamp: new Date().toISOString(),
+    benchmark: "locomo-llm-judge",
     conversations: limited.length,
     questions: perQueryResults.length,
     topK: opts.topK,
     useEmbeddings: opts.useEmbeddings,
     categories: {
-      singleHop: catResult(1),
-      multiHop: catResult(4),
+      // Official mapping: 1=multi-hop, 4=single-hop (was swapped).
+      singleHop: catResult(4),
+      multiHop: catResult(1),
       temporal: catResult(2),
       openDomain: catResult(3),
+      adversarial: catResult(5),
     },
     aggregate: {
       llmJudgeScore: overallScore,
@@ -536,7 +583,7 @@ async function main() {
     args.find((a) => a.startsWith("--topk="))?.split("=")[1] || "15",
     10,
   );
-  const useEmbeddings = !args.includes("--no-embeddings");
+  const useEmbedding = !args.includes("--no-embeddings");
   const maxConvos = args.find((a) => a.startsWith("--convs="))
     ? parseInt(args.find((a) => a.startsWith("--convs="))!.split("=")[1], 10)
     : undefined;
@@ -551,8 +598,8 @@ async function main() {
     10,
   );
 
-  const useEmbedding = !args.includes("--no-embeddings");
-  console.log("MemOS LoCoMo Benchmark");
+  const providerArgs = parseProviderArgs(args);
+  console.log("MemOS LoCoMo Benchmark (LLM answer + judge)");
   console.log(`  Dataset: LOCOMO (snap-research/locomo)`);
   console.log(
     `  Top-K: ${topK} | Embeddings: ${useEmbedding}${maxConvos ? ` | Convos: ${maxConvos}` : ""}${maxQuestions ? ` | Max Qs: ${maxQuestions}` : ""} | Delay: ${delayMs}ms`,
@@ -565,10 +612,11 @@ async function main() {
     maxConversations: maxConvos,
     maxQuestions,
     delayMs,
+    providerArgs,
   });
 
   // Print results table
-  console.log("\\n=== Results ===\\n");
+  console.log("\n=== Results ===\n");
   console.log("Category           LLM Judge Score  Count");
   console.log("------------------------------------------------------");
   console.log(
@@ -582,6 +630,9 @@ async function main() {
   );
   console.log(
     `Open-domain       ${report.categories.openDomain.recall.toFixed(4)}         ${report.categories.openDomain.count}`,
+  );
+  console.log(
+    `Adversarial       ${report.categories.adversarial.recall.toFixed(4)}         ${report.categories.adversarial.count}`,
   );
   console.log("------------------------------------------------------");
   console.log(
@@ -606,8 +657,9 @@ async function main() {
     "\\nNote: Mem0 scores are LLM-Judge (GPT-4o). Retrieval recall will differ.",
   );
 
-  // Write results
-  const outPath = "scripts/bench-locomo-results.json";
+  // Write results — SEPARATE file from the retrieval-only no-api bench
+  // (they previously overwrote each other's results).
+  const outPath = "scripts/bench-locomo-llmjudge-results.json";
   writeFileSync(outPath, JSON.stringify(report, null, 2));
   console.log(`\nResults written to ${outPath}`);
 

@@ -8,6 +8,12 @@
  * for downstream code.
  */
 
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
 import {
   FastEmbedEmbeddingProvider,
   createEmbeddingProvider,
@@ -30,31 +36,59 @@ describe("FastEmbedEmbeddingProvider", () => {
     expect(p.dimensions).toBe(768);
   });
 
-  test("embed() returns a normalized vector of the right length", async () => {
-    const p = new FastEmbedEmbeddingProvider();
-    const v = await p.embed("hello world");
-    expect(v).toHaveLength(384);
-    // L2 norm should be ~1 after normalizeVector.
-    const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
-    expect(norm).toBeGreaterThan(0.99);
-    expect(norm).toBeLessThan(1.01);
-  });
+  test("real pipeline: embed/batchEmbed are normalized, 384-d, deterministic", () => {
+    // Spawned process: the onnxruntime backend builds tensors in Node's
+    // own realm, and jest's VM realm has a different Float32Array
+    // identity — the tensor constructor rejects them under jest.
+    const dir = mkdtempSync(join(tmpdir(), "fastembed-test-"));
+    const script = join(dir, "probe.mts");
+    const srcPath = pathToFileURL(
+      join(__dirname, "..", "src", "embeddings.ts"),
+    ).href;
+    writeFileSync(
+      script,
+      [
+        `import { FastEmbedEmbeddingProvider } from "${srcPath}";`,
+        "const p = new FastEmbedEmbeddingProvider();",
+        'const v = await p.embed("hello world");',
+        'const a = await p.embed("dark mode preference");',
+        'const b = await p.embed("dark mode preference");',
+        'const vs = await p.batchEmbed(["first", "second", "third"]);',
+        "const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0));",
+        "console.log(JSON.stringify({ dim: v.length, norm,",
+        "  deterministic: JSON.stringify(a) === JSON.stringify(b),",
+        "  batch: vs.length, batchDim: vs[0].length }));",
+      ].join("\n"),
+      "utf8",
+    );
 
-  test("embed() is deterministic for the same input", async () => {
-    const p = new FastEmbedEmbeddingProvider();
-    const a = await p.embed("dark mode preference");
-    const b = await p.embed("dark mode preference");
-    expect(a).toEqual(b);
-  });
+    const result = spawnSync(
+      process.execPath,
+      [join(__dirname, "..", "node_modules", "tsx", "dist", "cli.mjs"), script],
+      { encoding: "utf8", timeout: 120_000 },
+    );
 
-  test("batchEmbed() returns one normalized vector per input", async () => {
-    const p = new FastEmbedEmbeddingProvider();
-    const vectors = await p.batchEmbed!(["first", "second", "third"]);
-    expect(vectors).toHaveLength(3);
-    for (const v of vectors) {
-      expect(v).toHaveLength(384);
-    }
-  });
+    rmSync(dir, { recursive: true, force: true });
+    const line = result.stdout
+      .trim()
+      .split("\n")
+      .filter((l) => l.startsWith("{"))
+      .pop();
+    expect(line).toBeDefined();
+    const parsed = JSON.parse(line as string) as {
+      dim: number;
+      norm: number;
+      deterministic: boolean;
+      batch: number;
+      batchDim: number;
+    };
+    expect(parsed.dim).toBe(384);
+    expect(parsed.norm).toBeGreaterThan(0.99);
+    expect(parsed.norm).toBeLessThan(1.01);
+    expect(parsed.deterministic).toBe(true);
+    expect(parsed.batch).toBe(3);
+    expect(parsed.batchDim).toBe(384);
+  }, 180_000);
 
   test("createEmbeddingProvider recognizes provider: 'fastembed'", () => {
     const p = createEmbeddingProvider({ provider: "fastembed" });

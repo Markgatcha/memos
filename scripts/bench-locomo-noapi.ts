@@ -1,20 +1,231 @@
+#!/usr/bin/env npx tsx
+/**
+ * ─── LoCoMo Retrieval-Only Benchmark for MemOS (no API, no LLM) ──────────────
+ *
+ * Runs the actual LOCOMO dataset (snap-research/locomo) against MemOS and
+ * scores retrieval quality by DIRECT EVIDENCE-ID comparison:
+ *
+ *   1. Ingests each utterance with its LoCoMo `dia_id` (e.g. "D7:14") stored
+ *      in memory metadata — the ID the dataset's `qa.evidence` array uses.
+ *   2. For each QA pair, searches MemOS (hybrid FTS + semantic).
+ *   3. Scores the retrieved `dia_id`s against `qa.evidence` with
+ *      deterministic metrics: Hit@K, Evidence Recall@K, All-Evidence
+ *      Recall@K, Precision@K, MRR, nDCG@K — per category, macro and micro.
+ *   4. Writes results to scripts/bench-locomo-noapi-results.json (separate
+ *      from the LLM-judge bench results file) plus full reproducibility
+ *      metadata (git SHA, dataset hash, provider + fallback status).
+ *
+ * NO fuzzy text matching is used for scoring. A legacy fuzzy-overlap score
+ * is computed ONLY as a clearly-labeled diagnostic so the two scoring
+ * conventions can be compared run-over-run — it is never reported as
+ * evidence recall.
+ *
+ * Category mapping follows the official LoCoMo evaluation code
+ * (task_eval/evaluation.py): 1=multi-hop, 2=temporal, 3=open-domain,
+ * 4=single-hop, 5=adversarial. Both benchmark scripts previously mapped
+ * cat 1/4 backwards — the dataset's own evidence distribution confirms
+ * the official mapping (276/282 cat-1 questions carry 2+ evidence IDs;
+ * 795/841 cat-4 questions carry exactly 1).
+ *
+ * Usage:
+ *   npx tsx scripts/bench-locomo-noapi.ts --topk=10 --convs=2
+ *   npx tsx scripts/bench-locomo-noapi.ts --provider=local-hash --topk=10
+ *   npx tsx scripts/bench-locomo-noapi.ts --provider=fastembed --model=Xenova/gemma-300m-e5-it-v1 \
+ *       --dimensions=768 --fail-on-embedding-fallback
+ *
+ * Provider flags (CLI > env > default local-hash):
+ *   --provider=local-hash|fastembed|ollama|openai-compatible|voyage|cohere
+ *   --model=<name>  --dimensions=<n>  --base-url=<url>  --api-key=<key>
+ *   --fail-on-embedding-fallback   terminate if the requested backend did not load
+ *
+ * Results: scripts/bench-locomo-noapi-results.json
+ */
+
 import { MemOS } from "../src/memory.ts";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import {
+  parseProviderArgs,
+  parseRetrievalArgs,
+  buildProvider,
+  assertNoFallback,
+  benchMetadata,
+  retrievalConfig,
+} from "./lib/bench-common.ts";
+import {
+  aggregateMetrics,
+  dedupeRankedIds,
+  type EvalQueryResult,
+  type MetricsReport,
+} from "./lib/bench-metrics.ts";
+
+// ─── LoCoMo data types ───────────────────────────────────────────────────────
+
+interface LocoChat {
+  speaker: string;
+  /** Official evidence unit id, e.g. "D1:3" — the exact value that
+   *  appears in qa.evidence. */
+  dia_id: string;
+  text: string;
+}
+
+interface LocoConversation {
+  conversation: {
+    speaker_a: string;
+    speaker_b: string;
+    [key: string]: unknown;
+  };
+  qa: Array<{
+    question: string;
+    answer: string;
+    evidence: string[];
+    category: number;
+    adversarial_answer?: string;
+  }>;
+  sample_id: string;
+}
+
+/**
+ * Official LoCoMo category mapping (task_eval/evaluation.py):
+ * 1 = multi-hop, 2 = temporal, 3 = open-domain, 4 = single-hop,
+ * 5 = adversarial. The dataset's evidence distribution corroborates:
+ * cat 1 overwhelmingly carries 2+ evidence ids (multi-hop), cat 4 exactly 1.
+ */
+const CATEGORY_NAMES: Record<number, string> = {
+  1: "multi_hop",
+  2: "temporal",
+  3: "open_domain",
+  4: "single_hop",
+  5: "adversarial",
+};
+
+function categoryName(cat: number): string {
+  return CATEGORY_NAMES[cat] ?? `cat_${cat}`;
+}
+
+/**
+ * Group consecutive utterances into conversational EXCHANGES (pairs) —
+ * the natural memory unit for dialogue. LoCoMo sessions strictly
+ * alternate speakers, so pairing (a) makes each memory self-contained
+ * (a question travels with its answer, giving the embedder and reranker
+ * real context instead of a dangling "sure, Tuesday works") and (b) lets
+ * one retrieved node carry TWO official dia_ids, which multi-evidence /
+ * multi-hop scoring needs. Each grouped node keeps all its dia_ids in
+ * metadata (`dia_ids`) plus the first one in `dia_id` for compatibility.
+ * Odd trailing utterances form a single-message group.
+ */
+function groupTurns(chats: LocoChat[]): Array<{
+  dia_ids: string[];
+  speaker: string;
+  texts: string[];
+}> {
+  const groups: Array<{ dia_ids: string[]; speaker: string; texts: string[] }> =
+    [];
+  for (let i = 0; i < chats.length; i += 2) {
+    const pair = chats.slice(i, i + 2).filter((c) => c?.dia_id);
+    if (pair.length === 0) continue;
+    groups.push({
+      dia_ids: pair.map((c) => c.dia_id),
+      speaker: pair[0].speaker,
+      texts: pair.map((c) => c.text),
+    });
+  }
+  return groups;
+}
+
+// ─── Fuzzy diagnostic (NOT a scoring metric) ─────────────────────────────────
+
+/**
+ * Legacy fuzzy term-overlap heuristic, kept ONLY as a labeled diagnostic.
+ * This is the scoring the benchmark used before evidence-ID matching — it
+ * over-counts (any lexically similar utterance passes). Comparing the two
+ * numbers quantifies how much the old scoring inflated recall.
+ */
+function fuzzyOverlapDiagnostic(
+  evidenceTexts: string[],
+  retrievedContents: string[],
+): boolean {
+  const stop = new Set([
+    "this",
+    "that",
+    "with",
+    "have",
+    "they",
+    "them",
+    "what",
+    "when",
+    "where",
+    "from",
+    "been",
+    "were",
+    "said",
+    "will",
+    "just",
+    "like",
+  ]);
+  for (const evidenceText of evidenceTexts) {
+    const core = evidenceText.includes(": ")
+      ? (evidenceText.split(": ", 2)[1] ?? evidenceText)
+      : evidenceText;
+    const evidenceTerms = core
+      .toLowerCase()
+      .split(/[\s,.!?'-]+/)
+      .filter((w) => w.length > 3 && !stop.has(w));
+    for (const content of retrievedContents) {
+      const c = content.toLowerCase();
+      if (c.includes(core.toLowerCase())) return true;
+      const contentTerms = new Set(
+        c.split(/[\s,.!?'-]+/).filter((w) => w.length > 3),
+      );
+      const matchCount = evidenceTerms.filter((t) =>
+        contentTerms.has(t),
+      ).length;
+      if (matchCount >= Math.min(evidenceTerms.length, 2)) return true;
+      const speakerPrefix = evidenceText.includes(": ")
+        ? (evidenceText.split(": ", 2)[0] ?? "").toLowerCase()
+        : "";
+      if (speakerPrefix && c.startsWith(speakerPrefix) && matchCount >= 1) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
   const args = process.argv.slice(2);
-  const topK = parseInt(
-    args.find((a) => a.startsWith("--topk="))?.split("=")[1] || "15",
-    10,
+  const topK =
+    parseInt(
+      args.find((a) => a.startsWith("--topk="))?.split("=")[1] ?? "10",
+      10,
+    ) || 10;
+  const convsArg = args.find((a) => a.startsWith("--convs="));
+  const maxConvos = convsArg ? parseInt(convsArg.split("=")[1] ?? "2", 10) : 2;
+  // Two-stage / ingestion ablation flags.
+  const groupTurnsFlag = args.includes("--group-turns");
+  const depthArg = args.find((a) => a.startsWith("--candidate-depth="));
+  const candidateDepth = depthArg
+    ? parseInt(depthArg.split("=")[1] ?? "", 10)
+    : undefined;
+  const rerankUrlArg = args.find((a) => a.startsWith("--rerank-url="));
+  const rerankUrl = rerankUrlArg?.split("=")[1];
+  const rerankModelArg = args.find((a) => a.startsWith("--rerank-model="));
+  const rerankCandidatesArg = args.find((a) =>
+    a.startsWith("--rerank-candidates="),
   );
-  const maxConvosArg = args.find((a) => a.startsWith("--convs="));
-  const maxConvos = maxConvosArg
-    ? parseInt(maxConvosArg.split("=")[1], 10)
-    : args.find((a) => a === "--convs" && args.indexOf(a) + 1 < args.length)
-      ? parseInt(args[args.indexOf("--convs") + 1], 10)
-      : 2;
+  const rerankTimeoutArg = args.find((a) => a.startsWith("--rerank-timeout="));
+  const rerankMaxDocCharsArg = args.find((a) =>
+    a.startsWith("--rerank-max-doc-chars="),
+  );
 
-  const datasetPath = "scripts/dataset/locomo/data/locomo10.json";
+  const providerArgs = parseProviderArgs(args);
+  const retrievalArgs = parseRetrievalArgs(args);
+  const datasetPath =
+    args.find((a) => a.startsWith("--dataset="))?.split("=")[1] ??
+    "scripts/dataset/locomo/data/locomo10.json";
   if (!existsSync(datasetPath)) {
     console.error(
       "Dataset not found. Run: git clone --depth 1 https://github.com/snap-research/locomo.git scripts/dataset/locomo",
@@ -22,286 +233,405 @@ async function main() {
     process.exit(1);
   }
 
-  const conversations = JSON.parse(readFileSync(datasetPath, "utf-8")).slice(
-    0,
-    maxConvos,
-  );
+  const conversations: LocoConversation[] = JSON.parse(
+    readFileSync(datasetPath, "utf8"),
+  ).slice(0, maxConvos);
 
-  const dbPath = `/tmp/bench-locomo-noapi-${Date.now()}.db`;
+  const provider = buildProvider(providerArgs);
+  // Resolve lazy providers and detect fallback BEFORE ingesting anything.
+  const runtimeInfo = await assertNoFallback(provider, providerArgs);
+
+  // Deterministic temp DB (timestamped, cleaned in finally).
+  const dbPath = join(tmpdir(), `bench-locomo-noapi-${Date.now()}.db`);
   const memos = new MemOS({
     dbPath,
     wal: false,
     autoLinkThreshold: 0,
-    experimental: { namespaces: true, semanticSearch: true },
+    experimental: {
+      namespaces: true,
+      semanticSearch: true,
+      ...(rerankUrl
+        ? {
+            rerank: {
+              endpoint: rerankUrl,
+              ...(rerankModelArg
+                ? { model: rerankModelArg.split("=")[1] }
+                : {}),
+              ...(rerankCandidatesArg
+                ? {
+                    candidates: parseInt(
+                      rerankCandidatesArg.split("=")[1] ?? "50",
+                      10,
+                    ),
+                  }
+                : {}),
+              ...(rerankTimeoutArg
+                ? {
+                    timeoutMs: parseInt(
+                      rerankTimeoutArg.split("=")[1] ?? "5000",
+                      10,
+                    ),
+                  }
+                : {}),
+              ...(rerankMaxDocCharsArg
+                ? {
+                    maxDocChars: parseInt(
+                      rerankMaxDocCharsArg.split("=")[1] ?? "0",
+                      10,
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    },
     embeddings: {
       enabled: true,
-      provider: "fastembed",
-      model: "Xenova/gemma-300m-e5-it-v1",
-      dimensions: 768,
+      provider,
+      // Pass model/dimensions through so storage records match the request.
+      ...(providerArgs.model ? { model: providerArgs.model } : {}),
+      ...(providerArgs.dimensions
+        ? { dimensions: providerArgs.dimensions }
+        : {}),
+      ...(retrievalArgs.embedText
+        ? { embedText: retrievalArgs.embedText }
+        : {}),
     },
-    embeddingQueue: { concurrency: 1, batchSize: 32 },
+    ...(Object.keys(retrievalConfig(retrievalArgs)).length > 0
+      ? retrievalConfig(retrievalArgs)
+      : {}),
+    embeddingQueue: { concurrency: 4, batchSize: 16 },
   });
 
   await memos.init();
 
-  // Category mapping based on analysis of actual LOCOMO question content:
-  // - Cat 1: "What did Caroline research?" → Single-hop (direct fact recall)
-  // - Cat 2: "When did Caroline go to the LGBTQ support group?" → Temporal (dates/event timing)
-  // - Cat 3: "Would Caroline likely have Dr. Seuss books?" → Open-domain (hypothetical/reasoning)
-  // - Cat 4: "What did the charity race raise awareness for?" → Multi-hop (cross-session facts)
-  // - Cat 5: "What did Caroline realize after her charity race?" → Adversarial (distractor/hard)
-  const categoryNames: Record<number, string> = {
-    1: "Single-hop",
-    2: "Temporal",
-    3: "Open-domain",
-    4: "Multi-hop",
-    5: "Adversarial",
-  };
+  // Per-question evaluation records (scored after ingestion).
+  const evalQueries: EvalQueryResult[] = [];
+  const diagnosticFuzzyHits: number[] = []; // per-question 0/1, diagnostic only
+  const benchStart = Date.now();
+  let ingestionMs = 0;
 
-  const categoryStats: Record<
-    number,
-    { hits: number; total: number; latencies: number[] }
-  > = {};
-  let totalHits = 0;
-  let totalQuestions = 0;
-  let totalLatency = 0;
+  try {
+    for (let convIdx = 0; convIdx < conversations.length; convIdx++) {
+      const conv = conversations[convIdx]!;
+      const { conversation } = conv;
+      const sessionKeys = Object.keys(conversation).filter(
+        (k) =>
+          k !== "speaker_a" && k !== "speaker_b" && !k.endsWith("_date_time"),
+      ) as Array<`session_${number}`>;
 
-  // Build a global evidence map: dia_id → text (across all conversations)
-  const evidenceMap = new Map<string, string>();
-
-  for (let convIdx = 0; convIdx < conversations.length; convIdx++) {
-    const conv = conversations[convIdx];
-    const { conversation } = conv;
-    const sessionKeys = Object.keys(conversation).filter(
-      (k) =>
-        k !== "speaker_a" && k !== "speaker_b" && !k.endsWith("_date_time"),
-    );
-
-    // Build evidence map for this conversation
-    for (const sk of sessionKeys) {
-      const chats = conversation[sk];
-      if (!Array.isArray(chats)) continue;
-      for (const chat of chats) {
-        if (chat.dia_id) {
-          evidenceMap.set(
-            `${convIdx}_${chat.dia_id}`,
-            `${chat.speaker}: ${chat.text}`,
-          );
-        }
-      }
-    }
-  }
-
-  for (let convIdx = 0; convIdx < conversations.length; convIdx++) {
-    const conv = conversations[convIdx];
-    const { conversation } = conv;
-    const sessionKeys = Object.keys(conversation).filter(
-      (k) =>
-        k !== "speaker_a" && k !== "speaker_b" && !k.endsWith("_date_time"),
-    );
-
-    // Store memories
-    for (const sessionKey of sessionKeys) {
-      const chats = conversation[sessionKey];
-      if (!Array.isArray(chats)) continue;
-      for (const chat of chats) {
-        const content = `${chat.speaker}: ${chat.text}`;
-        await memos.store(content, {
-          namespace: `locomo_conv_${convIdx}`,
-          metadata: { speaker: chat.speaker },
-        });
-      }
-    }
-    await memos.flushEmbeddings();
-
-    console.log(`[conv ${convIdx}] ${conv.qa.length} questions`);
-
-    // Run QA
-    for (const qa of conv.qa) {
-      const startTime = Date.now();
-      const results = await memos.search({
-        query: qa.question,
-        limit: topK,
-        namespace: `locomo_conv_${convIdx}`,
-      });
-      const elapsed = Date.now() - startTime;
-      totalLatency += elapsed;
-
-      // Check if evidence is in retrieved results
-      let found = false;
-      for (const evidenceRef of qa.evidence) {
-        const evidenceKey = `${convIdx}_${evidenceRef}`;
-        const evidenceText = evidenceMap.get(evidenceKey);
-        if (evidenceText) {
-          // Extract the core content (without speaker prefix) for matching
-          const evidenceCore = evidenceText.split(": ", 2)[1] || evidenceText;
-          const evidenceLower = evidenceCore.toLowerCase();
-
-          // Extract key content terms (nouns, proper nouns, longer words)
-          // for more forgiving matching — questions may use different words
-          // than the evidence (e.g., "pursue" vs "career options").
-          const evidenceTerms = evidenceLower
-            .split(/[\s,.!?'-]+/)
-            .filter((w: string) => w.length > 3)
-            .filter(
-              (w: string) =>
-                ![
-                  "this",
-                  "that",
-                  "with",
-                  "have",
-                  "they",
-                  "them",
-                  "what",
-                  "when",
-                  "where",
-                  "from",
-                  "been",
-                  "were",
-                  "said",
-                  "will",
-                  "just",
-                  "like",
-                ].includes(w),
-            );
-
-          for (const result of results) {
-            const content = (result.node.content || "").toLowerCase();
-            // 1. Exact substring match (strongest signal)
-            if (content.includes(evidenceCore.toLowerCase())) {
-              found = true;
-              break;
-            }
-            // 2. Key term overlap — at least 2 unique terms must match
-            // This catches cases where the evidence is paraphrased or
-            // the memory content has slight formatting differences.
-            const contentTerms = new Set(
-              content.split(/[\s,.!?'-]+/).filter((w: string) => w.length > 3),
-            );
-            const matchCount = evidenceTerms.filter((t: string) =>
-              contentTerms.has(t),
-            ).length;
-            if (matchCount >= Math.min(evidenceTerms.length, 2)) {
-              found = true;
-              break;
-            }
-            // 3. Speaker + key noun match — if the evidence mentions a speaker
-            // (Caroline/Melanie) and one key term from the evidence matches,
-            // count as found. This catches temporal/identity questions where
-            // the answer terms may be paraphrased in the retrieved memory.
-            const speakerPrefix = evidenceText.split(": ", 2)[0].toLowerCase();
-            if (content.startsWith(speakerPrefix) && matchCount >= 1) {
-              found = true;
-              break;
-            }
+      // ── Ingestion: store every utterance WITH its dia_id ──────────────
+      const ingestStart = Date.now();
+      // Build a map dia_id → evidence text for the fuzzy diagnostic.
+      const evidenceTextMap = new Map<string, string>();
+      for (const sessionKey of sessionKeys) {
+        const chats = conversation[sessionKey] as unknown as LocoChat[];
+        if (!Array.isArray(chats)) continue;
+        const sessionDateKey = `${sessionKey}_date_time`;
+        const sessionTimestamp = String(
+          (conversation as Record<string, unknown>)[sessionDateKey] ?? "",
+        );
+        if (groupTurnsFlag) {
+          // Conversational exchanges (utterance pairs) become one memory
+          // node carrying all their dia_ids.
+          for (const turn of groupTurns(chats)) {
+            turn.dia_ids.forEach((id, i) => {
+              evidenceTextMap.set(id, `${turn.speaker}: ${turn.texts[i]}`);
+            });
+            await memos.store(`${turn.speaker}: ${turn.texts.join("\n")}`, {
+              namespace: `locomo_conv_${convIdx}`,
+              metadata: {
+                dia_id: turn.dia_ids[0],
+                dia_ids: turn.dia_ids,
+                benchmark: "locomo",
+                instanceId: `locomo_conv_${convIdx}`,
+                speaker: turn.speaker,
+                sessionId: sessionKey,
+                timestamp: sessionTimestamp,
+              },
+            });
+          }
+        } else {
+          for (const chat of chats) {
+            if (!chat?.dia_id) continue;
+            const content = `${chat.speaker}: ${chat.text}`;
+            evidenceTextMap.set(chat.dia_id, content);
+            // THE fix: preserve the official evidence unit id so retrieval can
+            // be scored by direct ID comparison, plus the session timestamp so
+            // temporal behaviors have real data to work with.
+            await memos.store(content, {
+              namespace: `locomo_conv_${convIdx}`,
+              metadata: {
+                dia_id: chat.dia_id,
+                benchmark: "locomo",
+                instanceId: `locomo_conv_${convIdx}`,
+                speaker: chat.speaker,
+                sessionId: sessionKey,
+                timestamp: sessionTimestamp,
+              },
+            });
           }
         }
-        if (found) break;
       }
+      await memos.flushEmbeddings();
+      ingestionMs += Date.now() - ingestStart;
 
-      const cat = qa.category;
-      if (!categoryStats[cat])
-        categoryStats[cat] = { hits: 0, total: 0, latencies: [] };
-      categoryStats[cat].total++;
-      if (found) {
-        categoryStats[cat].hits++;
-        totalHits++;
+      console.log(
+        `[conv ${convIdx}] ingested ${evidenceTextMap.size} utterances, ${conv.qa.length} questions`,
+      );
+
+      // ── Retrieval + direct-ID scoring ──────────────────────────────────
+      for (const [qaIdx, qa] of conv.qa.entries()) {
+        const startTime = Date.now();
+        const results = await memos.search({
+          query: qa.question,
+          limit: topK,
+          namespace: `locomo_conv_${convIdx}`,
+          ...(candidateDepth ? { candidateDepth } : {}),
+          ...(retrievalArgs.ftsOperator
+            ? { ftsOperator: retrievalArgs.ftsOperator }
+            : {}),
+          ...(retrievalArgs.sessionExpansion ? { sessionExpansion: true } : {}),
+          ...(args.includes("--semantic-dedup") ? { semanticDedup: true } : {}),
+        });
+        const elapsed = Date.now() - startTime;
+
+        // Direct ID match: retrieved memories' dia_id metadata vs qa.evidence.
+        // Grouped ingestion stores a `dia_ids` ARRAY per node — every id in
+        // a retrieved group counts as retrieved at the group's rank.
+        const retrievedIds = dedupeRankedIds(
+          results
+            .flatMap((r) => {
+              const grouped = r.node.metadata?.dia_ids;
+              if (Array.isArray(grouped)) return grouped.map(String);
+              return [String(r.node.metadata?.dia_id ?? "")];
+            })
+            .filter(Boolean),
+        );
+
+        // Evidence ids that exist in this conversation's utterances. LoCoMo
+        // has 9 malformed evidence entries (wrong session prefix / typos,
+        // e.g. "D:11:26", "D30:05") that can never match a stored dia_id —
+        // keep them in the denominator (they are what the dataset demands)
+        // but they are unmatchable by ANY system, not just ours.
+        const relevantIds = qa.evidence.filter(
+          (e) => typeof e === "string" && e.length > 0,
+        );
+
+        evalQueries.push({
+          questionId: `conv${convIdx}_q${qaIdx}`,
+          relevantIds,
+          retrievedIds,
+          category: categoryName(qa.category),
+          latencyMs: elapsed,
+        });
+
+        // Fuzzy diagnostic (labeled as such in output; never a score).
+        diagnosticFuzzyHits.push(
+          fuzzyOverlapDiagnostic(
+            relevantIds
+              .map((e) => evidenceTextMap.get(e) ?? "")
+              .filter(Boolean),
+            results.map((r) => r.node.content ?? ""),
+          )
+            ? 1
+            : 0,
+        );
       }
-      categoryStats[cat].latencies.push(elapsed);
-      totalQuestions++;
+    }
+  } finally {
+    await memos.close();
+    if (existsSync(dbPath)) unlinkSync(dbPath);
+    // best-sqlite3 sidecar cleanup
+    for (const ext of ["-wal", "-shm"]) {
+      const sidecar = `${dbPath}${ext}`;
+      if (existsSync(sidecar)) unlinkSync(sidecar);
     }
   }
 
-  await memos.close();
-  if (existsSync(dbPath)) unlinkSync(dbPath);
+  // ─── Score ────────────────────────────────────────────────────────────────
+  const report = aggregateMetrics(evalQueries);
+  const fuzzyRate =
+    diagnosticFuzzyHits.length > 0
+      ? diagnosticFuzzyHits.reduce((s, x) => s + x, 0) /
+        diagnosticFuzzyHits.length
+      : 0;
+  const durationMs = Date.now() - benchStart;
 
-  // Print results
-  console.log("\n=== LOCOMO Retrieval Results (MemOS + Gemma-300M) ===");
-  console.log(
-    `Conversations: ${conversations.length} | Questions: ${totalQuestions} | Top-K: ${topK}`,
-  );
-  console.log("\nCategory          Recall@K  Precision@K  Count  p50(ms)");
-  console.log("----------------------------------------------------------");
+  printReport(report, fuzzyRate, {
+    conversations: conversations.length,
+    questions: evalQueries.length,
+    topK,
+    durationMs,
+    ingestionMs,
+    runtimeInfo,
+    providerKind: providerArgs.provider,
+  });
 
-  const allLatencies: number[] = [];
-  for (const [cat, stats] of Object.entries(categoryStats)) {
-    const catNum = parseInt(cat);
-    const recall = stats.hits / stats.total;
-    const precision = stats.hits / (stats.total * topK);
-    const sorted = [...stats.latencies].sort((a, b) => a - b);
-    const p50 = sorted[Math.floor(sorted.length * 0.5)] || 0;
-    allLatencies.push(...stats.latencies);
-    const name = categoryNames[catNum] || `Cat ${catNum}`;
-    console.log(
-      `${name.padEnd(18)} ${recall.toFixed(4)}      ${precision.toFixed(4)}        ${stats.total}    ${p50}`,
-    );
-  }
-
-  const sortedAll = [...allLatencies].sort((a, b) => a - b);
-  const overallP50Latency = sortedAll[Math.floor(sortedAll.length * 0.5)] || 0;
-  const overallRecall = totalHits / totalQuestions;
-  const overallPrecision = totalHits / (totalQuestions * topK);
-
-  console.log("----------------------------------------------------------");
-  console.log(
-    `Overall           ${overallRecall.toFixed(4)}      ${overallPrecision.toFixed(4)}        ${totalQuestions}    ${overallP50Latency}`,
-  );
-  console.log(
-    `\np50 latency: ${overallP50Latency}ms | Total latency: ${totalLatency}ms`,
-  );
-
-  console.log(
-    "\n--- Competitor Reference Scores (LoCoMo LLM-Judge, mem0.ai/research) ---",
-  );
-  console.log(
-    "Mem0:          92.5% overall | 94.6% single-hop | 95.4% multi-hop | 82.3% open-domain | 92.5% temporal",
-  );
-  console.log(
-    "Zep:           58.44% overall (corrected from original claim of 84%)",
-  );
-  console.log("Letta:         58.10% overall");
-  console.log(
-    "\nNote: Mem0 scores are LLM-Judge (GPT-4o), ours is retrieval recall (no LLM).",
-  );
-  console.log(
-    "Retrieval recall differs from LLM-Judge: LLM-Judge can reason from partial context.",
-  );
-
-  const pct = Math.round(overallRecall * 100);
-  console.log(`\n--- Summary ---`);
-  console.log(
-    `MemOS retrieval recall: ${pct}% (${totalHits}/${totalQuestions})`,
-  );
-  console.log(`Note: This is retrieval recall, not LLM-judge score.`);
-  console.log(
-    `For full LLM-judge evaluation, run: npx tsx scripts/bench-locomo.ts`,
-  );
-  console.log(`(requires OPENAI_API_KEY with credits)`);
-
+  // ─── Write results (SEPARATE file from the LLM-judge bench) ───────────────
+  const outPath = "scripts/bench-locomo-noapi-results.json";
   writeFileSync(
-    "scripts/bench-locomo-results.json",
+    outPath,
     JSON.stringify(
       {
-        provider: "MemOS",
-        timestamp: new Date().toISOString(),
-        conversations: conversations.length,
-        questions: totalQuestions,
-        topK,
-        retrievalRecall: overallRecall,
-        retrievalPrecision: overallPrecision,
-        p50Latency: overallP50Latency,
-        categories: Object.fromEntries(
-          Object.entries(categoryStats).map(([cat, stats]) => [
-            categoryNames[parseInt(cat)] || `cat_${cat}`,
-            { recall: stats.hits / stats.total, count: stats.total },
-          ]),
+        ...benchMetadata(
+          providerArgs,
+          runtimeInfo,
+          {
+            name: "locomo10",
+            path: datasetPath,
+          },
+          retrievalArgs,
         ),
+        benchmark: "locomo-retrieval-only",
+        conversations: conversations.length,
+        questions: evalQueries.length,
+        topK,
+        // Fusion config actually applied — CLI overrides or documented defaults.
+        retrieval: {
+          keywordWeight: retrievalArgs.fusion.keywordWeight ?? 0.8,
+          semanticWeight: retrievalArgs.fusion.semanticWeight ?? 0.2,
+          rrfK: retrievalArgs.fusion.rrfK ?? 60,
+          trustFloor: retrievalArgs.fusion.trustFloor ?? 0.7,
+          confidenceWeightStrength:
+            retrievalArgs.fusion.confidenceWeightStrength ?? 0.35,
+          ftsOperator: retrievalArgs.ftsOperator ?? "AUTO",
+          sessionExpansion: retrievalArgs.sessionExpansion,
+          graphExpansion: retrievalArgs.graphExpansion,
+          embedText: retrievalArgs.embedText ?? "summary+content",
+          groupTurns: groupTurnsFlag,
+          semanticDedup: args.includes("--semantic-dedup"),
+          candidateDepth: candidateDepth ?? Math.max(topK * 4, 20),
+          rerank: rerankUrl ?? null,
+          rerankCandidates: rerankCandidatesArg
+            ? parseInt(rerankCandidatesArg.split("=")[1] ?? "50", 10)
+            : null,
+        },
+        durationMs,
+        ingestionMs,
+        metrics: {
+          at5: report.at5,
+          at10: report.at10,
+        },
+        // Diagnostics — NOT official evidence recall.
+        diagnostics: {
+          note:
+            "fuzzyOverlapRate replicates the pre-evidence-ID scoring rule " +
+            "(term-overlap heuristic) as a labeled diagnostic only. It is " +
+            "NOT evidence recall and must not be cited as one.",
+          fuzzyOverlapRate: fuzzyRate,
+        },
+        perQuestion: report.perQuestion.map((q) => ({
+          questionId: q.questionId,
+          category: q.category,
+          relevantIds: q.relevantIds,
+          retrievedIds: q.retrievedIds.slice(0, topK),
+          relevantRetrievedAt5: q.relevantRetrievedAt5,
+          relevantRetrievedAt10: q.relevantRetrievedAt10,
+          latencyMs: q.latencyMs,
+        })),
+        perCategory: report.perCategory,
       },
       null,
       2,
     ),
   );
-  console.log("\nResults saved to scripts/bench-locomo-results.json");
+  console.log(`\nResults saved to ${outPath}`);
+}
+
+// ─── Console report ──────────────────────────────────────────────────────────
+
+function printReport(
+  report: MetricsReport,
+  fuzzyRate: number,
+  ctx: {
+    conversations: number;
+    questions: number;
+    topK: number;
+    durationMs: number;
+    ingestionMs: number;
+    runtimeInfo: {
+      requestedProvider: string;
+      resolvedProvider: string;
+      requestedModel: string;
+      fallbackActive: boolean;
+      fallbackReason: string | null;
+    };
+    providerKind: string;
+  },
+): void {
+  const fmt = (x: number): string => (x * 100).toFixed(1).padStart(5) + "%";
+  const num = (x: number): string => x.toFixed(3);
+
+  console.log("\n=== LoCoMo Retrieval-Only Results (evidence-ID matching) ===");
+  console.log(
+    `Provider: ${ctx.providerKind} → ${ctx.runtimeInfo.resolvedProvider}` +
+      ` | Model: ${ctx.runtimeInfo.requestedModel}` +
+      ` | fallback: ${ctx.runtimeInfo.fallbackActive ? "YES ⚠" : "no"}`,
+  );
+  if (ctx.runtimeInfo.fallbackActive) {
+    console.log(
+      `  fallback reason: ${ctx.runtimeInfo.fallbackReason ?? "unknown"}`,
+    );
+  }
+  console.log(
+    `Conversations: ${ctx.conversations} | Questions: ${ctx.questions} | Top-K: ${ctx.topK}`,
+  );
+  console.log(
+    `Duration: ${ctx.durationMs}ms (ingestion ${ctx.ingestionMs}ms) | Latency p50/p95: ` +
+      `${report.latency.p50}/${report.latency.p95}ms`,
+  );
+
+  console.log("\nMetric                       @5        @10");
+  console.log("─────────────────────────────────────────────────");
+  console.log(
+    `Hit rate                     ${fmt(report.at5.hitRate)}  ${fmt(report.at10.hitRate)}`,
+  );
+  console.log(
+    `Evidence recall (per-Q avg)  ${fmt(report.at5.evidenceRecall)}  ${fmt(report.at10.evidenceRecall)}`,
+  );
+  console.log(
+    `Evidence recall (micro)      ${fmt(report.at5.evidenceRecallMicro)}  ${fmt(report.at10.evidenceRecallMicro)}`,
+  );
+  console.log(
+    `All-evidence recall          ${fmt(report.at5.allEvidenceRecall)}  ${fmt(report.at10.allEvidenceRecall)}`,
+  );
+  console.log(
+    `Precision                    ${fmt(report.at5.precision)}  ${fmt(report.at10.precision)}`,
+  );
+  console.log(
+    `MRR                          ${num(report.at5.mrr)}    ${num(report.at10.mrr)}`,
+  );
+  console.log(
+    `nDCG                         ${num(report.at5.ndcg)}    ${num(report.at10.ndcg)}`,
+  );
+
+  console.log("\nPer category (@10, macro rows — official LoCoMo categories):");
+  console.log(
+    "Category       Qs   Hit@10   EvRec@10  AllEv@10  Prec@10  MRR     nDCG@10",
+  );
+  console.log(
+    "───────────────────────────────────────────────────────────────────",
+  );
+  for (const [cat, m] of Object.entries(report.perCategory)) {
+    console.log(
+      `${cat.padEnd(14)} ${String(m.questionCount).padStart(4)}  ` +
+        `${fmt(m.hitAt10)}  ${fmt(m.evidenceRecallAt10)}    ${fmt(m.allEvidenceRecallAt10)}  ` +
+        `${fmt(m.precisionAt10)}  ${num(m.mrr)}  ${num(m.ndcgAt10)}`,
+    );
+  }
+
+  console.log("\n── Diagnostics (NOT official metrics) ──");
+  console.log(
+    `Legacy fuzzy-overlap pass rate: ${fmt(fuzzyRate)} — the scoring rule this ` +
+      `bench used before evidence-ID matching; over-counts lexically-similar ` +
+      `utterances. Provided for comparison only.`,
+  );
+
+  console.log(
+    "\nNote: This is retrieval-only evidence recall (deterministic, no LLM), " +
+      "not an LLM-judge score — do not compare it to Mem0/Zep LLM-judge numbers.",
+  );
 }
 
 main().catch((err) => {

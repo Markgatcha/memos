@@ -88,6 +88,7 @@ export type {
   ExperimentalConfig,
   EmbeddingProvider,
   EmbeddingVector,
+  EmbeddingRuntimeInfo,
   EmbeddingRecordInfo,
   EmbeddingNodeStatus,
   EmbeddingNodeStatusInfo,

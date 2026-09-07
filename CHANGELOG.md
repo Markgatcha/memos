@@ -6,6 +6,273 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Full-dataset LoCoMo re-run — fast config wins twice
+
+- **83.2% Hit@10 / 77.9% EvRec@10 / 72.5% AllEv@10 / MRR 0.642 / nDCG
+  0.656** on all 10 conversations — above the previous full run (80.9 /
+  75.6 / 70.3 / 0.633) at **79.7 min instead of 266.6 min (3.3×)**. Config:
+  0.5/0.5 fusion + rerank-100/depth-100 + `--rerank-max-doc-chars=600` +
+  `--semantic-dedup`. Per category: single_hop 89.7%, multi_hop 86.9%,
+  temporal 85.4%, adversarial 73.3%, open_domain 53.3% Hit@10.
+
+### Weak-cell ablations — balanced fusion wins with a real embedder
+
+- Ablated the weak benchmark cells on convs 0-1 with rerank-200/depth-200:
+  `ftsOperator=OR` is a wash (80.1% Hit@10, multi_hop AllEv drops — OR
+  floods the pool with partial matches); **`0.5/0.5` fusion wins overall
+  AND on the weak cells**: Hit@10 83.1% (+1.6pp), EvRec@10 77.9% (+2.3pp),
+  AllEv@10 73.2% (+3.0pp), open_domain Hit 72.7% (+9.1pp), multi_hop AllEv
+  30.2% (+6.9pp). Recommendation recorded: 0.5/0.5 with a real embedder +
+  reranker; 0.8/0.2 stays the default for the hash embedder. Artifacts:
+  `scripts/bench-locomo-ablation-{or,5050}.json`.
+
+### Added — UX + token budget + memory knob + package updates
+
+- **`memos doctor`** — one-command health check: store counts, per-model
+  embedding counts, partial embedding coverage (→ reindex suggestion),
+  embedding endpoint reachability, a live semantic-search probe, and rerank
+  endpoint health. `--json` for scripts.
+- **Token-lean MCP defaults**: `memos_context_pack` now serializes as
+  **toon-compact** by default (~70% fewer tokens than JSON, identical
+  information); `memos_search` accepts **`compact: true`** for trimmed
+  results (id, content, score, type, tags).
+- **`storageOptions.vectorCacheEntries`** — bound the in-process parsed
+  vector cache (default 25,000 ≈ 100MB at 1024 dims).
+- **Package updates**: jest 30.5.1, oxlint 1.81.0, tsx 4.23.13,
+  zod 4.5.4, @swc/core 1.16.2, @types/node 26.4.1; devDependency
+  `@huggingface/transformers` 4.2.0 added (real fastembed coverage).
+  `FastEmbedEmbeddingProvider` fixed for the v4 callable-pipeline API —
+  the previous `.feature` call shape never worked on the maintained
+  package. FastEmbed real-pipeline tests spawn a plain node process
+  (onnxruntime tensors live in Node's realm, which jest's VM realm
+  rejects).
+
+### Results — full-dataset benchmarks (LFM2.5 + prefixes + two-stage rerank)
+
+- **LoCoMo, all 10 conversations (1,986 questions)**: Hit@10 **80.9%**,
+  EvRec@10 **75.6%**, AllEv@10 **70.3%**, MRR 0.633, nDCG@10 0.643
+  (hash-baseline session start: 62.6% / 52.5%). Per category: single_hop
+  87.0%, multi_hop 83.7%, temporal 81.9%, adversarial 73.1%, open_domain
+  51.1% Hit@10.
+- **HotPotQA distractor (500 questions, ~4.9k-paragraph corpus)**:
+  Hit@10 **100%**, EvRec@10 **96.3%**, AllEv@10 **92.6%**, MRR 0.977 —
+  comparison questions perfect, bridge 95.4% EvRec@10. Committed result
+  JSONs: `scripts/bench-locomo-noapi-results.json`,
+  `scripts/bench-hotpot-results.json`.
+
+### Performance — in-memory vector cache + cache hygiene (bug hunt wave 2)
+
+- **In-memory vector cache in `SQLiteStorage`.** The semantic leg re-fetched
+  EVERY stored vector BLOB from SQLite on every query (a 5.5k-memory store
+  memcpy'd ~22MB per query; a 10-conv LoCoMo run memcpy'd ~35GB over its
+  lifetime). `querySimilarEmbeddings` is now two-phase: a cheap id-only
+  SELECT, then vectors served from a bounded (25k-vector) parsed
+  `Float32Array` cache with chunked miss-fetch and exact invalidation on
+  `saveEmbedding` / `deleteEmbeddingsByModel` / `deleteAllNodes`.
+- **Fixed: search cache could grow unbounded.** Eviction only removed
+  EXPIRED entries — a sweep of unique queries (i.e. every benchmark) pushed
+  the cache past its 128-entry cap forever. Now falls back to oldest-first
+  eviction.
+- Verified: full suite green; stage profile warm query ≈ 50ms
+  (embed 7.6 + FTS 3.2 + semantic 8 + hybrid+rerank 18.4).
+
+### Performance — benchmark + server throughput (results identical)
+
+- **Rerank server batch sizing: 200-doc rerank 0.73s → 0.07-0.11s (~7-10×).**
+  llama-server was processing 200 (query, doc) pairs in 2048-token waves;
+  `-c 16384 -b 16384 -ub 8192 --parallel 4` cuts the wave count ~4×.
+  Launch recipe updated in `docs/benchmark-comparison.md`.
+- **Zero-copy Float32Array vector decoding.** `querySimilarEmbeddings`
+  decoded every stored vector element-by-element (`readFloatLE` per
+  component — millions of calls per query on large stores); BLOB rows now
+  go through an aligned `Float32Array` view (`cosineSimilarity` widened to
+  `ArrayLike<number>`; legacy JSON rows keep the old path). Values are
+  bit-identical.
+- **Internal searches skip the reranker.** The evidence-learning candidate
+  pass (8 candidates per store) hit the cross-encoder on every `store()`;
+  it evaluates ALL candidates by pair similarity, so ordering never changes
+  its decision — `hybridSearch(..., { internal: true })` now skips rerank
+  there. User-facing `search()` and `contextPack()` still rerank.
+- **Batched ingestion in the benchmarks.** `embeddingQueue` gained
+  `batchSize` forwarding through `MemOSConfig` (it existed on the queue but
+  was silently dropped by the constructor); benches now ingest with
+  `concurrency 4 + batchSize 16` over the OpenAI-compatible array-input
+  endpoint — LoCoMo ingestion 120s → 7.7s (15×), full 2-conv run ~20 min →
+  ~7 min. Hit/Recall metrics are unchanged; MRR wiggles ±0.3% from GPU
+  batch-shape float non-determinism (inherent to batched inference, not a
+  code change).
+
+### Added — "plugin for any harness" distribution + peer benchmarks
+
+- **MCP server now exposes the FULL capability surface: 6 → 14 tools.** The
+  SDK rewrite had silently dropped the temporal/trust/extraction tools the
+  changelog claimed. New tools: `memos_context_pack` (token-budgeted
+  TOON/TOON-compact prompt-injection slice — the main tool for coding
+  agents), `memos_search_temporal`, `memos_set_validity`, `memos_supersede`,
+  `memos_set_trust`, `memos_extract_facts`, `memos_diagnostics`,
+  `memos_reindex`. Server `instructions` now tell agents to proactively
+  store durable facts and recall with `memos_context_pack`.
+
+- **`memos connect <target>`** — registers the stdio MCP server with any
+  agentic harness: `claude-code` (prints `claude mcp add ...` + writes
+  project `.mcp.json`), `cursor`, `windsurf`, `cline`, `opencode`, `codex`
+  (TOML), `gemini`, `generic`. Prints config by default; `--write` saves
+  it (`--force` overwrites). `MEMOS_DB_PATH` / `MEMOS_EMBEDDING_*` env vars
+  travel into the generated config automatically. `memos mcp` now also
+  honors `MEMOS_EMBEDDING_*`.
+
+- **Claude Code plugin + marketplace** (`plugin/`, `.claude-plugin/marketplace.json`):
+  `/plugin marketplace add Markgatcha/memos` → `/plugin install
+  memos@memos-marketplace` bundles the MCP server, `/memos` + `/recall`
+  slash commands, and the `memos-memory` skill (when to store / recall /
+  supersede). Docs: `docs/integrations.md`.
+
+- **Memory-haystack benchmark** (`scripts/bench-haystack.ts`) — the
+  needle-in-a-haystack test adapted to memory stores: 1k-10k distractor
+  memories with unique access-code needles planted across depths.
+  Local-hash default: Hit@1/Hit@10/MRR/latency per corpus size
+  (100% Hit@1 at 1k, p50 10ms; runs CPU-only, deterministic).
+
+- **HotPotQA retrieval-only benchmark** (`scripts/bench-hotpot.ts`) — the
+  multi-hop QA dataset Cognee uses in its published memory evals (vs Mem0,
+  Graphiti, LightRAG). 500 validation questions, ~4.9k deduplicated
+  Wikipedia paragraphs ingested corpus-wide, scored by supporting-paragraph
+  title ID matching (Hit@K / EvRec@K / AllEv@K / MRR / nDCG, bridge vs
+  comparison). Dataset fetched from the HuggingFace datasets-server API
+  (CC BY-SA); runs with any provider + the two-stage reranker.
+
+
+### Added — two-stage reranking (the big retrieval lever)
+
+- **`experimental.rerank` — cross-encoder re-scoring after fusion.** The
+  first stage (hybrid search) recalls; a cross-encoder served over HTTP
+  `POST {endpoint}/rerank` (llama-server `--rerank` with
+  `bge-reranker-v2-m3-Q8_0`) re-scores the top-`candidates` fused results
+  and the final ranking follows it. Logits are squashed to [0,1] into
+  `scores.rerank`; unranked candidates keep fused order behind the head;
+  a downed endpoint degrades to the fused order (graceful). Bench flags:
+  `--rerank-url= --rerank-model= --rerank-candidates= --candidate-depth=`.
+  Measured on LoCoMo convs 0-1 (302 questions, LFM2.5 + prefixes, default
+  fusion): Hit@10 68.2% → 81.1%, EvRec@10 63.4% → 75.5%, AllEv@10 58.9% →
+  70.2%, MRR 0.469 → 0.606, nDCG@10 0.494 → 0.629. Reranking a wider head
+  is strictly better (rerank-50 76.8% < rerank-200 81.1%).
+
+- **`SearchFilter.candidateDepth`** — widens the per-leg recall pool beyond
+  `max(limit*4, 20)` for rerank/expansion pipelines.
+
+- **Bench: `--group-turns`** ingests conversational exchanges (utterance
+  pairs) as one memory carrying both dia_ids. NET-NEGATIVE on LoCoMo
+  (Hit@10 68.2% → 66.6%; multi_hop collapses: fused nodes waste slots on
+  the partner utterance) — kept as an off-by-default ablation flag with
+  honest numbers. (LoCoMo sessions strictly alternate speakers, so
+  same-speaker grouping is a no-op on this dataset.)
+
+### Added — asymmetric-embedding support, retrieval tuning & fixes (LFM2.5 wave)
+
+- **Asymmetric query/document prefixes are now live end-to-end.** Retrieval
+  models trained with query-side instructions (Liquid **LFM2.5-Embedding-350M**,
+  e5) silently degrade without `"query: "` / `"document: "` — and the hot path
+  never applied them. `semanticSearch()` now routes queries through
+  `embedQuery()`; `OpenAICompatibleEmbeddingProvider` (llama.cpp / vLLM /
+  OpenAI) gained `queryPrefix` + `documentPrefix` options, `embedQuery()`,
+  and a true `batchEmbed()` (one array request); `OllamaEmbeddingProvider`
+  gained `documentPrefix` + `batchEmbed()` and its `embedDocuments()` no
+  longer references a nonexistent method. Prefixes flow from
+  `EmbeddingConfig.queryPrefix/documentPrefix` and are applied inside the
+  providers, so every call site (store, dedupe, extractFacts, reindex) is
+  covered. Verified: no-prefix vs prefix on LoCoMo convs 0–1 (302 questions,
+  0.9/0.1 fusion) → EvRec@10 62.8% → 63.7%, nDCG@10 48.6% → 49.6%.
+
+- **`EmbeddingQueue` micro-batching (`embeddingQueue.batchSize`).** Workers
+  drain up to `batchSize` pending jobs into one `batchEmbed()` call (group
+  pickup is deferred one microtask so synchronous ingest bursts coalesce
+  into full batches); a failed batch falls back to the per-job retry path.
+  Default 1 = legacy behavior.
+
+- **Model-aware semantic leg + `reindexEmbeddings`.** `querySimilarEmbeddings`
+  now takes the model name and compares only rows stored by the same model
+  (two models can share a dimensionality — dims equality alone mixed
+  incompatible vectors silently). `memos.reindexEmbeddings({ purgeStale })`
+  re-embeds the store under the current provider, batched through
+  `embedDocuments`, with `getEmbeddingModelCounts()`/`deleteEmbeddingsByModel()`
+  on the storage adapter and a `memos reindex-embeddings [--purge-stale]` CLI
+  command.
+
+- **`MemOSConfig.fusion`** — `fuseResults()` options (RRF K, keyword/semantic
+  weights, trust floor, confidence strength) are now configurable per
+  instance instead of hardcoded at the only `hybridSearch` call site;
+  `FusionOptions` moved to `types.ts` (re-exported from `retrieval.ts`).
+
+- **Expansion legs (opt-in).** `SearchFilter.sessionExpansion` (declared but
+  dead since introduction) is now implemented: top-5 fused results pull in
+  their `metadata.sessionId`/`instanceId` siblings at 0.85^k of the seed
+  score (max 10). `experimental.graphExpansion` follows graph edges from the
+  top-3 seeds (max 5 neighbours, `scores.graph` breakdown). Both are OFF by
+  default; on LoCoMo session expansion HURTS (same-session distractors
+  flood top-10: Hit@10 68.2% → 64.9%) — treat as a LongMemEval-shaped lever.
+
+- **Semantic-fusion threshold floor.** The hybrid semantic leg previously ran
+  at threshold 0, letting cosine-0 (unrelated) memories vote in RRF and
+  occupy candidate slots. Now floored at 0.05.
+
+- **`embeddings.embedText: "content" | "summary+content"`** — what gets
+  embedded at store time is now a choice. A/B on LoCoMo: content-only is
+  WORSE (Hit@10 68.2% → 62.3%); the extractive summary adds real signal.
+  Default unchanged.
+
+- **`ftsOperator` honored.** `"OR"` forces the recall-first keyword query;
+  `"AUTO"` keeps the historical AND-then-OR-on-empty behavior (the docstring
+  previously described an unimplemented merge; docs now match code).
+
+- **Fixed: search-cache key covered only 6 of ~15 filter fields.** Two
+  searches differing by `type`, `metadata`, `source`, `minTrustScore`,
+  `validAt`, or `offset` collided for the 5s TTL (offset pagination returned
+  page one). The key is now a stable sorted-keys serialization of the full
+  filter.
+
+- **Fixed: FTS keyword leg ignored `type`/importance filters.**
+  `search({ query, type })` leaked keyword hits of any type into hybrid
+  results (the structured branch already filtered them); `n.type` /
+  `n.importance` now join the FTS WHERE clause.
+
+- **Python server bridge honors `MEMOS_EMBEDDING_*` env vars**
+  (`_BRIDGE_SCRIPT` constructed `new MemOS({ dbPath })` and dropped every
+  embedding setting — the "Python server" always ran the hash embedder).
+  Adds `_PROVIDER/_MODEL/_BASE_URL/_API_KEY/_DIMENSIONS/_QUERY_PREFIX/
+  _DOCUMENT_PREFIX/_BATCH_SIZE`.
+
+- **Benchmark harness: shared retrieval-ablation flags.** All bench scripts
+  accept `--query-prefix/--document-prefix` (env `EMBEDDING_QUERY_PREFIX`/
+  `EMBEDDING_DOCUMENT_PREFIX`) plus `--keyword-weight/--semantic-weight/
+  --rrf-k/--trust-floor/--confidence-weight-strength/--embed-text/
+  --fts-operator/--session-expansion/--graph-expansion`. Applied settings are
+  recorded in the result JSON (`metadata.retrieval`,
+  `metadata.embedding.queryPrefix/documentPrefix`). LoCoMo with
+  LFM2.5-Embedding-350M via llama.cpp (convs 0–1, 302 questions, 0.9/0.1,
+  prefixes): Hit@10 68.9% / EvRec@10 63.7% / AllEv@10 58.9% / MRR 0.469 /
+  nDCG@10 0.496 (hash baseline on the same slice: 62.6% / 52.5%); synthetic
+  quality harness with the same model: recall@10 100%, MRR 0.934.
+
+
+### Fixed — benchmark correctness (Priority 1)
+
+- **LoCoMo no-API benchmark now scores by direct evidence-ID matching.** `scripts/bench-locomo-noapi.ts` previously decided "evidence found" with a fuzzy term-overlap heuristic (≥2 shared words, or speaker prefix + 1 word), which over-counted: on conversations 0–1 (304 questions, top-10) the fuzzy rule passes 96.7% while honest evidence-ID matching yields Hit@10 62.6% / micro evidence-recall 52.5%. Ingestion now preserves each utterance's official `dia_id` (the exact value `qa.evidence` references) in memory metadata, and scoring compares retrieved `dia_id`s directly against `qa.evidence`. The legacy fuzzy rule is kept **only as a labeled diagnostic** (`diagnostics.fuzzyOverlapRate`) so the two conventions can be compared — it is never reported as evidence recall.
+- **Correct LoCoMo category mapping.** Both LoCoMo benchmark scripts mapped categories 1↔4 backwards (1→"single-hop", 4→"multi-hop"). The official evaluation code (`task_eval/evaluation.py`) and the dataset's own evidence distribution (276/282 cat-1 questions carry 2+ evidence IDs; 795/841 cat-4 questions exactly 1) confirm: **1 = multi-hop, 4 = single-hop**. Per-category scores published under the old labels were attached to the wrong questions.
+- **Full deterministic retrieval metrics.** New shared metrics module (`scripts/lib/bench-metrics.ts`): Hit@K, Evidence Recall@K (per-question mean + pooled micro), All-Evidence Recall@K (a multi-evidence question counts only when EVERY evidence item is retrieved), Precision@K (mean + micro), MRR, nDCG@K (binary gains), per-category macro rows, and nearest-rank p50/p95 latency. Questions with empty evidence lists (LoCoMo has 4, all category 3) are excluded from recall aggregates and never count as successes.
+- **Embedding fallback is now visible — and optionally fatal.** `FastEmbedEmbeddingProvider` silently served a deterministic local feature hash whenever the transformers package failed to load; benchmark runs configured for `fastembed` (including the committed `bench-locomo-results.json`, produced with no transformers installed) were unknowingly scoring the hash baseline. Providers now expose `getRuntimeInfo()` (`EmbeddingRuntimeInfo`: requested/resolved provider + model, dimensions requested/observed, fallback flag + reason), benchmarks print a warning when the fallback is active, and `--fail-on-embedding-fallback` terminates with exit code 1 instead. Default SDK behavior (resilient fallback) is unchanged.
+- **LongMemEval ingestion: session timestamps.** `scripts/bench-longmemeval.ts` previously stamped every haystack session with the QUESTION date. Sessions now store their own `haystack_dates[i]` timestamp plus `sessionId`, chronological position, `questionDate`, and benchmark instance id; retrieval-only scoring matches retrieved `sessionId`s against the official `answer_session_ids` (`--retrieve-only`, no API key).
+- **Separate result files.** The LoCoMo LLM-judge bench, LoCoMo retrieval-only bench, and LongMemEval bench previously all overwrote `scripts/bench-locomo-results.json`. They now write `bench-locomo-llmjudge-results.json`, `bench-locomo-noapi-results.json`, and `bench-longmemeval-results.json` respectively.
+- **Reproducibility metadata (v2 schema).** Every benchmark result JSON records: schema version, timestamp, git commit SHA + dirty-tree flag, dataset name/path/SHA-256, provider kind, resolved provider/model, fallback status + reason, dimensions, Node version, OS, benchmark duration, and p50/p95 latency.
+- **Shared provider loader for benchmarks.** `scripts/lib/bench-common.ts`: all benchmark scripts accept `--provider=local-hash|fastembed|ollama|openai-compatible|voyage|cohere`, `--model=`, `--dimensions=`, `--base-url=`, `--api-key=` (CLI > `EMBEDDING_*` env vars > default), and throw on unknown providers instead of substituting. `docs/benchmark-comparison.md` documented an `EMBEDDING_PROVIDER=voyage` env command that `bench-quality.ts` never read — the documented commands now actually work.
+- **Benchmark scripts are now typechecked.** `tsconfig.scripts.json` + `npm run typecheck:scripts` cover the benchmark scripts (they were previously outside `tsconfig.json`, which let a nonexistent `embeddingQueue.batchSize` option and an `unknown`-typed timestamp flow silently). Two latent type errors fixed as a result.
+- **`bench-locomo.ts` output bugs:** literal `\n` strings printed instead of newlines in two places; adversarial category (5) was computed but never reported.
+
+### Added
+
+- `EmbeddingRuntimeInfo` type + optional `EmbeddingProvider.getRuntimeInfo()` (exported from the package root) so any caller can verify which embedding backend actually loaded.
+- `__tests__/bench-metrics.test.ts` (21 tests): direct evidence-ID matching, multi-evidence partial retrieval, K-window effects, no-relevant and empty-evidence handling, duplicate-result dedup, macro/micro aggregation, latency percentiles — all hand-computed expectations.
+- `__tests__/bench-common.test.ts` (16 tests): provider arg parsing (CLI > env), unknown-provider rejection, strict-mode fallback termination (injectable exit hook), dataset hashing, metadata assembly.
+- `npm run typecheck:scripts` and `npm run bench:longmemeval:retrieve` script entries.
 
 ### Changed
 

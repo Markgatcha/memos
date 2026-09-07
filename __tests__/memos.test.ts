@@ -5,7 +5,7 @@
 import { MemOS } from "../src/memory";
 import { GraphEngine, textSimilarity, generateId } from "../src/graph";
 import { getMcpTools } from "../src/mcp";
-import { MemoryNode } from "../src/types";
+import type { MemoryNode } from "../src/types";
 
 // Use in-memory SQLite for tests
 const TEST_DB = ":memory:";
@@ -128,6 +128,14 @@ describe("MemOS MCP adapter", () => {
       "memos_forget",
       "memos_graph",
       "memos_context",
+      "memos_context_pack",
+      "memos_search_temporal",
+      "memos_set_validity",
+      "memos_supersede",
+      "memos_set_trust",
+      "memos_extract_facts",
+      "memos_diagnostics",
+      "memos_reindex",
     ]);
   });
 });

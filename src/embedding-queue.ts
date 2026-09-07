@@ -14,6 +14,9 @@
  *   - `enqueue()` is fire-and-forget — returns a job id immediately.
  *   - Workers are pulled in FIFO order. Concurrency is bounded by
  *     `EmbeddingQueueConfig.concurrency` (default 2).
+ *   - When `batchSize` > 1 and the provider implements `batchEmbed`,
+ *     a worker drains up to `batchSize` pending jobs into one batched
+ *     call; a failed batch falls back to per-job retries.
  *   - Failures are retried with exponential backoff up to `maxRetries`
  *     (default 3) before the job is marked `failed` and an
  *     `embedding:failed` event fires.
@@ -85,6 +88,14 @@ export interface EmbeddingQueueConfig {
   provider: EmbeddingProvider;
   /** Maximum number of concurrent in-flight embed calls. Default 2. */
   concurrency?: number;
+  /**
+   * Maximum number of pending jobs drained into a single `batchEmbed()`
+   * call when the provider supports batching (e.g. Ollama and
+   * OpenAI-compatible servers accept array input). Default 1 = one
+   * `embed()` call per job (legacy behavior). Groups that fail as a batch
+   * fall back to the per-job retry path.
+   */
+  batchSize?: number;
   /** Maximum number of jobs buffered when workers are saturated. Default 10000. */
   maxQueueSize?: number;
   /** Maximum number of retry attempts per job. Default 3. */
@@ -98,6 +109,7 @@ export interface EmbeddingQueueConfig {
 }
 
 const DEFAULT_CONCURRENCY = 2;
+const DEFAULT_BATCH_SIZE = 1;
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_BACKOFF_MS = 250;
@@ -130,6 +142,7 @@ type InternalJob = EmbeddingJob;
 export class EmbeddingQueue {
   private readonly provider: EmbeddingProvider;
   private readonly concurrency: number;
+  private readonly batchSize: number;
   private readonly maxQueueSize: number;
   private readonly maxRetries: number;
   private readonly retryBackoffMs: number;
@@ -138,18 +151,21 @@ export class EmbeddingQueue {
 
   /** Pending jobs not yet picked up by a worker. */
   private pending: InternalJob[] = [];
-  /** Currently running jobs, by worker slot index. */
-  private readonly running: Array<InternalJob | null>;
+  /** Currently running job groups, by worker slot index. */
+  private readonly running: Array<InternalJob[] | null>;
   /** Job index by id, for status queries. */
   private readonly jobs: Map<string, InternalJob> = new Map();
   /** Resolvers for `flush()` callers, resolved when the queue drains. */
   private readonly drainWaiters: Array<() => void> = [];
   /** Set true after `close()` so enqueue can reject and workers exit. */
   private closed = false;
+  /** Guards one-at-a-time microtask deferral of group pickup (see schedule()). */
+  private scheduleQueued = false;
 
   constructor(config: EmbeddingQueueConfig) {
     this.provider = config.provider;
     this.concurrency = Math.max(1, config.concurrency ?? DEFAULT_CONCURRENCY);
+    this.batchSize = Math.max(1, config.batchSize ?? DEFAULT_BATCH_SIZE);
     this.maxQueueSize = Math.max(
       1,
       config.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE,
@@ -161,7 +177,7 @@ export class EmbeddingQueue {
     );
     this.onPersist = config.onPersist;
     this.onStatusChange = config.onStatusChange;
-    this.running = new Array<InternalJob | null>(this.concurrency).fill(null);
+    this.running = new Array<InternalJob[] | null>(this.concurrency).fill(null);
   }
 
   /**
@@ -206,7 +222,9 @@ export class EmbeddingQueue {
   /** Number of jobs currently being processed. */
   activeCount(): number {
     let n = 0;
-    for (const r of this.running) if (r) n += 1;
+    for (const group of this.running) {
+      if (group) n += group.length;
+    }
     return n;
   }
 
@@ -275,19 +293,71 @@ export class EmbeddingQueue {
     }
   }
 
-  /** Pull the next pending job into an idle worker slot, if any. */
+  /**
+   * Pull pending jobs into idle worker slots. The actual pickup is
+   * deferred by one microtask so a synchronous enqueue burst (e.g. an
+   * ingestion loop storing N memories back-to-back) coalesces into
+   * full `batchSize` groups instead of starting a half-empty group per
+   * enqueue.
+   */
   private schedule(): void {
+    if (this.scheduleQueued) return;
+    this.scheduleQueued = true;
+    queueMicrotask(() => {
+      this.scheduleQueued = false;
+      this.scheduleNow();
+    });
+  }
+
+  private scheduleNow(): void {
     for (let i = 0; i < this.running.length; i += 1) {
       if (this.running[i] !== null) continue;
-      const job = this.pending.shift();
-      if (!job) break;
-      this.running[i] = job;
+      if (this.pending.length === 0) break;
+      const group = this.pending.splice(0, this.batchSize);
+      this.running[i] = group;
       // Fire-and-forget worker loop.
-      void this.runJob(i, job);
+      void this.runGroup(i, group);
     }
   }
 
-  private async runJob(slot: number, job: InternalJob): Promise<void> {
+  private async runGroup(slot: number, group: InternalJob[]): Promise<void> {
+    const canBatch =
+      group.length > 1 && typeof this.provider.batchEmbed === "function";
+    if (!canBatch) {
+      for (const job of group) {
+        await this.runJobWithRetries(job);
+      }
+    } else {
+      for (const job of group) {
+        this.notifyStatus(job, "running", null);
+      }
+      try {
+        const vectors = await this.provider.batchEmbed!(
+          group.map((job) => job.text),
+        );
+        for (const [index, job] of group.entries()) {
+          job.attempts = 1;
+          job.vector = vectors[index] ?? null;
+          job.model = this.provider.model;
+          if (this.onPersist) {
+            await this.onPersist(job.nodeId, job.vector, this.provider.model);
+          }
+          this.notifyStatus(job, "complete", null);
+        }
+      } catch {
+        // The batch as a whole failed — fall back to the per-job retry
+        // path so one poisoned text cannot silently fail its whole group.
+        for (const job of group) {
+          job.attempts = 0;
+          await this.runJobWithRetries(job);
+        }
+      }
+    }
+    this.running[slot] = null;
+    this.afterJob();
+  }
+
+  private async runJobWithRetries(job: InternalJob): Promise<void> {
     this.notifyStatus(job, "running", null);
     let attempt = 0;
     let lastError: Error | null = null;
@@ -303,8 +373,6 @@ export class EmbeddingQueue {
           await this.onPersist(job.nodeId, vector, this.provider.model);
         }
         this.notifyStatus(job, "complete", null);
-        this.running[slot] = null;
-        this.afterJob();
         return;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
@@ -322,8 +390,6 @@ export class EmbeddingQueue {
       "failed",
       lastError ? lastError.message : "unknown error",
     );
-    this.running[slot] = null;
-    this.afterJob();
   }
 
   /** After a worker slot frees, schedule the next pending job and

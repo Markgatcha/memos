@@ -17,7 +17,13 @@
  * while embeddings rescue paraphrases that share no vocabulary.
  */
 
-import type { MemoryNode, ScoredMemory } from "./types.js";
+import type { FusionOptions, MemoryNode, ScoredMemory } from "./types.js";
+
+// Re-exported so existing `import { FusionOptions } from "./retrieval.js"`
+// callers keep working; the definition lives in `types.ts` because
+// `MemOSConfig.fusion` references it and types.ts must stay
+// dependency-free.
+export type { FusionOptions } from "./types.js";
 import { confidenceWeight } from "./confidence-machine.js";
 
 /** Default RRF constant (Cormack et al., 2009). */
@@ -71,37 +77,6 @@ export const DEFAULT_RECENCY_HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
  * facts ingested twice).
  */
 export const RECENCY_EPSILON = 1e-9;
-
-export interface FusionOptions {
-  /** RRF constant K. Larger K flattens rank differences. Default 60. */
-  rrfK?: number;
-  /** Weight of the keyword leg. Default 0.8. */
-  keywordWeight?: number;
-  /** Weight of the semantic leg. Default 0.2. */
-  semanticWeight?: number;
-  /**
-   * Lower bound of the trust multiplier (applied as
-   * `trustFloor + trustScore * (1 - trustFloor)`). Default 0.7.
-   * Set to 1.0 to disable trust weighting.
-   */
-  trustFloor?: number;
-  /**
-   * Strength of the confidence/trust combined multiplier from the
-   * evidence state machine. Default 0.35. Set to 0 to disable
-   * confidence-aware ranking.
-   */
-  confidenceWeightStrength?: number;
-  /**
-   * Recency half-life in ms for the tie-break among near-equal scores.
-   * Default 30 days. Set to 0 to disable recency tie-breaking.
-   */
-  recencyHalfLifeMs?: number;
-  /**
-   * Reference "now" for recency computations. Defaults to wall-clock;
-   * injectable for deterministic tests/benchmarks.
-   */
-  nowMs?: number;
-}
 
 /**
  * Fuse two ranked retrieval lists into one via weighted Reciprocal Rank

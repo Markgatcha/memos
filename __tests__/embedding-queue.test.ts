@@ -136,7 +136,9 @@ describe("EmbeddingQueue retry", () => {
     queue.enqueue("n", "t");
     await queue.flush();
     const jobs = queue.pendingJobs();
-    const failed = [...queue["jobs"].values()].find((j) => j.status === "failed");
+    const failed = [...queue["jobs"].values()].find(
+      (j) => j.status === "failed",
+    );
     expect(failed).toBeDefined();
     expect(failed!.attempts).toBe(3); // 1 initial + 2 retries
     expect(jobs.filter((j) => j.status === "failed")).toHaveLength(0); // terminal
@@ -187,7 +189,11 @@ describe("EmbeddingQueue.onPersist", () => {
   test("invokes onPersist with vector and model on success", async () => {
     const provider = new ScriptedProvider();
     provider.resolveNextWith = [0.1, 0.2, 0.3, 0.4];
-    const persisted: Array<{ nodeId: string; vector: EmbeddingVector; model: string }> = [];
+    const persisted: Array<{
+      nodeId: string;
+      vector: EmbeddingVector;
+      model: string;
+    }> = [];
     const queue = new EmbeddingQueue({
       provider,
       onPersist: async (nodeId, vector, model) => {
@@ -209,7 +215,11 @@ describe("EmbeddingQueue.onPersist", () => {
 describe("EmbeddingQueue.onStatusChange", () => {
   test("fires queued, running, complete for a successful job", async () => {
     const provider = new ScriptedProvider();
-    const events: Array<{ nodeId: string; status: string; error: string | null }> = [];
+    const events: Array<{
+      nodeId: string;
+      status: string;
+      error: string | null;
+    }> = [];
     const queue = new EmbeddingQueue({
       provider,
       onStatusChange: (nodeId, status, error) => {
@@ -238,7 +248,13 @@ describe("EmbeddingQueue.onStatusChange", () => {
 
     queue.enqueue("n", "t");
     await queue.flush();
-    expect(events).toEqual(["queued", "running", "retrying", "running", "complete"]);
+    expect(events).toEqual([
+      "queued",
+      "running",
+      "retrying",
+      "running",
+      "complete",
+    ]);
   });
 });
 
@@ -261,5 +277,105 @@ describe("EmbeddingQueue flush and close", () => {
     await queue.close();
     expect(queue.size()).toBe(0);
     expect(provider.calls).toHaveLength(5);
+  });
+});
+
+// --- batch draining -----------------------------------------------------------
+
+/** A provider that batches, recording every group it receives. */
+class BatchProvider implements EmbeddingProvider {
+  public readonly id = "batched";
+  public readonly model = "batched-v1";
+  public readonly dimensions = 4;
+  public readonly batchCalls: string[][] = [];
+  public readonly singleCalls: string[] = [];
+  /** When true, every batchEmbed() call throws (simulates a poisoned batch). */
+  public failBatches = false;
+
+  async embed(text: string): Promise<EmbeddingVector> {
+    this.singleCalls.push(text);
+    return [text.length, 0, 0, 0];
+  }
+
+  async batchEmbed(texts: string[]): Promise<EmbeddingVector[]> {
+    this.batchCalls.push(texts);
+    if (this.failBatches) throw new Error("batch failure");
+    return texts.map((t) => [t.length, 0, 0, 0]);
+  }
+}
+
+describe("EmbeddingQueue batch draining", () => {
+  test("drains pending jobs into batchSize groups and persists in order", async () => {
+    const provider = new BatchProvider();
+    const persisted: string[] = [];
+    const queue = new EmbeddingQueue({
+      provider,
+      concurrency: 1,
+      batchSize: 4,
+      onPersist: async (nodeId) => {
+        persisted.push(nodeId);
+      },
+    });
+    for (let i = 0; i < 5; i += 1) queue.enqueue(`n${i}`, `t${i}`);
+    await queue.flush();
+
+    // One batch of 4, then a group of 1 (too small to batch -> single embed).
+    expect(provider.batchCalls).toEqual([["t0", "t1", "t2", "t3"]]);
+    expect(provider.singleCalls).toEqual(["t4"]);
+    expect(persisted).toEqual(["n0", "n1", "n2", "n3", "n4"]);
+    expect(queue.getJob(queue.pendingJobs()[0]?.id ?? "")).toBeNull();
+  });
+
+  test("batchSize 1 keeps one embed call per job", async () => {
+    const provider = new BatchProvider();
+    const queue = new EmbeddingQueue({ provider, concurrency: 1 });
+    for (let i = 0; i < 3; i += 1) queue.enqueue(`n${i}`, `t${i}`);
+    await queue.flush();
+
+    expect(provider.batchCalls).toHaveLength(0);
+    expect(provider.singleCalls).toEqual(["t0", "t1", "t2"]);
+  });
+
+  test("a failed batch falls back to the per-job retry path", async () => {
+    const provider = new BatchProvider();
+    provider.failBatches = true;
+    const statuses = new Map<string, string>();
+    const queue = new EmbeddingQueue({
+      provider,
+      concurrency: 1,
+      batchSize: 4,
+      onStatusChange: (nodeId, status) => {
+        statuses.set(nodeId, status);
+      },
+    });
+    for (let i = 0; i < 4; i += 1) queue.enqueue(`n${i}`, `t${i}`);
+    await queue.flush();
+
+    expect(provider.batchCalls).toHaveLength(1);
+    expect(provider.singleCalls).toEqual(["t0", "t1", "t2", "t3"]);
+    for (let i = 0; i < 4; i += 1) {
+      expect(statuses.get(`n${i}`)).toBe("complete");
+    }
+  });
+
+  test("concurrent slots each drain their own group", async () => {
+    const provider = new BatchProvider();
+    const persisted = new Set<string>();
+    const queue = new EmbeddingQueue({
+      provider,
+      concurrency: 2,
+      batchSize: 2,
+      onPersist: async (nodeId) => {
+        persisted.add(nodeId);
+      },
+    });
+    for (let i = 0; i < 4; i += 1) queue.enqueue(`n${i}`, `t${i}`);
+    await queue.flush();
+
+    expect(provider.batchCalls).toHaveLength(2);
+    for (const group of provider.batchCalls) {
+      expect(group).toHaveLength(2);
+    }
+    expect(persisted.size).toBe(4);
   });
 });

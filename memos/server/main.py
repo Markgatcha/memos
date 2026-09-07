@@ -410,7 +410,33 @@ _BRIDGE_SCRIPT = r"""/**
 import { MemOS } from './index.js';
 
 const dbPath = process.argv[2] || undefined;
-const memos = new MemOS({ dbPath });
+
+// Embedding configuration via MEMOS_EMBEDDING_* environment variables.
+// Without MEMOS_EMBEDDING_PROVIDER the bridge falls back to the SDK
+// default (local hash), keeping zero-config behavior for plain installs.
+const env = process.env;
+const memosConfig = { dbPath };
+if (env.MEMOS_EMBEDDING_PROVIDER) {
+  const dimensions = env.MEMOS_EMBEDDING_DIMENSIONS;
+  memosConfig.experimental = { semanticSearch: true };
+  memosConfig.embeddings = {
+    enabled: true,
+    provider: env.MEMOS_EMBEDDING_PROVIDER,
+    ...(env.MEMOS_EMBEDDING_MODEL ? { model: env.MEMOS_EMBEDDING_MODEL } : {}),
+    ...(env.MEMOS_EMBEDDING_BASE_URL ? { baseUrl: env.MEMOS_EMBEDDING_BASE_URL } : {}),
+    ...(env.MEMOS_EMBEDDING_API_KEY ? { apiKey: env.MEMOS_EMBEDDING_API_KEY } : {}),
+    ...(dimensions ? { dimensions: parseInt(dimensions, 10) } : {}),
+    ...(env.MEMOS_EMBEDDING_QUERY_PREFIX ? { queryPrefix: env.MEMOS_EMBEDDING_QUERY_PREFIX } : {}),
+    ...(env.MEMOS_EMBEDDING_DOCUMENT_PREFIX ? { documentPrefix: env.MEMOS_EMBEDDING_DOCUMENT_PREFIX } : {}),
+  };
+  if (env.MEMOS_EMBEDDING_BATCH_SIZE) {
+    memosConfig.embeddingQueue = {
+      batchSize: parseInt(env.MEMOS_EMBEDDING_BATCH_SIZE, 10),
+    };
+  }
+}
+
+const memos = new MemOS(memosConfig);
 await memos.init();
 
 const rl = (await import('readline')).createInterface({

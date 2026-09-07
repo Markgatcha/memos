@@ -307,12 +307,44 @@ export interface SearchFilter {
    */
   includeHistorical?: boolean;
   /**
-   * When set, only return memories that were valid at this point in
-   * time (Unix ms). A memory is "valid at time T" if:
-   *   (validFrom is null OR validFrom <= T) AND
-   *   (validTo is null OR validTo >= T)
+   * FTS term-join operator for the keyword leg.
+   *
+   * - `"AUTO"` (default): run the precision `AND` query first; when it
+   *   matches nothing, relax to an `OR` query so partial-term matches
+   *   still surface. Precise, and the historical default.
+   * - `"AND"`: every query term must appear (forced precision).
+   * - `"OR"`: any term may appear (forced recall — useful for
+   *   multi-evidence retrieval where relevant facts rarely share every
+   *   query term; noisier for single-fact queries).
    */
+  ftsOperator?: "AUTO" | "AND" | "OR";
+  /**
+   * When true, expand the top base results with their "session siblings" —
+   * other memories sharing the same `sessionId` (or `instanceId`) metadata
+   * value. Multi-hop / multi-evidence answers typically live across many turns
+   * of one conversation, so once a single relevant turn is retrieved, pulling
+   * its conversation neighbours into the ranking materially raises All-Evidence
+   * Recall. Deterministic, model-free, and OFF by default so single-node
+   * retrieval keeps its exact ordering.
+   */
+  sessionExpansion?: boolean;
+  /** Timestamp filter (Unix ms): only return memories valid at this time. */
   validAt?: number;
+  /**
+   * How many candidates each hybrid-search leg fetches before fusion.
+   * Overrides the default `max(limit * 4, 20)`. Higher values widen the
+   * recall pool (useful when a reranker or expansion stage narrows
+   * afterwards) at linear scan cost.
+   */
+  candidateDepth?: number;
+  /**
+   * Drop results whose stored embedding is a near-duplicate (cosine >=
+   * `experimental.searchDedupThreshold`, default 0.95) of an
+   * already-selected result. Near-duplicates waste top-K slots that
+   * distinct evidence needs — multi-evidence questions score one node per
+   * duplicate otherwise. Off by default.
+   */
+  semanticDedup?: boolean;
 }
 
 /**
@@ -352,11 +384,17 @@ export interface ScoredMemory {
   node: MemoryNode;
   /** Relevance score returned by the search algorithm. */
   score: number;
-  /** Optional score breakdown for hybrid retrieval. */
+  /** Optional score breakdown for hybrid retrieval. `graph` marks a
+   * node injected by the graph-expansion leg, `session` one pulled in
+   * by session-sibling expansion, `rerank` the cross-encoder score
+   * (squashed to [0,1]) from the two-stage reranking pass. */
   scores?: {
     keyword?: number;
     semantic?: number;
     hybrid?: number;
+    graph?: number;
+    session?: number;
+    rerank?: number;
   };
 }
 
@@ -366,6 +404,40 @@ export interface ScoredMemory {
 
 export type EmbeddingVector = number[];
 
+/**
+ * Runtime resolution metadata for an embedding provider instance.
+ *
+ * Benchmarks (and any caller who cares about reproducibility) use this to
+ * verify that the provider they REQUESTED is the provider that actually
+ * loaded — in particular to detect the FastEmbed local-hash fallback that
+ * activates when the transformers package is missing.
+ */
+export interface EmbeddingRuntimeInfo {
+  /** Provider kind the caller asked for, e.g. "fastembed". */
+  requestedProvider: string;
+  /** Provider actually serving embeddings, e.g. "fastembed" or
+   * "local-hash-fallback". Equal to `requestedProvider` when no fallback. */
+  resolvedProvider: string;
+  /** Model the caller asked for. */
+  requestedModel: string;
+  /** Model actually producing vectors. */
+  resolvedModel: string;
+  /** Model revision/commit when the provider exposes one, else null. */
+  modelRevision: string | null;
+  /** Dimensions the caller declared. */
+  requestedDimensions: number;
+  /** Dimensions observed on the most recent embed call, or null before
+   * the first call. Differs from `requestedDimensions` only when the
+   * provider's real output shape disagrees with configuration. */
+  observedDimensions: number | null;
+  /** True when the requested backend did NOT load and a fallback is
+   * serving embeddings instead. Only meaningful after the first embed
+   * call (or an explicit probe) has run. */
+  fallbackActive: boolean;
+  /** Human-readable reason for the fallback, or null when none occurred. */
+  fallbackReason: string | null;
+}
+
 export interface EmbeddingProvider {
   /** Stable provider identifier, e.g. "local-hash" or "ollama". */
   id: string;
@@ -373,6 +445,14 @@ export interface EmbeddingProvider {
   model: string;
   /** Expected vector dimensionality. */
   dimensions: number;
+  /**
+   * Runtime resolution metadata (requested vs. resolved provider/model,
+   * fallback status). Optional so custom providers need not implement it;
+   * when absent, callers should assume the provider IS what it claims and
+   * there is no fallback. The built-in FastEmbed provider implements it to
+   * expose the local-hash fallback state.
+   */
+  getRuntimeInfo?(): EmbeddingRuntimeInfo;
   /** Generate a normalized embedding vector for a text input. */
   embed(text: string): Promise<EmbeddingVector>;
   /**
@@ -382,6 +462,29 @@ export interface EmbeddingProvider {
    * the input `texts` array.
    */
   batchEmbed?(texts: string[]): Promise<EmbeddingVector[]>;
+  /**
+   * Embed a QUERY — a short natural-language retrieval question.
+   *
+   * Many modern retrieval models (e.g. the Liquid E / e5 families, and
+   * Cohere embed-v3) are trained for an asymmetric query/document setting:
+   * they expect an instruction or "query" prefix on the query side and plain
+   * text on the document side. Routing queries through a dedicated method lets
+   * providers apply that signal, which materially improves semantic recall for
+   * paraphrase questions.
+   *
+   * Optional for backward compatibility: when a provider does not implement it,
+   * `embedQuery`/`embedDocuments` default to the plain `embed` path so
+   * existing custom providers keep working unchanged.
+   */
+  embedQuery?(text: string): Promise<EmbeddingVector>;
+  /**
+   * Embed a batch of DOCUMENTS (the persisted memory contents) for indexing.
+   *
+   * Optional; defaults to `batchEmbed`, falling back to per-text `embed`.
+   * Providers that distinguish query from document mode should use the document
+   * input type here (e.g. Cohere `search_document`).
+   */
+  embedDocuments?(texts: string[]): Promise<EmbeddingVector[]>;
 }
 
 export type EmbeddingProviderKind =
@@ -405,6 +508,25 @@ export interface EmbeddingConfig {
   baseUrl?: string;
   /** API key for OpenAI-compatible embedding endpoints. */
   apiKey?: string;
+  /**
+   * Prefix prepended to QUERY text before embedding. Asymmetric retrieval
+   * models are trained with a query-side instruction and silently degrade
+   * without it — e.g. Liquid LFM2.5-Embedding and e5 models expect
+   * `"query: "`. Empty (default) sends queries as-is.
+   */
+  queryPrefix?: string;
+  /**
+   * Prefix prepended to DOCUMENT text (stored memory content) before
+   * embedding at index time. e.g. Liquid LFM2.5-Embedding and e5 models
+   * expect `"document: "`. Empty (default) sends documents as-is.
+   */
+  documentPrefix?: string;
+  /**
+   * Which node text to embed at store time: the raw `content`, or
+   * `summary + "\n" + content` (the historical default — for short facts
+   * the extractive summary roughly doubles the embedded tokens).
+   */
+  embedText?: "content" | "summary+content";
 }
 
 export interface EmbeddingRecordInfo {
@@ -446,6 +568,13 @@ export interface EmbeddingQueueStatus {
 export interface EmbeddingQueueConfig {
   /** Max concurrent in-flight embed calls. Default 2. */
   concurrency?: number;
+  /**
+   * Max pending jobs drained into a single `batchEmbed()` call when the
+   * provider supports batching (array-input HTTP endpoints). Default 1 =
+   * one `embed()` call per job. Groups that fail fall back to per-job
+   * retries.
+   */
+  batchSize?: number;
   /** Max buffered jobs before `enqueue` throws. Default 10000. */
   maxQueueSize?: number;
   /** Max retry attempts per job before marking it failed. Default 3. */
@@ -552,7 +681,20 @@ export interface StorageAdapter {
     filter: SearchFilter,
     limit: number,
     threshold?: number,
+    /**
+     * When provided, only rows stored by this exact model are compared.
+     * Cosine similarity is meaningless across models, and two different
+     * models can share a dimensionality — dimension equality alone does
+     * not prevent silently mixing incompatible vectors.
+     */
+    model?: string,
   ): Promise<ScoredMemory[]>;
+
+  /** Counts of stored embeddings grouped by model (reindex/audit support). */
+  getEmbeddingModelCounts?(): Promise<Array<{ model: string; count: number }>>;
+
+  /** Delete all embedding rows stored by the given model. Returns the count. */
+  deleteEmbeddingsByModel?(model: string): Promise<number>;
 
   /** Query edges, optionally filtered by source/target. */
   queryEdges(filter?: {
@@ -635,12 +777,112 @@ export interface ExperimentalConfig {
    * Default: false.
    */
   recencyBoost?: boolean;
+  /**
+   * Graph-expansion recall leg for hybrid search. After fusion, the top
+   * `maxSeeds` results are expanded along their graph edges and unseen
+   * neighbours are injected into the ranking at `seedScore * scoreFactor`
+   * (capped at `maxAdded` extra nodes). Useful for multi-evidence /
+   * multi-hop queries where related facts are connected by
+   * `relates_to`/`supports` edges but neither retrieval leg surfaces them.
+   * Off by default.
+   */
+  graphExpansion?: {
+    enabled?: boolean;
+    /** How many top fused results to expand along edges. Default 3. */
+    maxSeeds?: number;
+    /** Maximum neighbours injected per query. Default 5. */
+    maxAdded?: number;
+    /** Injected neighbour score = seed score × this factor. Default 0.85. */
+    scoreFactor?: number;
+  };
+  /**
+   * Two-stage reranking: after fusion, the top `candidates` results are
+   * re-scored by a cross-encoder served over an HTTP `/rerank` endpoint
+   * (e.g. llama-server with bge-reranker-v2-m3) and the final ranking is
+   * reordered by relevance score. The first stage (hybrid search) exists
+   * to recall; the reranker decides what the caller actually sees. On
+   * endpoint failure the fused order is kept unchanged (graceful
+   * degradation). Off by default.
+   */
+  /**
+   * Cosine threshold for the opt-in `filter.semanticDedup` in hybrid
+   * search. Default 0.95 — near-verbatim duplicates only.
+   */
+  searchDedupThreshold?: number;
+  rerank?: {
+    /** Base URL of the rerank server, e.g. "http://127.0.0.1:8081".
+     *  Receives `POST {endpoint}/rerank` with
+     *  `{ model, query, documents: string[] }`. */
+    endpoint: string;
+    /** Bearer token for the rerank endpoint, when required. */
+    apiKey?: string;
+    /** Model name sent to the endpoint (many local servers ignore it). */
+    model?: string;
+    /** How many fused candidates to submit for reranking. Default 50. */
+    candidates?: number;
+    /**
+     * Truncate each reranked document to this many characters before
+     * sending. Cross-encoder relevance signal lives in the first few
+     * hundred tokens, and capping pair length keeps the request's token
+     * count predictable — long-tail documents otherwise force many extra
+     * GPU waves on the rerank server. Default 0 = send full documents.
+     */
+    maxDocChars?: number;
+    /** Request timeout in ms. Default 5000. */
+    timeoutMs?: number;
+  };
+}
+
+/**
+ * Tunable knobs for the hybrid-search Reciprocal Rank Fusion. Lives in
+ * `types.ts` (dependency-free) and is re-exported by `src/retrieval.ts`,
+ * where `fuseResults()` consumes it. `MemOSConfig.fusion` forwards these
+ * to every hybrid search; unset fields fall back to `retrieval.ts`
+ * defaults.
+ */
+export interface FusionOptions {
+  /** RRF constant K. Larger K flattens rank differences. Default 60. */
+  rrfK?: number;
+  /** Weight of the keyword (FTS5) leg. Default 0.8. */
+  keywordWeight?: number;
+  /** Weight of the semantic (embedding) leg. Default 0.2. */
+  semanticWeight?: number;
+  /**
+   * Lower bound of the trust multiplier (applied as
+   * `trustFloor + trustScore * (1 - trustFloor)`). Default 0.7.
+   * Set to 1.0 to disable trust weighting.
+   */
+  trustFloor?: number;
+  /**
+   * Strength of the confidence/trust combined multiplier from the
+   * evidence state machine. Default 0.35. Set to 0 to disable
+   * confidence-aware ranking.
+   */
+  confidenceWeightStrength?: number;
+  /**
+   * Recency half-life in ms for the tie-break among near-equal scores.
+   * Default 30 days. Set to 0 to disable recency tie-breaking.
+   */
+  recencyHalfLifeMs?: number;
+  /**
+   * Reference "now" for recency computations. Defaults to wall-clock;
+   * injectable for deterministic tests/benchmarks.
+   */
+  nowMs?: number;
 }
 
 /**
  * Configuration options for a MemOS instance.
  */
 export interface MemOSConfig {
+  /**
+   * Hybrid-search fusion tuning forwarded to `fuseResults()` on every
+   * hybrid search. Unset fields use `src/retrieval.ts` defaults
+   * (keyword 0.8 / semantic 0.2 / K 60 — tuned for the hash baseline;
+   * stronger embedding models generally want a higher semantic weight).
+   */
+  fusion?: FusionOptions;
+
   /**
    * Path to the SQLite database file.
    * @default "~/.memos/memos.db"
@@ -672,6 +914,14 @@ export interface MemOSConfig {
    * Custom storage adapter. When provided, `dbPath` is ignored.
    */
   storage?: StorageAdapter;
+
+  /**
+   * Options forwarded to the built-in SQLite storage adapter when
+   * `storage` is not supplied. `vectorCacheEntries` bounds the in-process
+   * parsed-vector cache (default 25,000 ≈ 100MB at 1024 dims); lower it
+   * for memory-constrained hosts.
+   */
+  storageOptions?: { vectorCacheEntries?: number };
 
   /**
    * Interval in seconds for the TTL expiration sweep.

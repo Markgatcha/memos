@@ -37,6 +37,15 @@ import { MemOS } from "../src/memory.js";
 import { SQLiteStorage } from "../src/storage/sqlite.js";
 import { LocalHashEmbeddingProvider } from "../src/embeddings.js";
 import type { EmbeddingProvider, EmbeddingVector } from "../src/types.js";
+import {
+  parseProviderArgs,
+  parseRetrievalArgs,
+  buildProvider,
+  assertNoFallback,
+  benchMetadata,
+  retrievalConfig,
+} from "./lib/bench-common.ts";
+import { aggregateMetrics, type EvalQueryResult } from "./lib/bench-metrics.ts";
 
 interface GroundTruthEntry {
   query: string;
@@ -78,7 +87,18 @@ interface BenchResult {
       GroundTruthEntry["category"],
       { queries: number; recallAt10: number; mrr: number }
     >;
+    /** Shared deterministic metric superset (v2 schema). */
+    shared: {
+      at5: import("./lib/bench-metrics.ts").MetricsAtK;
+      at10: import("./lib/bench-metrics.ts").MetricsAtK;
+      perCategory: ReturnType<
+        typeof import("./lib/bench-metrics.ts").aggregateMetrics
+      >["perCategory"];
+      latency: { p50: number; p95: number; mean: number };
+    };
   };
+  /** Reproducibility metadata (git SHA, dataset hash, provider, fallback). */
+  metadata: import("./lib/bench-common.ts").BenchMetadata;
   perQuery: QueryResult[];
 }
 
@@ -374,6 +394,12 @@ function buildSyntheticDataset(): SyntheticDataset {
  * vector. The hash is computed on the words in the input, so two
  * semantically related queries (e.g. "where does the user live"
  * and "user's home city") produce similar vectors.
+ *
+ * NOTE: this class is no longer used by the benchmark default path —
+ * provider construction goes through the shared loader in
+ * scripts/lib/bench-common.ts (`buildProvider`). It is kept only as
+ * documentation of the original baseline embedding and for ad-hoc
+ * experimentation.
  */
 class HashEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "bench-hash";
@@ -419,22 +445,45 @@ async function main(): Promise<void> {
   const repoRoot = join(here, "..");
   const dataset = buildSyntheticDataset();
 
-  // Provider selection:
-  //   (default)        — bench-hash: naive deterministic hash baseline.
-  //                      Kept as the stable historical reference point.
-  //   --provider=local — LocalHashEmbeddingProvider: the provider that
-  //                      actually ships with MemOS (synonym lexicon +
-  //                      character n-grams). Use this to measure what
-  //                      users get out of the box.
-  const useLocal = process.argv.includes("--provider=local");
-  const provider: EmbeddingProvider = useLocal
-    ? new LocalHashEmbeddingProvider()
-    : new HashEmbeddingProvider();
+  // Provider selection (shared loader — CLI/env > default):
+  //   default (NO --provider flag, NO EMBEDDING_PROVIDER env) — bench-hash:
+  //     the naive deterministic hash baseline this script has always used.
+  //     Kept as the stable historical reference point; the committed
+  //     recall@10 89.5% baseline was measured with it.
+  //   --provider=local-hash — LocalHashEmbeddingProvider: the provider
+  //     that actually ships with MemOS (synonym lexicon + character
+  //     n-grams). Use this to measure what users get out of the box.
+  //   --provider=<kind> — any supported provider via the shared loader
+  //     (fastembed, ollama, openai-compatible, voyage, cohere) with
+  //     --model / --dimensions / --fail-on-embedding-fallback.
+  // The legacy `--provider=local` shorthand maps to `local-hash`.
+  const argv = process.argv
+    .slice(2)
+    .map((a) => (a === "--provider=local" ? "--provider=local-hash" : a));
+  const explicitProvider =
+    argv.some((a) => a.startsWith("--provider=")) ||
+    process.env.EMBEDDING_PROVIDER !== undefined;
+  const providerArgs = parseProviderArgs(argv);
+  const retrievalArgs = parseRetrievalArgs(argv);
+  const provider: EmbeddingProvider = !explicitProvider
+    ? new HashEmbeddingProvider()
+    : buildProvider(providerArgs);
+  // Resolve lazy providers & detect fallback (never silent in strict mode).
+  const runtimeInfo = await assertNoFallback(provider, providerArgs);
   const storage = new SQLiteStorage(":memory:", true);
   const memos = new MemOS({
     storage,
     experimental: { semanticSearch: true, namespaces: true },
-    embeddings: { enabled: true, provider },
+    embeddings: {
+      enabled: true,
+      provider,
+      ...(retrievalArgs.embedText
+        ? { embedText: retrievalArgs.embedText }
+        : {}),
+    },
+    ...(Object.keys(retrievalConfig(retrievalArgs)).length > 0
+      ? retrievalConfig(retrievalArgs)
+      : {}),
     embeddingQueue: { synchronous: true },
   });
   await memos.init();
@@ -451,8 +500,16 @@ async function main(): Promise<void> {
 
   // Run every query.
   const perQuery: QueryResult[] = [];
+  const evalQueries: EvalQueryResult[] = [];
   for (const gt of dataset.groundTruth) {
-    const results = await memos.search({ query: gt.query, limit: 10 });
+    const results = await memos.search({
+      query: gt.query,
+      limit: 10,
+      ...(retrievalArgs.ftsOperator
+        ? { ftsOperator: retrievalArgs.ftsOperator }
+        : {}),
+      ...(retrievalArgs.sessionExpansion ? { sessionExpansion: true } : {}),
+    });
     const retrievedIds = results.map((r) => {
       // Reverse-map back to the dataset id.
       for (const [original, real] of idMap) {
@@ -469,7 +526,7 @@ async function main(): Promise<void> {
     );
     let reciprocalRank = 0;
     for (let rank = 0; rank < retrievedIds.length; rank += 1) {
-      if (expectedRelevant.includes(retrievedIds[rank])) {
+      if (expectedRelevant.includes(retrievedIds[rank] ?? "")) {
         reciprocalRank = 1 / (rank + 1);
         break;
       }
@@ -483,13 +540,25 @@ async function main(): Promise<void> {
       reciprocalRank,
       expectedRelevant,
     });
+    evalQueries.push({
+      questionId: gt.query,
+      relevantIds: gt.relevant,
+      retrievedIds,
+      category: gt.category,
+    });
   }
 
   // Aggregate.
   const totalQueries = perQuery.length;
+  // Legacy metrics (identical definitions to the historical baseline so
+  // trend lines stay comparable): recall@5/@10 are Hit@5/@10.
   const recallAt5 = perQuery.filter((r) => r.hitAt5).length / totalQueries;
   const recallAt10 = perQuery.filter((r) => r.hitAt10).length / totalQueries;
   const mrr = perQuery.reduce((s, r) => s + r.reciprocalRank, 0) / totalQueries;
+
+  // Full shared-metric set (Hit/EvidenceRecall/AllEvidence/Precision/MRR/nDCG
+  // at 5 and 10, macro + micro).
+  const shared = aggregateMetrics(evalQueries);
 
   const perCategory: BenchResult["metrics"]["perCategory"] = {} as never;
   for (const cat of ["factual", "preference", "temporal", "entity"] as const) {
@@ -518,7 +587,28 @@ async function main(): Promise<void> {
       nodes: dataset.nodes.length,
       queries: dataset.groundTruth.length,
     },
-    metrics: { recallAt5, recallAt10, mrr, perCategory },
+    metrics: {
+      recallAt5,
+      recallAt10,
+      mrr,
+      perCategory,
+      // Shared-metric superset (v2 schema): deterministic, ID-based.
+      shared: {
+        at5: shared.at5,
+        at10: shared.at10,
+        perCategory: shared.perCategory,
+        latency: shared.latency,
+      },
+    },
+    metadata: benchMetadata(
+      providerArgs,
+      runtimeInfo,
+      {
+        name: "synthetic-quality-v1",
+        path: import.meta.url,
+      },
+      retrievalArgs,
+    ),
     perQuery,
   };
 
@@ -530,12 +620,12 @@ async function main(): Promise<void> {
 
   // Print markdown summary.
   const md = renderMarkdown(result);
-  const mdPath = join(repoRoot, "docs", "benchmark-quality.md");
-  if (!existsSync(dirname(mdPath)))
-    mkdirSync(dirname(mdPath), { recursive: true });
+  // The generated per-run report lives in scripts/bench-quality.md.
+  // NOTE: docs/benchmark-quality.md is a hand-maintained METHODOLOGY doc
+  // and must NOT be overwritten by the generator (it previously was,
+  // which made it impossible to keep stable explanations there).
+  const mdPath = join(outDir, "bench-quality.md");
   writeFileSync(mdPath, md);
-  // Also write to scripts/ so the existing benchmark tooling picks it up.
-  writeFileSync(join(outDir, "bench-quality.md"), md);
 
   console.log(md);
   console.log(`\nWrote ${jsonPath}`);

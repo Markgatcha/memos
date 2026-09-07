@@ -1,6 +1,7 @@
 import type {
   EmbeddingConfig,
   EmbeddingProvider,
+  EmbeddingRuntimeInfo,
   EmbeddingVector,
 } from "./types.js";
 
@@ -142,8 +143,8 @@ export function normalizeVector(vector: EmbeddingVector): EmbeddingVector {
 }
 
 export function cosineSimilarity(
-  a: EmbeddingVector,
-  b: EmbeddingVector,
+  a: ArrayLike<number>,
+  b: ArrayLike<number>,
 ): number {
   const length = Math.min(a.length, b.length);
   if (length === 0) return 0;
@@ -199,22 +200,44 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   public readonly model: string;
   public readonly dimensions: number;
   private readonly baseUrl: string;
+  private readonly queryPrefix: string;
+  private readonly documentPrefix: string;
 
   constructor(
-    options: { baseUrl?: string; model?: string; dimensions?: number } = {},
+    options: {
+      baseUrl?: string;
+      model?: string;
+      dimensions?: number;
+      /** Optional string prepended to QUERY text before embedding. Many
+       *  retrieval models (Liquid E / e5, nomic with a prompt) are
+       *  trained for an asymmetric query/document setting and expect an
+       *  instruction on the query side, e.g. "query: ". Empty by default
+       *  = backward compatible. */
+      queryPrefix?: string;
+      /** Optional string prepended to DOCUMENT text (the index-side
+       *  content) before embedding, e.g. "document: " for Liquid
+       *  LFM2.5-Embedding / e5. Applied by `embed()`/`batchEmbed()` but
+       *  NOT by `embedQuery()`, which applies `queryPrefix` only. Empty
+       *  by default = backward compatible. */
+      documentPrefix?: string;
+    } = {},
   ) {
     this.baseUrl = stripTrailingSlashes(
       options.baseUrl ?? "http://127.0.0.1:11434",
     );
     this.model = options.model ?? "nomic-embed-text";
     this.dimensions = options.dimensions ?? 768;
+    this.queryPrefix = options.queryPrefix ?? "";
+    this.documentPrefix = options.documentPrefix ?? "";
   }
 
-  async embed(text: string): Promise<EmbeddingVector> {
+  private async callEmbed(
+    input: string | string[],
+  ): Promise<EmbeddingVector[]> {
     const response = await fetch(`${this.baseUrl}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: this.model, input: text }),
+      body: JSON.stringify({ model: this.model, input }),
     });
     if (!response.ok) {
       throw new Error(
@@ -225,11 +248,47 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       embeddings?: number[][];
       embedding?: number[];
     };
-    const vector = payload.embeddings?.[0] ?? payload.embedding;
-    if (!Array.isArray(vector)) {
+    const vectors =
+      payload.embeddings ??
+      (payload.embedding ? [payload.embedding] : undefined);
+    if (!Array.isArray(vectors)) {
       throw new Error("Ollama embedding response did not include a vector.");
     }
-    return normalizeVector(vector);
+    if (Array.isArray(input) && vectors.length !== input.length) {
+      throw new Error(
+        `Ollama embedding response length mismatch: got ${vectors.length}, expected ${input.length}.`,
+      );
+    }
+    return vectors.map((v) => normalizeVector(v));
+  }
+
+  async embed(text: string): Promise<EmbeddingVector> {
+    const input = this.documentPrefix ? `${this.documentPrefix}${text}` : text;
+    return this.callEmbed(input).then((v) => v[0]);
+  }
+
+  /**
+   * Query embedding applies the configured `queryPrefix`, when set, so the
+   * retrieval question is embedded in the model's query mode. Documents are
+   * embedded WITHOUT the prefix (plain indexing text).
+   */
+  embedQuery(text: string): Promise<EmbeddingVector> {
+    const input = this.queryPrefix ? `${this.queryPrefix}${text}` : text;
+    return this.callEmbed(input).then((v) => v[0]);
+  }
+
+  async batchEmbed(texts: string[]): Promise<EmbeddingVector[]> {
+    const input = this.documentPrefix
+      ? texts.map((t) => `${this.documentPrefix}${t}`)
+      : texts;
+    return this.callEmbed(input);
+  }
+
+  async embedDocuments(texts: string[]): Promise<EmbeddingVector[]> {
+    if (texts.length === 1) {
+      return this.embed(texts[0]).then((v) => [v]);
+    }
+    return this.batchEmbed(texts);
   }
 }
 
@@ -239,12 +298,24 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
   public readonly dimensions: number;
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly queryPrefix: string;
+  private readonly documentPrefix: string;
 
   constructor(options: {
     baseUrl?: string;
     apiKey?: string;
     model?: string;
     dimensions?: number;
+    /** Prepended to QUERY text by `embedQuery()`. Asymmetric retrieval
+     *  models served over OpenAI-compatible endpoints (e.g. Liquid
+     *  LFM2.5-Embedding via llama.cpp, e5 via vLLM) are trained with a
+     *  query-side instruction — e.g. "query: " — and silently degrade
+     *  without it. Empty by default = backward compatible. */
+    queryPrefix?: string;
+    /** Prepended to DOCUMENT text by `embed()`/`batchEmbed()` — e.g.
+     *  "document: " for Liquid LFM2.5-Embedding / e5 index-side text.
+     *  `embedQuery()` applies `queryPrefix` only. Empty by default. */
+    documentPrefix?: string;
   }) {
     this.baseUrl = stripTrailingSlashes(
       options.baseUrl ?? "https://api.openai.com/v1",
@@ -252,15 +323,17 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
     this.apiKey = options.apiKey ?? "";
     this.model = options.model ?? "text-embedding-3-small";
     this.dimensions = options.dimensions ?? 1536;
+    this.queryPrefix = options.queryPrefix ?? "";
+    this.documentPrefix = options.documentPrefix ?? "";
   }
 
-  async embed(text: string): Promise<EmbeddingVector> {
+  private async callEmbeddings(input: string[]): Promise<EmbeddingVector[]> {
     const headers = new Headers({ "Content-Type": "application/json" });
     if (this.apiKey) headers.set("Authorization", `Bearer ${this.apiKey}`);
     const response = await fetch(`${this.baseUrl}/embeddings`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ model: this.model, input: text }),
+      body: JSON.stringify({ model: this.model, input }),
     });
     if (!response.ok) {
       throw new Error(
@@ -270,11 +343,37 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
     const payload = (await response.json()) as {
       data?: Array<{ embedding?: number[] }>;
     };
-    const vector = payload.data?.[0]?.embedding;
-    if (!Array.isArray(vector)) {
-      throw new Error("Embedding response did not include a vector.");
+    if (!Array.isArray(payload.data)) {
+      throw new Error("Embedding response did not include a `data` array.");
     }
-    return normalizeVector(vector);
+    if (payload.data.length !== input.length) {
+      throw new Error(
+        `Embedding response length mismatch: got ${payload.data.length}, expected ${input.length}.`,
+      );
+    }
+    return payload.data.map((row) => {
+      if (!Array.isArray(row.embedding)) {
+        throw new Error("Embedding response contained a non-vector entry.");
+      }
+      return normalizeVector(row.embedding);
+    });
+  }
+
+  async embed(text: string): Promise<EmbeddingVector> {
+    const input = this.documentPrefix ? `${this.documentPrefix}${text}` : text;
+    return this.callEmbeddings([input]).then((v) => v[0]);
+  }
+
+  embedQuery(text: string): Promise<EmbeddingVector> {
+    const input = this.queryPrefix ? `${this.queryPrefix}${text}` : text;
+    return this.callEmbeddings([input]).then((v) => v[0]);
+  }
+
+  async batchEmbed(texts: string[]): Promise<EmbeddingVector[]> {
+    const input = this.documentPrefix
+      ? texts.map((t) => `${this.documentPrefix}${t}`)
+      : texts;
+    return this.callEmbeddings(input);
   }
 }
 
@@ -481,18 +580,53 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "fastembed";
   public readonly model: string;
   public readonly dimensions: number;
-  private pipeline: {
-    feature: (
-      text: string,
-      opts: { pooling: string; normalize: boolean },
-    ) => Promise<{ data: Float32Array }>;
-  } | null = null;
+  private pipeline:
+    | ((
+        text: string,
+        opts: { pooling: string; normalize: boolean },
+      ) => Promise<{ data: Float32Array }>)
+    | null = null;
   private resolved = false;
+  /**
+   * Set when the transformers pipeline could NOT be loaded and the
+   * deterministic local hash fallback is serving embeddings instead.
+   * Null while unresolved or when the real model loaded fine. Exposed
+   * via `getRuntimeInfo()` so benchmarks can detect — and optionally
+   * refuse to run on — the fallback.
+   */
+  private fallbackReason: string | null = null;
 
   constructor(options: { model?: string; dimensions?: number } = {}) {
     this.model = options.model ?? "BAAI/bge-small-en-v1.5";
     this.dimensions = options.dimensions ?? 384;
   }
+
+  /**
+   * Runtime resolution metadata. `fallbackActive` is only meaningful after
+   * the first `embed()` call (or an explicit probe) has triggered
+   * `resolve()`; before that it reports `false` with a null reason, which
+   * callers should read as "not yet known" rather than "no fallback".
+   */
+  getRuntimeInfo(): EmbeddingRuntimeInfo {
+    return {
+      requestedProvider: "fastembed",
+      resolvedProvider: this.fallbackReason
+        ? "local-hash-fallback"
+        : "fastembed",
+      requestedModel: this.model,
+      resolvedModel: this.fallbackReason
+        ? `local-hash-fallback-${this.dimensions}`
+        : this.model,
+      modelRevision: null,
+      requestedDimensions: this.dimensions,
+      observedDimensions: this.lastObservedDimensions,
+      fallbackActive: this.fallbackReason !== null,
+      fallbackReason: this.fallbackReason,
+    };
+  }
+
+  /** Dimensions seen on the most recent embed/batchEmbed result. */
+  private lastObservedDimensions: number | null = null;
 
   /**
    * Lazily resolve the transformers pipeline. We use a dynamic import so
@@ -523,24 +657,47 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
             pipeline: (task: string, model: string) => Promise<unknown>;
           } | null);
       const resolved = mod ?? legacyMod;
-      if (!resolved) return;
+      if (!resolved) {
+        // Neither optional peer dep is installed — record WHY so
+        // `getRuntimeInfo()` can report the fallback, then fall through
+        // to the local hash. (The early return here previously skipped
+        // the missing-package reason entirely — the silent-fallback bug.)
+        this.fallbackReason =
+          "neither @huggingface/transformers nor @xenova/transformers is installed";
+        return;
+      }
       const pipeline = await resolved.pipeline(
         "feature-extraction",
         this.model,
       );
-      this.pipeline = pipeline as FastEmbedEmbeddingProvider["pipeline"];
-    } catch {
-      // Fall through to the local hash.
+      // @huggingface/transformers v3+/v4 pipelines are callable directly;
+      // older shapes exposed `.feature`. Normalize both behind one function.
+      this.pipeline =
+        typeof pipeline === "function"
+          ? (pipeline as FastEmbedEmbeddingProvider["pipeline"])
+          : ((pipeline as { feature?: FastEmbedEmbeddingProvider["pipeline"] })
+              .feature ?? null);
+      if (!this.pipeline) {
+        this.fallbackReason = `pipeline for model "${this.model}" exposed no callable feature-extraction interface`;
+      }
+    } catch (err) {
+      // Record the failure for runtime info, then fall through to the
+      // local hash. The SDK keeps its resilient default behavior — but
+      // benchmarks can now SEE the fallback instead of silently scoring it.
+      this.fallbackReason = `pipeline construction failed for model "${this.model}": ${String(
+        err,
+      ).substring(0, 200)}`;
     }
   }
 
   async embed(text: string): Promise<EmbeddingVector> {
     await this.resolve();
     if (this.pipeline) {
-      const out = await this.pipeline.feature(text, {
+      const out = await this.pipeline(text, {
         pooling: "mean",
         normalize: true,
       });
+      this.lastObservedDimensions = out.data.length;
       return Array.from(out.data);
     }
     return this.fallbackEmbed(text);
@@ -551,10 +708,11 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
     if (this.pipeline) {
       const vectors: EmbeddingVector[] = [];
       for (const text of texts) {
-        const out = await this.pipeline.feature(text, {
+        const out = await this.pipeline(text, {
           pooling: "mean",
           normalize: true,
         });
+        this.lastObservedDimensions = out.data.length;
         vectors.push(Array.from(out.data));
       }
       return vectors;
@@ -569,6 +727,7 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
    * identical to the online path.
    */
   private fallbackEmbed(text: string): EmbeddingVector {
+    this.lastObservedDimensions = this.dimensions;
     const vector = Array.from({ length: this.dimensions }, () => 0);
     const tokens = text
       .toLowerCase()

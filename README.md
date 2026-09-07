@@ -380,7 +380,22 @@ Use a specific local database:
 npx -y @mem-os/sdk mcp --db ~/.memos/memos.db
 ```
 
-The MCP adapter provides tools for storing, searching, retrieving, deleting, graph inspection, and context injection. It is intentionally local-first: the server reads and writes the SQLite database you point it at and does not require cloud credentials.
+The MCP adapter provides **14 tools** covering the full capability surface — store/search/retrieve/forget, graph + neighbour context, `memos_context_pack` (token-budgeted slice for prompt injection), temporal search, validity/supersede, trust, fact extraction, diagnostics, and reindex. It is intentionally local-first: the server reads and writes the SQLite database you point it at and does not require cloud credentials.
+
+#### Plugin for Claude Code (and every other harness)
+
+```bash
+memos connect claude-code   # prints the exact setup; --write saves ./.mcp.json
+```
+
+Or install as a plugin (bundles the MCP server + `/memos` and `/recall` commands + a memory skill):
+
+```
+/plugin marketplace add Markgatcha/memos
+/plugin install memos@memos-marketplace
+```
+
+Same one-line MCP registration works in Cursor, Windsurf, Cline, OpenCode, Codex CLI, Gemini CLI and anything else that speaks MCP — see [docs/integrations.md](docs/integrations.md) for the per-harness table.
 
 ### WebSocket API
 
