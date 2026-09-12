@@ -10,7 +10,7 @@ import type {
  * regular expression. Avoids a ReDoS-flagged `/+$/` pattern on user-supplied
  * input (CodeQL js/regular-expression-polynomial-redos).
  */
-function stripTrailingSlashes(url: string): string {
+export function stripTrailingSlashes(url: string): string {
   let result = url;
   while (result.endsWith("/")) {
     result = result.slice(0, -1);
