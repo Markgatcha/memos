@@ -107,16 +107,27 @@ export default function Home() {
         <div className="max-w-6xl mx-auto px-6 grid grid-cols-1 sm:grid-cols-3 sm:divide-x divide-white/[0.06]">
           {stats.map((s, i) => (
             <Reveal key={s.label} delay={i * 100}>
-              <div className="py-10 sm:px-10 text-center sm:text-left">
+              <a
+                href="/benchmarks#methodology"
+                className="group block py-10 sm:px-10 text-center sm:text-left"
+              >
                 <div className="font-mono text-3xl md:text-4xl text-zinc-50 tabular-nums tracking-tight">
                   <Counter value={s.value} decimals={s.decimals} suffix={s.suffix} />
                 </div>
-                <div className="mt-2 font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500">
+                <div className="mt-2 font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500 group-hover:text-zinc-300 transition-colors">
                   {s.label}
                 </div>
-              </div>
+              </a>
             </Reveal>
           ))}
+        </div>
+        <div className="max-w-6xl mx-auto px-6 pb-6 -mt-2 text-center sm:text-right">
+          <a
+            href="/benchmarks#methodology"
+            className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-600 hover:text-zinc-400 transition-colors"
+          >
+            how we measure →
+          </a>
         </div>
       </section>
 
@@ -153,6 +164,10 @@ export default function Home() {
                       trust scoring, and a compact format that cuts context
                       tokens by 77.6%.
                     </p>
+                    <div className="mt-5 mb-2 inline-flex items-center font-mono text-xs text-zinc-300 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2">
+                      <span className="text-zinc-600 select-none">$&nbsp;</span>
+                      npm install @mem-os/sdk
+                    </div>
                   </div>
                   <svg
                     viewBox="0 0 190 150"
@@ -205,10 +220,16 @@ export default function Home() {
                 <h3 className="text-xl font-semibold text-zinc-50 mb-3">
                   Universal MCP Toolkit
                 </h3>
-                <p className="text-sm text-zinc-400 leading-relaxed mb-6">
+                <p className="text-sm text-zinc-400 leading-relaxed mb-5">
                   Transport, registry, and routing for MCP tools across every
                   major client.
                 </p>
+                <div className="mb-6">
+                  <div className="inline-flex items-center font-mono text-xs text-zinc-300 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2">
+                    <span className="text-zinc-600 select-none">$&nbsp;</span>
+                    npx universal-mcp-toolkit list
+                  </div>
+                </div>
                 <div className="font-mono text-xs space-y-2.5 mb-6">
                   <div className="flex justify-between">
                     <span className="text-zinc-400">ollama</span>
@@ -245,10 +266,16 @@ export default function Home() {
                 <h3 className="text-xl font-semibold text-zinc-50 mb-3">
                   LLM Guardian
                 </h3>
-                <p className="text-sm text-zinc-400 leading-relaxed mb-6">
+                <p className="text-sm text-zinc-400 leading-relaxed mb-5">
                   Compresses prompts and guards token budgets at inference
                   time.
                 </p>
+                <div className="mb-6">
+                  <div className="inline-flex items-center font-mono text-xs text-zinc-300 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2">
+                    <span className="text-zinc-600 select-none">$&nbsp;</span>
+                    npm install -g llm-guardian
+                  </div>
+                </div>
                 <div className="space-y-3 mb-6">
                   <div>
                     <div className="flex justify-between font-mono text-[11px] text-zinc-500 mb-1.5">

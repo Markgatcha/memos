@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "start": "next start"
+    "start": "next start",
+    "sync:benchmarks": "node scripts/sync-benchmarks.mjs"
   },
   "dependencies": {
     "geist": "^1.7.2",

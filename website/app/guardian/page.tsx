@@ -66,6 +66,31 @@ export default function Guardian() {
           </div>
         </Reveal>
 
+        <Reveal className="mb-12" delay={60}>
+          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+            The interactive TUI
+          </h2>
+          <p className="text-sm text-zinc-500 mb-5">
+            Chat with any model through the optimization pipeline, with 25
+            built-in slash commands — budgets, model routing, transcript
+            export, and more.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <img
+              src="/guardian-tui.png"
+              alt="LLM Guardian interactive TUI"
+              className="rounded-lg border border-white/10 w-full"
+              loading="lazy"
+            />
+            <img
+              src="/guardian-commands.png"
+              alt="LLM Guardian slash-command palette"
+              className="rounded-lg border border-white/10 w-full"
+              loading="lazy"
+            />
+          </div>
+        </Reveal>
+
         <Reveal className="mb-12" delay={80}>
           <h2 className="text-sm font-medium text-zinc-200 mb-4">
             Optimization pipeline
@@ -132,8 +157,8 @@ export default function Guardian() {
 
         <Reveal delay={200}>
           <div className="flex flex-wrap gap-3">
-            <a href="/docs" className="btn btn-primary">
-              Read the docs
+            <a href="/playground" className="btn btn-primary">
+              Try the folding engine
               <ArrowRight size={15} />
             </a>
             <a

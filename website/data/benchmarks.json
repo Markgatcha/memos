@@ -1,0 +1,72 @@
+{
+  "generatedAt": "2026-09-12T19:08:48.904Z",
+  "locomo": {
+    "source": "scripts/bench-locomo-noapi-results.json",
+    "timestamp": "2026-09-06T22:59:45.728Z",
+    "gitSha": "a6e1af99a07ecc579a41afb45c7e787918e2592d",
+    "gitDirty": true,
+    "os": "win32 10.0.26220",
+    "node": "v26.7.0",
+    "model": "LFM2.5-Embedding-350M-BF16",
+    "dataset": "locomo10",
+    "questions": 1986,
+    "topK": 10,
+    "at5": {
+      "hitRate": 0.7825428859737639,
+      "evidenceRecall": 0.7256917750757045,
+      "mrr": 0.6350992263706698,
+      "ndcg": 0.6373709091249904
+    },
+    "at10": {
+      "hitRate": 0.8319878910191726,
+      "evidenceRecall": 0.7786092461453613,
+      "allEvidenceRecall": 0.7250252270433906,
+      "mrr": 0.6417994089664119,
+      "ndcg": 0.6561201798397048
+    }
+  },
+  "beam": {
+    "source": "scripts/bench-beam-results-lfm2.5-350m.json",
+    "timestamp": "2026-08-19T19:29:04.367Z",
+    "gitSha": null,
+    "gitDirty": null,
+    "os": null,
+    "node": null,
+    "model": null,
+    "dataset": "BEAM-1M",
+    "benchmark": "BEAM-1M",
+    "questions": 200,
+    "overallRecall": 1,
+    "p50LatencyMs": null
+  },
+  "haystack": {
+    "source": "scripts/bench-haystack-results.json",
+    "timestamp": "2026-09-06T03:16:44.513Z",
+    "gitSha": "00afdb496c0376e58b232c5cb439ef218f05ac64",
+    "gitDirty": true,
+    "os": "win32 10.0.26220",
+    "node": "v26.7.0",
+    "model": "local-hash-384",
+    "dataset": "memory-haystack",
+    "benchmark": "memory-haystack",
+    "needleCount": 50
+  },
+  "hotpot": {
+    "source": "scripts/bench-hotpot-results.json",
+    "timestamp": "2026-09-06T09:47:50.069Z",
+    "gitSha": "00afdb496c0376e58b232c5cb439ef218f05ac64",
+    "gitDirty": true,
+    "os": "win32 10.0.26220",
+    "node": "v26.7.0",
+    "model": "LFM2.5-Embedding-350M-BF16",
+    "dataset": "hotpotqa-distractor-500",
+    "questions": 500,
+    "topK": 10,
+    "at10": {
+      "hitRate": 1,
+      "evidenceRecall": 0.963,
+      "mrr": 0.9766111111111111,
+      "ndcg": 0.9343906724850207
+    }
+  }
+}

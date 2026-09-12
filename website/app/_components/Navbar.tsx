@@ -8,9 +8,9 @@ const links = [
   { href: "/memos", label: "MemOS" },
   { href: "/umt", label: "UMT" },
   { href: "/guardian", label: "Guardian" },
+  { href: "/playground", label: "Playground" },
   { href: "/benchmarks", label: "Benchmarks" },
   { href: "/docs", label: "Docs" },
-  { href: "/blog", label: "Blog" },
   { href: "/support", label: "Support" },
 ];
 

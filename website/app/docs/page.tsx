@@ -42,6 +42,11 @@ const sections = [
     links: [
       { label: "Guardian Overview & Quick Start", href: "/guardian", internal: true },
       {
+        label: "Semantic Folding Playground (in-browser)",
+        href: "/playground",
+        internal: true,
+      },
+      {
         label: "API Reference (GitHub README)",
         href: "https://github.com/Markgatcha/llm-guardian#readme",
         internal: false,
@@ -51,9 +56,11 @@ const sections = [
   {
     title: "AI Trio Integration",
     links: [
+      { label: "Benchmarks & methodology", href: "/benchmarks", internal: true },
+      { label: "Architecture Guide", href: "/docs/architecture", internal: true },
       {
-        label: "AI Trio Documentation",
-        href: "https://github.com/Markgatcha/memos/blob/main/docs/benchmark-comparison.md",
+        label: "UMT Integration Contract",
+        href: "https://github.com/Markgatcha/universal-mcp-toolkit/blob/main/docs/integration-contract.md",
         internal: false,
       },
       {

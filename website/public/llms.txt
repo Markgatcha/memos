@@ -1,0 +1,20 @@
+# ContextCore
+
+> Local-first memory, MCP tooling, and token-cost control for AI agents. Three open-source tools that run entirely on your machine — no cloud, no API keys required.
+
+## Tools
+
+- [MemOS](https://github.com/Markgatcha/memos): persistent memory layer for AI agents. Graph-native memory on local SQLite with temporal validity and trust scoring. Install: `npm install @mem-os/sdk`
+- [Universal MCP Toolkit](https://github.com/Markgatcha/universal-mcp-toolkit): 28 production-ready MCP servers in one monorepo — transport, registry, and tool routing for any MCP client. Install: `npx universal-mcp-toolkit list`
+- [LLM Guardian](https://github.com/Markgatcha/llm-guardian): token-cost guardian that compresses prompts 80–95% and enforces budgets at inference time. Install: `npm install -g llm-guardian`
+
+## Pages
+
+- [Home](https://context-core.dev): the trio overview and quick-start terminal
+- [Playground](https://context-core.dev/playground): LLM Guardian's real Semantic Folding engine running in-browser — paste a prompt, watch it compress
+- [Benchmarks](https://context-core.dev/benchmarks): LoCoMo, HotPotQA, BEAM-1M, memory haystack, token efficiency — with methodology and per-run provenance
+- [Memory landscape research post](https://context-core.dev/blog/ai-memory-landscape-2026): the 2025–2026 AI memory state of the art and MemOS's resulting roadmap (multi-granularity pools, sleep-time consolidation, entity-fused retrieval, local embedder+reranker defaults)
+- [Docs](https://context-core.dev/docs): quick starts, architecture, and integration guides
+- [MemOS vs Mem0](https://context-core.dev/compare/memos-vs-mem0): memory-layer comparison
+- [UMT vs mcp-get/supergateway](https://context-core.dev/compare/umt-vs-mcp-get-supergateway): MCP toolkit comparison
+- [Support](https://context-core.dev/support): community and commercial support
