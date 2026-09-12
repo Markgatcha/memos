@@ -57,7 +57,7 @@ jobs:
           ls -la better_sqlite3-*.node
 
       - name: Upload prebuild artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: prebuild-${{ matrix.os }}-node${{ matrix.node }}
           path: better_sqlite3-*.node
