@@ -19,14 +19,15 @@ type BenchProvenance = {
  * so the table updates whenever a benchmark script re-runs.
  */
 function VerifiedRuns() {
-  const rows: Array<{ name: string; data: BenchProvenance }> = (
-    [
-      ["LoCoMo · full dataset", benchmarksData.locomo],
-      ["BEAM-1M", benchmarksData.beam],
-      ["Memory haystack", benchmarksData.haystack],
-      ["HotPotQA", benchmarksData.hotpot],
-    ] as Array<[string, BenchProvenance]>
-  ).filter(([, data]) => data?.timestamp);
+  const benchRows: Array<[string, BenchProvenance]> = [
+    ["LoCoMo · full dataset", benchmarksData.locomo],
+    ["BEAM-1M", benchmarksData.beam],
+    ["Memory haystack", benchmarksData.haystack],
+    ["HotPotQA", benchmarksData.hotpot],
+  ];
+  const rows = benchRows
+    .filter(([, data]) => data?.timestamp)
+    .map(([name, data]) => ({ name, data }));
 
   if (rows.length === 0) return null;
 
@@ -45,7 +46,7 @@ function VerifiedRuns() {
             </tr>
           </thead>
           <tbody>
-            {rows.map(([name, data]) => (
+            {rows.map(({ name, data }) => (
               <tr key={name}>
                 <td>
                   {name}
