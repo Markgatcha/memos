@@ -9,94 +9,34 @@
       <stop offset="100%" style="stop-color:#48cfad;stop-opacity:1" />
     </linearGradient>
   </defs>
-
+  <!-- Background circle -->
   <circle cx="100" cy="100" r="95" fill="url(#bg)" stroke="#6c63ff" stroke-width="2"/>
-
-  <!-- faint background constellation -->
-  <g stroke="#ffffff" opacity="0.07" stroke-width="1">
-    <line x1="30" y1="42" x2="52" y2="30"/>
-    <line x1="52" y1="30" x2="66" y2="44"/>
-    <line x1="170" y1="52" x2="150" y2="38"/>
-    <line x1="150" y1="38" x2="138" y2="54"/>
-    <line x1="34" y1="150" x2="50" y2="160"/>
-    <line x1="166" y1="146" x2="152" y2="158"/>
+  <!-- Brain icon (simplified) -->
+  <g transform="translate(100,100)">
+    <!-- Left lobe -->
+    <path d="M-10,-30 C-40,-35 -55,-20 -50,-5 C-55,5 -50,20 -35,25 C-25,30 -15,25 -10,20 Z"
+      fill="none" stroke="url(#brain)" stroke-width="3" stroke-linecap="round"/>
+    <!-- Right lobe -->
+    <path d="M10,-30 C40,-35 55,-20 50,-5 C55,5 50,20 35,25 C25,30 15,25 10,20 Z"
+      fill="none" stroke="url(#brain)" stroke-width="3" stroke-linecap="round"/>
+    <!-- Center stem -->
+    <line x1="0" y1="-30" x2="0" y2="20" stroke="url(#brain)" stroke-width="2.5"/>
+    <!-- Neural nodes -->
+    <circle cx="-30" cy="-10" r="4" fill="#6c63ff" opacity="0.9"/>
+    <circle cx="30" cy="-10" r="4" fill="#48cfad" opacity="0.9"/>
+    <circle cx="-38" cy="10" r="3" fill="#6c63ff" opacity="0.7"/>
+    <circle cx="38" cy="10" r="3" fill="#48cfad" opacity="0.7"/>
+    <circle cx="0" cy="-15" r="3.5" fill="#a78bfa" opacity="0.9"/>
+    <!-- Connection lines -->
+    <line x1="-30" y1="-10" x2="0" y2="-15" stroke="#6c63ff" stroke-width="1" opacity="0.5"/>
+    <line x1="30" y1="-10" x2="0" y2="-15" stroke="#48cfad" stroke-width="1" opacity="0.5"/>
+    <line x1="-30" y1="-10" x2="-38" y2="10" stroke="#6c63ff" stroke-width="1" opacity="0.4"/>
+    <line x1="30" y1="-10" x2="38" y2="10" stroke="#48cfad" stroke-width="1" opacity="0.4"/>
   </g>
-  <g fill="#ffffff" opacity="0.12">
-    <circle cx="30" cy="42" r="1.5"/>
-    <circle cx="52" cy="30" r="1.2"/>
-    <circle cx="66" cy="44" r="1.5"/>
-    <circle cx="170" cy="52" r="1.5"/>
-    <circle cx="150" cy="38" r="1.2"/>
-    <circle cx="138" cy="54" r="1.5"/>
-    <circle cx="34" cy="150" r="1.5"/>
-    <circle cx="50" cy="160" r="1.2"/>
-    <circle cx="166" cy="146" r="1.5"/>
-    <circle cx="152" cy="158" r="1.2"/>
-  </g>
-
-  <!-- ============ BRAIN, top-down (front at top) ============ -->
-  <!-- one connected cerebrum outline -->
-  <path d="M100,34
-           C76,32 54,42 50,64
-           C46,86 52,108 68,120
-           C80,129 120,129 132,120
-           C148,108 154,86 150,64
-           C146,42 124,32 100,34 Z"
-        fill="none" stroke="url(#brain)" stroke-width="3.5"
-        stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- longitudinal fissure: gently S-curved divider -->
-  <path d="M100,36 C96,52 104,68 100,84 C96,100 103,110 100,120"
-        fill="none" stroke="url(#brain)" stroke-width="2.75" stroke-linecap="round"/>
-
-  <!-- gyri folds: left hemisphere (flow from fissure toward outline) -->
-  <g fill="none" stroke="#6c63ff" stroke-width="3" stroke-linecap="round">
-    <path d="M92,48 C74,46 64,52 62,64"/>
-    <path d="M90,66 C72,64 60,72 58,84"/>
-    <path d="M92,84 C78,84 66,92 64,102"/>
-    <path d="M94,102 C86,104 78,110 76,118"/>
-  </g>
-
-  <!-- gyri folds: right hemisphere -->
-  <g fill="none" stroke="#48cfad" stroke-width="3" stroke-linecap="round">
-    <path d="M108,48 C126,46 136,52 138,64"/>
-    <path d="M110,66 C128,64 140,72 142,84"/>
-    <path d="M108,84 C122,84 134,92 136,102"/>
-    <path d="M106,102 C114,104 122,110 124,118"/>
-  </g>
-
-  <!-- cerebellum: striated, tucked under the back -->
-  <path d="M70,118 C64,128 70,139 84,142 C98,145 114,141 121,131 C125,125 121,119 113,117"
-        fill="none" stroke="url(#brain)" stroke-width="3" stroke-linecap="round"/>
-  <g fill="none" stroke-width="1.4" stroke-linecap="round" opacity="0.6">
-    <path d="M73,127 C84,132 102,132 114,126" stroke="#6c63ff"/>
-    <path d="M76,134 C86,138 102,137 113,131" stroke="#48cfad"/>
-  </g>
-
-  <!-- brainstem stub peeking below -->
-  <path d="M104,144 C106,150 110,153 116,154" fill="none"
-        stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
-
-  <!-- memory nodes at fold tips -->
-  <g fill="#6c63ff">
-    <circle cx="62" cy="64" r="3"/>
-    <circle cx="58" cy="84" r="3"/>
-    <circle cx="64" cy="102" r="3"/>
-    <circle cx="76" cy="118" r="2.5"/>
-  </g>
-  <g fill="#48cfad">
-    <circle cx="138" cy="64" r="3"/>
-    <circle cx="142" cy="84" r="3"/>
-    <circle cx="136" cy="102" r="3"/>
-    <circle cx="124" cy="118" r="2.5"/>
-  </g>
-  <circle cx="100" cy="36" r="4" fill="#a78bfa"/>
-  <circle cx="116" cy="154" r="3" fill="#a78bfa"/>
-
-  <!-- ===================== TEXT ===================== -->
-  <text x="100" y="170" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
+  <!-- Text -->
+  <text x="100" y="165" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
     font-size="22" font-weight="700" fill="#ffffff" text-anchor="middle"
     letter-spacing="3">MemOS</text>
-  <text x="100" y="185" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
+  <text x="100" y="182" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
     font-size="9" fill="#6c63ff" text-anchor="middle" letter-spacing="1">MEMORY LAYER</text>
 </svg>
