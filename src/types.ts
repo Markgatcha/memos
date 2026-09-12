@@ -948,6 +948,27 @@ export interface MemOSConfig {
     namespace: string;
   }) => Promise<string | null | undefined> | string | null | undefined;
   /**
+   * Deployment-specific entity aliases for fused retrieval scoring,
+   * merged over the built-in table (`BUILTIN_ENTITY_ALIASES` in
+   * `src/entity-extraction.ts`). Keys and values are matched
+   * case-insensitively. Use this to canonicalize domain vocabulary —
+   * e.g. `{ "sso": "auth", "okta": "auth" }` — so memories surface no
+   * matter which phrasing a query uses.
+   */
+  entityAliases?: Record<string, string>;
+  /**
+   * Optional LLM distillation hook for `summarizeCluster` /
+   * `consolidate`. Receives the contents of one cluster and returns an
+   * abstractive summary (a runbook-style note — the highest-value
+   * granularity in the LongMemEval-V2 ablations). When omitted or when
+   * the hook fails/returns empty, the extractive summarizer is used.
+   * Wire this to a local 0.6B–4B model for fully-offline consolidation.
+   */
+  summarizeClusterLlm?: (input: {
+    contents: string[];
+    sourceIds: string[];
+  }) => Promise<string | null | undefined> | string | null | undefined;
+  /**
    * Hybrid-search fusion tuning forwarded to `fuseResults()` on every
    * hybrid search. Unset fields use `src/retrieval.ts` defaults
    * (keyword 0.8 / semantic 0.2 / K 60 — tuned for the hash baseline;

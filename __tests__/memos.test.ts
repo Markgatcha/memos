@@ -137,6 +137,7 @@ describe("MemOS MCP adapter", () => {
       "memos_diagnostics",
       "memos_reindex",
       "memos_consolidate",
+      "memos_usage",
     ]);
   });
 });

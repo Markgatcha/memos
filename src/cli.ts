@@ -328,6 +328,11 @@ Commands:
   export                  Export memories to file
   backup                  Backup the database
   restore <path>          Restore from a backup
+  import-external <file>  Import a ChatGPT/Claude memory export
+                          (--source auto|chatgpt|claude|generic, --dry-run,
+                          --max-items <n>, --namespace <ns>)
+  stats                   Token-savings telemetry for this process
+                          (packs built, tokens injected vs naive baseline)
   doctor                  Health-check the store, embedding config and endpoints
   consolidate             Offline maintenance pass: merge duplicates, archive
                           stale memories, supersede decayed ones (kept as
@@ -610,6 +615,61 @@ async function main(): Promise<void> {
       case "browse": {
         const { runBrowse } = await import("./cli-browse.js");
         await runBrowse(memos);
+        break;
+      }
+
+      case "import-external": {
+        const file = args[1];
+        if (!file) {
+          console.error(
+            "Error: export file is required.\n  Usage: memos import-external <file> [--source auto|chatgpt|claude|generic] [--dry-run]",
+          );
+          process.exit(1);
+        }
+        const sourceIdx = args.indexOf("--source");
+        const importSource =
+          sourceIdx !== -1
+            ? (args[sourceIdx + 1] as "auto" | "chatgpt" | "claude" | "generic")
+            : "auto";
+        const maxItemsIdx = args.indexOf("--max-items");
+        const maxItems =
+          maxItemsIdx !== -1 ? parseInt(args[maxItemsIdx + 1], 10) : undefined;
+        const nsIdx = args.indexOf("--namespace");
+        const namespace = nsIdx !== -1 ? args[nsIdx + 1] : undefined;
+        const result = await memos.importExternal({
+          file,
+          ...(importSource ? { source: importSource } : {}),
+          ...(maxItems !== undefined && !Number.isNaN(maxItems)
+            ? { maxItems }
+            : {}),
+          ...(namespace ? { namespace } : {}),
+          dryRun: args.includes("--dry-run"),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(
+            `Import from ${result.detected} export ${result.dryRun ? "(dry run)" : "complete"}: ${result.imported} imported, ${result.skipped} skipped of ${result.total} item(s)`,
+          );
+        }
+        break;
+      }
+
+      case "stats": {
+        const usage = memos.usageStats();
+        if (jsonFlag) {
+          console.log(JSON.stringify(usage, null, 2));
+        } else {
+          console.log("Context-pack token telemetry (this process):");
+          console.log(`  packs built:   ${usage.packsBuilt}`);
+          console.log(`  tokens injected: ${usage.packTokens}`);
+          console.log(
+            `  naive baseline:  ${usage.naiveBaselineTokens} (raw node JSON, same candidates)`,
+          );
+          console.log(
+            `  saved:           ${usage.savedTokens} tok (${usage.savedPct}%)`,
+          );
+        }
         break;
       }
 

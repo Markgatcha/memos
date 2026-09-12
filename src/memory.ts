@@ -11,17 +11,27 @@
 import { GraphEngine, generateId, textSimilarity } from "./graph.js";
 import { SQLiteStorage } from "./storage/sqlite.js";
 import { defaultDbPath } from "./storage/sqlite.js";
+import { readFile } from "node:fs/promises";
+import {
+  parseExternalMemoryExport,
+  type DetectedExportSource,
+  type ExternalImportSource,
+} from "./external-import.js";
 import { createEmbeddingProvider, cosineSimilarity } from "./embeddings.js";
 import { EmbeddingQueue } from "./embedding-queue.js";
 import {
   buildContextPack,
+  estimateTokens,
   searchResultsToToon,
   searchResultsToToonCompact,
   serializeContextPack,
 } from "./context-pack.js";
 import type { ContextPack } from "./context-pack.js";
 import { fuseResults } from "./retrieval.js";
-import { extractQueryEntities } from "./entity-extraction.js";
+import {
+  canonicalizeEntities,
+  extractQueryEntities,
+} from "./entity-extraction.js";
 import { decideRetain } from "./retain-filter.js";
 import type {
   MemoryNode,
@@ -275,9 +285,16 @@ function stringArray(value: unknown): string[] | undefined {
 export class MemOS {
   private graph: GraphEngine;
   private storage: StorageAdapter;
-  private config: Required<Omit<MemOSConfig, "storage" | "enrichMemory">> & {
+  private config: Required<
+    Omit<
+      MemOSConfig,
+      "storage" | "enrichMemory" | "entityAliases" | "summarizeClusterLlm"
+    >
+  > & {
     storage?: StorageAdapter;
+    entityAliases?: MemOSConfig["entityAliases"];
     enrichMemory?: MemOSConfig["enrichMemory"];
+    summarizeClusterLlm?: MemOSConfig["summarizeClusterLlm"];
   };
   private experimental: ExperimentalConfig;
   private embeddingProvider: EmbeddingProvider | null = null;
@@ -307,6 +324,18 @@ export class MemOS {
   private rerankFailureWarned = false;
 
   /**
+   * Lifetime token-savings telemetry for context packs (in-process —
+   * resets when the MemOS instance is recreated). `packTokens` counts
+   * what was actually injected; `naiveBaselineTokens` counts what
+   * dumping the same candidates as raw JSON nodes would have cost.
+   */
+  private usage: {
+    packsBuilt: number;
+    packTokens: number;
+    naiveBaselineTokens: number;
+  } = { packsBuilt: 0, packTokens: 0, naiveBaselineTokens: 0 };
+
+  /**
    * Create a new MemOS instance.
    *
    * @param config — Configuration options. All fields are optional.
@@ -329,7 +358,9 @@ export class MemOS {
       embeddings: config.embeddings ?? {},
       embeddingQueue: config.embeddingQueue ?? {},
       fusion: config.fusion ?? {},
+      entityAliases: config.entityAliases,
       enrichMemory: config.enrichMemory,
+      summarizeClusterLlm: config.summarizeClusterLlm,
       storageOptions: config.storageOptions ?? {},
     };
 
@@ -458,7 +489,12 @@ export class MemOS {
     const metadata: Record<string, unknown> = { ...(opts.metadata ?? {}) };
     if (!Array.isArray(metadata.entities)) {
       const entities = extractQueryEntities(content);
-      if (entities.length > 0) metadata.entities = entities;
+      if (entities.length > 0) {
+        metadata.entities = canonicalizeEntities(
+          entities,
+          this.config.entityAliases,
+        );
+      }
     }
 
     // Contextual enrichment (contextual retrieval): an explicit
@@ -901,6 +937,83 @@ export class MemOS {
    * @param opts — Import options (source path, format).
    * @returns Import result with counts.
    */
+  /**
+   * Import memories from a third-party AI assistant export (ChatGPT or
+   * Claude data exports). The parser sniffs each entry, extracts
+   * user-side text, and every item is stored with `source:
+   * "external_data"` (lower trust by default) plus provenance tags, so
+   * imported memories are rankable but never outrank first-party facts.
+   */
+  async importExternal(opts: {
+    /** Path to the export JSON file. Mutually exclusive with `data`. */
+    file?: string;
+    /** Pre-loaded export payload (JSON string or decoded value). */
+    data?: unknown;
+    /** Parser hint. Default `"auto"` sniffs the shape. */
+    source?: ExternalImportSource;
+    namespace?: string;
+    dryRun?: boolean;
+    /** Safety cap on imported items. Default 500. */
+    maxItems?: number;
+    /** Extra tags applied to every imported memory. */
+    tags?: string[];
+  }): Promise<{
+    detected: DetectedExportSource;
+    total: number;
+    imported: number;
+    skipped: number;
+    dryRun: boolean;
+    durationMs: number;
+    sampleIds: string[];
+  }> {
+    this.assertInit();
+    const start = Date.now();
+    const dryRun = opts.dryRun ?? false;
+
+    let payload: unknown = opts.data;
+    if (payload === undefined && opts.file) {
+      payload = await readFile(opts.file, "utf8");
+    }
+    if (payload === undefined) {
+      throw new Error("importExternal requires `file` or `data`.");
+    }
+
+    const parsed = parseExternalMemoryExport(
+      payload,
+      opts.source ?? "auto",
+      opts.maxItems ?? 500,
+    );
+
+    const sampleIds: string[] = [];
+    let imported = 0;
+    if (!dryRun) {
+      for (const item of parsed.items) {
+        try {
+          const stored = await this.store(item.content, {
+            source: "external_data",
+            tags: ["imported", parsed.detected, ...(opts.tags ?? [])],
+            ...(opts.namespace ? { namespace: opts.namespace } : {}),
+            ...(item.createdAt ? { validFrom: item.createdAt } : {}),
+          });
+          imported += 1;
+          if (sampleIds.length < 5) sampleIds.push(stored.node.id);
+        } catch {
+          // Retain-filter or other soft failure — count as skipped.
+        }
+      }
+    }
+
+    return {
+      detected: parsed.detected,
+      total: parsed.items.length,
+      imported: dryRun ? 0 : imported,
+      skipped: parsed.skipped,
+      dryRun,
+      durationMs: Date.now() - start,
+      sampleIds,
+    };
+  }
+
   async importMemories(opts: ImportOptions): Promise<ImportResult> {
     this.assertInit();
 
@@ -1396,6 +1509,13 @@ export class MemOS {
      * Default true.
      */
     multiStream?: boolean;
+    /**
+     * Bounded graph expansion for this pack: 1-hop neighbours of the top
+     * seeds join the candidate set (via `derived_from` / relation edges),
+     * so consolidated summaries carry their sources. Default true;
+     * `experimental.graphExpansion` settings take precedence when set.
+     */
+    graphExpansion?: boolean;
   }): Promise<ContextPack | string> {
     this.assertInit();
     const namespace = opts.namespace ?? "default";
@@ -1418,12 +1538,30 @@ export class MemOS {
         : await this.multiStreamSearch(filter)
       : await this.storage.queryNodes(filter);
 
+    // Bounded graph expansion for packs (default on): 1-hop neighbours of
+    // the top seeds ride along even when no query would surface them —
+    // derived_from edges from consolidation make summaries carry their
+    // sources. Honors the caller's `graphExpansion: false`; when the
+    // experimental config already tunes expansion, its values win.
+    const expandedItems =
+      opts.graphExpansion === false
+        ? items
+        : await this.applyGraphExpansion(
+            items,
+            this.experimental.graphExpansion ?? {
+              enabled: true,
+              maxSeeds: 3,
+              maxAdded: 5,
+              scoreFactor: 0.85,
+            },
+          );
+
     // Semantic dedup needs each candidate's stored vector. Pull them in
     // one pass over the embedding table filtered to the candidate ids —
     // no new embedding compute, just a lookup of vectors we already have.
     let embeddings: Map<string, EmbeddingVector> | undefined;
     if (opts.semanticDedup && this.storage.getAllEmbeddings) {
-      const wanted = new Set(items.map((i) => i.node.id));
+      const wanted = new Set(expandedItems.map((i) => i.node.id));
       embeddings = new Map();
       for (const row of await this.storage.getAllEmbeddings()) {
         if (wanted.has(row.nodeId)) embeddings.set(row.nodeId, row.vector);
@@ -1434,17 +1572,71 @@ export class MemOS {
       query: opts.query,
       namespace,
       tokenBudget: opts.tokenBudget,
-      items,
+      items: expandedItems,
       trust: opts.trust,
       source: opts.source,
       includeSummary: opts.includeSummary,
       embeddings,
     });
+    // Telemetry: the naive baseline is what dumping the SAME candidates as
+    // full raw node JSON would cost (the "no memory layer" approach) —
+    // punctuation-heavy minified JSON, which is exactly why TOON wins.
+    // `estimateTokens` counts punctuation as tokens, matching GPT.
+    const naiveBaselineTokens = estimateTokens(
+      JSON.stringify(expandedItems.map((r) => r.node)),
+    );
+
     // Serialize in the requested format if not "json"
     if (opts.format && opts.format !== "json") {
-      return serializeContextPack(pack, opts.format);
+      // Guarded above: non-json formats always serialize to a string.
+      const serialized = serializeContextPack(pack, opts.format) as string;
+      this.trackPackUsage(estimateTokens(serialized), naiveBaselineTokens);
+      return serialized;
     }
+
+    this.trackPackUsage(
+      estimateTokens(
+        JSON.stringify((pack as { items?: unknown[] }).items ?? pack),
+      ),
+      naiveBaselineTokens,
+    );
     return pack;
+  }
+
+  /**
+   * Lifetime token-savings counters for context packs. `savedPct` is the
+   * percentage of the naive baseline (raw node JSON for the same
+   * candidates) that TOON packing + budget trimming eliminated.
+   */
+  usageStats(): {
+    packsBuilt: number;
+    packTokens: number;
+    naiveBaselineTokens: number;
+    savedTokens: number;
+    savedPct: number;
+  } {
+    const savedTokens = this.usage.naiveBaselineTokens - this.usage.packTokens;
+    return {
+      packsBuilt: this.usage.packsBuilt,
+      packTokens: this.usage.packTokens,
+      naiveBaselineTokens: this.usage.naiveBaselineTokens,
+      savedTokens,
+      savedPct:
+        this.usage.naiveBaselineTokens > 0
+          ? Number(
+              ((savedTokens / this.usage.naiveBaselineTokens) * 100).toFixed(1),
+            )
+          : 0,
+    };
+  }
+
+  private trackPackUsage(
+    packTokens: number,
+    naiveBaselineTokens: number,
+  ): void {
+    this.usage.packsBuilt += 1;
+    this.usage.packTokens += packTokens;
+    this.usage.naiveBaselineTokens += naiveBaselineTokens;
   }
 
   /**
@@ -1707,9 +1899,21 @@ export class MemOS {
     for (const [, indices] of groups) {
       if (indices.length < minClusterSize) continue;
       const sources = indices.map((i) => all[i].node);
-      const summary = extractiveSummary(
-        sources.map((n) => n.content).join(" "),
-      );
+      let summary = extractiveSummary(sources.map((n) => n.content).join(" "));
+      // Optional abstractive distillation (contextual hook, fail-soft to
+      // the extractive summarizer). LLM runbook notes are the
+      // highest-value granularity per the LongMemEval-V2 ablations.
+      if (this.config.summarizeClusterLlm) {
+        try {
+          const distilled = await this.config.summarizeClusterLlm({
+            contents: sources.map((n) => n.content),
+            sourceIds: sources.map((n) => n.id),
+          });
+          if (distilled && distilled.trim()) summary = distilled.trim();
+        } catch {
+          // Hook failure — keep the extractive summary.
+        }
+      }
       let summaryId: string | null = null;
       if (!dryRun) {
         const stored = await this.store(summary, {
@@ -2846,7 +3050,10 @@ export class MemOS {
     // stored) so the entity-fusion signal always reflects the live query.
     const fused = fuseResults(keywordResults, semanticResults, {
       ...this.config.fusion,
-      queryEntities: extractQueryEntities(filter.query ?? ""),
+      queryEntities: canonicalizeEntities(
+        extractQueryEntities(filter.query ?? ""),
+        this.config.entityAliases,
+      ),
     });
 
     const expanded = await this.applyGraphExpansion(fused);
@@ -2960,8 +3167,9 @@ export class MemOS {
    */
   private async applyGraphExpansion(
     fused: ScoredMemory[],
+    config: NonNullable<ExperimentalConfig["graphExpansion"]> | undefined = this
+      .experimental.graphExpansion,
   ): Promise<ScoredMemory[]> {
-    const config = this.experimental.graphExpansion;
     if (!config?.enabled || fused.length === 0) return fused;
 
     const maxSeeds = config.maxSeeds ?? 3;

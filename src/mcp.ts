@@ -694,6 +694,31 @@ function registerTools(server: McpServer, memos: MemOS): void {
       };
     },
   );
+
+  server.registerTool(
+    "memos_usage",
+    {
+      title: "Token Savings Telemetry",
+      description:
+        "Lifetime context-pack token telemetry for this server process: " +
+        "packs built, tokens actually injected, the naive raw-JSON " +
+        "baseline for the same candidates, and the savings percentage.",
+      inputSchema: z.object({}),
+      outputSchema: z.object({ usage: z.unknown() }),
+    },
+    async () => {
+      const usage = memos.usageStats();
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${usage.packsBuilt} pack(s) · ${usage.packTokens} tok injected vs ${usage.naiveBaselineTokens} naive (${usage.savedPct}% saved).`,
+          },
+        ],
+        structuredContent: { usage },
+      };
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1122,6 +1147,17 @@ const TOOL_METADATA: McpToolInfo[] = [
       }),
     ) as Record<string, unknown>,
     outputSchema: z.toJSONSchema(z.object({ report: z.unknown() })) as Record<
+      string,
+      unknown
+    >,
+  },
+  {
+    name: "memos_usage",
+    description:
+      "Lifetime context-pack token telemetry for this server process: " +
+      "packs built, tokens injected, naive raw-JSON baseline, savings %.",
+    inputSchema: z.toJSONSchema(z.object({})) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(z.object({ usage: z.unknown() })) as Record<
       string,
       unknown
     >,

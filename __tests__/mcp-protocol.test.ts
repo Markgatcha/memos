@@ -147,7 +147,7 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
     ).toBeDefined();
   });
 
-  test("tools/list returns all 15 tools with outputSchema", async () => {
+  test("tools/list returns all 16 tools with outputSchema", async () => {
     const response = await sendRequest(
       clientTransport,
       "tools/list",
@@ -160,7 +160,7 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
     expect(response.error).toBeUndefined();
     const result = response.result!;
     const tools = result.tools as Array<Record<string, unknown>>;
-    expect(tools).toHaveLength(15);
+    expect(tools).toHaveLength(16);
     // Full-capability surface: core CRUD + context pack + temporal + trust +
     // extraction + operations.
     const names = tools.map((t) => t.name);
@@ -180,6 +180,7 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
       "memos_diagnostics",
       "memos_reindex",
       "memos_consolidate",
+      "memos_usage",
     ]) {
       expect(names).toContain(expected);
     }
@@ -200,6 +201,7 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
       "memos_diagnostics",
       "memos_reindex",
       "memos_consolidate",
+      "memos_usage",
     ];
     const toolNames = tools.map((t) => t.name);
     expect(toolNames).toEqual(expectedNames);
@@ -427,7 +429,7 @@ describe("MCP Protocol — legacy 2025-era backward compatibility", () => {
     expect(response.error).toBeUndefined();
     const result = response.result!;
     const tools = result.tools as Array<Record<string, unknown>>;
-    expect(tools).toHaveLength(15);
+    expect(tools).toHaveLength(16);
     // Full-capability surface: core CRUD + context pack + temporal + trust +
     // extraction + operations.
     const names = tools.map((t) => t.name);
@@ -447,6 +449,7 @@ describe("MCP Protocol — legacy 2025-era backward compatibility", () => {
       "memos_diagnostics",
       "memos_reindex",
       "memos_consolidate",
+      "memos_usage",
     ]) {
       expect(names).toContain(expected);
     }
@@ -456,7 +459,7 @@ describe("MCP Protocol — legacy 2025-era backward compatibility", () => {
 describe("getMcpTools static metadata", () => {
   test("returns 6 tools with outputSchema", () => {
     const tools = getMcpTools();
-    expect(tools).toHaveLength(15);
+    expect(tools).toHaveLength(16);
     // Full-capability surface: core CRUD + context pack + temporal + trust +
     // extraction + operations.
     const names = tools.map((t) => t.name);
@@ -476,6 +479,7 @@ describe("getMcpTools static metadata", () => {
       "memos_diagnostics",
       "memos_reindex",
       "memos_consolidate",
+      "memos_usage",
     ]) {
       expect(names).toContain(expected);
     }
@@ -505,6 +509,7 @@ describe("getMcpTools static metadata", () => {
       "memos_diagnostics",
       "memos_reindex",
       "memos_consolidate",
+      "memos_usage",
     ]);
   });
 });

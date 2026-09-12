@@ -255,3 +255,91 @@ export function entityOverlap(
   }
   return shared / Math.min(queryEntities.length, stored.size);
 }
+
+// ---------------------------------------------------------------------------
+// Entity resolution (aliasing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Built-in alias table mapping surface forms to a canonical entity.
+ * Lexical extraction alone yields "Postgres", "PostgreSQL", and "pg" as
+ * three different entities; canonicalizing through this map (plus any
+ * deployment-specific `MemOSConfig.entityAliases`) collapses them so the
+ * overlap signal fires across phrasings.
+ */
+export const BUILTIN_ENTITY_ALIASES: Readonly<Record<string, string>> = {
+  pg: "postgres",
+  postgres: "postgres",
+  postgresql: "postgres",
+  pgsql: "postgres",
+  js: "javascript",
+  nodejs: "node",
+  "node.js": "node",
+  ts: "typescript",
+  k8s: "kubernetes",
+  ks: "kubernetes",
+  py: "python",
+  pip: "python",
+  yarn: "npm",
+  npm: "npm",
+  docker: "docker",
+  containerd: "docker",
+  rust: "rust",
+  go: "golang",
+  golang: "golang",
+  rails: "rails",
+  react: "react",
+  nextjs: "next",
+  "next.js": "next",
+  vue: "vue",
+  s3: "aws",
+  aws: "aws",
+  gcp: "gcp",
+  gh: "github",
+  github: "github",
+  gha: "github-actions",
+  llm: "llm",
+  agent: "agent",
+  agents: "agent",
+  db: "database",
+  database: "database",
+  redis: "redis",
+  sqlite: "sqlite",
+  graphql: "graphql",
+};
+
+/**
+ * Canonicalize extracted entities through the built-in alias table plus
+ * any deployment-specific aliases (from `MemOSConfig.entityAliases`,
+ * which wins over built-ins). Deduplicates after mapping, preserving
+ * first-appearance order.
+ */
+export function canonicalizeEntities(
+  entities: readonly string[],
+  extraAliases?: Readonly<Record<string, string>>,
+): string[] {
+  const aliases = extraAliases
+    ? { ...BUILTIN_ENTITY_ALIASES, ...lowerKeys(extraAliases) }
+    : BUILTIN_ENTITY_ALIASES;
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entity of entities) {
+    const key = entity.toLowerCase();
+    const canonical = (aliases[key] ?? key).toLowerCase();
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    out.push(canonical);
+  }
+  return out;
+}
+
+function lowerKeys(
+  record: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(record)) {
+    out[key.toLowerCase()] = value.toLowerCase();
+  }
+  return out;
+}
