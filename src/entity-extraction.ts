@@ -158,7 +158,11 @@ export function extractQueryEntities(text: string): string[] {
   };
 
   // 1. Quoted strings and backticked code spans are always entities.
-  for (const match of text.matchAll(/["'`]+([^"'`\n]{3,60})["'`]+/g)) {
+  // Single-character delimiters with lazy content (no `+` quantifiers
+  // adjacent to the negated class): nothing can be matched two ways, so
+  // the scan stays linear on adversarial, quote-heavy input — a
+  // polynomial-backtracking hazard with the previous `["'`]+` form.
+  for (const match of text.matchAll(/["'`]([^"'`\n]{3,60}?)["'`]/g)) {
     push(match[1]!);
   }
 

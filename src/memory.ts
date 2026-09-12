@@ -3098,26 +3098,29 @@ export class MemOS {
       }>;
     };
     try {
-      const response = await fetch(
-        `${cfg.endpoint.replace(/\/+$/, "")}/rerank`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
-          },
-          body: JSON.stringify({
-            model: cfg.model ?? "reranker",
-            query: filter.query,
-            documents: head.map((r) =>
-              cfg.maxDocChars && r.node.content.length > cfg.maxDocChars
-                ? r.node.content.slice(0, cfg.maxDocChars)
-                : r.node.content,
-            ),
-          }),
-          signal: AbortSignal.timeout(cfg.timeoutMs ?? 5_000),
+      // Trailing-slash strip without a regex: an unanchored `/\/+$/` scan
+      // is quadratic on adversarial endpoints (CodeQL polynomial-regex).
+      let endpointBase = cfg.endpoint;
+      while (endpointBase.endsWith("/")) {
+        endpointBase = endpointBase.slice(0, -1);
+      }
+      const response = await fetch(`${endpointBase}/rerank`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
         },
-      );
+        body: JSON.stringify({
+          model: cfg.model ?? "reranker",
+          query: filter.query,
+          documents: head.map((r) =>
+            cfg.maxDocChars && r.node.content.length > cfg.maxDocChars
+              ? r.node.content.slice(0, cfg.maxDocChars)
+              : r.node.content,
+          ),
+        }),
+        signal: AbortSignal.timeout(cfg.timeoutMs ?? 5_000),
+      });
       if (!response.ok) {
         throw new Error(`rerank endpoint returned ${response.status}`);
       }

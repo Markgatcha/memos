@@ -72,3 +72,4 @@ mcp-smoke.db
 
 # Large benchmark datasets (regenerate via scripts)
 scripts/dataset/**/*.parquet
+scripts/eval/retrieval-results.json
