@@ -21,10 +21,12 @@ import {
 } from "./context-pack.js";
 import type { ContextPack } from "./context-pack.js";
 import { fuseResults } from "./retrieval.js";
+import { extractQueryEntities } from "./entity-extraction.js";
 import { decideRetain } from "./retain-filter.js";
 import type {
   MemoryNode,
   MemoryEdge,
+  MemoryPool,
   CreateMemoryInput,
   UpdateMemoryInput,
   ScoredMemory,
@@ -49,6 +51,9 @@ import type {
   DedupeOptions,
   DedupeMerge,
   DedupeResult,
+  DecaySuperseded,
+  DecayForgettingOptions,
+  DecayForgetResult,
   ArchiveOptions,
   ArchiveMove,
   ArchiveResult,
@@ -270,8 +275,9 @@ function stringArray(value: unknown): string[] | undefined {
 export class MemOS {
   private graph: GraphEngine;
   private storage: StorageAdapter;
-  private config: Required<Omit<MemOSConfig, "storage">> & {
+  private config: Required<Omit<MemOSConfig, "storage" | "enrichMemory">> & {
     storage?: StorageAdapter;
+    enrichMemory?: MemOSConfig["enrichMemory"];
   };
   private experimental: ExperimentalConfig;
   private embeddingProvider: EmbeddingProvider | null = null;
@@ -323,6 +329,7 @@ export class MemOS {
       embeddings: config.embeddings ?? {},
       embeddingQueue: config.embeddingQueue ?? {},
       fusion: config.fusion ?? {},
+      enrichMemory: config.enrichMemory,
       storageOptions: config.storageOptions ?? {},
     };
 
@@ -441,6 +448,37 @@ export class MemOS {
       ? (opts.namespace ?? "default")
       : "default";
     const source: MemorySource = opts.source ?? "user_input";
+    const type = opts.type ?? "fact";
+    const tags = opts.tags ?? [];
+
+    // Write-time entity capture for fused retrieval scoring: entities are
+    // extracted once here and stored in metadata, so the query-time overlap
+    // check (see `fuseResults`) is a set intersection instead of a rescan.
+    // Caller-supplied `metadata.entities` always wins.
+    const metadata: Record<string, unknown> = { ...(opts.metadata ?? {}) };
+    if (!Array.isArray(metadata.entities)) {
+      const entities = extractQueryEntities(content);
+      if (entities.length > 0) metadata.entities = entities;
+    }
+
+    // Contextual enrichment (contextual retrieval): an explicit
+    // `opts.context` wins; otherwise consult the optional `enrichMemory`
+    // config hook. Fail-soft — an enricher error must never block a write.
+    let context: string | null | undefined = opts.context;
+    if (context === undefined && this.config.enrichMemory) {
+      try {
+        context = await this.config.enrichMemory({
+          content,
+          type,
+          tags,
+          source,
+          namespace,
+        });
+      } catch {
+        context = undefined;
+      }
+    }
+    if (context) metadata.context = context;
 
     // Evidence state machine (opt-in via `evidenceLearning`, default
     // OFF — append-always remains the default write semantics, matching
@@ -473,19 +511,20 @@ export class MemOS {
       id: generateId(),
       content,
       summary: opts.summary ?? extractiveSummary(content),
-      type: opts.type ?? "fact",
-      metadata: opts.metadata ?? {},
+      type,
+      metadata,
       importance: opts.importance ?? 0.5,
       createdAt: now,
       updatedAt: now,
       accessCount: 0,
       lastAccessed: now,
-      tags: opts.tags ?? [],
+      tags,
       expiresAt: opts.ttl ? Math.floor(now / 1000) + opts.ttl : null,
       namespace,
       validFrom: opts.validFrom ?? null,
       validTo: opts.validTo ?? null,
       source,
+      pool: opts.pool ?? "event",
       trustScore: opts.trustScore ?? DEFAULT_TRUST_SCORES[source],
       // Initialize confidence state machine values
       confidence: opts.confidence ?? INITIAL_CONFIDENCE,
@@ -1074,10 +1113,16 @@ export class MemOS {
 
     const nodes = this.graph.getAllNodes();
     const scored: ScoredMemory[] = [];
+    const poolFilter = filter.pool
+      ? Array.isArray(filter.pool)
+        ? filter.pool
+        : [filter.pool]
+      : null;
 
     for (const node of nodes) {
       if (filter.namespace && node.namespace !== filter.namespace) continue;
       if (filter.type && node.type !== filter.type) continue;
+      if (poolFilter && !poolFilter.includes(node.pool ?? "event")) continue;
       if (filter.tags && filter.tags.some((tag) => !node.tags.includes(tag))) {
         continue;
       }
@@ -1342,6 +1387,15 @@ export class MemOS {
      * off by default.
      */
     semanticDedup?: boolean;
+    /**
+     * Multi-stream retrieval (LongMemEval-V2 design lesson): run the query
+     * separately against each granularity pool (`event`, `note`,
+     * `procedure`) and fuse the ranked lists. Beats a single fused query
+     * once distilled notes or procedures exist, and degrades to the
+     * plain single-stream path when only `event` content is present.
+     * Default true.
+     */
+    multiStream?: boolean;
   }): Promise<ContextPack | string> {
     this.assertInit();
     const namespace = opts.namespace ?? "default";
@@ -1358,7 +1412,10 @@ export class MemOS {
       limit: limit * 4,
     };
     const items = this.embeddingProvider
-      ? await this.hybridSearch(filter)
+      ? opts.multiStream === false ||
+        !(await this.hasPoolContent(namespace, ["note", "procedure"]))
+        ? await this.hybridSearch(filter)
+        : await this.multiStreamSearch(filter)
       : await this.storage.queryNodes(filter);
 
     // Semantic dedup needs each candidate's stored vector. Pull them in
@@ -1388,6 +1445,49 @@ export class MemOS {
       return serializeContextPack(pack, opts.format);
     }
     return pack;
+  }
+
+  /**
+   * Whether any memory exists in the given pools. Cheap probe used by
+   * `contextPack` to skip multi-stream retrieval on event-only stores.
+   */
+  private async hasPoolContent(
+    namespace: string,
+    pools: MemoryPool[],
+  ): Promise<boolean> {
+    const probe = await this.storage.queryNodes({
+      namespace,
+      pool: pools,
+      limit: 1,
+    });
+    return probe.length > 0;
+  }
+
+  /**
+   * Multi-stream retrieval: run the query separately against each
+   * granularity pool and fuse the ranked lists by keeping each node's best
+   * stream score. Candidates found by multiple streams are the strongest
+   * evidence — exactly the behavior that beats single-query retrieval on
+   * the LongMemEval-V2 ablations.
+   */
+  private async multiStreamSearch(
+    filter: SearchFilter,
+  ): Promise<ScoredMemory[]> {
+    const pools: MemoryPool[] = ["event", "note", "procedure"];
+    const streams = await Promise.all(
+      pools.map((pool) => this.hybridSearch({ ...filter, pool, offset: 0 })),
+    );
+
+    const byId = new Map<string, ScoredMemory>();
+    for (const stream of streams) {
+      for (const result of stream) {
+        const existing = byId.get(result.node.id);
+        if (!existing || result.score > existing.score) {
+          byId.set(result.node.id, result);
+        }
+      }
+    }
+    return [...byId.values()].sort((a, b) => b.score - a.score);
   }
 
   // ---------------------------------------------------------------------------
@@ -1616,6 +1716,9 @@ export class MemOS {
           type: "context",
           tags: ["__consolidated_summary"],
           importance: Math.max(...sources.map((s) => s.importance)),
+          // Consolidated summaries live in the `note` pool — the distilled
+          // granularity that multi-stream context packs query separately.
+          pool: "note",
         });
         summaryId = stored.node.id;
         for (const source of sources) {
@@ -1667,13 +1770,92 @@ export class MemOS {
         })
       : { clusters: [], dryRun, durationMs: 0 };
 
+    // Decay-based forgetting runs AFTER archive (archive already moved the
+    // lowest-value memories out) and BEFORE summarize (so notes are
+    // distilled from the surviving store, not from memories we just
+    // deprecated).
+    const decayResult =
+      opts.decay === false
+        ? { superseded: [] as DecaySuperseded[], dryRun, durationMs: 0 }
+        : await this.forgetByDecay({
+            namespace,
+            halfLifeDays: opts.decayHalfLifeDays,
+            minScore: opts.minRetentionScore,
+            olderThanDays: opts.olderThanDays,
+            dryRun,
+          });
+
     return {
       merges: dedupeResult.merges,
       moves: archiveResult.moves,
       clusters: summarizeResult.clusters,
+      decayed: decayResult.superseded,
       dryRun,
       durationMs: Date.now() - start,
     };
+  }
+
+  /**
+   * Decay-based algorithmic forgetting. Computes a retention score per
+   * memory — importance, trust, access reinforcement, and an exponential
+   * recency term — and SUPERSEDES memories whose score falls below
+   * `minScore`: `validTo = now`, so they become historical and drop out
+   * of default search while remaining queryable via `searchTemporal`.
+   * Nothing is ever deleted.
+   *
+   * Weights: importance 0.35 · trust 0.15 · access 0.15 · recency 0.35.
+   * With the default half-life (60 days) a month-old, never-accessed,
+   * agent-inferred low-importance memory crosses the default threshold
+   * (~0.2) at roughly four months of age; frequently-reinforced or
+   * user-stated memories effectively never do.
+   */
+  async forgetByDecay(
+    opts: DecayForgettingOptions = {},
+  ): Promise<DecayForgetResult> {
+    this.assertInit();
+    const start = Date.now();
+    const namespace = opts.namespace ?? "default";
+    const halfLifeMs = (opts.halfLifeDays ?? 60) * 24 * 60 * 60 * 1000;
+    const minScore = opts.minScore ?? 0.2;
+    const olderThanMs = (opts.olderThanDays ?? 60) * 24 * 60 * 60 * 1000;
+    const dryRun = opts.dryRun ?? false;
+    const now = Date.now();
+
+    const all = await this.storage.queryNodes({
+      namespace,
+      includeHistorical: false,
+      limit: 1_000_000,
+    });
+
+    const superseded: DecaySuperseded[] = [];
+    for (const row of all) {
+      const node = row.node;
+      // TTL'd memories expire through the TTL sweep, not decay.
+      if (node.expiresAt !== null) continue;
+      const anchor = Math.max(node.lastAccessed, node.createdAt);
+      if (now - anchor < olderThanMs) continue;
+
+      const recency = Math.pow(0.5, (now - anchor) / halfLifeMs);
+      const accessBoost = Math.min(1, node.accessCount / 5);
+      const score =
+        node.importance * 0.35 +
+        (node.trustScore ?? 1.0) * 0.15 +
+        accessBoost * 0.15 +
+        recency * 0.35;
+
+      if (score < minScore) {
+        superseded.push({ id: node.id, score: Number(score.toFixed(4)) });
+        if (!dryRun) {
+          await this.setValidity(node.id, node.validFrom, now);
+        }
+      }
+    }
+
+    if (!dryRun && superseded.length > 0) {
+      this.invalidateSearchCache();
+    }
+
+    return { superseded, dryRun, durationMs: Date.now() - start };
   }
 
   /**
@@ -2488,12 +2670,20 @@ export class MemOS {
    * The text that gets embedded for a node. `embeddings.embedText`
    * selects raw content vs. the historical summary+content blend (the
    * extractive summary roughly doubles input tokens for short facts).
+   * Write-time context (`metadata.context`, from `store({ context })` or
+   * the `enrichMemory` hook) is prepended so the vector carries
+   * situational meaning — contextual retrieval, without re-embedding
+   * queries. Only nodes stored with a context line are affected; changing
+   * enrichment later requires `reindexEmbeddings()`.
    */
   private embeddedTextFor(node: MemoryNode): string {
-    if (this.config.embeddings?.embedText === "content") {
-      return node.content;
-    }
-    return `${node.summary}\n${node.content}`;
+    const context =
+      typeof node.metadata?.context === "string" ? node.metadata.context : "";
+    const base =
+      this.config.embeddings?.embedText === "content"
+        ? node.content
+        : `${node.summary}\n${node.content}`;
+    return context ? `${context}\n${base}` : base;
   }
 
   private async persistEmbedding(node: MemoryNode): Promise<void> {
@@ -2652,12 +2842,12 @@ export class MemOS {
     // be unit-tested without storage or embeddings. Weights come from
     // `config.fusion` so deployments with a stronger embedding model can
     // rebalance the legs (defaults: keyword 0.8 / semantic 0.2, tuned
-    // for the hash baseline).
-    const fused = fuseResults(
-      keywordResults,
-      semanticResults,
-      this.config.fusion,
-    );
+    // for the hash baseline). Query entities are extracted here (not
+    // stored) so the entity-fusion signal always reflects the live query.
+    const fused = fuseResults(keywordResults, semanticResults, {
+      ...this.config.fusion,
+      queryEntities: extractQueryEntities(filter.query ?? ""),
+    });
 
     const expanded = await this.applyGraphExpansion(fused);
     const withSessions = await this.applySessionExpansion(expanded, filter);

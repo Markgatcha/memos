@@ -16,6 +16,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 import { MemOS } from "./memory.js";
+import { graphToMermaid } from "./graph-mermaid.js";
 import type { MemOSConfig } from "./types.js";
 import { getSdkVersion } from "./version.js";
 
@@ -94,13 +95,27 @@ function registerTools(server: McpServer, memos: MemOS): void {
           .describe(
             "Optional namespace when experimental namespaces are enabled.",
           ),
+        pool: z
+          .enum(["event", "note", "procedure"])
+          .optional()
+          .describe(
+            "Retrieval pool. Default event (raw statements). Use procedure " +
+              "for workflow/how-to knowledge.",
+          ),
+        context: z
+          .string()
+          .optional()
+          .describe(
+            "One line of situational context (contextual retrieval) — " +
+              "prepended to the embedded text and shown in context packs.",
+          ),
       }),
       outputSchema: z.object({
         node: memoryNodeSchema,
         links: z.array(memoryEdgeSchema),
       }),
     },
-    async ({ content, type, tags, ttl, namespace }) => {
+    async ({ content, type, tags, ttl, namespace, pool, context }) => {
       const stored = await memos.store(content, {
         type:
           (type as
@@ -113,6 +128,8 @@ function registerTools(server: McpServer, memos: MemOS): void {
         ...(tags ? { tags } : {}),
         ...(ttl !== undefined ? { ttl } : {}),
         ...(namespace ? { namespace } : {}),
+        ...(pool ? { pool } : {}),
+        ...(context ? { context } : {}),
       });
       return {
         content: [
@@ -134,6 +151,13 @@ function registerTools(server: McpServer, memos: MemOS): void {
         limit: z.number().optional().describe("Maximum result count."),
         tags: z.array(z.string()).optional().describe("Optional tag filter."),
         namespace: z.string().optional().describe("Optional namespace filter."),
+        pool: z
+          .union([
+            z.enum(["event", "note", "procedure"]),
+            z.array(z.enum(["event", "note", "procedure"])),
+          ])
+          .optional()
+          .describe("Filter by retrieval pool (event, note, or procedure)."),
         compact: z
           .boolean()
           .optional()
@@ -158,12 +182,13 @@ function registerTools(server: McpServer, memos: MemOS): void {
         }),
       ]),
     },
-    async ({ query, limit, tags, namespace, compact }) => {
+    async ({ query, limit, tags, namespace, pool, compact }) => {
       const found = await memos.search({
         query,
         limit: limit ?? 10,
         ...(tags ? { tags } : {}),
         ...(namespace ? { namespace } : {}),
+        ...(pool !== undefined ? { pool } : {}),
       });
       if (compact) {
         const trimmed = found.map((r) => ({
@@ -335,6 +360,14 @@ function registerTools(server: McpServer, memos: MemOS): void {
           .boolean()
           .optional()
           .describe("Drop near-duplicate pack items via embedding cosine."),
+        multiStream: z
+          .boolean()
+          .optional()
+          .describe(
+            "Query each granularity pool (event/note/procedure) separately " +
+              "and fuse. Default true; automatically skipped on event-only " +
+              "stores.",
+          ),
       }),
       outputSchema: z.object({
         pack: z.unknown(),
@@ -348,6 +381,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
       format,
       includeSummary,
       semanticDedup,
+      multiStream,
     }) => {
       // Token-lean by default: the pack feeds an LLM, not a human.
       const chosenFormat = format ?? "toon-compact";
@@ -358,6 +392,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
         format: chosenFormat,
         ...(includeSummary !== undefined ? { includeSummary } : {}),
         ...(semanticDedup !== undefined ? { semanticDedup } : {}),
+        ...(multiStream !== undefined ? { multiStream } : {}),
       });
       const text =
         typeof pack === "string" ? pack : JSON.stringify(pack, null, 2);
@@ -597,6 +632,177 @@ function registerTools(server: McpServer, memos: MemOS): void {
       };
     },
   );
+
+  server.registerTool(
+    "memos_consolidate",
+    {
+      title: "Consolidate Memories",
+      description:
+        "Offline maintenance pass ('dreaming'): merge near-duplicates, " +
+        "archive stale low-importance memories, supersede decayed ones " +
+        "(marked historical — never deleted), and distill cluster summary " +
+        "notes into the note pool. Run periodically or while idle.",
+      inputSchema: z.object({
+        namespace: z.string().optional(),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe("Report what would happen without mutating anything."),
+        summarize: z
+          .boolean()
+          .optional()
+          .describe("Generate cluster summary notes. Default true."),
+        decay: z
+          .boolean()
+          .optional()
+          .describe("Run decay-based forgetting. Default true."),
+        decayHalfLifeDays: z
+          .number()
+          .optional()
+          .describe("Recency half-life in days for the retention score."),
+        minRetentionScore: z
+          .number()
+          .optional()
+          .describe("Retention scores below this supersede the memory."),
+        olderThanDays: z
+          .number()
+          .optional()
+          .describe("Only memories untouched this long are decay-eligible."),
+      }),
+      outputSchema: z.object({ report: z.unknown() }),
+    },
+    async (args) => {
+      const report = await memos.consolidate({
+        ...(args.namespace ? { namespace: args.namespace } : {}),
+        ...(args.dryRun !== undefined ? { dryRun: args.dryRun } : {}),
+        ...(args.summarize !== undefined ? { summarize: args.summarize } : {}),
+        ...(args.decay !== undefined ? { decay: args.decay } : {}),
+        ...(args.decayHalfLifeDays !== undefined
+          ? { decayHalfLifeDays: args.decayHalfLifeDays }
+          : {}),
+        ...(args.minRetentionScore !== undefined
+          ? { minRetentionScore: args.minRetentionScore }
+          : {}),
+        ...(args.olderThanDays !== undefined
+          ? { olderThanDays: args.olderThanDays }
+          : {}),
+      });
+      const text = `Consolidated: ${report.merges.length} merged, ${report.moves.length} archived, ${report.decayed.length} decayed, ${report.clusters.length} note(s)${report.dryRun ? " (dry run — nothing changed)" : ""}.`;
+      return {
+        content: [{ type: "text" as const, text }],
+        structuredContent: { report },
+      };
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Resources & prompts
+// ---------------------------------------------------------------------------
+
+/**
+ * Resources give MCP clients pull-based access to memory state (some
+ * harnesses surface resources natively rather than calling tools); prompts
+ * are reusable templates the client can launch with one argument.
+ */
+function registerResourcesAndPrompts(server: McpServer, memos: MemOS): void {
+  server.registerResource(
+    "context",
+    "memos://context",
+    {
+      title: "Memory Brief",
+      description:
+        "Zero-query snapshot of what MemOS remembers: a summary plus the " +
+        "most recent memories. Pull this at session start for instant context.",
+      mimeType: "text/markdown",
+    },
+    async (uri) => {
+      const summary = await memos.summarize();
+      const graph = await memos.getGraph();
+      const recent = [...graph.nodes]
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 20);
+      const sections = [
+        "# MemOS memory brief",
+        "",
+        summary,
+        "",
+        `## Recent memories (${recent.length})`,
+        "",
+        ...recent.map(
+          (node) =>
+            `- [${node.type}] ${node.content} _(trust ${node.trustScore.toFixed(2)})_`,
+        ),
+      ];
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: sections.join("\n"),
+            mimeType: "text/markdown",
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerResource(
+    "graph",
+    "memos://graph",
+    {
+      title: "Memory Graph (Mermaid)",
+      description:
+        "The full memory graph — nodes are memories, edges are relations — " +
+        "rendered as a Mermaid flowchart.",
+      mimeType: "text/plain",
+    },
+    async (uri) => {
+      const graph = await memos.getGraph();
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: graphToMermaid(graph),
+            mimeType: "text/plain",
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerPrompt(
+    "recall",
+    {
+      title: "Recall Memories",
+      description:
+        "Search MemOS for memories about a topic and summarize findings " +
+        "with trust and recency caveats.",
+      argsSchema: {
+        topic: z
+          .string()
+          .describe("What to recall, e.g. 'deployment preferences'."),
+      },
+    },
+    ({ topic }) => ({
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text:
+              `Search MemOS for memories relevant to: ${topic}\n\n` +
+              "1. Call memos_search with the topic, then refine with a " +
+              "second query if the first pass looks thin.\n" +
+              "2. Summarize what you found as a short bulleted list.\n" +
+              "3. Flag each bullet's trust score and age — say explicitly " +
+              "when a memory is old or low-trust rather than presenting it " +
+              "as current fact.\n" +
+              "4. If nothing relevant is stored, say so plainly.",
+          },
+        },
+      ],
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -611,7 +817,7 @@ export function createMcpServer(memos: MemOS): McpServer {
   const server = new McpServer(
     { name: "memos", version: getSdkVersion() },
     {
-      capabilities: { tools: {} },
+      capabilities: { tools: {}, resources: {}, prompts: {} },
       instructions:
         "MemOS local-first persistent memory. PROACTIVELY store durable " +
         "facts (user preferences, project decisions, environment setup, " +
@@ -628,6 +834,7 @@ export function createMcpServer(memos: MemOS): McpServer {
     },
   );
   registerTools(server, memos);
+  registerResourcesAndPrompts(server, memos);
   return server;
 }
 
@@ -895,6 +1102,29 @@ const TOOL_METADATA: McpToolInfo[] = [
         model: z.string(),
       }),
     ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_consolidate",
+    description:
+      "Offline maintenance pass ('dreaming'): merge near-duplicates, " +
+      "archive stale low-importance memories, supersede decayed ones " +
+      "(marked historical — never deleted), and distill cluster summary " +
+      "notes into the note pool. Run periodically or while idle.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        namespace: z.string().optional(),
+        dryRun: z.boolean().optional(),
+        summarize: z.boolean().optional(),
+        decay: z.boolean().optional(),
+        decayHalfLifeDays: z.number().optional(),
+        minRetentionScore: z.number().optional(),
+        olderThanDays: z.number().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(z.object({ report: z.unknown() })) as Record<
+      string,
+      unknown
+    >,
   },
 ];
 

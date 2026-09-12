@@ -54,6 +54,19 @@ export const DEFAULT_TRUST_SCORES: Record<MemorySource, number> = {
 /**
  * A single unit of memory stored in the graph.
  */
+/**
+ * Which retrieval pool a memory belongs to — the multi-granularity
+ * structure from the LongMemEval-V2 design lessons:
+ * - `event`      — raw statements as they were captured (the default; every
+ *                  legacy memory reads as `event`).
+ * - `note`       — distilled summaries produced by consolidation
+ *                  (`summarizeCluster` writes here).
+ * - `procedure`  — workflow/procedural knowledge ("how to" steps).
+ * Pools are queryable via `SearchFilter.pool` and searched as separate
+ * streams by multi-stream context packs.
+ */
+export type MemoryPool = "event" | "note" | "procedure";
+
 export interface MemoryNode {
   /** Globally unique identifier (UUID v4). */
   id: string;
@@ -109,6 +122,12 @@ export interface MemoryNode {
    */
   source: MemorySource;
   /**
+   * Retrieval pool this memory belongs to (multi-granularity retrieval).
+   * Optional for backward compatibility with custom storage adapters;
+   * treated as `"event"` when absent.
+   */
+  pool?: MemoryPool;
+  /**
    * Trust score in [0, 1]. Influences retrieval ranking. Starts at
    * 1.0 for `user_input`, 0.7 for `agent_inferred`, 0.5 for
    * `external_data`, 0.3 for `system`. Can be manually adjusted via
@@ -150,6 +169,20 @@ export interface CreateMemoryInput {
   validTo?: number | null;
   /** Provenance source. Default: `user_input`. */
   source?: MemorySource;
+  /**
+   * Retrieval pool for this memory. Default: `"event"`. Use `"procedure"`
+   * for workflow/how-to knowledge — multi-stream context packs search
+   * procedures with a dedicated query stream.
+   */
+  pool?: MemoryPool;
+  /**
+   * One line of write-time context describing the situation this memory
+   * was captured in (e.g. "stated while debugging the deploy pipeline").
+   * Stored in `metadata.context`, prepended to the embedded text, and
+   * included in context packs. When absent, the optional
+   * `MemOSConfig.enrichMemory` hook is consulted.
+   */
+  context?: string;
   /** Trust score [0, 1]. Overrides the default for the chosen source. */
   trustScore?: number;
   /**
@@ -296,6 +329,11 @@ export interface SearchFilter {
   tags?: string[];
   /** Filter by namespace (experimental). */
   namespace?: string;
+  /**
+   * Filter by retrieval pool. Pass a single pool or a list (OR logic).
+   * Memories written before pools existed read as `"event"`.
+   */
+  pool?: MemoryPool | MemoryPool[];
   /** Filter by provenance source. */
   source?: MemorySource;
   /** Minimum trust score [0, 1]. */
@@ -387,7 +425,8 @@ export interface ScoredMemory {
   /** Optional score breakdown for hybrid retrieval. `graph` marks a
    * node injected by the graph-expansion leg, `session` one pulled in
    * by session-sibling expansion, `rerank` the cross-encoder score
-   * (squashed to [0,1]) from the two-stage reranking pass. */
+   * (squashed to [0,1]) from the two-stage reranking pass, `entity` the
+   * query-entity overlap (in [0,1]) that earned the entity-fusion boost. */
   scores?: {
     keyword?: number;
     semantic?: number;
@@ -395,6 +434,7 @@ export interface ScoredMemory {
     graph?: number;
     session?: number;
     rerank?: number;
+    entity?: number;
   };
 }
 
@@ -869,12 +909,44 @@ export interface FusionOptions {
    * injectable for deterministic tests/benchmarks.
    */
   nowMs?: number;
+  /**
+   * Entities extracted from the query (populated automatically by
+   * `hybridSearch` via `extractQueryEntities`). When non-empty, memories
+   * whose tags / `metadata.entities` overlap the query entities receive a
+   * post-fusion boost — the third retrieval signal alongside keyword and
+   * semantic (see the 2026 fused multi-signal retrieval consensus).
+   */
+  queryEntities?: string[];
+  /**
+   * Strength of the entity-overlap boost: `score *= 1 + entityWeight *
+   * overlap`. Default 0.15. Set to 0 to disable entity-fused scoring.
+   */
+  entityWeight?: number;
 }
 
 /**
  * Configuration options for a MemOS instance.
  */
 export interface MemOSConfig {
+  /**
+   * Optional write-time contextual enrichment hook (contextual retrieval,
+   * Anthropic-style). Called once per `store()` with the memory's signals;
+   * return a single line describing the situation the memory was captured
+   * in (e.g. "stated while debugging the deploy pipeline"). The line is
+   * stored in `metadata.context`, prepended to the embedded text, and
+   * surfaced in context packs — it makes embeddings carry situational
+   * meaning, which is the best-attested cheap retrieval upgrade in the
+   * literature. Wire this to a local LLM (0.6B-class is enough) or any
+   * heuristic. Errors are swallowed (fail-soft) and `opts.context`
+   * always takes precedence over the hook.
+   */
+  enrichMemory?: (input: {
+    content: string;
+    type: MemoryType;
+    tags: string[];
+    source: MemorySource;
+    namespace: string;
+  }) => Promise<string | null | undefined> | string | null | undefined;
   /**
    * Hybrid-search fusion tuning forwarded to `fuseResults()` on every
    * hybrid search. Unset fields use `src/retrieval.ts` defaults
@@ -1163,6 +1235,51 @@ export interface ConsolidateOptions {
   minClusterSize?: number;
   /** Cosine threshold for cluster membership. Default 0.78. */
   clusterThreshold?: number;
+  /**
+   * Run decay-based forgetting (algorithmic forgetting with an exponential
+   * recency half-life). Superseded memories are marked historical
+   * (`validTo = now`) — never deleted — so they stay queryable via
+   * `searchTemporal`. Default true.
+   */
+  decay?: boolean;
+  /** Exponential half-life (days) for the recency term of the retention score. Default 60. */
+  decayHalfLifeDays?: number;
+  /** Retention scores below this supersede the memory. Default 0.2. */
+  minRetentionScore?: number;
+  /** Only memories created more than this many days ago are eligible. Default 60. */
+  olderThanDays?: number;
+}
+
+/**
+ * A single memory superseded by the decay-forgetting stage of
+ * `consolidate()`.
+ */
+export interface DecaySuperseded {
+  /** The superseded memory's id. */
+  id: string;
+  /** The retention score that fell below `minRetentionScore`. */
+  score: number;
+}
+
+/** Options for {@link MemOS.forgetByDecay}. */
+export interface DecayForgettingOptions {
+  /** Only consider memories in this namespace. Default "default". */
+  namespace?: string;
+  /** Exponential half-life (days) for the recency term. Default 60. */
+  halfLifeDays?: number;
+  /** Retention scores below this supersede the memory. Default 0.2. */
+  minScore?: number;
+  /** Only memories untouched for this many days are eligible. Default 60. */
+  olderThanDays?: number;
+  /** If true, do not actually supersede anything. Default false. */
+  dryRun?: boolean;
+}
+
+/** Result returned by {@link MemOS.forgetByDecay}. */
+export interface DecayForgetResult {
+  superseded: DecaySuperseded[];
+  dryRun: boolean;
+  durationMs: number;
 }
 
 /** Result returned by {@link MemOS.consolidate}. */
@@ -1170,6 +1287,8 @@ export interface ConsolidateResult {
   merges: DedupeMerge[];
   moves: ArchiveMove[];
   clusters: ClusterSummary[];
+  /** Memories superseded by decay-based forgetting. */
+  decayed: DecaySuperseded[];
   dryRun: boolean;
   durationMs: number;
 }

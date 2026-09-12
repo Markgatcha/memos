@@ -9,7 +9,8 @@
  *   memos retrieve <id>
  *   memos forget <id>
  *   memos summarize
- *   memos graph
+ *   memos graph [--mermaid]
+ *   memos browse
  *   memos link <src> <dst>
  *   memos count
  *   memos tag <id> <tag1> [tag2...]
@@ -25,6 +26,8 @@
  */
 
 import { MemOS } from "./memory.js";
+import { graphToMermaid } from "./graph-mermaid.js";
+import type { MemoryPool } from "./types.js";
 import type { SQLiteStorage } from "./storage/sqlite.js";
 import { getSdkVersion } from "./version.js";
 import type { EmbeddingConfig, EmbeddingProviderKind } from "./types.js";
@@ -310,10 +313,13 @@ Usage:
 Commands:
   store <content>         Store a new memory
   retrieve <id>           Retrieve a memory by ID
-  search <query>          Search memories by text
+  search <query>          Search memories by text (--pool event|note|procedure)
   forget <id>             Delete a memory by ID
   summarize               Summarize all memories
-  graph                   Print the full memory graph
+  graph                   Print the full memory graph (--mermaid for a
+                          GitHub-renderable Mermaid diagram)
+  browse                  Interactive terminal browser (search, inspect,
+                          forget memories)
   link <src> <dst>        Link two memories
   count                   Show memory count
   tag <id> <tag> [...]    Add tags to a memory
@@ -323,6 +329,12 @@ Commands:
   backup                  Backup the database
   restore <path>          Restore from a backup
   doctor                  Health-check the store, embedding config and endpoints
+  consolidate             Offline maintenance pass: merge duplicates, archive
+                          stale memories, supersede decayed ones (kept as
+                          history), distill cluster summary notes
+                          (--dry-run, --no-summarize, --no-decay,
+                          --decay-half-life <days>, --min-retention <score>,
+                          --older-than <days>, --namespace <ns>)
   connect <target>        Register the MemOS MCP server with a coding harness
                           (claude-code, cursor, windsurf, cline, opencode,
                           codex, gemini, generic) — --write saves the config
@@ -347,6 +359,8 @@ Examples:
   memos store "User prefers dark mode" --type preference
   memos store "Temp note" --ttl 3600
   memos search "dark mode" --limit 5
+  memos graph --mermaid > graph.mmd
+  memos browse
   memos tag <id> work important
   memos list --tag work
   memos export --format markdown --output ./my-export
@@ -426,6 +440,14 @@ async function main(): Promise<void> {
         if (type) opts.type = type;
         if (ttl) opts.ttl = ttl;
         if (tags && tags.length > 0) opts.tags = tags;
+        const poolIdx = args.indexOf("--pool");
+        const pool = poolIdx !== -1 ? args[poolIdx + 1] : undefined;
+        if (pool === "event" || pool === "note" || pool === "procedure") {
+          opts.pool = pool;
+        }
+        const contextIdx = args.indexOf("--context");
+        const context = contextIdx !== -1 ? args[contextIdx + 1] : undefined;
+        if (context) opts.context = context;
         const result = await memos.store(content, opts as any);
         if (jsonFlag) {
           console.log(JSON.stringify(result, null, 2));
@@ -491,6 +513,11 @@ async function main(): Promise<void> {
         }
         const limitIdx = args.indexOf("--limit");
         const limit = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : 10;
+        const poolIdx = args.indexOf("--pool");
+        const poolArg = poolIdx !== -1 ? args[poolIdx + 1] : undefined;
+        const pool = poolArg
+          ? (poolArg.split(",").map((p) => p.trim()) as MemoryPool[])
+          : undefined;
         const tagIdx = args.indexOf("--tag");
         let searchTags: string[] | undefined;
         if (tagIdx !== -1) {
@@ -501,7 +528,12 @@ async function main(): Promise<void> {
           }
           if (searchTags.length === 0) searchTags = undefined;
         }
-        const results = await memos.search({ query, limit, tags: searchTags });
+        const results = await memos.search({
+          query,
+          limit,
+          tags: searchTags,
+          ...(pool ? { pool } : {}),
+        });
         if (jsonFlag) {
           console.log(JSON.stringify(results, null, 2));
         } else {
@@ -550,7 +582,9 @@ async function main(): Promise<void> {
 
       case "graph": {
         const graph = await memos.getGraph();
-        if (jsonFlag) {
+        if (args.includes("--mermaid")) {
+          console.log(graphToMermaid(graph));
+        } else if (jsonFlag) {
           console.log(JSON.stringify(graph, null, 2));
         } else {
           console.log(
@@ -566,6 +600,75 @@ async function main(): Promise<void> {
             for (const edge of graph.edges) {
               console.log(
                 `  ${edge.sourceId.slice(0, 8)} --[${edge.relation}]--> ${edge.targetId.slice(0, 8)}`,
+              );
+            }
+          }
+        }
+        break;
+      }
+
+      case "browse": {
+        const { runBrowse } = await import("./cli-browse.js");
+        await runBrowse(memos);
+        break;
+      }
+
+      case "consolidate": {
+        const dryRun = args.includes("--dry-run");
+        const summarize = !args.includes("--no-summarize");
+        const decay = !args.includes("--no-decay");
+        const nsIdx = args.indexOf("--namespace");
+        const namespace = nsIdx !== -1 ? args[nsIdx + 1] : undefined;
+        const halfLifeIdx = args.indexOf("--decay-half-life");
+        const decayHalfLifeDays =
+          halfLifeIdx !== -1 ? Number(args[halfLifeIdx + 1]) : undefined;
+        const minRetentionIdx = args.indexOf("--min-retention");
+        const minRetentionScore =
+          minRetentionIdx !== -1
+            ? Number(args[minRetentionIdx + 1])
+            : undefined;
+        const olderThanIdx = args.indexOf("--older-than");
+        const olderThanDays =
+          olderThanIdx !== -1 ? Number(args[olderThanIdx + 1]) : undefined;
+
+        const result = await memos.consolidate({
+          ...(namespace ? { namespace } : {}),
+          dryRun,
+          summarize,
+          decay,
+          ...(decayHalfLifeDays !== undefined &&
+          !Number.isNaN(decayHalfLifeDays)
+            ? { decayHalfLifeDays }
+            : {}),
+          ...(minRetentionScore !== undefined &&
+          !Number.isNaN(minRetentionScore)
+            ? { minRetentionScore }
+            : {}),
+          ...(olderThanDays !== undefined && !Number.isNaN(olderThanDays)
+            ? { olderThanDays }
+            : {}),
+        });
+
+        if (jsonFlag) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(
+            `Consolidation ${dryRun ? "(dry run — nothing changed)" : "complete"} in ${result.durationMs} ms`,
+          );
+          console.log(
+            `  merged:   ${result.merges.length} duplicate cluster(s)`,
+          );
+          console.log(`  archived: ${result.moves.length} memory(ies)`);
+          console.log(
+            `  decayed:  ${result.decayed.length} superseded (kept as history — queryable via searchTemporal)`,
+          );
+          console.log(
+            `  notes:    ${result.clusters.length} cluster summary(ies)`,
+          );
+          for (const cluster of result.clusters) {
+            if (cluster.summaryId) {
+              console.log(
+                `    - ${cluster.summaryId.slice(0, 8)}: ${cluster.summary.slice(0, 72)}`,
               );
             }
           }

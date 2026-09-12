@@ -318,6 +318,9 @@ export class SQLiteStorage implements StorageAdapter {
       "TEXT NOT NULL DEFAULT 'user_input'",
     );
     this.migrateAddColumn("nodes", "trust_score", "REAL NOT NULL DEFAULT 1.0");
+    // Migration: multi-granularity retrieval pool (event | note | procedure).
+    // Every pre-pool memory reads as "event", matching the legacy semantics.
+    this.migrateAddColumn("nodes", "pool", "TEXT NOT NULL DEFAULT 'event'");
 
     // Index for TTL sweep
     this.db.exec(`
@@ -330,6 +333,7 @@ export class SQLiteStorage implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS idx_nodes_valid_to ON nodes(valid_to);
       CREATE INDEX IF NOT EXISTS idx_nodes_trust_score ON nodes(trust_score);
       CREATE INDEX IF NOT EXISTS idx_nodes_source ON nodes(source);
+      CREATE INDEX IF NOT EXISTS idx_nodes_pool ON nodes(pool);
     `);
 
     // FTS5 virtual table for full-text search. The `porter unicode61`
@@ -475,8 +479,8 @@ export class SQLiteStorage implements StorageAdapter {
   async saveNode(node: MemoryNode): Promise<MemoryNode> {
     const stmt = this.getPreparedStatement(
       "saveNode",
-      `INSERT INTO nodes (id, content, summary, type, metadata, importance, created_at, updated_at, access_count, last_accessed, expires_at, tags, namespace, valid_from, valid_to, source, trust_score)
-       VALUES (@id, @content, @summary, @type, @metadata, @importance, @createdAt, @updatedAt, @accessCount, @lastAccessed, @expiresAt, @tags, @namespace, @validFrom, @validTo, @source, @trustScore)`,
+      `INSERT INTO nodes (id, content, summary, type, metadata, importance, created_at, updated_at, access_count, last_accessed, expires_at, tags, namespace, valid_from, valid_to, source, trust_score, pool)
+       VALUES (@id, @content, @summary, @type, @metadata, @importance, @createdAt, @updatedAt, @accessCount, @lastAccessed, @expiresAt, @tags, @namespace, @validFrom, @validTo, @source, @trustScore, @pool)`,
     );
 
     stmt.run({
@@ -501,6 +505,7 @@ export class SQLiteStorage implements StorageAdapter {
       validTo: node.validTo,
       source: node.source,
       trustScore: node.trustScore,
+      pool: node.pool ?? "event",
     });
 
     // Mirror to the join table for index-backed tag lookups.
@@ -793,6 +798,15 @@ export class SQLiteStorage implements StorageAdapter {
       extraConds.push("n.importance <= ?");
       extraParams.push(filter.maxImportance);
     }
+    // Multi-granularity pool filter (OR within a list). Pre-pool
+    // memories carry the 'event' default from the migration.
+    if (filter.pool !== undefined) {
+      const pools = Array.isArray(filter.pool) ? filter.pool : [filter.pool];
+      if (pools.length > 0) {
+        extraConds.push(`n.pool IN (${pools.map(() => "?").join(", ")})`);
+        extraParams.push(...pools);
+      }
+    }
 
     if (filter.query) {
       // Full-text search via FTS5. The query is tokenized into
@@ -1041,6 +1055,13 @@ export class SQLiteStorage implements StorageAdapter {
     if (filter.namespace) {
       conditions.push("n.namespace = ?");
       params.push(filter.namespace);
+    }
+    if (filter.pool !== undefined) {
+      const pools = Array.isArray(filter.pool) ? filter.pool : [filter.pool];
+      if (pools.length > 0) {
+        conditions.push(`n.pool IN (${pools.map(() => "?").join(", ")})`);
+        params.push(...pools);
+      }
     }
     const metadata = this.buildMetadataFilter(filter.metadata, "n");
     conditions.push(...metadata.conditions);
@@ -1296,6 +1317,7 @@ export class SQLiteStorage implements StorageAdapter {
       validTo: (row.valid_to as number) ?? null,
       source: (row.source as MemoryNode["source"]) || "user_input",
       trustScore: (row.trust_score as number) ?? 1.0,
+      pool: ((row.pool as string) || "event") as MemoryNode["pool"],
       // Load confidence state machine values from metadata
       confidence: metadata.confidence as number | undefined,
       evidenceCount: metadata.evidenceCount as number | undefined,

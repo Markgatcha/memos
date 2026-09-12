@@ -25,6 +25,7 @@ import type { FusionOptions, MemoryNode, ScoredMemory } from "./types.js";
 // dependency-free.
 export type { FusionOptions } from "./types.js";
 import { confidenceWeight } from "./confidence-machine.js";
+import { entityOverlap } from "./entity-extraction.js";
 
 /** Default RRF constant (Cormack et al., 2009). */
 export const DEFAULT_RRF_K = 60;
@@ -34,6 +35,14 @@ export const DEFAULT_KEYWORD_WEIGHT = 0.8;
 
 /** Default weight for the semantic (embedding) leg. */
 export const DEFAULT_SEMANTIC_WEIGHT = 0.2;
+
+/**
+ * Default strength of the entity-overlap boost — the third retrieval
+ * signal (semantic + keyword + entity match). Applied as a post-fusion
+ * multiplier `score *= 1 + entityWeight * overlap`, so it nudges rather
+ * than dominates; only active when `queryEntities` is non-empty.
+ */
+export const DEFAULT_ENTITY_WEIGHT = 0.15;
 
 /**
  * Lower bound of the trust multiplier. A memory with trustScore 0 is
@@ -106,6 +115,10 @@ export function fuseResults(
   const recencyHalfLifeMs =
     options.recencyHalfLifeMs ?? DEFAULT_RECENCY_HALF_LIFE_MS;
   const nowMs = options.nowMs ?? Date.now();
+  const queryEntities = options.queryEntities ?? [];
+  const entityWeight =
+    options.entityWeight ??
+    (queryEntities.length > 0 ? DEFAULT_ENTITY_WEIGHT : 0);
 
   const merged = new Map<
     string,
@@ -138,6 +151,24 @@ export function fuseResults(
           hybrid: semanticRrf,
         },
       });
+    }
+  }
+
+  // Entity-fused scoring: a third signal on top of keyword + semantic.
+  // Memories whose stored entities / tags overlap the query's entities get
+  // a gentle multiplicative boost. No-op unless the caller supplied query
+  // entities (hybridSearch extracts them per query).
+  if (entityWeight > 0 && queryEntities.length > 0) {
+    for (const entry of merged.values()) {
+      const overlap = entityOverlap(queryEntities, {
+        tags: entry.node.tags,
+        metadata: entry.node.metadata,
+      });
+      if (overlap > 0) {
+        entry.score *= 1 + entityWeight * overlap;
+        entry.scores.entity = overlap;
+        entry.scores.hybrid = entry.score;
+      }
     }
   }
 

@@ -348,6 +348,12 @@ memos search "dark mode" --limit 5
 # View the graph
 memos graph
 
+# Export the graph as a Mermaid diagram (renders on GitHub)
+memos graph --mermaid > graph.mmd
+
+# Browse interactively — search, inspect, forget from the terminal
+memos browse
+
 # Get a summary
 memos summarize
 
@@ -666,6 +672,8 @@ MemOS works on **Windows**, **macOS**, and **Linux**. Choose your preferred meth
 ```bash
 npm install @mem-os/sdk
 ```
+
+Prebuilt native `better-sqlite3` bindings for Linux, macOS, and Windows (Node 22 and 24) are built and verified on every push and attached to every [GitHub Release](https://github.com/Markgatcha/memos/releases) — useful if your platform has no upstream prebuild and you'd rather not run a compiler.
 
 ### Python (PyPI)
 
