@@ -34,79 +34,66 @@
     <circle cx="152" cy="158" r="1.2"/>
   </g>
 
-  <!-- detailed brain: lobes, folds, neural graph -->
-  <g transform="translate(100,84)">
-    <!-- hemispheres -->
-    <path d="M-10,-34 C-42,-40 -56,-24 -52,-8 C-56,4 -50,18 -36,25 C-26,30 -14,27 -10,22 Z"
-      fill="none" stroke="url(#brain)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M10,-34 C42,-40 56,-24 52,-8 C56,4 50,18 36,25 C26,30 14,27 10,22 Z"
-      fill="none" stroke="url(#brain)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
-    <!-- brainstem -->
-    <path d="M0,22 C0,28 2,32 6,35" fill="none" stroke="url(#brain)" stroke-width="2.5" stroke-linecap="round"/>
-    <circle cx="7" cy="36" r="2.5" fill="#a78bfa"/>
+  <!-- ============ BRAIN, top-down (front at top) ============ -->
+  <!-- one connected cerebrum outline -->
+  <path d="M100,34
+           C76,32 54,42 50,64
+           C46,86 52,108 68,120
+           C80,129 120,129 132,120
+           C148,108 154,86 150,64
+           C146,42 124,32 100,34 Z"
+        fill="none" stroke="url(#brain)" stroke-width="3.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
 
-    <!-- central fissure stem -->
-    <line x1="0" y1="-34" x2="0" y2="22" stroke="url(#brain)" stroke-width="2.2" opacity="0.9"/>
+  <!-- longitudinal fissure: gently S-curved divider -->
+  <path d="M100,36 C96,52 104,68 100,84 C96,100 103,110 100,120"
+        fill="none" stroke="url(#brain)" stroke-width="2.75" stroke-linecap="round"/>
 
-    <!-- gyri folds: left -->
-    <g fill="none" stroke="#6c63ff" stroke-width="2" stroke-linecap="round" opacity="0.75">
-      <path d="M-36,-26 C-28,-22 -30,-12 -38,-10"/>
-      <path d="M-44,-4 C-36,-2 -34,6 -44,10"/>
-      <path d="M-24,-16 C-18,-10 -22,0 -30,4"/>
-    </g>
-    <!-- gyri folds: right -->
-    <g fill="none" stroke="#48cfad" stroke-width="2" stroke-linecap="round" opacity="0.75">
-      <path d="M36,-26 C28,-22 30,-12 38,-10"/>
-      <path d="M44,-4 C36,-2 34,6 44,10"/>
-      <path d="M24,-16 C18,-10 22,0 30,4"/>
-    </g>
-
-    <!-- neural graph edges: left -->
-    <g stroke="#6c63ff" stroke-width="1.1" opacity="0.45">
-      <line x1="-38" y1="-26" x2="-16" y2="-36"/>
-      <line x1="-38" y1="-26" x2="-48" y2="-6"/>
-      <line x1="-48" y1="-6" x2="-30" y2="16"/>
-      <line x1="-24" y1="-14" x2="-38" y2="-26"/>
-      <line x1="-24" y1="-14" x2="-14" y2="4"/>
-    </g>
-    <!-- neural graph edges: right -->
-    <g stroke="#48cfad" stroke-width="1.1" opacity="0.45">
-      <line x1="38" y1="-26" x2="16" y2="-36"/>
-      <line x1="38" y1="-26" x2="48" y2="-6"/>
-      <line x1="48" y1="-6" x2="30" y2="16"/>
-      <line x1="24" y1="-14" x2="38" y2="-26"/>
-      <line x1="24" y1="-14" x2="14" y2="4"/>
-    </g>
-    <!-- neural graph edges: cross-hemisphere via the stem -->
-    <g stroke="#a78bfa" stroke-width="1.1" opacity="0.5">
-      <line x1="-16" y1="-36" x2="0" y2="-38"/>
-      <line x1="16" y1="-36" x2="0" y2="-38"/>
-      <line x1="-14" y1="4" x2="0" y2="-12"/>
-      <line x1="14" y1="4" x2="0" y2="-12"/>
-      <line x1="-30" y1="16" x2="0" y2="14"/>
-      <line x1="30" y1="16" x2="0" y2="14"/>
-    </g>
-
-    <!-- neural nodes: left lobe -->
-    <circle cx="-38" cy="-26" r="3.5" fill="#6c63ff"/>
-    <circle cx="-16" cy="-36" r="2.5" fill="#6c63ff" opacity="0.85"/>
-    <circle cx="-48" cy="-6" r="3" fill="#6c63ff" opacity="0.9"/>
-    <circle cx="-30" cy="16" r="4" fill="#6c63ff"/>
-    <circle cx="-14" cy="4" r="2.5" fill="#a78bfa"/>
-    <circle cx="-24" cy="-14" r="2" fill="#6c63ff" opacity="0.7"/>
-    <!-- neural nodes: right lobe -->
-    <circle cx="38" cy="-26" r="3.5" fill="#48cfad"/>
-    <circle cx="16" cy="-36" r="2.5" fill="#48cfad" opacity="0.85"/>
-    <circle cx="48" cy="-6" r="3" fill="#48cfad" opacity="0.9"/>
-    <circle cx="30" cy="16" r="4" fill="#48cfad"/>
-    <circle cx="14" cy="4" r="2.5" fill="#a78bfa"/>
-    <circle cx="24" cy="-14" r="2" fill="#48cfad" opacity="0.7"/>
-    <!-- neural nodes: center stem -->
-    <circle cx="0" cy="-38" r="4" fill="#a78bfa"/>
-    <circle cx="0" cy="-12" r="3" fill="#6c63ff" opacity="0.9"/>
-    <circle cx="0" cy="14" r="3" fill="#48cfad" opacity="0.9"/>
+  <!-- gyri folds: left hemisphere (flow from fissure toward outline) -->
+  <g fill="none" stroke="#6c63ff" stroke-width="3" stroke-linecap="round">
+    <path d="M92,48 C74,46 64,52 62,64"/>
+    <path d="M90,66 C72,64 60,72 58,84"/>
+    <path d="M92,84 C78,84 66,92 64,102"/>
+    <path d="M94,102 C86,104 78,110 76,118"/>
   </g>
 
+  <!-- gyri folds: right hemisphere -->
+  <g fill="none" stroke="#48cfad" stroke-width="3" stroke-linecap="round">
+    <path d="M108,48 C126,46 136,52 138,64"/>
+    <path d="M110,66 C128,64 140,72 142,84"/>
+    <path d="M108,84 C122,84 134,92 136,102"/>
+    <path d="M106,102 C114,104 122,110 124,118"/>
+  </g>
+
+  <!-- cerebellum: striated, tucked under the back -->
+  <path d="M70,118 C64,128 70,139 84,142 C98,145 114,141 121,131 C125,125 121,119 113,117"
+        fill="none" stroke="url(#brain)" stroke-width="3" stroke-linecap="round"/>
+  <g fill="none" stroke-width="1.4" stroke-linecap="round" opacity="0.6">
+    <path d="M73,127 C84,132 102,132 114,126" stroke="#6c63ff"/>
+    <path d="M76,134 C86,138 102,137 113,131" stroke="#48cfad"/>
+  </g>
+
+  <!-- brainstem stub peeking below -->
+  <path d="M104,144 C106,150 110,153 116,154" fill="none"
+        stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- memory nodes at fold tips -->
+  <g fill="#6c63ff">
+    <circle cx="62" cy="64" r="3"/>
+    <circle cx="58" cy="84" r="3"/>
+    <circle cx="64" cy="102" r="3"/>
+    <circle cx="76" cy="118" r="2.5"/>
+  </g>
+  <g fill="#48cfad">
+    <circle cx="138" cy="64" r="3"/>
+    <circle cx="142" cy="84" r="3"/>
+    <circle cx="136" cy="102" r="3"/>
+    <circle cx="124" cy="118" r="2.5"/>
+  </g>
+  <circle cx="100" cy="36" r="4" fill="#a78bfa"/>
+  <circle cx="116" cy="154" r="3" fill="#a78bfa"/>
+
+  <!-- ===================== TEXT ===================== -->
   <text x="100" y="170" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
     font-size="22" font-weight="700" fill="#ffffff" text-anchor="middle"
     letter-spacing="3">MemOS</text>
