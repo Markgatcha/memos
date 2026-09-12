@@ -92,6 +92,37 @@ jobs:
   # families (dnf/apt/pacman). Reduced from 6 to 3
   # to save CI minutes while covering all package
   # manager families.
+  # Retrieval regression eval: the golden corpus (scripts/eval/corpus.json)
+  # runs through the real hybrid pipeline on the deterministic local-hash
+  # embedder; recall@5 / MRR must stay within tolerance of the committed
+  # baseline. Catches ranking regressions (fusion, pools, expansion) before
+  # they ship.
+  retrieval-eval:
+    name: Retrieval regression eval
+    runs-on: ubuntu-latest
+    needs: [verify-lockfile]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Setup Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run retrieval eval against committed baseline
+        run: npx tsx scripts/eval-retrieval.ts --check
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-eval-results
+          path: scripts/eval/retrieval-results.json
+          retention-days: 14
+          if-no-files-found: warn
+
   # ──────────────────────────────────────────────
   linux-distro-native-smoke:
     name: Native deps (${{ matrix.name }})
