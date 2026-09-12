@@ -1,9 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#0c0c0e"/>
   <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" fill="none" stroke="rgba(255,255,255,0.12)"/>
-  <g fill="none" stroke="#fafafa" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M32 14 L50 24 L32 34 L14 24 Z"/>
+
+  <!-- memory thread: one memory traced through the layers (drawn first, layers mask it) -->
+  <line x1="32" y1="15" x2="32" y2="52" stroke="#52525b" stroke-width="1.25" stroke-dasharray="2.5 4"/>
+
+  <!-- vertical slab edges -->
+  <g stroke="#3f3f46" stroke-width="1.25">
+    <line x1="17" y1="24" x2="17" y2="42"/>
+    <line x1="47" y1="24" x2="47" y2="42"/>
+  </g>
+
+  <!-- middle + bottom layers -->
+  <g fill="none" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
     <path d="M14 33 L32 43 L50 33" stroke="#71717a"/>
     <path d="M14 42 L32 52 L50 42" stroke="#3f3f46"/>
   </g>
+
+  <!-- top layer: the current memory graph -->
+  <path d="M32 14 L50 24 L32 34 L14 24 Z" fill="#0c0c0e" fill-opacity="0.55" stroke="#fafafa" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- graph nodes: apex node on each layer, connected by the thread -->
+  <circle cx="32" cy="14" r="3.4" fill="#fafafa" stroke="#0c0c0e" stroke-width="1.4"/>
+  <circle cx="32" cy="43" r="2.4" fill="#a1a1aa" stroke="#0c0c0e" stroke-width="1"/>
+  <circle cx="32" cy="52" r="2.4" fill="#52525b" stroke="#0c0c0e" stroke-width="1"/>
 </svg>

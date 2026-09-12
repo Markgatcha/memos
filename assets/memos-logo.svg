@@ -9,34 +9,35 @@
       <stop offset="100%" style="stop-color:#48cfad;stop-opacity:1" />
     </linearGradient>
   </defs>
-  <!-- Background circle -->
+
   <circle cx="100" cy="100" r="95" fill="url(#bg)" stroke="#6c63ff" stroke-width="2"/>
-  <!-- Brain icon (simplified) -->
-  <g transform="translate(100,100)">
-    <!-- Left lobe -->
-    <path d="M-10,-30 C-40,-35 -55,-20 -50,-5 C-55,5 -50,20 -35,25 C-25,30 -15,25 -10,20 Z"
-      fill="none" stroke="url(#brain)" stroke-width="3" stroke-linecap="round"/>
-    <!-- Right lobe -->
-    <path d="M10,-30 C40,-35 55,-20 50,-5 C55,5 50,20 35,25 C25,30 15,25 10,20 Z"
-      fill="none" stroke="url(#brain)" stroke-width="3" stroke-linecap="round"/>
-    <!-- Center stem -->
-    <line x1="0" y1="-30" x2="0" y2="20" stroke="url(#brain)" stroke-width="2.5"/>
-    <!-- Neural nodes -->
-    <circle cx="-30" cy="-10" r="4" fill="#6c63ff" opacity="0.9"/>
-    <circle cx="30" cy="-10" r="4" fill="#48cfad" opacity="0.9"/>
-    <circle cx="-38" cy="10" r="3" fill="#6c63ff" opacity="0.7"/>
-    <circle cx="38" cy="10" r="3" fill="#48cfad" opacity="0.7"/>
-    <circle cx="0" cy="-15" r="3.5" fill="#a78bfa" opacity="0.9"/>
-    <!-- Connection lines -->
-    <line x1="-30" y1="-10" x2="0" y2="-15" stroke="#6c63ff" stroke-width="1" opacity="0.5"/>
-    <line x1="30" y1="-10" x2="0" y2="-15" stroke="#48cfad" stroke-width="1" opacity="0.5"/>
-    <line x1="-30" y1="-10" x2="-38" y2="10" stroke="#6c63ff" stroke-width="1" opacity="0.4"/>
-    <line x1="30" y1="-10" x2="38" y2="10" stroke="#48cfad" stroke-width="1" opacity="0.4"/>
+
+  <!-- memory thread: one memory traced through the layers -->
+  <line x1="100" y1="62" x2="100" y2="136" stroke="#6c63ff" stroke-width="2.5" stroke-dasharray="6 9" opacity="0.55"/>
+
+  <!-- vertical slab edges -->
+  <g stroke="#6c63ff" stroke-width="2" opacity="0.35">
+    <line x1="62" y1="80" x2="62" y2="124"/>
+    <line x1="138" y1="80" x2="138" y2="124"/>
   </g>
-  <!-- Text -->
-  <text x="100" y="165" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
-    font-size="22" font-weight="700" fill="#ffffff" text-anchor="middle"
+
+  <!-- middle + bottom layers -->
+  <g fill="none" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M62 108 L100 128 L138 108" stroke="#6c63ff" opacity="0.65"/>
+    <path d="M62 130 L100 150 L138 130" stroke="#6c63ff" opacity="0.35"/>
+  </g>
+
+  <!-- top layer: the current memory graph -->
+  <path d="M100 56 L138 80 L100 104 L62 80 Z" fill="#0f0f1a" fill-opacity="0.6" stroke="url(#brain)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- graph nodes: apex node on each layer, connected by the thread -->
+  <circle cx="100" cy="56" r="9" fill="#48cfad" stroke="#0f0f1a" stroke-width="4"/>
+  <circle cx="100" cy="128" r="6.5" fill="#6c63ff" stroke="#0f0f1a" stroke-width="3"/>
+  <circle cx="100" cy="150" r="6.5" fill="#48cfad" stroke="#0f0f1a" stroke-width="3" opacity="0.85"/>
+
+  <text x="100" y="178" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
+    font-size="21" font-weight="700" fill="#ffffff" text-anchor="middle"
     letter-spacing="3">MemOS</text>
-  <text x="100" y="182" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
+  <text x="100" y="193" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
     font-size="9" fill="#6c63ff" text-anchor="middle" letter-spacing="1">MEMORY LAYER</text>
 </svg>
