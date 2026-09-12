@@ -1,0 +1,91 @@
+name: Prebuilds
+
+# Build and verify the native better-sqlite3 binding on every push to main
+# and on every published release. Each run produces per-platform binding
+# artifacts; release runs additionally attach them to the GitHub Release
+# (with a combined SHA256SUMS.txt) so users on platforms without an
+# upstream prebuild never need a compiler toolchain.
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Prebuild (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["22", "24"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies (downloads the better-sqlite3 prebuild)
+        run: npm ci
+
+      - name: Verify the native binding loads and runs
+        run: >-
+          node -e "const db = require('better-sqlite3')(':memory:');
+          db.exec('CREATE TABLE t (x INTEGER)');
+          db.prepare('INSERT INTO t VALUES (?)').run(42);
+          if (db.prepare('SELECT x FROM t').get().x !== 42) throw new Error('smoke failed');
+          console.log('better-sqlite3 binding OK')"
+
+      - name: Stage the binding artifact
+        shell: bash
+        run: |
+          SQ_VERSION=$(node -p "require('./node_modules/better-sqlite3/package.json').version")
+          NODE_MAJOR=$(node -p "process.versions.node.split('.')[0]")
+          PLATFORM=$(node -p "process.platform")
+          ARCH=$(node -p "process.arch")
+          cp node_modules/better-sqlite3/build/Release/better_sqlite3.node \
+            "better_sqlite3-v${SQ_VERSION}-${PLATFORM}-${ARCH}-node${NODE_MAJOR}.node"
+          ls -la better_sqlite3-*.node
+
+      - name: Upload prebuild artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuild-${{ matrix.os }}-node${{ matrix.node }}
+          path: better_sqlite3-*.node
+          retention-days: 14
+          if-no-files-found: error
+
+  attach:
+    name: Attach prebuilds to release
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all prebuild artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: prebuilds
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd prebuilds
+          sha256sum better_sqlite3-*.node > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Attach to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" prebuilds/* --clobber

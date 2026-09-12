@@ -105,7 +105,8 @@
     "bench:crossrepo": "tsx scripts/bench-crossrepo.ts",
     "bench:memory": "tsx scripts/bench-memory.ts",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
-    "bench:longmemeval:retrieve": "tsx scripts/bench-longmemeval.ts --retrieve-only"
+    "bench:longmemeval:retrieve": "tsx scripts/bench-longmemeval.ts --retrieve-only",
+    "check:plugin": "node scripts/check-plugin-version.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",

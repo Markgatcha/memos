@@ -8,5 +8,6 @@
     "name": "Markgatcha"
   },
   "homepage": "https://github.com/Markgatcha/memos",
-  "license": "MIT"
+  "license": "MIT",
+  "hooks": "hooks"
 }
