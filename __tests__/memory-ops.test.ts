@@ -14,6 +14,21 @@ import { SQLiteStorage } from "../src/storage/sqlite";
 import { composeScope, parseScopeArg } from "../src/scope";
 import type { EmbeddingProvider, EmbeddingVector } from "../src/types";
 
+/**
+ * The cipher driver is an OPTIONAL dependency. When it cannot be loaded
+ * (install scripts blocked, platform without prebuilds), the encryption
+ * tests skip instead of failing CI — the feature itself already reports
+ * a clear "install it with" error at runtime.
+ */
+let cipherDriverAvailable = true;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require("better-sqlite3-multiple-ciphers");
+} catch {
+  cipherDriverAvailable = false;
+}
+const maybeDescribe = cipherDriverAvailable ? describe : describe.skip;
+
 class VectorProvider implements EmbeddingProvider {
   public readonly id = "vector";
   public readonly model = "vector-v1";
@@ -134,7 +149,7 @@ describe("multi-scope memory", () => {
 // Encryption at rest
 // ---------------------------------------------------------------------------
 
-describe("encryption at rest", () => {
+maybeDescribe("encryption at rest", () => {
   test("encrypted store round-trips with the key", async () => {
     const dir = mkdtempSync(join(tmpdir(), "memos-cipher-"));
     const dbPath = join(dir, "encrypted.db");
