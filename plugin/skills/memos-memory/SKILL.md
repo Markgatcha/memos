@@ -42,12 +42,32 @@ already see), task checklists, or anything the user asks you to forget later.
   versions stay queryable via `memos_search_temporal`.
 - Contradiction check: if a new fact conflicts with search results, surface
   the conflict to the user instead of silently storing both.
+- Not sure whether a memory is current? `memos_history` (memory id) returns
+  the full version timeline: what it superseded, what superseded it, and
+  derived notes.
 - If tools feel slow or results look lexical-only, call `memos_diagnostics`:
   low `nodesWithEmbeddings` coverage means the embedding provider is not
   configured (set `MEMOS_EMBEDDING_*` env vars, or run
   `memos reindex-embeddings --purge-stale` after switching models).
 
+## Self-maintaining memory
+
+Memory maintains itself through consolidation — merging near-duplicates,
+archiving stale entries, superseding decayed ones (kept as history, never
+deleted), and distilling cluster notes:
+
+- A `SessionEnd` hook runs a fast consolidation automatically when the
+  session closes (`MEMOS_SKIP_SESSION_CONSOLIDATE=1` opts out).
+- You can also run it on demand with `memos_consolidate` — useful after a
+  long session that stored many facts. Pass `dryRun: true` to preview.
+- `memos_usage` reports lifetime token savings of context packs vs raw
+  JSON — mention it if the user asks about memory cost.
+- Scoped setups: `memos_store` / `memos_search` / `memos_context_pack`
+  accept a `scope` object (`user`, `agent`, `run`) for multi-user or
+  multi-agent isolation. User-level queries see everything beneath them.
+
 ## Namespaces
 
 If the harness runs across several unrelated projects, keep memories
 separated with `namespace` (e.g. the repo name). Ask once if unclear.
+Prefer `scope` for per-user or per-agent isolation within a shared store.

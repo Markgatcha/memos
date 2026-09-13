@@ -32,11 +32,15 @@ import {
   canonicalizeEntities,
   extractQueryEntities,
 } from "./entity-extraction.js";
+import { composeScope, escapeLikePrefix } from "./scope.js";
 import { decideRetain } from "./retain-filter.js";
 import type {
   MemoryNode,
   MemoryEdge,
   MemoryPool,
+  MemoryScope,
+  MemoryHistory,
+  HistoryOptions,
   CreateMemoryInput,
   UpdateMemoryInput,
   ScoredMemory,
@@ -288,13 +292,18 @@ export class MemOS {
   private config: Required<
     Omit<
       MemOSConfig,
-      "storage" | "enrichMemory" | "entityAliases" | "summarizeClusterLlm"
+      | "storage"
+      | "enrichMemory"
+      | "entityAliases"
+      | "summarizeClusterLlm"
+      | "cipherKey"
     >
   > & {
     storage?: StorageAdapter;
     entityAliases?: MemOSConfig["entityAliases"];
     enrichMemory?: MemOSConfig["enrichMemory"];
     summarizeClusterLlm?: MemOSConfig["summarizeClusterLlm"];
+    cipherKey: string;
   };
   private experimental: ExperimentalConfig;
   private embeddingProvider: EmbeddingProvider | null = null;
@@ -361,6 +370,9 @@ export class MemOS {
       entityAliases: config.entityAliases,
       enrichMemory: config.enrichMemory,
       summarizeClusterLlm: config.summarizeClusterLlm,
+      // Encryption at rest: explicit config wins, MEMOS_KEY env is the
+      // ops-friendly fallback. Empty string disables.
+      cipherKey: config.cipherKey ?? process.env.MEMOS_KEY ?? "",
       storageOptions: config.storageOptions ?? {},
     };
 
@@ -378,6 +390,9 @@ export class MemOS {
       new SQLiteStorage(this.config.dbPath, this.config.wal, {
         vectorCacheEntries:
           this.config.storageOptions?.vectorCacheEntries ?? 25_000,
+        // Only forward the key when set — otherwise the default plaintext
+        // driver is used and the optional cipher dependency is never loaded.
+        ...(this.config.cipherKey ? { cipherKey: this.config.cipherKey } : {}),
       });
   }
 
@@ -475,9 +490,12 @@ export class MemOS {
     }
 
     const now = Date.now();
-    const namespace = this.experimental.namespaces
-      ? (opts.namespace ?? "default")
-      : "default";
+    // Namespaces are always on now (promoted from experimental). Explicit
+    // namespace wins; `scope` composes into one (fixed order user → agent
+    // → run); plain writes land in "default".
+    const namespace = opts.scope
+      ? composeScope(opts.scope)
+      : (opts.namespace ?? "default");
     const source: MemorySource = opts.source ?? "user_input";
     const type = opts.type ?? "fact";
     const tags = opts.tags ?? [];
@@ -628,8 +646,14 @@ export class MemOS {
         ? { query: queryOrFilter, limit: 20 }
         : { limit: 20, ...queryOrFilter };
 
-    if (this.experimental.namespaces) {
-      filter.namespace = filter.namespace ?? "default";
+    // Scope → namespace matching (hierarchical prefix by default). No
+    // scope/namespace means the query spans ALL namespaces.
+    const scopeFilter = this.resolveScopeFilter(filter);
+    if (scopeFilter.namespace !== undefined) {
+      filter.namespace = scopeFilter.namespace;
+    }
+    if (scopeFilter.namespacePrefix !== undefined) {
+      filter.namespacePrefix = scopeFilter.namespacePrefix;
     }
 
     // Check the search cache. Only cache text queries (not structured-only
@@ -707,6 +731,25 @@ export class MemOS {
       return searchResultsToToonCompact(results);
     }
     return searchResultsToToon(results);
+  }
+
+  /**
+   * Compose a scope filter into storage-facing namespace constraints.
+   * Explicit `namespace` always wins over `scope`; scope matches
+   * hierarchically (prefix) unless `scopeMatch: "exact"`.
+   */
+  private resolveScopeFilter(opts: {
+    namespace?: string;
+    scope?: MemoryScope;
+    scopeMatch?: "exact" | "hierarchical";
+  }): { namespace?: string; namespacePrefix?: string } {
+    if (!opts.scope) return { namespace: opts.namespace };
+    const composed = composeScope(opts.scope);
+    return opts.namespace
+      ? { namespace: composed }
+      : opts.scopeMatch === "exact"
+        ? { namespace: composed }
+        : { namespacePrefix: composed };
   }
 
   /**
@@ -1234,6 +1277,12 @@ export class MemOS {
 
     for (const node of nodes) {
       if (filter.namespace && node.namespace !== filter.namespace) continue;
+      if (
+        filter.namespacePrefix &&
+        !node.namespace.startsWith(filter.namespacePrefix)
+      ) {
+        continue;
+      }
       if (filter.type && node.type !== filter.type) continue;
       if (poolFilter && !poolFilter.includes(node.pool ?? "event")) continue;
       if (filter.tags && filter.tags.some((tag) => !node.tags.includes(tag))) {
@@ -1298,11 +1347,6 @@ export class MemOS {
    */
   async listNamespaces(): Promise<string[]> {
     this.assertInit();
-    if (!this.experimental.namespaces) {
-      throw new Error(
-        "Namespaces are experimental. Enable them with experimental: { namespaces: true }",
-      );
-    }
 
     const nodes = this.graph.getAllNodes();
     const nsSet = new Set<string>();
@@ -1317,11 +1361,6 @@ export class MemOS {
    */
   async namespaceCount(ns: string): Promise<number> {
     this.assertInit();
-    if (!this.experimental.namespaces) {
-      throw new Error(
-        "Namespaces are experimental. Enable them with experimental: { namespaces: true }",
-      );
-    }
 
     return this.graph.getAllNodes().filter((n) => n.namespace === ns).length;
   }
@@ -1485,6 +1524,10 @@ export class MemOS {
   async contextPack(opts: {
     query: string;
     namespace?: string;
+    /** Typed multi-scope filter (hierarchical by default). */
+    scope?: MemoryScope;
+    /** How `scope` matches stored namespaces. Default `"hierarchical"`. */
+    scopeMatch?: "exact" | "hierarchical";
     tokenBudget: number;
     limit?: number;
     trust?: string;
@@ -1518,7 +1561,13 @@ export class MemOS {
     graphExpansion?: boolean;
   }): Promise<ContextPack | string> {
     this.assertInit();
-    const namespace = opts.namespace ?? "default";
+    const scopeFilter = this.resolveScopeFilter({
+      namespace: opts.namespace,
+      scope: opts.scope,
+      scopeMatch: opts.scopeMatch,
+    });
+    const namespace =
+      scopeFilter.namespace ?? scopeFilter.namespacePrefix ?? "default";
     const limit =
       opts.limit ??
       Math.min(50, Math.max(8, Math.floor(opts.tokenBudget / 80)));
@@ -1528,8 +1577,8 @@ export class MemOS {
     // configured.
     const filter: SearchFilter = {
       query: opts.query,
-      namespace,
       limit: limit * 4,
+      ...scopeFilter,
     };
     const items = this.embeddingProvider
       ? opts.multiStream === false ||
@@ -1937,6 +1986,93 @@ export class MemOS {
     }
 
     return { clusters, dryRun, durationMs: Date.now() - start };
+  }
+
+  /**
+   * Version timeline for one memory — the audit view behind "auditable by
+   * design". Returns the memory, the older versions it replaced
+   * (`supersedes`), the newer versions that replaced it (`supersededBy`),
+   * consolidated notes derived from it, and every graph edge touching it.
+   *
+   * Related versions are inferred by content similarity (cosine over
+   * stored embeddings where available, text similarity otherwise) combined
+   * with creation order — superseded versions are the historical ones
+   * (`validTo` set), so nothing here is guesswork about intent.
+   */
+  async history(id: string, opts: HistoryOptions = {}): Promise<MemoryHistory> {
+    this.assertInit();
+    const threshold = opts.threshold ?? 0.8;
+    const limit = opts.limit ?? 10;
+
+    const node = await this.retrieve(id);
+    if (!node) throw new Error(`Memory ${id} not found.`);
+
+    const edges = this.graph.getEdgesForNode(id);
+
+    const derivedNotes: MemoryNode[] = [];
+    for (const edge of edges) {
+      if (edge.relation !== "derived_from") continue;
+      const otherId = edge.sourceId === id ? edge.targetId : edge.sourceId;
+      const other = await this.storage.getNode(otherId);
+      if (other && (other.pool ?? "event") === "note") derivedNotes.push(other);
+    }
+
+    // Related-version scan INCLUDES historical memories (includeHistorical):
+    // an audit view that skipped superseded versions would defeat its own
+    // purpose. With embeddings: cosine against the stored vectors; without:
+    // text-similarity fallback over content.
+    const related: Array<{ node: MemoryNode; sim: number }> = [];
+    const all = await this.storage.queryNodes({
+      namespace: node.namespace,
+      includeHistorical: true,
+      limit: 100_000,
+    });
+    const byId = new Map(all.map((row) => [row.node.id, row.node]));
+
+    const vectors =
+      this.storage.getAllEmbeddings && all.length > 1
+        ? await this.storage.getAllEmbeddings()
+        : [];
+    const selfVector = vectors.find((v) => v.nodeId === id)?.vector;
+
+    if (selfVector) {
+      const selfRecord = vectors.find((v) => v.nodeId === id)!;
+      for (const record of vectors) {
+        // Only compare vectors from the SAME embedding model.
+        if (record.model !== selfRecord.model) continue;
+        const other = byId.get(record.nodeId);
+        if (!other || other.id === id) continue;
+        const sim = cosineSimilarity(selfVector, record.vector);
+        if (sim >= threshold) {
+          related.push({ node: other, sim: Number(sim.toFixed(4)) });
+        }
+      }
+    } else {
+      for (const other of byId.values()) {
+        if (other.id === id) continue;
+        const sim = textSimilarity(node.content, other.content);
+        if (sim >= threshold) {
+          related.push({ node: other, sim: Number(sim.toFixed(4)) });
+        }
+      }
+    }
+    related.sort((a, b) => a.node.createdAt - b.node.createdAt);
+
+    const toScored = (r: { node: MemoryNode; sim: number }): ScoredMemory => ({
+      node: r.node,
+      score: r.sim,
+    });
+    const supersedes = related
+      .filter((r) => r.node.createdAt < node.createdAt)
+      .slice(-limit)
+      .map(toScored);
+    const supersededBy = related
+      .filter((r) => r.node.createdAt > node.createdAt)
+      .sort((a, b) => b.node.createdAt - a.node.createdAt)
+      .slice(0, limit)
+      .map(toScored);
+
+    return { node, supersedes, supersededBy, derivedNotes, edges };
   }
 
   /**

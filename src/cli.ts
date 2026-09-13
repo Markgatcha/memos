@@ -6,6 +6,7 @@
  * Usage:
  *   memos store "User prefers dark mode" --type preference
  *   memos search "dark mode"
+ *   memos history <id>
  *   memos retrieve <id>
  *   memos forget <id>
  *   memos summarize
@@ -27,6 +28,7 @@
 
 import { MemOS } from "./memory.js";
 import { graphToMermaid } from "./graph-mermaid.js";
+import { parseScopeArg } from "./scope.js";
 import type { MemoryPool } from "./types.js";
 import type { SQLiteStorage } from "./storage/sqlite.js";
 import { getSdkVersion } from "./version.js";
@@ -311,9 +313,11 @@ Usage:
   memos <command> [options]
 
 Commands:
-  store <content>         Store a new memory
+  store <content>         Store a new memory (--pool, --context,
+                          --scope user:alice[,agent:coder][,run:r1])
   retrieve <id>           Retrieve a memory by ID
-  search <query>          Search memories by text (--pool event|note|procedure)
+  search <query>          Search memories by text (--pool event|note|procedure,
+                          --scope user:alice[,...]) (--pool event|note|procedure)
   forget <id>             Delete a memory by ID
   summarize               Summarize all memories
   graph                   Print the full memory graph (--mermaid for a
@@ -331,6 +335,19 @@ Commands:
   import-external <file>  Import a ChatGPT/Claude memory export
                           (--source auto|chatgpt|claude|generic, --dry-run,
                           --max-items <n>, --namespace <ns>)
+  history <id>            Version timeline for one memory: supersedes,
+                          superseded by, derived notes
+  digest                  Run consolidation now and print a summary
+  consolidate             Offline maintenance pass: merge duplicates, archive
+                          stale memories, supersede decayed ones (kept as
+                          history), distill cluster summary notes
+                          (--dry-run, --no-summarize, --no-decay,
+                          --decay-half-life <days>, --min-retention <score>,
+                          --older-than <days>, --namespace <ns>, --watch,
+                          --interval-min <n>)
+  encrypt                 Encrypt the database in place (--key <key> or
+                          MEMOS_KEY; requires better-sqlite3-multiple-ciphers)
+  decrypt                 Remove encryption in place (--key <key>)
   stats                   Token-savings telemetry for this process
                           (packs built, tokens injected vs naive baseline)
   doctor                  Health-check the store, embedding config and endpoints
@@ -389,6 +406,16 @@ async function main(): Promise<void> {
   const dbFlagIdx = args.indexOf("--db");
   const dbPath = dbFlagIdx !== -1 ? args[dbFlagIdx + 1] : undefined;
   const jsonFlag = args.includes("--json");
+  // Encryption key for at-rest-encrypted databases: --key or MEMOS_KEY.
+  // encrypt/decrypt are excluded — they perform the conversion itself and
+  // must open the source at its CURRENT (pre/post conversion) state.
+  const keyFlagIdx = args.indexOf("--key");
+  const cipherKey =
+    command === "encrypt" || command === "decrypt"
+      ? undefined
+      : keyFlagIdx !== -1
+        ? args[keyFlagIdx + 1]
+        : process.env.MEMOS_KEY;
 
   if (command === "mcp") {
     const { runMcpServer } = await import("./mcp.js");
@@ -402,12 +429,50 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Encrypt/decrypt operate on the raw database file and must run BEFORE
+  // the store is opened (Windows refuses to rename an open file).
+  if (command === "encrypt" || command === "decrypt") {
+    const keyIdx = args.indexOf("--key");
+    const key = keyIdx !== -1 ? args[keyIdx + 1] : process.env.MEMOS_KEY;
+    if (!key) {
+      console.error(
+        "Error: --key <key> (or the MEMOS_KEY environment variable) is required.",
+      );
+      process.exit(1);
+    }
+    if (!dbPath) {
+      console.error("Error: --db <path> is required.");
+      process.exit(1);
+    }
+    const { encryptDatabase, decryptDatabase } =
+      await import("./storage/sqlite.js");
+    const backup =
+      command === "encrypt"
+        ? await encryptDatabase(dbPath, key)
+        : await decryptDatabase(dbPath, key);
+    if (jsonFlag) {
+      console.log(JSON.stringify({ command, dbPath, backup }, null, 2));
+    } else {
+      console.log(
+        `${command === "encrypt" ? "Encrypted" : "Decrypted"}: ${dbPath}`,
+      );
+      console.log(`  previous file kept as ${backup}`);
+      console.log(
+        command === "encrypt"
+          ? "  From now on provide the key: --key, MEMOS_KEY, or cipherKey config."
+          : "  The database is now plaintext.",
+      );
+    }
+    return;
+  }
+
   // Embedding config via environment (same variables the Python server
   // and benchmark scripts accept). Without MEMOS_EMBEDDING_PROVIDER the
   // CLI runs the default local-hash provider.
   const embeddingsConfig = cliEmbeddingsConfig();
   const memos = new MemOS({
     dbPath,
+    ...(cipherKey ? { cipherKey } : {}),
     ...(embeddingsConfig
       ? {
           embeddings: embeddingsConfig,
@@ -453,6 +518,10 @@ async function main(): Promise<void> {
         const contextIdx = args.indexOf("--context");
         const context = contextIdx !== -1 ? args[contextIdx + 1] : undefined;
         if (context) opts.context = context;
+        const scopeIdx = args.indexOf("--scope");
+        if (scopeIdx !== -1 && args[scopeIdx + 1]) {
+          opts.scope = parseScopeArg(args[scopeIdx + 1]);
+        }
         const result = await memos.store(content, opts as any);
         if (jsonFlag) {
           console.log(JSON.stringify(result, null, 2));
@@ -523,6 +592,9 @@ async function main(): Promise<void> {
         const pool = poolArg
           ? (poolArg.split(",").map((p) => p.trim()) as MemoryPool[])
           : undefined;
+        const scopeIdx = args.indexOf("--scope");
+        const scopeArg = scopeIdx !== -1 ? args[scopeIdx + 1] : undefined;
+        const scope = scopeArg ? parseScopeArg(scopeArg) : undefined;
         const tagIdx = args.indexOf("--tag");
         let searchTags: string[] | undefined;
         if (tagIdx !== -1) {
@@ -538,6 +610,7 @@ async function main(): Promise<void> {
           limit,
           tags: searchTags,
           ...(pool ? { pool } : {}),
+          ...(scope && Object.keys(scope).length > 0 ? { scope } : {}),
         });
         if (jsonFlag) {
           console.log(JSON.stringify(results, null, 2));
@@ -691,6 +764,55 @@ async function main(): Promise<void> {
         const olderThanDays =
           olderThanIdx !== -1 ? Number(args[olderThanIdx + 1]) : undefined;
 
+        // Watch mode: self-maintaining memory. Runs the full consolidation
+        // immediately, then every interval until interrupted. Each cycle
+        // prints a one-line digest.
+        if (args.includes("--watch")) {
+          const intervalIdx = args.indexOf("--interval-min");
+          const intervalMin = Math.max(
+            1,
+            intervalIdx !== -1 ? parseInt(args[intervalIdx + 1], 10) || 30 : 30,
+          );
+          const consolidateOpts = {
+            ...(namespace ? { namespace } : {}),
+            dryRun,
+            summarize,
+            decay,
+            ...(decayHalfLifeDays !== undefined &&
+            !Number.isNaN(decayHalfLifeDays)
+              ? { decayHalfLifeDays }
+              : {}),
+            ...(minRetentionScore !== undefined &&
+            !Number.isNaN(minRetentionScore)
+              ? { minRetentionScore }
+              : {}),
+            ...(olderThanDays !== undefined && !Number.isNaN(olderThanDays)
+              ? { olderThanDays }
+              : {}),
+          };
+          console.log(
+            `consolidation watch: every ${intervalMin} min — ctrl+c to stop`,
+          );
+          for (;;) {
+            const started = Date.now();
+            try {
+              const result = await memos.consolidate(consolidateOpts);
+              const usage = memos.usageStats();
+              console.log(
+                `[${new Date().toISOString()}] merged ${result.merges.length} · archived ${result.moves.length} · decayed ${result.decayed.length} · notes ${result.clusters.length} · ${usage.packTokens} tok injected (${usage.savedPct}% saved) — ${Date.now() - started} ms`,
+              );
+            } catch (error) {
+              console.error(
+                "consolidation cycle failed:",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+            await new Promise((resolve) =>
+              setTimeout(resolve, intervalMin * 60_000),
+            );
+          }
+        }
+
         const result = await memos.consolidate({
           ...(namespace ? { namespace } : {}),
           dryRun,
@@ -732,6 +854,88 @@ async function main(): Promise<void> {
               );
             }
           }
+        }
+        break;
+      }
+
+      case "digest": {
+        const result = await memos.consolidate({
+          summarize: !args.includes("--no-summarize"),
+        });
+        const usage = memos.usageStats();
+        if (jsonFlag) {
+          console.log(JSON.stringify({ result, usage }, null, 2));
+        } else {
+          console.log("Memory digest:");
+          console.log(
+            `  learned/merged:  ${result.merges.length} duplicate cluster(s) merged`,
+          );
+          console.log(`  superseded:      ${result.decayed.length} decayed`);
+          console.log(`  archived:        ${result.moves.length} moved aside`);
+          console.log(
+            `  new notes:       ${result.clusters.length} cluster summary(ies)`,
+          );
+          console.log(
+            `  context packs:   ${usage.packsBuilt} built · ${usage.savedPct}% tokens saved vs raw JSON`,
+          );
+        }
+        break;
+      }
+
+      case "history": {
+        const id = args[1];
+        if (!id) {
+          console.error(
+            "Error: memory ID is required.\n  Usage: memos history <id>",
+          );
+          process.exit(1);
+        }
+        const timeline = await memos.history(id);
+        if (jsonFlag) {
+          console.log(JSON.stringify(timeline, null, 2));
+          break;
+        }
+        const node = timeline.node;
+        const validity =
+          node.validFrom || node.validTo
+            ? `${node.validFrom ? new Date(node.validFrom).toISOString().slice(0, 10) : "…"} → ${node.validTo ? new Date(node.validTo).toISOString().slice(0, 10) : "present"}`
+            : "always";
+        console.log(`Memory ${node.id}`);
+        console.log(
+          `  type: ${node.type} · trust: ${node.trustScore.toFixed(2)} · valid: ${validity}`,
+        );
+        console.log(`  ${node.content}`);
+        if (timeline.supersedes.length > 0) {
+          console.log(`\nSupersedes (older versions):`);
+          for (const version of timeline.supersedes) {
+            console.log(
+              `  ← [${version.node.createdAt ? new Date(version.node.createdAt).toISOString().slice(0, 10) : "?"}] ${version.node.id.slice(0, 8)} — ${version.node.content.slice(0, 60)}`,
+            );
+          }
+        }
+        if (timeline.supersededBy.length > 0) {
+          console.log(`\nSuperseded by (newer versions):`);
+          for (const version of timeline.supersededBy) {
+            console.log(
+              `  → [${new Date(version.node.createdAt).toISOString().slice(0, 10)}] ${version.node.id.slice(0, 8)} — ${version.node.content.slice(0, 60)}`,
+            );
+          }
+        }
+        if (timeline.derivedNotes.length > 0) {
+          console.log(`\nDerived notes: ${timeline.derivedNotes.length}`);
+          for (const note of timeline.derivedNotes) {
+            console.log(
+              `  ¶ ${note.id.slice(0, 8)} — ${note.content.slice(0, 60)}`,
+            );
+          }
+        }
+        if (
+          timeline.supersedes.length === 0 &&
+          timeline.supersededBy.length === 0
+        ) {
+          console.log(
+            "\nNo related versions found (this is the only version).",
+          );
         }
         break;
       }

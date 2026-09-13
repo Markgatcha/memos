@@ -68,6 +68,16 @@ const scoredMemorySchema = z.object({
     .optional(),
 });
 
+// Shared multi-scope input (composed into a namespace string in fixed
+// order user -> agent -> run; hierarchical match by default).
+const scopeInputSchema = z
+  .object({
+    user: z.string().optional().describe("User scope key."),
+    agent: z.string().optional().describe("Agent scope key."),
+    run: z.string().optional().describe("Run/session scope key."),
+  })
+  .optional();
+
 // ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
@@ -102,6 +112,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
             "Retrieval pool. Default event (raw statements). Use procedure " +
               "for workflow/how-to knowledge.",
           ),
+        scope: scopeInputSchema,
         context: z
           .string()
           .optional()
@@ -115,7 +126,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
         links: z.array(memoryEdgeSchema),
       }),
     },
-    async ({ content, type, tags, ttl, namespace, pool, context }) => {
+    async ({ content, type, tags, ttl, namespace, pool, context, scope }) => {
       const stored = await memos.store(content, {
         type:
           (type as
@@ -130,6 +141,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
         ...(namespace ? { namespace } : {}),
         ...(pool ? { pool } : {}),
         ...(context ? { context } : {}),
+        ...(scope ? { scope } : {}),
       });
       return {
         content: [
@@ -158,6 +170,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
           ])
           .optional()
           .describe("Filter by retrieval pool (event, note, or procedure)."),
+        scope: scopeInputSchema,
         compact: z
           .boolean()
           .optional()
@@ -182,13 +195,14 @@ function registerTools(server: McpServer, memos: MemOS): void {
         }),
       ]),
     },
-    async ({ query, limit, tags, namespace, pool, compact }) => {
+    async ({ query, limit, tags, namespace, pool, scope, compact }) => {
       const found = await memos.search({
         query,
         limit: limit ?? 10,
         ...(tags ? { tags } : {}),
         ...(namespace ? { namespace } : {}),
         ...(pool !== undefined ? { pool } : {}),
+        ...(scope ? { scope } : {}),
       });
       if (compact) {
         const trimmed = found.map((r) => ({
@@ -347,6 +361,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
           .optional()
           .describe("Token budget for the pack (default 2000)."),
         namespace: z.string().optional(),
+        scope: scopeInputSchema,
         format: z
           .enum(["json", "toon", "toon-compact"])
           .optional()
@@ -378,6 +393,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
       query,
       tokenBudget,
       namespace,
+      scope,
       format,
       includeSummary,
       semanticDedup,
@@ -389,6 +405,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
         query,
         tokenBudget: tokenBudget ?? 2000,
         ...(namespace ? { namespace } : {}),
+        ...(scope ? { scope } : {}),
         format: chosenFormat,
         ...(includeSummary !== undefined ? { includeSummary } : {}),
         ...(semanticDedup !== undefined ? { semanticDedup } : {}),
@@ -716,6 +733,41 @@ function registerTools(server: McpServer, memos: MemOS): void {
           },
         ],
         structuredContent: { usage },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_history",
+    {
+      title: "Memory Version Timeline",
+      description:
+        "Audit timeline for one memory: the versions it superseded, the " +
+        "versions that superseded it, and consolidated notes derived from " +
+        "it. Use when recalling something that may be outdated and you " +
+        "need the full history.",
+      inputSchema: z.object({
+        id: z.string().describe("Memory ID."),
+        threshold: z
+          .number()
+          .optional()
+          .describe("Similarity threshold for related versions (default 0.8)."),
+        limit: z
+          .number()
+          .optional()
+          .describe("Cap on related versions per direction (default 10)."),
+      }),
+      outputSchema: z.object({ history: z.unknown() }),
+    },
+    async ({ id, threshold, limit }) => {
+      const history = await memos.history(id, {
+        ...(threshold !== undefined ? { threshold } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      const text = `${history.supersedes.length} older / ${history.supersededBy.length} newer version(s) · ${history.derivedNotes.length} derived note(s).`;
+      return {
+        content: [{ type: "text" as const, text }],
+        structuredContent: { history },
       };
     },
   );
@@ -1158,6 +1210,22 @@ const TOOL_METADATA: McpToolInfo[] = [
       "packs built, tokens injected, naive raw-JSON baseline, savings %.",
     inputSchema: z.toJSONSchema(z.object({})) as Record<string, unknown>,
     outputSchema: z.toJSONSchema(z.object({ usage: z.unknown() })) as Record<
+      string,
+      unknown
+    >,
+  },
+  {
+    name: "memos_history",
+    description:
+      "Audit timeline for one memory: supersedes, superseded by, derived notes.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        id: z.string(),
+        threshold: z.number().optional(),
+        limit: z.number().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(z.object({ history: z.unknown() })) as Record<
       string,
       unknown
     >,

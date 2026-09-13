@@ -9,8 +9,10 @@
 
 import Database from "better-sqlite3";
 import type { Statement } from "better-sqlite3";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { escapeLikePrefix } from "../scope.js";
 import type {
   StorageAdapter,
   MemoryNode,
@@ -189,6 +191,7 @@ export function buildFtsQuery(
  */
 export class SQLiteStorage implements StorageAdapter {
   private db!: Database.Database;
+  private cipherKey: string | undefined;
   private readonly path: string;
   private readonly wal: boolean;
   /**
@@ -213,7 +216,7 @@ export class SQLiteStorage implements StorageAdapter {
   constructor(
     path: string,
     wal = true,
-    options: { vectorCacheEntries?: number } = {},
+    options: { vectorCacheEntries?: number; cipherKey?: string } = {},
   ) {
     this.path = path;
     this.wal = wal;
@@ -225,6 +228,28 @@ export class SQLiteStorage implements StorageAdapter {
       100,
       options.vectorCacheEntries ?? 25_000,
     );
+    this.cipherKey = options.cipherKey;
+  }
+
+  /**
+   * Open the database file, switching to the cipher-capable driver and
+   * applying `PRAGMA key` when encryption is configured. The key MUST be
+   * set before any other statement on an encrypted database.
+   */
+  private openDatabase(path: string, cipherKey?: string): Database.Database {
+    if (!cipherKey || path === ":memory:" || path.startsWith("file::memory:")) {
+      // In-memory databases cannot be encrypted (the driver rejects
+      // PRAGMA key) — and there is nothing on disk to protect.
+      return new Database(path);
+    }
+    const CipherDatabase = loadCipherDriver();
+    const db = new CipherDatabase(path) as Database.Database;
+    // Escape single quotes for the pragma literal; a mismatched key makes
+    // the first real statement fail with SQLITE_NOTADB, which callers see
+    // as a clear decryption error.
+    const escaped = cipherKey.replace(/'/g, "''");
+    db.pragma(`key = '${escaped}'`);
+    return db;
   }
 
   /**
@@ -238,7 +263,7 @@ export class SQLiteStorage implements StorageAdapter {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    this.db = new Database(this.path);
+    this.db = this.openDatabase(this.path, this.cipherKey);
 
     if (this.wal) {
       this.db.pragma("journal_mode = WAL");
@@ -763,6 +788,12 @@ export class SQLiteStorage implements StorageAdapter {
       extraConds.push("n.source = ?");
       extraParams.push(filter.source);
     }
+    if (filter.namespacePrefix) {
+      // Hierarchical scope match: escaped LIKE prefix so user values
+      // cannot inject % or _ wildcards.
+      extraConds.push("n.namespace LIKE ? ESCAPE '\\'");
+      extraParams.push(escapeLikePrefix(filter.namespacePrefix) + "%");
+    }
     if (filter.minTrustScore !== undefined) {
       extraConds.push("n.trust_score >= ?");
       extraParams.push(filter.minTrustScore);
@@ -903,6 +934,10 @@ export class SQLiteStorage implements StorageAdapter {
       if (filter.namespace) {
         conditions.push("namespace = ?");
         params.push(filter.namespace);
+      }
+      if (filter.namespacePrefix) {
+        conditions.push("namespace LIKE ? ESCAPE '\\'");
+        params.push(escapeLikePrefix(filter.namespacePrefix) + "%");
       }
       if (filter.source) {
         conditions.push("source = ?");
@@ -1055,6 +1090,10 @@ export class SQLiteStorage implements StorageAdapter {
     if (filter.namespace) {
       conditions.push("n.namespace = ?");
       params.push(filter.namespace);
+    }
+    if (filter.namespacePrefix) {
+      conditions.push("n.namespace LIKE ? ESCAPE '\\'");
+      params.push(escapeLikePrefix(filter.namespacePrefix) + "%");
     }
     if (filter.pool !== undefined) {
       const pools = Array.isArray(filter.pool) ? filter.pool : [filter.pool];
@@ -1472,4 +1511,126 @@ export class SQLiteStorage implements StorageAdapter {
     }
     return { conditions, params };
   }
+}
+
+/**
+ * Load the cipher-capable driver (an API-compatible better-sqlite3 fork
+ * with multiple-cipher support). Kept optional: installs without it keep
+ * the default plaintext driver and never load this module. Exported for
+ * the `memos encrypt` / `memos decrypt` CLI commands.
+ */
+export function loadCipherDriver(): typeof Database {
+  const require = createRequire(import.meta.url);
+  try {
+    const mod = require("better-sqlite3-multiple-ciphers") as unknown as {
+      default?: typeof Database;
+    } & typeof Database;
+    return (mod.default ?? mod) as typeof Database;
+  } catch {
+    throw new Error(
+      "Encryption requires the optional driver better-sqlite3-multiple-ciphers.\n" +
+        "Install it with: npm i better-sqlite3-multiple-ciphers",
+    );
+  }
+}
+
+/**
+ * Encrypt a plaintext database in place. The original file is preserved
+ * as `<path>.plaintext.bak`. Uses the standard sqlcipher_export recipe.
+ * Returns the backup path.
+ */
+export async function encryptDatabase(
+  dbPath: string,
+  key: string,
+): Promise<string> {
+  return convertDatabase(dbPath, key, "encrypt");
+}
+
+export async function decryptDatabase(
+  dbPath: string,
+  key: string,
+): Promise<string> {
+  return convertDatabase(dbPath, key, "decrypt");
+}
+
+/**
+ * Convert a database between plaintext and encrypted forms by copying
+ * schema and data through an attached target (the standard
+ * better-sqlite3-multiple-ciphers migration path — sqlcipher_export is
+ * not available in this driver). The original file is preserved as a
+ * `.plaintext.bak` / `.encrypted.bak` sibling.
+ */
+async function convertDatabase(
+  dbPath: string,
+  key: string,
+  mode: "encrypt" | "decrypt",
+): Promise<string> {
+  const Cipher = loadCipherDriver();
+  const tmp =
+    mode === "encrypt" ? `${dbPath}.encrypted.tmp` : `${dbPath}.decrypted.tmp`;
+  const escapedKey = key.replace(/'/g, "''");
+  const escapedTmp = tmp.replace(/'/g, "''");
+  const escapedSrc = dbPath.replace(/'/g, "''");
+
+  const target = new Cipher(tmp);
+  try {
+    if (mode === "encrypt") {
+      target.pragma(`key = '${escapedKey}'`);
+    }
+    // The SOURCE attaches with a key only when it is encrypted (decrypt);
+    // a plaintext ATTACH must omit the KEY clause entirely — an explicit
+    // empty key makes the driver expect an encrypted file.
+    const sourceKey = mode === "decrypt" ? ` KEY '${escapedKey}'` : " KEY ''";
+    target.exec(`ATTACH DATABASE '${escapedSrc}' AS src${sourceKey}`);
+
+    const objects = target
+      .prepare(
+        "SELECT type, name, sql FROM src.sqlite_master " +
+          "WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' " +
+          // Exclude only the FTS5 SHADOW tables — the virtual
+          // table itself must be recreated (then rebuilt).
+          "AND name NOT LIKE 'nodes\\_fts\\_%' ESCAPE '\\'",
+      )
+      .all() as Array<{ type: string; name: string; sql: string }>;
+
+    const tables = objects.filter((o) => o.type === "table");
+    const indexes = objects.filter((o) => o.type === "index");
+    const triggers = objects.filter((o) => o.type === "trigger");
+
+    // Tables first (the FTS virtual table is created empty), then data,
+    // then an FTS rebuild, then indexes and triggers last so nothing
+    // fires mid-copy.
+    for (const table of tables) target.exec(table.sql);
+    for (const table of tables) {
+      if (/CREATE VIRTUAL TABLE/i.test(table.sql)) continue;
+      target.exec(
+        `INSERT INTO main."${table.name}" SELECT * FROM src."${table.name}"`,
+      );
+    }
+    try {
+      // NOTE: unqualified — FTS5's special insert syntax does not
+      // accept schema-qualified table names.
+      target.exec(`INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')`);
+    } catch (error) {
+      if (!(error as Error).message.includes("no such table")) {
+        console.error(
+          "[convert] FTS rebuild failed:",
+          (error as Error).message,
+        );
+      }
+    }
+    for (const index of indexes) target.exec(index.sql);
+    for (const trigger of triggers) target.exec(trigger.sql);
+
+    target.exec("DETACH DATABASE src");
+  } finally {
+    target.close();
+  }
+
+  const fs = await import("node:fs");
+  const backup =
+    mode === "encrypt" ? `${dbPath}.plaintext.bak` : `${dbPath}.encrypted.bak`;
+  fs.renameSync(dbPath, backup);
+  fs.renameSync(tmp, dbPath);
+  return backup;
 }

@@ -140,6 +140,21 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 | Anthropic SDK adapter | ✅ v1.6.26 |
 | Trust-weighted hybrid search | ✅ v1.6.26 |
 | Parallel hybrid retrieval | ✅ v1.6.26 |
+| Interactive TUI (`memos browse`, slash palette) | ✅ |
+| Mermaid graph export (`memos graph --mermaid`) | ✅ |
+| Multi-granularity pools (event / note / procedure) | ✅ |
+| Multi-scope memory (user / agent / run) | ✅ |
+| Consolidation with decay-based forgetting (`memos consolidate`, `--watch`) | ✅ |
+| Entity-fused retrieval scoring + aliasing | ✅ |
+| Contextual write-time enrichment hook | ✅ |
+| Multi-stream context packs | ✅ |
+| Bounded graph expansion in packs | ✅ |
+| ChatGPT / Claude memory import (`memos import-external`) | ✅ |
+| Version timeline audit (`memos history`) | ✅ |
+| Encryption at rest (`memos encrypt`) | ✅ |
+| Token-savings telemetry (`memos stats`, `memos_usage`) | ✅ |
+| Claude Code plugin (auto-recall + auto-consolidation hooks) | ✅ |
+| Retrieval regression eval in CI | ✅ |
 | Multi-user isolation | 🔜 v3.0 |
 | Plugin system for custom backends | 🔜 v3.0 |
 | Admin dashboard | 🔜 v4.0 |
@@ -353,6 +368,22 @@ memos graph --mermaid > graph.mmd
 
 # Browse interactively — search, inspect, forget from the terminal
 memos browse
+
+# Scope memories per user / agent / run (hierarchical: a user query
+# sees everything their agents and runs stored)
+memos store "Prefers concise answers" --scope user:alice
+memos search "answers" --scope user:alice
+
+# Self-maintaining memory: consolidation with decay-based forgetting
+memos consolidate                      # one pass (+ digest)
+memos consolidate --watch              # run it on a schedule instead
+memos history <id>                     # version timeline: what replaced what
+
+# Bring memories from ChatGPT or Claude
+memos import-external ~/chatgpt-export/memories.json --source auto
+
+# Encrypt the database in place (AES-256 via better-sqlite3-multiple-ciphers)
+memos encrypt --key "<passphrase>" --db ~/.memos/memos.db
 
 # Get a summary
 memos summarize

@@ -157,5 +157,8 @@
     "@swc/core": true,
     "esbuild": true,
     "unrs-resolver": true
+  },
+  "optionalDependencies": {
+    "better-sqlite3-multiple-ciphers": "^13.0.3"
   }
 }

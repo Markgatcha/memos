@@ -138,6 +138,7 @@ describe("MemOS MCP adapter", () => {
       "memos_reindex",
       "memos_consolidate",
       "memos_usage",
+      "memos_history",
     ]);
   });
 });
@@ -365,13 +366,12 @@ describe("MemOS Experimental", () => {
     await memos.close();
   });
 
-  test("namespaces require experimental flag", async () => {
+  test("namespaces are always on (promoted from experimental)", async () => {
     const memos = new MemOS({ dbPath: TEST_DB });
     await memos.init();
 
-    await expect(memos.listNamespaces()).rejects.toThrow(
-      "Namespaces are experimental",
-    );
+    // Namespaces were promoted: the gate is gone, listing works flag-free.
+    await expect(memos.listNamespaces()).resolves.toBeDefined();
     await memos.close();
   });
 

@@ -67,6 +67,22 @@ export const DEFAULT_TRUST_SCORES: Record<MemorySource, number> = {
  */
 export type MemoryPool = "event" | "note" | "procedure";
 
+/**
+ * Typed multi-scope keys for isolating memories per user, agent, and run.
+ * Composed into the underlying namespace string in fixed order
+ * (`u:alice/a:coder/r:r1`) — see `src/scope.ts`. Hierarchical by default:
+ * querying `{ user: "alice" }` surfaces every memory Alice's agents and
+ * runs stored.
+ */
+export interface MemoryScope {
+  /** Owner of the memories (e.g. end-user id). */
+  user?: string;
+  /** Which agent produced them. */
+  agent?: string;
+  /** Which session/run produced them. */
+  run?: string;
+}
+
 export interface MemoryNode {
   /** Globally unique identifier (UUID v4). */
   id: string;
@@ -163,6 +179,12 @@ export interface CreateMemoryInput {
   tags?: string[];
   /** Namespace (experimental). */
   namespace?: string;
+  /**
+   * Typed multi-scope isolation. Composed into the namespace string
+   * (fixed order user → agent → run); takes precedence over `namespace`
+   * when both are supplied.
+   */
+  scope?: MemoryScope;
   /** Temporal validity start (Unix ms). null = always valid. */
   validFrom?: number | null;
   /** Temporal validity end (Unix ms). null = no expiry. */
@@ -327,8 +349,19 @@ export interface SearchFilter {
   sortOrder?: "asc" | "desc";
   /** Filter by tags (AND logic — node must have ALL specified tags). */
   tags?: string[];
-  /** Filter by namespace (experimental). */
+  /** Filter by namespace. */
   namespace?: string;
+  /**
+   * Typed multi-scope filter. Composed into a namespace prefix; with the
+   * default `"hierarchical"` match, `{ user: "alice" }` surfaces every
+   * memory stored under Alice's agents and runs. Set
+   * `scopeMatch: "exact"` to require the identical namespace string.
+   */
+  scope?: MemoryScope;
+  /** How `scope` matches stored namespaces. Default `"hierarchical"`. */
+  scopeMatch?: "exact" | "hierarchical";
+  /** Internal: pre-composed LIKE prefix for namespace matching. */
+  namespacePrefix?: string;
   /**
    * Filter by retrieval pool. Pass a single pool or a list (OR logic).
    * Memories written before pools existed read as `"event"`.
@@ -1015,6 +1048,14 @@ export interface MemOSConfig {
    * for memory-constrained hosts.
    */
   storageOptions?: { vectorCacheEntries?: number };
+  /**
+   * Encryption key for at-rest encryption of the SQLite database.
+   * Requires the optional `better-sqlite3-multiple-ciphers` driver
+   * (`npm i better-sqlite3-multiple-ciphers`). Falls back to the
+   * `MEMOS_KEY` environment variable. Only NEW databases get encrypted —
+   * convert an existing plaintext DB with `memos encrypt`.
+   */
+  cipherKey?: string;
 
   /**
    * Interval in seconds for the TTL expiration sweep.
@@ -1301,6 +1342,33 @@ export interface DecayForgetResult {
   superseded: DecaySuperseded[];
   dryRun: boolean;
   durationMs: number;
+}
+
+/** Options for {@link MemOS.history}. */
+export interface HistoryOptions {
+  /** Minimum similarity for related versions. Default 0.8. */
+  threshold?: number;
+  /** Cap on related versions per direction. Default 10. */
+  limit?: number;
+}
+
+/**
+ * The full version timeline for one memory: the memory itself, the older
+ * versions it replaced, the newer versions that replaced it, and any
+ * consolidated notes derived from it. Supersession is inferred from
+ * content similarity plus temporal-validity windows — superseded versions
+ * are historical (`validTo` set), the live version is not.
+ */
+export interface MemoryHistory {
+  node: MemoryNode;
+  /** Older versions this memory replaced (oldest first). */
+  supersedes: ScoredMemory[];
+  /** Newer versions that replaced this memory (newest first). */
+  supersededBy: ScoredMemory[];
+  /** Notes (note pool) derived from this memory via `derived_from` edges. */
+  derivedNotes: MemoryNode[];
+  /** All graph edges touching this memory. */
+  edges: MemoryEdge[];
 }
 
 /** Result returned by {@link MemOS.consolidate}. */

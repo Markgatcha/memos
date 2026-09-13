@@ -59,6 +59,11 @@ const sections = [
       { label: "Benchmarks & methodology", href: "/benchmarks", internal: true },
       { label: "Architecture Guide", href: "/docs/architecture", internal: true },
       {
+        label: "Memory Operations Guide",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/memory-guide.md",
+        internal: false,
+      },
+      {
         label: "UMT Integration Contract",
         href: "https://github.com/Markgatcha/universal-mcp-toolkit/blob/main/docs/integration-contract.md",
         internal: false,
