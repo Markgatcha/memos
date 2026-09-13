@@ -331,6 +331,13 @@ export class MemOS {
   private searchCacheTtlMs = 5_000; // 5 seconds
   /** Warn only once when the rerank endpoint fails (graceful degradation). */
   private rerankFailureWarned = false;
+  /**
+   * Last timestamp handed out by `store()`. Fast successive stores can land
+   * in the same millisecond, which would make createdAt ties ambiguous for
+   * temporal ordering, version timelines, and recency tie-breaks — so
+   * store timestamps are kept strictly monotonic per instance.
+   */
+  private lastStoreTime = 0;
 
   /**
    * Lifetime token-savings telemetry for context packs (in-process —
@@ -489,7 +496,11 @@ export class MemOS {
       }
     }
 
-    const now = Date.now();
+    // Strictly monotonic per instance: two stores in the same millisecond
+    // would otherwise be indistinguishable in every time-ordered view.
+    let now = Date.now();
+    if (now <= this.lastStoreTime) now = this.lastStoreTime + 1;
+    this.lastStoreTime = now;
     // Namespaces are always on now (promoted from experimental). Explicit
     // namespace wins; `scope` composes into one (fixed order user → agent
     // → run); plain writes land in "default".
