@@ -157,7 +157,10 @@
     "@swc/core": true,
     "esbuild": true,
     "unrs-resolver": true,
-    "better-sqlite3-multiple-ciphers": true
+    "better-sqlite3-multiple-ciphers": true,
+    "protobufjs@7.6.6": true,
+    "onnxruntime-node@1.24.3": true,
+    "@parcel/watcher@2.6.0": true
   },
   "optionalDependencies": {
     "better-sqlite3-multiple-ciphers": "^13.0.3"
