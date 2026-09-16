@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "memos": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@mem-os/sdk@1.6.26", "mcp"],
+      "cwd": "${PLUGIN_DATA}"
+    }
+  }
+}
