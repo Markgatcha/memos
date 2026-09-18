@@ -12,7 +12,7 @@ if (process.env.MEMOS_SKIP_SESSION_CONSOLIDATE) process.exit(0);
 
 const child = spawn(
 	"npx",
-	["-y", "@mem-os/sdk", "consolidate", "--no-summarize", "--json"],
+	["-y", "@mem-os/sdk@1.6.26", "consolidate", "--no-summarize", "--json"],
 	{ timeout: 30_000, shell: process.platform === "win32" },
 );
 child.on("error", () => process.exit(0));

@@ -1,5 +1,5 @@
 {
-  "name": "memos",
+  "name": "mem-os",
   "displayName": "MemOS Memory",
   "version": "1.6.26",
   "description": "Local-first persistent memory: store durable facts, recall them in any session. Zero cloud, zero telemetry, SQLite-backed.",

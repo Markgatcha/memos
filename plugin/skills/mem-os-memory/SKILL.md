@@ -1,5 +1,5 @@
 ---
-name: memos-memory
+name: mem-os-memory
 description: Use when the user shares durable facts worth persisting across sessions (preferences, project decisions, environment setup, corrections), asks to remember or recall something, or when a question may depend on prior sessions. Drives the local MemOS MCP server (memos_* tools, all data in local SQLite).
 ---
 

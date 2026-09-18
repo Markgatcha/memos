@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "memos": {
+    "mem-os": {
       "command": "npx",
-      "args": ["-y", "@mem-os/sdk", "mcp"],
+      "args": ["-y", "@mem-os/sdk@1.6.26", "mcp"],
       "env": {}
     }
   }

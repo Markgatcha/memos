@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 
 execFile(
 	"npx",
-	["-y", "@mem-os/sdk", "summarize", "--json"],
+	["-y", "@mem-os/sdk@1.6.26", "summarize", "--json"],
 	{ timeout: 10_000, shell: process.platform === "win32" },
 	(error, stdout) => {
 		if (error || !stdout.trim()) return;
