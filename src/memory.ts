@@ -12,6 +12,7 @@ import { GraphEngine, generateId, textSimilarity } from "./graph.js";
 import { SQLiteStorage } from "./storage/sqlite.js";
 import { defaultDbPath } from "./storage/sqlite.js";
 import { readFile } from "node:fs/promises";
+import { performance } from "node:perf_hooks";
 import {
   parseExternalMemoryExport,
   type DetectedExportSource,
@@ -2092,7 +2093,7 @@ export class MemOS {
    */
   async consolidate(opts: ConsolidateOptions = {}): Promise<ConsolidateResult> {
     this.assertInit();
-    const start = Date.now();
+    const start = performance.now();
     const namespace = (opts as { namespace?: string }).namespace ?? "default";
     const dryRun = opts.dryRun ?? false;
     const summarize = opts.summarize ?? true;
@@ -2142,7 +2143,7 @@ export class MemOS {
       clusters: summarizeResult.clusters,
       decayed: decayResult.superseded,
       dryRun,
-      durationMs: Date.now() - start,
+      durationMs: performance.now() - start,
     };
   }
 
