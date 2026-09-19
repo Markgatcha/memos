@@ -22,6 +22,8 @@
  */
 
 import { MemOS } from "../src/memory.ts";
+import { parseProviderArgs } from "./lib/bench-common.ts";
+import type { EmbeddingProviderKind } from "../src/types.ts";
 import { performance } from "perf_hooks";
 import { writeFileSync } from "fs";
 import { join, dirname } from "path";
@@ -593,6 +595,20 @@ function keywordOverlap(query: string, fact: MemoryFact): number {
 export async function runBenchmark(opts?: {
   factCount?: number;
   topK?: number;
+  /**
+   * Embedding provider override. When omitted, the benchmark keeps its
+   * historical default: fastembed + Xenova/gemma-300m-e5-it-v1 (768d).
+   * The CLI wires `--provider/--model/--dimensions/--base-url/--api-key`
+   * (or EMBEDDING_* env vars) through here, e.g. to point at a GPU-backed
+   * OpenAI-compatible embedding server.
+   */
+  embeddingOverrides?: {
+    provider?: string;
+    model?: string;
+    dimensions?: number;
+    baseUrl?: string;
+    apiKey?: string;
+  };
 }): Promise<BenchmarkReport> {
   const factCount = opts?.factCount ?? BENCHMARK_FACTS.length;
   const topK = opts?.topK ?? 10;
@@ -615,12 +631,19 @@ export async function runBenchmark(opts?: {
     autoLinkThreshold: 0,
     embeddings: {
       enabled: true,
-      provider: "fastembed",
-      // EmbeddingGemma-300M: Google's 300M parameter embedding model,
+      provider: (opts?.embeddingOverrides?.provider ??
+        "fastembed") as EmbeddingProviderKind,
+      // Default: EmbeddingGemma-300M: Google's 300M parameter embedding model,
       // state-of-the-art for its size. Significantly better than MiniLM
       // at semantic search tasks while still running locally/fast.
-      model: "Xenova/gemma-300m-e5-it-v1",
-      dimensions: 768,
+      model: opts?.embeddingOverrides?.model ?? "Xenova/gemma-300m-e5-it-v1",
+      dimensions: opts?.embeddingOverrides?.dimensions ?? 768,
+      ...(opts?.embeddingOverrides?.baseUrl
+        ? { baseUrl: opts.embeddingOverrides.baseUrl }
+        : {}),
+      ...(opts?.embeddingOverrides?.apiKey
+        ? { apiKey: opts.embeddingOverrides.apiKey }
+        : {}),
     },
     embeddingQueue: {
       concurrency: 1, // sequential for reproducible benchmark
@@ -853,15 +876,37 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const factCount = extractArg(args, "--facts") || 200;
   const topK = extractArg(args, "--topk") || 10;
+  const providerArgs = parseProviderArgs(args);
+  const providerExplicit =
+    args.some((a) => a.startsWith("--provider=")) ||
+    !!process.env.EMBEDDING_PROVIDER;
 
   console.log("MemOS Memory Quality Benchmark");
   console.log(`  Facts: ${factCount}`);
   console.log(`  Top-K: ${topK}`);
+  console.log(
+    `  Embeddings: ${providerExplicit ? providerArgs.provider : "fastembed"}` +
+      ` / ${providerArgs.model ?? "Xenova/gemma-300m-e5-it-v1"}` +
+      (providerArgs.baseUrl ? ` @ ${providerArgs.baseUrl}` : ""),
+  );
   console.log("");
 
   const report = await runBenchmark({
     factCount: Number(factCount),
     topK: Number(topK),
+    ...(providerExplicit
+      ? {
+          embeddingOverrides: {
+            provider: providerArgs.provider,
+            ...(providerArgs.model ? { model: providerArgs.model } : {}),
+            ...(providerArgs.dimensions
+              ? { dimensions: providerArgs.dimensions }
+              : {}),
+            ...(providerArgs.baseUrl ? { baseUrl: providerArgs.baseUrl } : {}),
+            ...(providerArgs.apiKey ? { apiKey: providerArgs.apiKey } : {}),
+          },
+        }
+      : {}),
   });
 
   console.log(formatComparisonTable(report));
