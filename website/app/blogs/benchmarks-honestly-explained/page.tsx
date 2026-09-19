@@ -1,6 +1,15 @@
 import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import BenchmarkChart from "../../_components/BenchmarkChart";
+import {
+  ArrowDefs,
+  DBox,
+  DCaption,
+  DNote,
+  Figure,
+  HArrow,
+} from "../../_components/Diagram";
 import Reveal from "../../_components/Reveal";
 
 export const metadata: Metadata = {
@@ -58,6 +67,47 @@ function A({ href, children }: { href: string; children: React.ReactNode }) {
     >
       {children}
     </a>
+  );
+}
+
+function TwoGamesDiagram() {
+  return (
+    <Figure
+      kicker="figure · two games, one scoreboard"
+      viewBox="0 0 640 250"
+      label="Diagram comparing retrieval-only scoring (query, hybrid retriever, evidence spans, recall at 5) with LLM-judge QA accuracy (query, retrieve, LLM writes answer, GPT-4o judges, accuracy plus judge mood)."
+    >
+      <ArrowDefs id="tg-arr" />
+      <DCaption x={16} y={22}>
+        {"game 1 · retrieval-only scoring"}
+      </DCaption>
+      <DBox x={16} y={34} w={128} lines={["query"]} />
+      <HArrow x1={148} x2={162} y={62} marker="tg-arr" />
+      <DBox x={166} y={34} w={128} lines={["hybrid", "retriever"]} />
+      <HArrow x1={298} x2={312} y={62} marker="tg-arr" />
+      <DBox x={316} y={34} w={128} lines={["evidence", "spans"]} />
+      <HArrow x1={448} x2={462} y={62} marker="tg-arr" />
+      <DBox x={466} y={34} w={158} lines={["recall@5 ≈ 95%"]} tone="emerald" />
+      <DNote x={16} y={114}>
+        {"measures the retriever — and nothing else"}
+      </DNote>
+
+      <DCaption x={16} y={148}>
+        {"game 2 · llm-judge qa accuracy"}
+      </DCaption>
+      <DBox x={16} y={160} w={100} lines={["query"]} />
+      <HArrow x1={120} x2={134} y={188} marker="tg-arr" />
+      <DBox x={138} y={160} w={100} lines={["retrieve"]} />
+      <HArrow x1={242} x2={256} y={188} marker="tg-arr" />
+      <DBox x={260} y={160} w={112} lines={["llm writes", "answer"]} />
+      <HArrow x1={376} x2={390} y={188} marker="tg-arr" />
+      <DBox x={394} y={160} w={112} lines={["gpt-4o", "judges"]} tone="amber" />
+      <HArrow x1={510} x2={524} y={188} marker="tg-arr" />
+      <DBox x={528} y={160} w={96} lines={["accuracy", "± mood"]} tone="amber" />
+      <DNote x={16} y={240}>
+        {"measures the retriever + the reader model + the judge's mood"}
+      </DNote>
+    </Figure>
   );
 }
 
@@ -155,6 +205,7 @@ export default function BenchmarksExplainedPost() {
             needle.&quot; When you see a leaderboard, the first question is
             always: which game was played?
           </P>
+          <TwoGamesDiagram />
 
           <H2>The five methodology traps</H2>
           <P>
@@ -206,12 +257,90 @@ export default function BenchmarksExplainedPost() {
             test from ICLR 2026, where Mem0 and Zep collapse to 21.1 and 24.0.
             Saturated benchmarks measure saturation, not utility.
           </P>
+          <div className="my-8">
+            <BenchmarkChart
+              title="reported scores · same systems, different scoreboards"
+              bars={[
+                {
+                  label: "Exa M-1 · LongMemEval",
+                  value: 96.4,
+                  display: "96.4",
+                },
+                {
+                  label: "Mem0 · LongMemEval (self-reported)",
+                  value: 94.4,
+                  display: "94.4",
+                },
+                {
+                  label: "MindMemOS · LoCoMo",
+                  value: 94.03,
+                  display: "94.03",
+                },
+                {
+                  label: "EverMemOS · LoCoMo",
+                  value: 93.05,
+                  display: "93.05",
+                },
+                {
+                  label: "Zep · MemoryAgentBench",
+                  value: 24.0,
+                  display: "24.0",
+                  accent: true,
+                },
+                {
+                  label: "Mem0 · MemoryAgentBench",
+                  value: 21.1,
+                  display: "21.1",
+                  accent: true,
+                },
+              ]}
+              footnote="The top four are saturated-benchmark numbers — judge-scored, vendor-reported. The bottom two are from MemoryAgentBench (ICLR 2026), a harder neutral test. The cliff between them is the point: saturated benchmarks measure saturation, not utility."
+            />
+          </div>
           <Callout>
             Zep&apos;s LoCoMo number deserves its own footnote: third parties
             have published corrections of both 75.14% and 58.44% against the
             claimed ~84%. When the re-runs disagree with each other, the
             leaderboard isn&apos;t a ranking — it&apos;s a rumor mill.
           </Callout>
+          <div className="my-8">
+            <BenchmarkChart
+              title="claimed vs. independently re-run · the rumor mill"
+              bars={[
+                {
+                  label: "Vendor claim (large k)",
+                  value: 100,
+                  display: "100%",
+                },
+                {
+                  label: "Third-party re-run (R@10)",
+                  value: 60.3,
+                  display: "60.3%",
+                  accent: true,
+                  note: "top-k games: recall is a function of k",
+                },
+                {
+                  label: "Zep LoCoMo claimed",
+                  value: 84,
+                  display: "~84%",
+                },
+                {
+                  label: "Zep correction A",
+                  value: 75.14,
+                  display: "75.14%",
+                  accent: true,
+                },
+                {
+                  label: "Zep correction B",
+                  value: 58.44,
+                  display: "58.44%",
+                  accent: true,
+                  note: "two re-runs disagree with each other",
+                },
+              ]}
+              footnote="Same systems, different methodologies, wildly different numbers. Before trusting a leaderboard entry, ask: which k, which judge, which categories were excluded?"
+            />
+          </div>
 
           <H2>What we do instead</H2>
           <P>

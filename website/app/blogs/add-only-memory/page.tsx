@@ -1,6 +1,16 @@
 import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import {
+  ArrowDefs,
+  DBox,
+  DCaption,
+  DNote,
+  Figure,
+  HArrow,
+  MONO,
+  VArrow,
+} from "../../_components/Diagram";
 import Reveal from "../../_components/Reveal";
 
 export const metadata: Metadata = {
@@ -58,6 +68,179 @@ function A({ href, children }: { href: string; children: React.ReactNode }) {
     >
       {children}
     </a>
+  );
+}
+
+function WritePathDiagram() {
+  return (
+    <Figure
+      kicker="figure · move the hard decision to the best moment"
+      viewBox="0 0 640 300"
+      label="Diagram comparing the old write path, where an LLM makes an irreversible ADD, UPDATE or DELETE decision at write time, with the add-only write path, where every observation is appended and contradictions are resolved at read time."
+    >
+      <ArrowDefs id="wp-arr" />
+      <DCaption x={16} y={22}>
+        {"old write path · decide with partial info"}
+      </DCaption>
+      <DBox x={16} y={34} w={288} lines={["new observation"]} />
+      <VArrow x={160} y1={94} y2={108} marker="wp-arr" />
+      <polygon
+        points="160,112 304,140 160,168 16,140"
+        fill="#141417"
+        stroke="rgba(251,191,36,0.45)"
+        strokeWidth={1}
+      />
+      <text
+        x={160}
+        y={140}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill="#fcd34d"
+        fontSize={12}
+        fontFamily={MONO}
+      >
+        {"LLM: ADD / UPDATE / DELETE?"}
+      </text>
+      <VArrow x={160} y1={172} y2={186} marker="wp-arr" />
+      <DBox x={16} y={190} w={288} lines={["irreversible write"]} tone="amber" />
+      <DNote x={16} y={268} fill="#fcd34d">
+        {"every UPDATE bets you'll never need the old version"}
+      </DNote>
+
+      <DCaption x={336} y={22}>
+        {"add-only write path · decide at read time"}
+      </DCaption>
+      <DBox x={336} y={34} w={288} lines={["new observation"]} />
+      <VArrow x={480} y1={94} y2={108} marker="wp-arr" />
+      <DBox x={336} y={112} w={288} lines={["single-pass ADD"]} tone="emerald" />
+      <VArrow x={480} y1={172} y2={186} marker="wp-arr" />
+      <DBox
+        x={336}
+        y={190}
+        w={288}
+        lines={["version chain grows"]}
+        tone="emerald"
+      />
+      <DNote x={336} y={268}>
+        {"contradictions resolved at read time, with the query in hand"}
+      </DNote>
+    </Figure>
+  );
+}
+
+function VersionTimeline() {
+  return (
+    <Figure
+      kicker="figure · invalidate, don't delete"
+      viewBox="0 0 640 380"
+      label="Timeline diagram comparing mutate-in-place memory, where Alice works at Acme is overwritten by Alice works at Globex and history is lost, with add-only memory, where version 1 keeps a validity window from March to June, version 2 opens from June onward, and a contradicts edge links them."
+    >
+      <ArrowDefs id="vt-arr" />
+      <line x1={96} y1={40} x2={600} y2={40} stroke="#3f3f46" strokeWidth={1.5} />
+      {[
+        { x: 150, label: "mar" },
+        { x: 350, label: "jun" },
+        { x: 560, label: "now" },
+      ].map((t) => (
+        <g key={t.label}>
+          <line
+            x1={t.x}
+            y1={34}
+            x2={t.x}
+            y2={46}
+            stroke="#52525b"
+            strokeWidth={1.5}
+          />
+          <text
+            x={t.x}
+            y={28}
+            textAnchor="middle"
+            fill="#71717a"
+            fontSize={11}
+            fontFamily={MONO}
+            letterSpacing={1}
+          >
+            {t.label}
+          </text>
+        </g>
+      ))}
+
+      <DCaption x={16} y={102}>
+        {"mutate-in-place"}
+      </DCaption>
+      <DBox x={96} y={112} w={180} lines={["Alice @ Acme"]} tone="ghost" />
+      <line x1={108} y1={122} x2={264} y2={154} stroke="#f87171" strokeWidth={2} />
+      <line x1={108} y1={154} x2={264} y2={122} stroke="#f87171" strokeWidth={2} />
+      <HArrow x1={280} x2={296} y={140} marker="vt-arr" />
+      <DBox x={300} y={112} w={180} lines={["Alice @ Globex"]} />
+      <DNote x={96} y={196} fill="#f87171">
+        {"✕ overwritten — “where did Alice work in March?” is unanswerable"}
+      </DNote>
+
+      <DCaption x={16} y={236}>
+        {"add-only · invalidate, don't delete"}
+      </DCaption>
+      <DBox x={96} y={246} w={220} lines={["v1 · Alice @ Acme"]} />
+      <rect
+        x={96}
+        y={308}
+        width={220}
+        height={6}
+        rx={3}
+        fill="rgba(16,185,129,0.55)"
+      />
+      <text
+        x={96}
+        y={328}
+        fill="#6ee7b7"
+        fontSize={11}
+        fontFamily={MONO}
+        letterSpacing={1}
+      >
+        {"t_valid  mar → jun"}
+      </text>
+      <DBox x={336} y={246} w={220} lines={["v2 · Alice @ Globex"]} />
+      <rect
+        x={336}
+        y={308}
+        width={220}
+        height={6}
+        rx={3}
+        fill="rgba(16,185,129,0.55)"
+      />
+      <text
+        x={336}
+        y={328}
+        fill="#6ee7b7"
+        fontSize={11}
+        fontFamily={MONO}
+        letterSpacing={1}
+      >
+        {"t_valid  jun → now"}
+      </text>
+      <path
+        d="M 440 240 C 400 206, 262 206, 222 240"
+        fill="none"
+        stroke="#a1a1aa"
+        strokeWidth={1.5}
+        strokeDasharray="5 4"
+        markerEnd="url(#vt-arr)"
+      />
+      <text
+        x={331}
+        y={200}
+        textAnchor="middle"
+        fill="#a1a1aa"
+        fontSize={11}
+        fontFamily={MONO}
+        letterSpacing={1}
+      >
+        {"contradicts"}
+      </text>
+      <DNote x={96} y={360}>
+        {"“where did Alice work in March?” → validity filter → v1"}
+      </DNote>
+    </Figure>
   );
 }
 
@@ -126,6 +309,7 @@ export default function AddOnlyMemoryPost() {
             to answer. Moving the hard decision from the worst moment to the
             best moment is the whole insight.
           </P>
+          <WritePathDiagram />
 
           <H2>Zep&apos;s version: invalidate, don&apos;t delete</H2>
           <P>
@@ -147,6 +331,7 @@ export default function AddOnlyMemoryPost() {
             slice of every memory benchmark — and it&apos;s unanswerable by
             construction if you overwrite.
           </P>
+          <VersionTimeline />
           <Callout>
             Premature consolidation destroys information. Every UPDATE is a
             bet that you&apos;ll never need the old version. The field spent

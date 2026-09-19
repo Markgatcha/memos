@@ -1,6 +1,15 @@
 import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import BenchmarkChart from "../../_components/BenchmarkChart";
+import {
+  ArrowDefs,
+  DBox,
+  DCaption,
+  DNote,
+  Figure,
+  VArrow,
+} from "../../_components/Diagram";
 import Reveal from "../../_components/Reveal";
 
 export const metadata: Metadata = {
@@ -45,6 +54,84 @@ function Callout({ children }: { children: React.ReactNode }) {
       </div>
       <div className="text-[14px] text-zinc-300 leading-[1.75]">{children}</div>
     </div>
+  );
+}
+
+function RetrievalDiagram() {
+  return (
+    <Figure
+      kicker="figure · ranking vs. evidence assembly"
+      viewBox="0 0 640 384"
+      label="Diagram contrasting document RAG, where a ranked top document can be a stale March fragment producing a fluent but stale answer, with memory retrieval, where hybrid fusion, reranking, and an evidence bundle of fact, provenance, validity window and entity links produce a grounded answer."
+    >
+      <ArrowDefs id="rr-arr" />
+      <DCaption x={16} y={22}>
+        {"document rag · ranking"}
+      </DCaption>
+      <DBox x={16} y={34} w={288} h={44} lines={["query"]} />
+      <VArrow x={160} y1={82} y2={94} marker="rr-arr" />
+      <DBox x={16} y={98} w={288} h={44} lines={["rank documents"]} />
+      <VArrow x={160} y1={146} y2={158} marker="rr-arr" />
+      <DBox
+        x={16}
+        y={162}
+        w={288}
+        h={60}
+        lines={["top hit: march fragment", "no june correction"]}
+        tone="amber"
+      />
+      <VArrow x={160} y1={226} y2={238} marker="rr-arr" />
+      <DBox
+        x={16}
+        y={242}
+        w={288}
+        h={44}
+        lines={["fluent, stale answer"]}
+        tone="amber"
+      />
+      <DNote x={16} y={312} fill="#fcd34d">
+        {"confident staleness —"}
+      </DNote>
+      <DNote x={16} y={330} fill="#71717a">
+        {"the june correction was never retrieved"}
+      </DNote>
+
+      <DCaption x={336} y={22}>
+        {"memory retrieval · evidence assembly"}
+      </DCaption>
+      <DBox x={336} y={34} w={288} h={44} lines={["query"]} />
+      <VArrow x={480} y1={82} y2={94} marker="rr-arr" />
+      <DBox
+        x={336}
+        y={98}
+        w={288}
+        h={60}
+        lines={["hybrid fusion", "fts5 + vectors + entities"]}
+      />
+      <VArrow x={480} y1={162} y2={174} marker="rr-arr" />
+      <DBox x={336} y={178} w={288} h={44} lines={["cross-encoder rerank"]} />
+      <VArrow x={480} y1={226} y2={238} marker="rr-arr" />
+      <DBox
+        x={336}
+        y={242}
+        w={288}
+        h={64}
+        lines={[
+          "evidence bundle:",
+          "fact · provenance · validity",
+          "entity links",
+        ]}
+      />
+      <VArrow x={480} y1={310} y2={322} marker="rr-arr" />
+      <DBox
+        x={336}
+        y={326}
+        w={288}
+        h={44}
+        lines={["grounded answer"]}
+        tone="emerald"
+      />
+    </Figure>
   );
 }
 
@@ -111,6 +198,34 @@ export default function RagIsNotMemoryPost() {
             on before you tune anything else. It outperforms most embedding
             model upgrades at a fraction of the effort.
           </P>
+          <div className="my-8">
+            <BenchmarkChart
+              title="marginal retrieval gains · percentage points of recall"
+              bars={[
+                {
+                  label: "Add BM25 to dense vectors",
+                  value: 90,
+                  display: "+9.0pp",
+                  accent: true,
+                  note: "hybrid dense + sparse — the consensus first stage",
+                },
+                {
+                  label: "Add cross-encoder rerank",
+                  value: 34,
+                  display: "+3.4pp",
+                  accent: true,
+                  note: "cheapest gain in the field",
+                },
+                {
+                  label: "Typical run-to-run noise",
+                  value: 20,
+                  display: "±2pp",
+                  note: "a +1.5pp “improvement” is luck",
+                },
+              ]}
+              footnote="Magnitudes from reported ablations across memory benchmarks; bars scaled illustratively. Entity linking adds further headroom on top of dense+sparse — the signal most DIY systems skip."
+            />
+          </div>
 
           <H2>Entities: the signal everyone underuses</H2>
           <P>
@@ -151,6 +266,7 @@ export default function RagIsNotMemoryPost() {
             embellishments — they&apos;re what make the difference between a
             search engine and a memory.
           </P>
+          <RetrievalDiagram />
 
           <H2>Our stack, concretely</H2>
           <P>
