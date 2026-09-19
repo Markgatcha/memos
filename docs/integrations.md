@@ -129,3 +129,25 @@ export MEMOS_EMBEDDING_DOCUMENT_PREFIX="document: "
 Then restart the harness. Existing memories keep working; new and updated
 ones get 1024-d vectors. To rebuild vectors for everything, run
 `memos reindex-embeddings --purge-stale` against the same database.
+
+### GPU alternative: sentence-transformers server
+
+If you have a CUDA GPU and prefer the HuggingFace model directly over a
+GGUF conversion, the repo ships `scripts/embed-server.py` — a minimal
+OpenAI-compatible embedding server on sentence-transformers (CUDA when
+available, CPU fallback otherwise):
+
+```bash
+pip install torch sentence-transformers
+python scripts/embed-server.py --model BAAI/bge-base-en-v1.5 --port 8081
+```
+
+```bash
+export MEMOS_EMBEDDING_PROVIDER=openai-compatible
+export MEMOS_EMBEDDING_BASE_URL=http://127.0.0.1:8081/v1
+export MEMOS_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
+export MEMOS_EMBEDDING_DIMENSIONS=768
+```
+
+The `MEMOS_EMBEDDING_MODEL` value must match the model the server loads —
+MemOS only compares vectors produced by the same model.

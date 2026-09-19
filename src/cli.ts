@@ -30,6 +30,8 @@ import { MemOS } from "./memory.js";
 import { graphToMermaid } from "./graph-mermaid.js";
 import { parseScopeArg } from "./scope.js";
 import type { MemoryPool } from "./types.js";
+import type { CreateMemoryInput, ExportFormat } from "./types.js";
+import type { ChildProcess } from "node:child_process";
 import type { SQLiteStorage } from "./storage/sqlite.js";
 import { getSdkVersion } from "./version.js";
 import type { EmbeddingConfig, EmbeddingProviderKind } from "./types.js";
@@ -422,9 +424,7 @@ async function main(): Promise<void> {
     const embeddings = cliEmbeddingsConfig();
     await runMcpServer({
       dbPath,
-      ...(embeddings
-        ? { embeddings, experimental: { semanticSearch: true } }
-        : {}),
+      ...(embeddings ? { embeddings: { ...embeddings, enabled: true } } : {}),
     });
     return;
   }
@@ -474,10 +474,7 @@ async function main(): Promise<void> {
     dbPath,
     ...(cipherKey ? { cipherKey } : {}),
     ...(embeddingsConfig
-      ? {
-          embeddings: embeddingsConfig,
-          experimental: { semanticSearch: true },
-        }
+      ? { embeddings: { ...embeddingsConfig, enabled: true } }
       : {}),
   });
   await memos.init();
@@ -522,7 +519,10 @@ async function main(): Promise<void> {
         if (scopeIdx !== -1 && args[scopeIdx + 1]) {
           opts.scope = parseScopeArg(args[scopeIdx + 1]);
         }
-        const result = await memos.store(content, opts as any);
+        const result = await memos.store(
+          content,
+          opts as unknown as Omit<CreateMemoryInput, "content">,
+        );
         if (jsonFlag) {
           console.log(JSON.stringify(result, null, 2));
         } else {
@@ -1050,7 +1050,7 @@ async function main(): Promise<void> {
         }
 
         const result = await memos.export({
-          format: format as any,
+          format: format as ExportFormat,
           output,
           tag,
         });
@@ -1470,7 +1470,7 @@ async function main(): Promise<void> {
           break;
         }
 
-        const children: any[] = [];
+        const children: ChildProcess[] = [];
         const spawn = async (
           cmd: string,
           cwd: string,

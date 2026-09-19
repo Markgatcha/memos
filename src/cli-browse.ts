@@ -4,6 +4,9 @@
 // (getGraph / search / retrieve / forget) so it stays in sync with the SDK:
 // browse everything, full-text search, inspect a memory's details, and
 // forget entries without leaving the terminal.
+//
+// Console output is the entire UI here, so no-console is disabled file-wide.
+/* eslint-disable no-console */
 
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";

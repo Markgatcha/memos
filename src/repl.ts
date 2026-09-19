@@ -193,8 +193,8 @@ export function createReplHandlers(memos: MemOS): ReplHandlers {
           const pack = (await memos.contextPack({
             query,
             tokenBudget,
-            format: "json",
-          })) as any as ContextPack;
+            format: "json" as const,
+          })) as ContextPack;
           out.push(
             `Context pack for "${query}" (${pack.items.length} items, ${pack.tokenBudget} token budget):`,
           );

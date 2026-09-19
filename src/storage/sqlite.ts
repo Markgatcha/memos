@@ -1659,7 +1659,6 @@ async function convertDatabase(
   const tmp =
     mode === "encrypt" ? `${dbPath}.encrypted.tmp` : `${dbPath}.decrypted.tmp`;
   const escapedKey = key.replace(/'/g, "''");
-  const escapedTmp = tmp.replace(/'/g, "''");
   const escapedSrc = dbPath.replace(/'/g, "''");
 
   const target = new Cipher(tmp);

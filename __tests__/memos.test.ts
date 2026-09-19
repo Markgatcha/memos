@@ -313,14 +313,16 @@ describe("MemOS", () => {
 });
 
 describe("MemOS Experimental", () => {
-  test("semantic search requires experimental flag", async () => {
+  test("semantic search works without the experimental flag", async () => {
     const memos = new MemOS({ dbPath: TEST_DB });
     await memos.init();
-    await memos.store("Test");
+    await memos.store("User prefers dark mode");
+    await memos.store("Project uses TypeScript");
 
-    await expect(memos.semanticSearch("test")).rejects.toThrow(
-      "Semantic search is experimental",
-    );
+    // No embedding provider configured: falls back to text similarity.
+    const results = await memos.semanticSearch("dark mode", 10, 0.1);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].node.content).toContain("dark mode");
     await memos.close();
   });
 
@@ -337,6 +339,36 @@ describe("MemOS Experimental", () => {
     const results = await memos.semanticSearch("dark mode", 10, 0.1);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].score).toBeGreaterThan(0);
+    await memos.close();
+  });
+
+  test("semanticSearch accepts an options object", async () => {
+    const memos = new MemOS({ dbPath: TEST_DB });
+    await memos.init();
+    await memos.store("User prefers dark mode", { type: "preference" });
+    await memos.store("Project uses TypeScript");
+    await memos.store("Dark mode settings configuration");
+
+    // Object style matches the positional style.
+    const byObject = await memos.semanticSearch("dark mode", {
+      limit: 10,
+      threshold: 0.1,
+    });
+    const byPosition = await memos.semanticSearch("dark mode", 10, 0.1);
+    expect(byObject.map((r) => r.node.id)).toEqual(
+      byPosition.map((r) => r.node.id),
+    );
+
+    // Threshold respected: an impossibly high cutoff returns nothing.
+    const none = await memos.semanticSearch("dark mode", { threshold: 2 });
+    expect(none).toHaveLength(0);
+
+    // SearchFilter fields (e.g. type) pass through.
+    const typed = await memos.semanticSearch("dark mode", {
+      type: "preference",
+    });
+    expect(typed.length).toBeGreaterThan(0);
+    expect(typed.every((r) => r.node.type === "preference")).toBe(true);
     await memos.close();
   });
 

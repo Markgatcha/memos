@@ -163,13 +163,13 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 
 ## Embedding-backed search
 
-MemOS still works with zero setup through local keyword search and graph similarity. When `experimental.semanticSearch` is enabled, it can now persist embedding vectors and merge semantic similarity with SQLite FTS keyword results.
+MemOS still works with zero setup through local keyword search and graph similarity. Configure an `embeddings` provider and it will persist embedding vectors and merge semantic similarity with SQLite FTS keyword results — no experimental flag needed.
 
 ```ts
 import { MemOS } from "@mem-os/sdk";
 
 const memos = new MemOS({
-  experimental: { semanticSearch: true, namespaces: true },
+  experimental: { namespaces: true },
   embeddings: {
     provider: "ollama",
     model: "nomic-embed-text",
@@ -191,7 +191,6 @@ LM Studio and other no-key OpenAI-compatible embedding servers work by leaving `
 
 ```ts
 const memos = new MemOS({
-  experimental: { semanticSearch: true },
   embeddings: {
     provider: "openai-compatible",
     baseUrl: "http://127.0.0.1:1234/v1",
@@ -202,6 +201,24 @@ const memos = new MemOS({
 ```
 
 CLI and server deployments can use `MEMOS_EMBEDDING_PROVIDER`, `MEMOS_EMBEDDING_MODEL`, `MEMOS_EMBEDDING_BASE_URL`, `MEMOS_EMBEDDING_API_KEY`, and `MEMOS_EMBEDDINGS=false` to control embedding behavior. `MEMOS_EMBEDDING_API_KEY` is optional for local no-key endpoints.
+
+### GPU embeddings
+
+The built-in Node embedding pipeline (fastembed/ONNX) is CPU-only. If you have a CUDA GPU, serve the same model weights from sentence-transformers on the GPU instead — MemOS talks to it through the `openai-compatible` provider, so nothing else changes.
+
+```bash
+# 1. Start the embedding server (needs: pip install torch sentence-transformers)
+python scripts/embed-server.py --model BAAI/bge-base-en-v1.5 --port 8081
+
+# 2. Point MemOS at it
+MEMOS_EMBEDDING_PROVIDER=openai-compatible \
+MEMOS_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5 \
+MEMOS_EMBEDDING_BASE_URL=http://127.0.0.1:8081/v1 \
+MEMOS_EMBEDDING_DIMENSIONS=768 \
+npx @mem-os/sdk store "remember this"
+```
+
+The `model` you configure in MemOS must match the model the server loads — MemOS only compares vectors produced by the same model. The server also respects `EMBED_MODEL` / `EMBED_PORT` environment variables, and `--device` overrides CUDA auto-detection (handy for forcing `--device cpu` to test the wiring without a GPU).
 
 ---
 

@@ -419,6 +419,15 @@ export interface SearchFilter {
 }
 
 /**
+ * Options for `MemOS.semanticSearch()`. Accepts every `SearchFilter` field
+ * (namespace, tags, type, limit, …) plus the semantic similarity cutoff.
+ */
+export interface SemanticSearchOptions extends SearchFilter {
+  /** Minimum similarity score in [0, 1]. Default 0.1. */
+  threshold?: number;
+}
+
+/**
  * AI Trio context pack — a token-budgeted, ranked, namespace-filtered
  * slice of memory intended to be folded into an LLM prompt by Guardian.
  *
@@ -838,7 +847,11 @@ export interface StorageAdapter {
  * Experimental feature flags.
  */
 export interface ExperimentalConfig {
-  /** Enable semantic search via embeddings (requires adapter). */
+  /**
+   * @deprecated No longer required — `semanticSearch()` works without it.
+   * Kept as a shorthand for enabling embeddings with the default provider
+   * (equivalent to `embeddings: { enabled: true }`).
+   */
   semanticSearch?: boolean;
   /** Enable graph visualization export. */
   graphViz?: boolean;

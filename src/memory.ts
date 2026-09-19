@@ -33,7 +33,7 @@ import {
   canonicalizeEntities,
   extractQueryEntities,
 } from "./entity-extraction.js";
-import { composeScope, escapeLikePrefix } from "./scope.js";
+import { composeScope } from "./scope.js";
 import { decideRetain } from "./retain-filter.js";
 import type {
   MemoryNode,
@@ -46,6 +46,7 @@ import type {
   UpdateMemoryInput,
   ScoredMemory,
   SearchFilter,
+  SemanticSearchOptions,
   GraphSnapshot,
   MemOSConfig,
   StorageAdapter,
@@ -1257,18 +1258,37 @@ export class MemOS {
   /**
    * Semantic-only retrieval. Uses persisted embedding vectors when configured,
    * with the older graph text-similarity path kept as a no-provider fallback.
+   *
+   * Two call styles (both supported):
+   *   semanticSearch(query, 10, 0.2, { namespace: "demo" })   // positional
+   *   semanticSearch(query, { limit: 10, threshold: 0.2, namespace: "demo" })
+   *
+   * @param query — Text query to search for.
+   * @param limitOrOpts — Result limit, or an options object with `limit`,
+   *   `threshold`, and any `SearchFilter` field.
+   * @param threshold — Minimum similarity score in [0, 1] (positional style).
+   * @param filter — Extra search filters (positional style).
    */
   async semanticSearch(
     query: string,
-    limit = 20,
+    limitOrOpts: number | SemanticSearchOptions = 20,
     threshold = 0.1,
     filter: SearchFilter = {},
   ): Promise<ScoredMemory[]> {
     this.assertInit();
-    if (!this.experimental.semanticSearch) {
-      throw new Error(
-        "Semantic search is experimental. Enable it with experimental: { semanticSearch: true }",
-      );
+
+    let limit: number;
+    let resolvedThreshold: number;
+    let resolvedFilter: SearchFilter;
+    if (typeof limitOrOpts === "number") {
+      limit = limitOrOpts;
+      resolvedThreshold = threshold;
+      resolvedFilter = filter;
+    } else {
+      const { threshold: t, limit: l, ...rest } = limitOrOpts;
+      limit = l ?? 20;
+      resolvedThreshold = t ?? threshold;
+      resolvedFilter = { ...rest, ...filter };
     }
 
     // Same store-then-search guarantee as search(): drain the embedding
@@ -1287,36 +1307,43 @@ export class MemOS {
       // dimension equality alone does not make vectors comparable.
       return this.storage.querySimilarEmbeddings(
         queryVector,
-        filter,
+        resolvedFilter,
         limit,
-        threshold,
+        resolvedThreshold,
         provider.model,
       );
     }
 
     const nodes = this.graph.getAllNodes();
     const scored: ScoredMemory[] = [];
-    const poolFilter = filter.pool
-      ? Array.isArray(filter.pool)
-        ? filter.pool
-        : [filter.pool]
+    const poolFilter = resolvedFilter.pool
+      ? Array.isArray(resolvedFilter.pool)
+        ? resolvedFilter.pool
+        : [resolvedFilter.pool]
       : null;
 
     for (const node of nodes) {
-      if (filter.namespace && node.namespace !== filter.namespace) continue;
       if (
-        filter.namespacePrefix &&
-        !node.namespace.startsWith(filter.namespacePrefix)
+        resolvedFilter.namespace &&
+        node.namespace !== resolvedFilter.namespace
+      )
+        continue;
+      if (
+        resolvedFilter.namespacePrefix &&
+        !node.namespace.startsWith(resolvedFilter.namespacePrefix)
       ) {
         continue;
       }
-      if (filter.type && node.type !== filter.type) continue;
+      if (resolvedFilter.type && node.type !== resolvedFilter.type) continue;
       if (poolFilter && !poolFilter.includes(node.pool ?? "event")) continue;
-      if (filter.tags && filter.tags.some((tag) => !node.tags.includes(tag))) {
+      if (
+        resolvedFilter.tags &&
+        resolvedFilter.tags.some((tag) => !node.tags.includes(tag))
+      ) {
         continue;
       }
       const score = textSimilarity(query, node.content);
-      if (score >= threshold) {
+      if (score >= resolvedThreshold) {
         scored.push({ node, score });
       }
     }

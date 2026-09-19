@@ -73,6 +73,7 @@ export type {
   UpdateMemoryInput,
   CreateEdgeInput,
   SearchFilter,
+  SemanticSearchOptions,
   ScoredMemory,
   GraphSnapshot,
   StorageAdapter,
