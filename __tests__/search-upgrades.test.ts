@@ -52,7 +52,7 @@ function makeMemos(
           experimental: { semanticSearch: true, namespaces: true },
           embeddings: { enabled: true, provider },
         }
-      : {}),
+      : { embeddings: { enabled: false } }),
     ...extra,
   });
 }

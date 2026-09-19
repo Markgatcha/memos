@@ -465,7 +465,12 @@ export function createEmbeddingProvider(
     return config.provider;
   }
 
-  const provider = config?.provider ?? "local-hash";
+  const provider = config?.provider ?? "fastembed";
+  // NOTE: "fastembed" is the default because a bare `new MemOS()` should
+  // give real local semantic search. FastEmbedEmbeddingProvider lazily
+  // loads the transformers pipeline on first use and degrades loudly to
+  // the deterministic local hash when the optional peer dep isn't
+  // installed — so the default is always safe, just sometimes degraded.
   if (provider === "ollama") {
     return new OllamaEmbeddingProvider(config);
   }
@@ -576,6 +581,13 @@ export class CohereEmbeddingProvider implements EmbeddingProvider {
  * are identical between the two modes, so swapping in the real
  * FastEmbed later is a no-op for downstream code.
  */
+/**
+ * Warn-once flag for the FastEmbed local-hash fallback. The fallback keeps
+ * the SDK working with zero extra installs, but users deserve to know
+ * their "semantic" search is degraded — and exactly how to fix it.
+ */
+let warnedEmbeddingFallback = false;
+
 export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "fastembed";
   public readonly model: string;
@@ -664,6 +676,7 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
         // the missing-package reason entirely — the silent-fallback bug.)
         this.fallbackReason =
           "neither @huggingface/transformers nor @xenova/transformers is installed";
+        this.warnFallbackOnce();
         return;
       }
       const pipeline = await resolved.pipeline(
@@ -679,6 +692,7 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
               .feature ?? null);
       if (!this.pipeline) {
         this.fallbackReason = `pipeline for model "${this.model}" exposed no callable feature-extraction interface`;
+        this.warnFallbackOnce();
       }
     } catch (err) {
       // Record the failure for runtime info, then fall through to the
@@ -687,7 +701,23 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
       this.fallbackReason = `pipeline construction failed for model "${this.model}": ${String(
         err,
       ).substring(0, 200)}`;
+      this.warnFallbackOnce();
     }
+  }
+
+  /**
+   * One-time loud warning when the local-hash fallback activates. Silent
+   * degradation is the worst plug-in experience: everything "works" but
+   * semantic search quietly returns garbage.
+   */
+  private warnFallbackOnce(): void {
+    if (warnedEmbeddingFallback) return;
+    warnedEmbeddingFallback = true;
+    console.warn(
+      `[memos] embedding fallback: ${this.fallbackReason}. ` +
+        "Semantic search is degraded to a deterministic local hash. " +
+        "For real embeddings: npm install @huggingface/transformers",
+    );
   }
 
   async embed(text: string): Promise<EmbeddingVector> {

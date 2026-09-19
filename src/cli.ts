@@ -83,8 +83,8 @@ function nonFlagArgs(args: string[], startIndex: number): string[] {
 
 /**
  * Build an `EmbeddingConfig` from MEMOS_EMBEDDING_* environment variables.
- * Returns null when MEMOS_EMBEDDING_PROVIDER is unset so callers keep the
- * default (local hash) provider.
+ * Returns null when MEMOS_EMBEDDING_PROVIDER is unset so callers fall
+ * through to the config file / SDK default.
  */
 function cliEmbeddingsConfig(): EmbeddingConfig | null {
   const provider = process.env.MEMOS_EMBEDDING_PROVIDER;
@@ -99,6 +99,283 @@ function cliEmbeddingsConfig(): EmbeddingConfig | null {
     queryPrefix: process.env.MEMOS_EMBEDDING_QUERY_PREFIX,
     documentPrefix: process.env.MEMOS_EMBEDDING_DOCUMENT_PREFIX,
   };
+}
+
+// ---------------------------------------------------------------------------
+// ~/.memos/config.json — written by `memos init`, read by every command.
+// ---------------------------------------------------------------------------
+
+/** Shape of the JSON written by `memos init` to ~/.memos/config.json. */
+interface MemosFileConfig {
+  version: 1;
+  dbPath?: string;
+  embeddings?: {
+    enabled?: boolean;
+    provider?: EmbeddingProviderKind;
+    model?: string;
+    baseUrl?: string;
+    dimensions?: number;
+    queryPrefix?: string;
+    documentPrefix?: string;
+  };
+}
+
+function configFilePath(): string {
+  return join(os.homedir(), ".memos", "config.json");
+}
+
+/** Read ~/.memos/config.json. Returns null when the file is missing or invalid. */
+function loadFileConfig(): MemosFileConfig | null {
+  try {
+    const raw = readFileSync(configFilePath(), "utf-8");
+    const parsed = JSON.parse(raw) as MemosFileConfig;
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist the config file, creating ~/.memos when needed. */
+function saveFileConfig(config: MemosFileConfig): void {
+  mkdirSync(dirname(configFilePath()), { recursive: true });
+  writeFileSync(configFilePath(), JSON.stringify(config, null, 2) + "\n");
+}
+
+/**
+ * Embedding config for the CLI: MEMOS_EMBEDDING_* wins, then the config
+ * file, then nothing (SDK default — embeddings on, fastembed provider).
+ */
+function resolveCliEmbeddingsConfig(): EmbeddingConfig | null {
+  const fromEnv = cliEmbeddingsConfig();
+  if (fromEnv) return fromEnv;
+  const file = loadFileConfig();
+  const e = file?.embeddings;
+  if (!e || Object.keys(e).length === 0) return null;
+  return {
+    ...(e.enabled !== undefined ? { enabled: e.enabled } : {}),
+    ...(e.provider ? { provider: e.provider } : {}),
+    ...(e.model ? { model: e.model } : {}),
+    ...(e.baseUrl ? { baseUrl: e.baseUrl } : {}),
+    ...(e.dimensions ? { dimensions: e.dimensions } : {}),
+    ...(e.queryPrefix ? { queryPrefix: e.queryPrefix } : {}),
+    ...(e.documentPrefix ? { documentPrefix: e.documentPrefix } : {}),
+  };
+}
+
+/** Database path: --db wins, then the config file, then the SDK default. */
+function resolveDbPath(cliDbPath: string | undefined): string | undefined {
+  if (cliDbPath) return cliDbPath;
+  return loadFileConfig()?.dbPath;
+}
+
+// ---------------------------------------------------------------------------
+// `memos init` — interactive onboarding wizard.
+// ---------------------------------------------------------------------------
+
+type InitProviderChoice = "fastembed" | "openai-compatible" | "ollama" | "off";
+
+/** Prompt for a line of input; returns the default when the user hits enter. */
+async function promptText(
+  rl: { question: (q: string) => Promise<string> },
+  label: string,
+  defaultValue: string,
+): Promise<string> {
+  const answer = (await rl.question(`${label} [${defaultValue}]: `)).trim();
+  return answer === "" ? defaultValue : answer;
+}
+
+/** Numbered-choice prompt. Returns the chosen key, or the default on empty. */
+async function promptChoice<T extends string>(
+  rl: { question: (q: string) => Promise<string> },
+  label: string,
+  options: Array<{ key: T; label: string; hint?: string }>,
+  defaultKey: T,
+): Promise<T> {
+  console.log(label);
+  options.forEach((o, i) => {
+    const marker = o.key === defaultKey ? " (default)" : "";
+    console.log(`  ${i + 1}) ${o.label}${o.hint ? ` — ${o.hint}` : ""}${marker}`);
+  });
+  for (;;) {
+    const answer = (
+      await rl.question(`Choice [${options.findIndex((o) => o.key === defaultKey) + 1}]: `)
+    ).trim();
+    if (answer === "") return defaultKey;
+    const n = parseInt(answer, 10);
+    if (!Number.isNaN(n) && n >= 1 && n <= options.length) {
+      return options[n - 1].key;
+    }
+    console.log(`Enter a number 1–${options.length}, or press enter for the default.`);
+  }
+}
+
+/**
+ * `memos init` — walk the user through database path + embedding provider,
+ * smoke-test the setup (store → semantic search → forget a probe memory),
+ * and save ~/.memos/config.json. `memos init --yes` accepts all defaults
+ * without prompting (for scripts).
+ */
+async function runInitWizard(cliArgs: string[]): Promise<void> {
+  const nonInteractive = cliArgs.includes("--yes") || cliArgs.includes("-y");
+  const { createInterface } = await import("node:readline/promises");
+  const rl = nonInteractive
+    ? null
+    : createInterface({ input: process.stdin, output: process.stdout });
+
+  try {
+    const existing = loadFileConfig();
+    if (existing && !nonInteractive) {
+      console.log(`Existing config found at ${configFilePath()}.`);
+      const again = await promptChoice(
+        rl!,
+        "Re-run the wizard and overwrite it?",
+        [
+          { key: "yes", label: "Yes, overwrite" },
+          { key: "no", label: "No, keep existing" },
+        ],
+        "no",
+      );
+      if (again === "no") {
+        console.log("Keeping existing config. Nothing changed.");
+        return;
+      }
+    }
+
+    const defaultDb = join(os.homedir(), ".memos", "memos.db");
+    const dbPath = nonInteractive
+      ? (existing?.dbPath ?? defaultDb)
+      : await promptText(rl!, "Database path", existing?.dbPath ?? defaultDb);
+
+    const providerChoice: InitProviderChoice = nonInteractive
+      ? ((existing?.embeddings?.provider as InitProviderChoice) ?? "fastembed")
+      : await promptChoice<InitProviderChoice>(
+          rl!,
+          "Embedding provider (semantic search):",
+          [
+            {
+              key: "fastembed",
+              label: "Local (fastembed)",
+              hint: "free, on-device; needs `npm i @huggingface/transformers` for real vectors",
+            },
+            {
+              key: "openai-compatible",
+              label: "OpenAI-compatible server",
+              hint: "e.g. scripts/embed-server.py on a GPU box",
+            },
+            {
+              key: "ollama",
+              label: "Ollama",
+              hint: "local models via Ollama",
+            },
+            {
+              key: "off",
+              label: "Off",
+              hint: "keyword-only search, no embeddings",
+            },
+          ],
+          "fastembed",
+        );
+
+    const embeddings: NonNullable<MemosFileConfig["embeddings"]> = {};
+    if (providerChoice === "off") {
+      embeddings.enabled = false;
+    } else {
+      embeddings.enabled = true;
+      embeddings.provider = providerChoice;
+      if (providerChoice === "openai-compatible") {
+        embeddings.baseUrl = nonInteractive
+          ? (existing?.embeddings?.baseUrl ?? "http://localhost:8000")
+          : await promptText(
+              rl!,
+              "Embedding server base URL",
+              existing?.embeddings?.baseUrl ?? "http://localhost:8000",
+            );
+        embeddings.model = nonInteractive
+          ? (existing?.embeddings?.model ?? "BAAI/bge-small-en-v1.5")
+          : await promptText(
+              rl!,
+              "Embedding model",
+              existing?.embeddings?.model ?? "BAAI/bge-small-en-v1.5",
+            );
+        const dimsDefault = String(existing?.embeddings?.dimensions ?? 384);
+        const dimsAnswer = nonInteractive
+          ? dimsDefault
+          : await promptText(rl!, "Embedding dimensions", dimsDefault);
+        const dims = parseInt(dimsAnswer, 10);
+        if (!Number.isNaN(dims) && dims > 0) embeddings.dimensions = dims;
+        console.log(
+          "Note: if the server needs an API key, set MEMOS_EMBEDDING_API_KEY — keys are never written to the config file.",
+        );
+      } else if (providerChoice === "ollama") {
+        embeddings.baseUrl = nonInteractive
+          ? (existing?.embeddings?.baseUrl ?? "http://localhost:11434")
+          : await promptText(
+              rl!,
+              "Ollama base URL",
+              existing?.embeddings?.baseUrl ?? "http://localhost:11434",
+            );
+        embeddings.model = nonInteractive
+          ? (existing?.embeddings?.model ?? "nomic-embed-text")
+          : await promptText(
+              rl!,
+              "Ollama embedding model",
+              existing?.embeddings?.model ?? "nomic-embed-text",
+            );
+      } else {
+        console.log(
+          "Note: real local vectors need `npm install @huggingface/transformers`; " +
+            "without it MemOS falls back to a deterministic local hash and warns loudly.",
+        );
+      }
+    }
+
+    // Smoke test: open the store with this exact config, round-trip a probe.
+    console.log("\nSmoke-testing the setup…");
+    const memos = new MemOS({
+      dbPath,
+      ...(Object.keys(embeddings).length > 0 ? { embeddings } : {}),
+    });
+    try {
+      await memos.init();
+      const probe = `memos init smoke test ${Date.now()}`;
+      const { node } = await memos.store(probe);
+      const info = memos.getEmbeddingRuntimeInfo();
+      if (info) {
+        if (info.fallbackActive) {
+          console.log(
+            `  embeddings: ${info.resolvedProvider} (fallback — ${info.fallbackReason})`,
+          );
+        } else {
+          console.log(
+            `  embeddings: ${info.resolvedProvider} (${info.resolvedModel}, ${info.observedDimensions ?? info.requestedDimensions}d)`,
+          );
+        }
+      } else {
+        console.log("  embeddings: disabled (keyword search only)");
+      }
+      const hits = await memos.search({ query: "memos init smoke test", limit: 3 });
+      const found = hits.some((h) => h.node.id === node.id);
+      console.log(`  store → search round-trip: ${found ? "ok" : "PROBE NOT FOUND"}`);
+      await memos.forget(node.id);
+      if (!found) {
+        console.error("Smoke test failed: probe memory was not retrievable.");
+        process.exit(1);
+      }
+      console.log("  probe memory cleaned up.");
+    } finally {
+      await memos.close();
+    }
+
+    const config: MemosFileConfig = { version: 1, dbPath };
+    if (Object.keys(embeddings).length > 0) config.embeddings = embeddings;
+    saveFileConfig(config);
+    console.log(`\nSaved ${configFilePath()}.`);
+    console.log("Every memos command (including `memos mcp`) now uses these settings.");
+    console.log("Precedence: --db and MEMOS_EMBEDDING_* env vars still override the file.");
+  } finally {
+    rl?.close();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +418,7 @@ function mcpServerEntry(dbPath?: string): Record<string, unknown> {
 
 function connectTarget(
   target: string,
-  opts: { dbPath?: string },
+  opts: { dbPath?: string; toolNames?: string[] },
 ): ConnectTarget | null {
   const entry = mcpServerEntry(opts.dbPath);
   const jsonEntry = JSON.stringify({ mcpServers: { memos: entry } }, null, 2);
@@ -265,6 +542,11 @@ function connectTarget(
     case "generic":
     case "any":
     case "mcp": {
+      // Tool list is injected by the caller from getMcpTools() so the
+      // count and names can never go stale.
+      const short = (opts.toolNames ?? []).map((n) =>
+        n.replace(/^memos_/, ""),
+      );
       return {
         instructions: [
           "Any MCP-capable harness — the MemOS server is a plain stdio MCP",
@@ -274,10 +556,8 @@ function connectTarget(
           jsonEntry,
           "",
           "The server speaks MCP 2026-07-28 with a legacy-2025 fallback and",
-          "exposes 14 tools: store/search/retrieve/forget/graph/context,",
-          "context_pack (token-budgeted injection), search_temporal,",
-          "set_validity, supersede, set_trust, extract_facts, diagnostics,",
-          "reindex. All data stays in local SQLite.",
+          `exposes ${short.length} tools: ${short.join("/")}.`,
+          "All data stays in local SQLite.",
         ].join("\n"),
       };
     }
@@ -315,6 +595,9 @@ Usage:
   memos <command> [options]
 
 Commands:
+  init                  Interactive setup wizard: database path, embedding
+                          provider, smoke test — saves ~/.memos/config.json
+                          (--yes accepts all defaults)
   store <content>         Store a new memory (--pool, --context,
                           --scope user:alice[,agent:coder][,run:r1])
   retrieve <id>           Retrieve a memory by ID
@@ -406,7 +689,10 @@ async function main(): Promise<void> {
   }
 
   const dbFlagIdx = args.indexOf("--db");
-  const dbPath = dbFlagIdx !== -1 ? args[dbFlagIdx + 1] : undefined;
+  const cliDbPath = dbFlagIdx !== -1 ? args[dbFlagIdx + 1] : undefined;
+  // --db wins, then ~/.memos/config.json (written by `memos init`), then the
+  // SDK default (~/.memos/memos.db).
+  const dbPath = resolveDbPath(cliDbPath);
   const jsonFlag = args.includes("--json");
   // Encryption key for at-rest-encrypted databases: --key or MEMOS_KEY.
   // encrypt/decrypt are excluded — they perform the conversion itself and
@@ -421,7 +707,7 @@ async function main(): Promise<void> {
 
   if (command === "mcp") {
     const { runMcpServer } = await import("./mcp.js");
-    const embeddings = cliEmbeddingsConfig();
+    const embeddings = resolveCliEmbeddingsConfig();
     await runMcpServer({
       dbPath,
       ...(embeddings ? { embeddings: { ...embeddings, enabled: true } } : {}),
@@ -468,7 +754,9 @@ async function main(): Promise<void> {
 
   // Embedding config via environment (same variables the Python server
   // and benchmark scripts accept). Without MEMOS_EMBEDDING_PROVIDER the
-  // CLI runs the default local-hash provider.
+  // SDK default applies: embeddings enabled with the local fastembed
+  // provider (real ONNX embeddings when @huggingface/transformers is
+  // installed, loud local-hash fallback otherwise).
   const embeddingsConfig = cliEmbeddingsConfig();
   const memos = new MemOS({
     dbPath,
@@ -1300,10 +1588,10 @@ async function main(): Promise<void> {
               "Start llama-server (--embedding) or unset MEMOS_EMBEDDING_* to fall back to the hash embedder.",
             );
           }
-        } else if (!jsonOut) {
-          console.log(
-            "Embedding provider: local-hash default (set MEMOS_EMBEDDING_* for real semantic search).",
-          );
+        } else {
+          // Default path (no MEMOS_EMBEDDING_*): the SDK resolves its
+          // default provider during the semantic probe below; the
+          // runtime-info report after step 5 shows what actually loaded.
         }
 
         // 5. Semantic probe — does a search actually come back?
@@ -1321,6 +1609,34 @@ async function main(): Promise<void> {
           console.log(
             `Semantic search probe: ok (${Date.now() - t0}ms, ${probeResults.length} candidate).`,
           );
+        }
+
+        // 5b. Provider runtime info — the semantic probe above forced the
+        // provider to resolve, so fallbackActive is accurate here.
+        if (!(embeddings?.provider && embeddings.baseUrl)) {
+          const info = memos.getEmbeddingRuntimeInfo();
+          report.embeddingProvider = info;
+          if (!jsonOut) {
+            if (!info) {
+              console.log(
+                "Embeddings disabled — semantic search falls back to keyword scoring.",
+              );
+            } else if (info.fallbackActive) {
+              problems.push(
+                `Embedding fallback active: ${info.fallbackReason}.`,
+              );
+              suggestions.push(
+                "Install @huggingface/transformers for real local embeddings: npm install @huggingface/transformers",
+              );
+              console.log(
+                `Embedding provider: ${info.resolvedProvider} (fallback — ${info.fallbackReason}).`,
+              );
+            } else {
+              console.log(
+                `Embedding provider: ${info.resolvedProvider} (${info.resolvedModel}, ${info.requestedDimensions}d).`,
+              );
+            }
+          }
         }
 
         // 6. Rerank endpoint probe (when configured).
@@ -1385,11 +1701,20 @@ async function main(): Promise<void> {
         break;
       }
 
+      case "init": {
+        await runInitWizard(args);
+        break;
+      }
+
       case "connect": {
         const target = (args[1] ?? "").toLowerCase();
         const write = args.includes("--write");
         const force = args.includes("--force");
-        const result = connectTarget(target, { dbPath });
+        const { getMcpTools } = await import("./mcp.js");
+        const result = connectTarget(target, {
+          dbPath,
+          toolNames: getMcpTools().map((t) => t.name),
+        });
         if (!result) break;
         if (!write) {
           console.log(result.instructions);

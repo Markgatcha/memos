@@ -147,7 +147,7 @@ describe("MemOS", () => {
   let memos: MemOS;
 
   beforeEach(async () => {
-    memos = new MemOS({ dbPath: TEST_DB });
+    memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
     await memos.init();
   });
 
@@ -314,22 +314,33 @@ describe("MemOS", () => {
 
 describe("MemOS Experimental", () => {
   test("semantic search works without the experimental flag", async () => {
-    const memos = new MemOS({ dbPath: TEST_DB });
+    const memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
     await memos.init();
     await memos.store("User prefers dark mode");
     await memos.store("Project uses TypeScript");
 
-    // No embedding provider configured: falls back to text similarity.
+    // Embeddings explicitly disabled: falls back to text similarity.
     const results = await memos.semanticSearch("dark mode", 10, 0.1);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].node.content).toContain("dark mode");
     await memos.close();
   });
 
+  test("embeddings are enabled by default with the fastembed provider", () => {
+    const memos = new MemOS({ dbPath: TEST_DB });
+    const info = memos.getEmbeddingRuntimeInfo();
+    expect(info).not.toBeNull();
+    expect(info?.requestedProvider).toBe("fastembed");
+    expect(info?.resolvedProvider).toBe("fastembed");
+    // Nothing embedded yet, so no fallback can be active.
+    expect(info?.fallbackActive).toBe(false);
+  });
+
   test("semantic search works when enabled", async () => {
     const memos = new MemOS({
       dbPath: TEST_DB,
-      experimental: { semanticSearch: true },
+      // Explicit opt-in with a hermetic provider (no model download).
+      embeddings: { enabled: true, provider: "local-hash" },
     });
     await memos.init();
     await memos.store("User prefers dark mode");
@@ -343,7 +354,7 @@ describe("MemOS Experimental", () => {
   });
 
   test("semanticSearch accepts an options object", async () => {
-    const memos = new MemOS({ dbPath: TEST_DB });
+    const memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
     await memos.init();
     await memos.store("User prefers dark mode", { type: "preference" });
     await memos.store("Project uses TypeScript");
@@ -373,7 +384,7 @@ describe("MemOS Experimental", () => {
   });
 
   test("graphViz requires experimental flag", async () => {
-    const memos = new MemOS({ dbPath: TEST_DB });
+    const memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
     await memos.init();
 
     await expect(memos.graphViz()).rejects.toThrow(
@@ -385,6 +396,7 @@ describe("MemOS Experimental", () => {
   test("graphViz produces DOT output", async () => {
     const memos = new MemOS({
       dbPath: TEST_DB,
+      embeddings: { enabled: false },
       experimental: { graphViz: true },
     });
     await memos.init();
@@ -399,7 +411,7 @@ describe("MemOS Experimental", () => {
   });
 
   test("namespaces are always on (promoted from experimental)", async () => {
-    const memos = new MemOS({ dbPath: TEST_DB });
+    const memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
     await memos.init();
 
     // Namespaces were promoted: the gate is gone, listing works flag-free.
@@ -410,6 +422,7 @@ describe("MemOS Experimental", () => {
   test("namespaces work when enabled", async () => {
     const memos = new MemOS({
       dbPath: TEST_DB,
+      embeddings: { enabled: false },
       experimental: { namespaces: true },
     });
     await memos.init();
@@ -426,7 +439,7 @@ describe("MemOS Experimental", () => {
   });
 
   test("context injection requires experimental flag", async () => {
-    const memos = new MemOS({ dbPath: TEST_DB });
+    const memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
     await memos.init();
     const { node } = await memos.store("Test");
 
@@ -439,6 +452,7 @@ describe("MemOS Experimental", () => {
   test("context injection returns context string", async () => {
     const memos = new MemOS({
       dbPath: TEST_DB,
+      embeddings: { enabled: false },
       experimental: { contextInjection: true },
     });
     await memos.init();

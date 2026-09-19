@@ -45,8 +45,10 @@ async function setupServer(): Promise<{
 }> {
   const memos = new MemOS({
     dbPath: TEST_DB,
+    // Protocol tests don't exercise embeddings — keep them off so the
+    // suite stays hermetic (no model download).
+    embeddings: { enabled: false },
     experimental: {
-      semanticSearch: true,
       graphViz: true,
       namespaces: true,
       contextInjection: true,
@@ -460,7 +462,7 @@ describe("MCP Protocol — legacy 2025-era backward compatibility", () => {
 });
 
 describe("getMcpTools static metadata", () => {
-  test("returns 6 tools with outputSchema", () => {
+  test("returns the full tool surface with outputSchema", () => {
     const tools = getMcpTools();
     expect(tools).toHaveLength(17);
     // Full-capability surface: core CRUD + context pack + temporal + trust +

@@ -58,6 +58,7 @@ import type {
   ImportResult,
   ExperimentalConfig,
   EmbeddingProvider,
+  EmbeddingRuntimeInfo,
   MemoryType,
   MemorySource,
   EmbeddingNodeStatus,
@@ -390,9 +391,13 @@ export class MemOS {
     };
 
     this.experimental = this.config.experimental;
-    const embeddingsEnabled =
-      this.config.embeddings.enabled ??
-      Boolean(this.experimental.semanticSearch);
+    // Embeddings are ON by default: a plain `new MemOS()` gets real local
+    // semantic search via fastembed (which degrades loudly to a local hash
+    // when the optional transformers dep isn't installed). The deprecated
+    // `experimental.semanticSearch` flag is now a no-op — it only ever
+    // meant "opt in", which is the default. Pass
+    // `embeddings: { enabled: false }` to go back to keyword-only search.
+    const embeddingsEnabled = this.config.embeddings.enabled ?? true;
     this.embeddingProvider = embeddingsEnabled
       ? createEmbeddingProvider(this.config.embeddings)
       : null;
@@ -2747,6 +2752,29 @@ export class MemOS {
    *
    * @returns A diagnostics report.
    */
+  /**
+   * Runtime metadata about the active embedding provider: what was
+   * requested vs. what actually resolved, and whether the FastEmbed
+   * local-hash fallback is active. Returns null when embeddings are
+   * disabled (`embeddings: { enabled: false }`).
+   */
+  getEmbeddingRuntimeInfo(): EmbeddingRuntimeInfo | null {
+    const provider = this.embeddingProvider;
+    if (!provider) return null;
+    if (provider.getRuntimeInfo) return provider.getRuntimeInfo();
+    return {
+      requestedProvider: provider.id,
+      resolvedProvider: provider.id,
+      requestedModel: provider.model,
+      resolvedModel: provider.model,
+      modelRevision: null,
+      requestedDimensions: provider.dimensions,
+      observedDimensions: null,
+      fallbackActive: false,
+      fallbackReason: null,
+    };
+  }
+
   async diagnostics(): Promise<DiagnosticsResult> {
     this.assertInit();
     const graph = await this.getGraph();

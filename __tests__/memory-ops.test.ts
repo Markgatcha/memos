@@ -172,6 +172,7 @@ maybeDescribe("encryption at rest", () => {
     const reopened = new MemOS({
       dbPath,
       cipherKey: "correct-horse-battery",
+      embeddings: { enabled: false },
     });
     await reopened.init();
     const found = await reopened.search({ query: "database password" });
@@ -183,14 +184,22 @@ maybeDescribe("encryption at rest", () => {
   test("wrong key fails with a clear error", async () => {
     const dir = mkdtempSync(join(tmpdir(), "memos-cipher-"));
     const dbPath = join(dir, "encrypted.db");
-    const memos = new MemOS({ dbPath, cipherKey: "right-key" });
+    const memos = new MemOS({
+      dbPath,
+      cipherKey: "right-key",
+      embeddings: { enabled: false },
+    });
     await memos.init();
     await memos.store("some fact");
     await memos.close();
 
     // Fail-fast: a wrongly-keyed database is rejected at open time
     // (the first pragma on a mismatched key raises SQLITE_NOTADB).
-    const wrong = new MemOS({ dbPath, cipherKey: "wrong-key" });
+    const wrong = new MemOS({
+      dbPath,
+      cipherKey: "wrong-key",
+      embeddings: { enabled: false },
+    });
     await expect(wrong.init()).rejects.toThrow();
     // init failed mid-open, so the underlying handle is still live —
     // close it (best effort) before removing the temp dir on Windows.

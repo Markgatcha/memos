@@ -928,9 +928,11 @@ export function createMcpServer(memos: MemOS): McpServer {
  */
 export async function runMcpServer(config: MemOSConfig = {}): Promise<void> {
   const memos = new MemOS({
+    // Embeddings default to on anyway; stating it here keeps the MCP
+    // server's semantic search working even if the SDK default changes.
+    embeddings: { enabled: true },
     ...config,
     experimental: {
-      semanticSearch: true,
       graphViz: true,
       namespaces: true,
       contextInjection: true,

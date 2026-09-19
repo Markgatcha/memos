@@ -32,6 +32,7 @@ function makeMemos(dbPath?: string): MemOS {
     dbPath: dbPath ?? tmpDb(),
     wal: true,
     autoLinkThreshold: 0,
+    embeddings: { enabled: false },
   });
 }
 

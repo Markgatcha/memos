@@ -45,7 +45,7 @@ describe("SQLiteStorage access-count debounce", () => {
     const path = `${process.cwd()}/.tmp-access-debounce-1.db`;
     if (existsSync(path)) unlinkSync(path);
     const storage = new SQLiteStorage(path, true);
-    const memos = new MemOS({ storage });
+    const memos = new MemOS({ storage, embeddings: { enabled: false } });
     await memos.init();
     await memos.store("alpha", { tags: [] });
     const node = (await memos.listByTag(""))[0] ?? (await memos.search({}))[0]?.node;
@@ -67,7 +67,7 @@ describe("SQLiteStorage access-count debounce", () => {
     const path = `${process.cwd()}/.tmp-access-debounce-2.db`;
     if (existsSync(path)) unlinkSync(path);
     const storage = new SQLiteStorage(path, true);
-    const memos = new MemOS({ storage });
+    const memos = new MemOS({ storage, embeddings: { enabled: false } });
     await memos.init();
     await memos.store("seed");
 
@@ -90,7 +90,7 @@ describe("SQLiteStorage access-count debounce", () => {
     const path = `${process.cwd()}/.tmp-access-debounce-3.db`;
     if (existsSync(path)) unlinkSync(path);
     const storage = new SQLiteStorage(path, true);
-    const memos = new MemOS({ storage });
+    const memos = new MemOS({ storage, embeddings: { enabled: false } });
     await memos.init();
     await memos.store("seed");
     const node = (await memos.search({}))[0]!.node;
