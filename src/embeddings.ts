@@ -582,9 +582,9 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
   public readonly dimensions: number;
   private pipeline:
     | ((
-        text: string,
+        text: string | string[],
         opts: { pooling: string; normalize: boolean },
-      ) => Promise<{ data: Float32Array }>)
+      ) => Promise<{ data: Float32Array; dims: number[] }>)
     | null = null;
   private resolved = false;
   /**
@@ -706,14 +706,25 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
   async batchEmbed(texts: string[]): Promise<EmbeddingVector[]> {
     await this.resolve();
     if (this.pipeline) {
+      // The transformers pipeline runs array input as one batched ONNX
+      // session — far cheaper than one session run per text. Batched output
+      // is a single Tensor with dims [batch, hidden]; slice it per row.
+      // Chunked to bound peak memory on large backfills.
+      const CHUNK_SIZE = 32;
       const vectors: EmbeddingVector[] = [];
-      for (const text of texts) {
-        const out = await this.pipeline(text, {
+      for (let i = 0; i < texts.length; i += CHUNK_SIZE) {
+        const chunk = texts.slice(i, i + CHUNK_SIZE);
+        const out = await this.pipeline(chunk, {
           pooling: "mean",
           normalize: true,
         });
-        this.lastObservedDimensions = out.data.length;
-        vectors.push(Array.from(out.data));
+        const hidden = out.dims[out.dims.length - 1];
+        this.lastObservedDimensions = hidden;
+        for (let r = 0; r < chunk.length; r += 1) {
+          vectors.push(
+            Array.from(out.data.slice(r * hidden, (r + 1) * hidden)),
+          );
+        }
       }
       return vectors;
     }
