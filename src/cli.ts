@@ -195,18 +195,24 @@ async function promptChoice<T extends string>(
   console.log(label);
   options.forEach((o, i) => {
     const marker = o.key === defaultKey ? " (default)" : "";
-    console.log(`  ${i + 1}) ${o.label}${o.hint ? ` — ${o.hint}` : ""}${marker}`);
+    console.log(
+      `  ${i + 1}) ${o.label}${o.hint ? ` — ${o.hint}` : ""}${marker}`,
+    );
   });
   for (;;) {
     const answer = (
-      await rl.question(`Choice [${options.findIndex((o) => o.key === defaultKey) + 1}]: `)
+      await rl.question(
+        `Choice [${options.findIndex((o) => o.key === defaultKey) + 1}]: `,
+      )
     ).trim();
     if (answer === "") return defaultKey;
     const n = parseInt(answer, 10);
     if (!Number.isNaN(n) && n >= 1 && n <= options.length) {
       return options[n - 1].key;
     }
-    console.log(`Enter a number 1–${options.length}, or press enter for the default.`);
+    console.log(
+      `Enter a number 1–${options.length}, or press enter for the default.`,
+    );
   }
 }
 
@@ -354,9 +360,14 @@ async function runInitWizard(cliArgs: string[]): Promise<void> {
       } else {
         console.log("  embeddings: disabled (keyword search only)");
       }
-      const hits = await memos.search({ query: "memos init smoke test", limit: 3 });
+      const hits = await memos.search({
+        query: "memos init smoke test",
+        limit: 3,
+      });
       const found = hits.some((h) => h.node.id === node.id);
-      console.log(`  store → search round-trip: ${found ? "ok" : "PROBE NOT FOUND"}`);
+      console.log(
+        `  store → search round-trip: ${found ? "ok" : "PROBE NOT FOUND"}`,
+      );
       await memos.forget(node.id);
       if (!found) {
         console.error("Smoke test failed: probe memory was not retrievable.");
@@ -371,8 +382,12 @@ async function runInitWizard(cliArgs: string[]): Promise<void> {
     if (Object.keys(embeddings).length > 0) config.embeddings = embeddings;
     saveFileConfig(config);
     console.log(`\nSaved ${configFilePath()}.`);
-    console.log("Every memos command (including `memos mcp`) now uses these settings.");
-    console.log("Precedence: --db and MEMOS_EMBEDDING_* env vars still override the file.");
+    console.log(
+      "Every memos command (including `memos mcp`) now uses these settings.",
+    );
+    console.log(
+      "Precedence: --db and MEMOS_EMBEDDING_* env vars still override the file.",
+    );
   } finally {
     rl?.close();
   }
@@ -544,9 +559,7 @@ function connectTarget(
     case "mcp": {
       // Tool list is injected by the caller from getMcpTools() so the
       // count and names can never go stale.
-      const short = (opts.toolNames ?? []).map((n) =>
-        n.replace(/^memos_/, ""),
-      );
+      const short = (opts.toolNames ?? []).map((n) => n.replace(/^memos_/, ""));
       return {
         instructions: [
           "Any MCP-capable harness — the MemOS server is a plain stdio MCP",

@@ -142,7 +142,9 @@ jobs:
             bootstrap: dnf install -y nodejs npm python3 make gcc-c++
           - name: Debian
             image: debian:trixie
-            bootstrap: apt-get update && apt-get install -y nodejs npm python3 make g++
+            # Debian trixie ships Node 20, but better-sqlite3 v13 requires
+            # Node >= 22 — install the NodeSource Node 24 LTS instead.
+            bootstrap: apt-get update && apt-get install -y curl ca-certificates gnupg && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs python3 make g++
           - name: Arch
             image: archlinux:latest
             bootstrap: pacman -Sy --noconfirm nodejs npm python base-devel

@@ -39,6 +39,7 @@ MemOS only compares vectors produced by the same model.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -49,9 +50,7 @@ DEFAULT_PORT = int(os.environ.get("EMBED_PORT", "8081"))
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="OpenAI-compatible GPU embedding server for MemOS."
-    )
+    p = argparse.ArgumentParser(description="OpenAI-compatible GPU embedding server for MemOS.")
     p.add_argument(
         "--model",
         default=DEFAULT_MODEL,
@@ -98,8 +97,7 @@ def main() -> int:
         from sentence_transformers import SentenceTransformer
     except ImportError:
         print(
-            "error: sentence-transformers is not installed. "
-            "Run: pip install sentence-transformers",
+            "error: sentence-transformers is not installed. Run: pip install sentence-transformers",
             file=sys.stderr,
         )
         return 1
@@ -130,18 +128,15 @@ def main() -> int:
 
     gpu_name = ""
     if device.startswith("cuda") and torch.cuda.is_available():
-        try:
+        with contextlib.suppress(Exception):
             gpu_name = f" ({torch.cuda.get_device_name(0)})"
-        except Exception:
-            pass
 
     print(f"[embed-server] torch {torch.__version__} | backend: {backend}", flush=True)
     print(f"[embed-server] loading {args.model} on {device}{gpu_name} …", flush=True)
     model = SentenceTransformer(args.model, device=device)
     dims = model.get_sentence_embedding_dimension()
     print(
-        f"[embed-server] ready: {args.model} ({dims}d) "
-        f"on http://127.0.0.1:{args.port}",
+        f"[embed-server] ready: {args.model} ({dims}d) on http://127.0.0.1:{args.port}",
         flush=True,
     )
 
