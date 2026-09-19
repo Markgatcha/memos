@@ -39,7 +39,7 @@ jobs:
           cache: pip
 
       - name: Install Node dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Compile TypeScript SDK
         run: npm run build

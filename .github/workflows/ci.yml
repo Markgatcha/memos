@@ -73,7 +73,14 @@ jobs:
           # only: hit = matching tree, miss = clean install (tarballs are
           # still warm via the setup-node npm cache above).
       - name: Install dependencies
-        run: npm ci
+        # --ignore-scripts: better-sqlite3 v13 ships binding.gyp, so npm's
+        # arborist auto-detects it as a node-gyp package and runs a pointless
+        # `node-gyp rebuild` (its prebuild loads via lib/binding.js, no build
+        # needed). The dep sets gypfile:false but npm reads that field from
+        # the lockfile, which drops it. On Windows runners with VS 2026 the
+        # bundled node-gyp can't detect the toolchain and the install fails.
+        # Repo + deps have no install hooks, so ignoring scripts is safe.
+        run: npm ci --ignore-scripts
       - name: Cache Hugging Face models
         uses: actions/cache@v6
         with:
@@ -116,7 +123,7 @@ jobs:
           node-version: "26"
           cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
       - name: Run retrieval eval against committed baseline
         run: npx tsx scripts/eval-retrieval.ts --check
       - name: Upload eval results

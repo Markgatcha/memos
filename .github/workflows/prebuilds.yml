@@ -38,7 +38,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies (downloads the better-sqlite3 prebuild)
-        run: npm ci
+        # --ignore-scripts: see ci.yml — npm auto-runs `node-gyp rebuild` for
+        # better-sqlite3's shipped binding.gyp; the prebuild needs no build.
+        run: npm ci --ignore-scripts
 
       - name: Verify the native binding loads and runs
         run: >-
