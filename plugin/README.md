@@ -3,7 +3,8 @@
 Local-first persistent memory for your agent. Installing this plugin registers
 the MemOS MCP server (17 tools: store, search, retrieve, forget, graph,
 context packs, temporal search, trust, fact extraction, diagnostics, …),
-plus the `/memos` and `/recall` slash commands and the `memos-memory` skill.
+plus the `/memos`, `/recall`, `/forget`, and `/timeline` slash commands and
+the `memos-memory` skill.
 
 ## Install
 
@@ -19,6 +20,18 @@ The MCP server runs via `npx -y @mem-os/sdk mcp` and stores everything in
 
 - `/memos <fact>` — store a durable fact
 - `/recall <query>` — recall relevant memories
+- `/forget <what>` — fuzzy-match a memory, confirm, delete it
+- `/timeline [limit]` — show what MemOS has learned recently, newest first
+
+## Hooks
+
+- **SessionStart** — injects a compact summary of remembered context into new sessions.
+- **SessionEnd** — session wrap-up bookkeeping.
+- **UserPromptSubmit (auto-capture)** — notices explicit "remember this" /
+  "don't forget" phrasing in your prompts and stores the fact automatically,
+  no command needed. Conservative: only explicit requests trigger it, slash
+  commands are skipped (no double-store with `/memos`), and anything shaped
+  like a credential is never stored.
 
 ## Skill
 
