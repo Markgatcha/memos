@@ -381,7 +381,7 @@ export default function Home() {
                 <ul className="space-y-2.5">
                   <li><a href="/docs" className="text-zinc-400 hover:text-zinc-100 transition-colors">Docs</a></li>
                   <li><a href="/benchmarks" className="text-zinc-400 hover:text-zinc-100 transition-colors">Benchmarks</a></li>
-                  <li><a href="/blog" className="text-zinc-400 hover:text-zinc-100 transition-colors">Blog</a></li>
+                  <li><a href="/blogs" className="text-zinc-400 hover:text-zinc-100 transition-colors">Blog</a></li>
                   <li><a href="/support" className="text-zinc-400 hover:text-zinc-100 transition-colors">Support</a></li>
                 </ul>
               </div>

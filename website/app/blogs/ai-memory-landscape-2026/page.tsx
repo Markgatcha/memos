@@ -60,7 +60,7 @@ export default function MemoryLandscapePost() {
       <div className="max-w-3xl mx-auto px-6 py-16 md:py-20">
         <Reveal>
           <Link
-            href="/blog"
+            href="/blogs"
             className="font-mono text-xs text-zinc-500 hover:text-zinc-300 transition-colors inline-flex items-center gap-1.5 mb-8"
           >
             <ArrowLeft size={13} /> all posts

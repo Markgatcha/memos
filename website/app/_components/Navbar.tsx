@@ -10,6 +10,7 @@ const links = [
   { href: "/guardian", label: "Guardian" },
   { href: "/playground", label: "Playground" },
   { href: "/benchmarks", label: "Benchmarks" },
+  { href: "/blogs", label: "Blog" },
   { href: "/docs", label: "Docs" },
   { href: "/support", label: "Support" },
 ];
@@ -31,7 +32,7 @@ export default function Navbar() {
 
         {/* Desktop links */}
         <div className="hidden md:flex items-center gap-6 text-sm">
-          {links.slice(0, 5).map((l) => (
+          {links.slice(0, 6).map((l) => (
             <a
               key={l.href}
               href={l.href}

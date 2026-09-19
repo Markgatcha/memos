@@ -17,7 +17,7 @@ const posts = [
       "The 2026 agent-memory landscape: what we learned, and what MemOS will adopt",
     excerpt:
       "We read the 2025–2026 memory wave end to end — Letta's sleep-time compute, HippoRAG 2, A-Mem, MIRIX, Mem0's industry report, LongMemEval-V2, and the compression literature. Five paradigms, a benchmark crisis, and eight concrete upgrades coming to MemOS.",
-    href: "/blog/ai-memory-landscape-2026",
+    href: "/blogs/ai-memory-landscape-2026",
     internal: true,
   },
   {
