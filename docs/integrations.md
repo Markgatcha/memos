@@ -132,13 +132,19 @@ ones get 1024-d vectors. To rebuild vectors for everything, run
 
 ### GPU alternative: sentence-transformers server
 
-If you have a CUDA GPU and prefer the HuggingFace model directly over a
+If you have a GPU and prefer the HuggingFace model directly over a
 GGUF conversion, the repo ships `scripts/embed-server.py` — a minimal
-OpenAI-compatible embedding server on sentence-transformers (CUDA when
-available, CPU fallback otherwise):
+OpenAI-compatible embedding server on sentence-transformers (CUDA/ROCm when
+available, CPU fallback otherwise). AMD GPUs work via the ROCm torch build
+(Linux only):
 
 ```bash
-pip install torch sentence-transformers
+pip install sentence-transformers
+# NVIDIA:
+pip install torch
+# AMD (Linux):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.4
+
 python scripts/embed-server.py --model BAAI/bge-base-en-v1.5 --port 8081
 ```
 

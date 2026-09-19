@@ -2,11 +2,17 @@
 """GPU embedding server for MemOS — OpenAI-compatible `/v1/embeddings`.
 
 MemOS's built-in Node embedding pipeline (fastembed/ONNX) is CPU-only. When
-you have a CUDA GPU, serve the same model weights from sentence-transformers
-on the GPU and point MemOS at this server with the `openai-compatible`
-provider for much faster ingestion.
+you have a GPU (NVIDIA CUDA, or AMD via ROCm on Linux), serve the same model
+weights from sentence-transformers on the GPU and point MemOS at this server
+with the `openai-compatible` provider for much faster ingestion.
 
-Requires: pip install torch sentence-transformers   (torch with CUDA)
+Requires: pip install torch sentence-transformers
+  NVIDIA: the default torch wheel already includes CUDA support.
+  AMD (Linux): install the ROCm torch build instead, e.g.
+      pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.4
+      pip install sentence-transformers
+  (PyTorch's ROCm build exposes the same torch.cuda API, so device="cuda"
+  below just works on AMD GPUs.)
 
 Usage:
     python scripts/embed-server.py --model BAAI/bge-base-en-v1.5 --port 8081
@@ -60,7 +66,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--device",
         default=None,
-        help="torch device: 'cuda', 'cpu', … (default: cuda when available)",
+        help="torch device: 'cuda' (covers NVIDIA CUDA and AMD ROCm), 'cpu', … "
+        "(default: cuda when a GPU is available)",
     )
     p.add_argument(
         "--batch-size",
@@ -97,16 +104,39 @@ def main() -> int:
         )
         return 1
 
+    # Backend detection: ROCm builds of torch expose the same torch.cuda API
+    # (torch.version.hip is set), so device="cuda" works on AMD GPUs too.
+    _ver = getattr(torch, "version", None)
+    hip_version = getattr(_ver, "hip", None)
+    cuda_version = getattr(_ver, "cuda", None)
+    if hip_version and torch.cuda.is_available():
+        backend = f"ROCm {hip_version}"
+    elif cuda_version and torch.cuda.is_available():
+        backend = f"CUDA {cuda_version}"
+    else:
+        backend = "CPU"
+
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     if device.startswith("cuda") and not torch.cuda.is_available():
         print(
-            f"warning: --device={device} but torch reports no CUDA; "
-            "falling back to cpu",
+            "warning: --device=cuda but torch reports no GPU "
+            f"(torch {torch.__version__}); falling back to cpu. "
+            "AMD users need the ROCm torch build: pip install torch torchvision "
+            "--index-url https://download.pytorch.org/whl/rocm6.4",
             file=sys.stderr,
         )
         device = "cpu"
+        backend = "CPU"
 
-    print(f"[embed-server] loading {args.model} on {device} …", flush=True)
+    gpu_name = ""
+    if device.startswith("cuda") and torch.cuda.is_available():
+        try:
+            gpu_name = f" ({torch.cuda.get_device_name(0)})"
+        except Exception:
+            pass
+
+    print(f"[embed-server] torch {torch.__version__} | backend: {backend}", flush=True)
+    print(f"[embed-server] loading {args.model} on {device}{gpu_name} …", flush=True)
     model = SentenceTransformer(args.model, device=device)
     dims = model.get_sentence_embedding_dimension()
     print(

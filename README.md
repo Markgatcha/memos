@@ -204,13 +204,22 @@ CLI and server deployments can use `MEMOS_EMBEDDING_PROVIDER`, `MEMOS_EMBEDDING_
 
 ### GPU embeddings
 
-The built-in Node embedding pipeline (fastembed/ONNX) is CPU-only. If you have a CUDA GPU, serve the same model weights from sentence-transformers on the GPU instead — MemOS talks to it through the `openai-compatible` provider, so nothing else changes.
+The built-in Node embedding pipeline (fastembed/ONNX) is CPU-only. If you have a GPU — NVIDIA CUDA, or AMD via ROCm (Linux) — serve the same model weights from sentence-transformers on the GPU instead. MemOS talks to it through the `openai-compatible` provider, so nothing else changes.
 
 ```bash
-# 1. Start the embedding server (needs: pip install torch sentence-transformers)
-python scripts/embed-server.py --model BAAI/bge-base-en-v1.5 --port 8081
+# 1. Install the server deps
+pip install sentence-transformers
+# NVIDIA: the default torch wheel already includes CUDA support
+pip install torch
+# AMD (Linux): install the ROCm torch build instead of the default wheel
+pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.4
 
-# 2. Point MemOS at it
+# 2. Start the embedding server
+python scripts/embed-server.py --model BAAI/bge-base-en-v1.5 --port 8081
+#    → check the startup log for "backend: ROCm …" (AMD) or "backend: CUDA …"
+#      (NVIDIA) to confirm you're on the GPU
+
+# 3. Point MemOS at it
 MEMOS_EMBEDDING_PROVIDER=openai-compatible \
 MEMOS_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5 \
 MEMOS_EMBEDDING_BASE_URL=http://127.0.0.1:8081/v1 \
@@ -218,7 +227,7 @@ MEMOS_EMBEDDING_DIMENSIONS=768 \
 npx @mem-os/sdk store "remember this"
 ```
 
-The `model` you configure in MemOS must match the model the server loads — MemOS only compares vectors produced by the same model. The server also respects `EMBED_MODEL` / `EMBED_PORT` environment variables, and `--device` overrides CUDA auto-detection (handy for forcing `--device cpu` to test the wiring without a GPU).
+The `model` you configure in MemOS must match the model the server loads — MemOS only compares vectors produced by the same model. The server also respects `EMBED_MODEL` / `EMBED_PORT` environment variables, and `--device` overrides GPU auto-detection (handy for forcing `--device cpu` to test the wiring without a GPU).
 
 ---
 
