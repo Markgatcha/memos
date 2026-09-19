@@ -154,6 +154,56 @@ export class MemorySkippedError extends Error {
  * @param text — Raw text to summarise.
  * @returns Extractive summary sentence.
  */
+
+// Module-level so every store() call doesn't re-allocate a 45-word Set.
+const EXTRACTIVE_SUMMARY_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "shall",
+  "should",
+  "may",
+  "might",
+  "must",
+  "can",
+  "could",
+  "to",
+  "of",
+  "in",
+  "for",
+  "on",
+  "with",
+  "at",
+  "by",
+  "from",
+  "as",
+  "into",
+  "through",
+  "and",
+  "but",
+  "or",
+  "not",
+  "it",
+  "its",
+  "this",
+  "that",
+]);
+
 function extractiveSummary(text: string): string {
   const sentences = text
     .replace(/\n+/g, " ")
@@ -164,53 +214,7 @@ function extractiveSummary(text: string): string {
   if (sentences.length === 0) return text.slice(0, 120);
   if (sentences.length === 1) return sentences[0];
 
-  const stopWords = new Set([
-    "a",
-    "an",
-    "the",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "being",
-    "have",
-    "has",
-    "had",
-    "do",
-    "does",
-    "did",
-    "will",
-    "would",
-    "shall",
-    "should",
-    "may",
-    "might",
-    "must",
-    "can",
-    "could",
-    "to",
-    "of",
-    "in",
-    "for",
-    "on",
-    "with",
-    "at",
-    "by",
-    "from",
-    "as",
-    "into",
-    "through",
-    "and",
-    "but",
-    "or",
-    "not",
-    "it",
-    "its",
-    "this",
-    "that",
-  ]);
+  const stopWords = EXTRACTIVE_SUMMARY_STOP_WORDS;
 
   // Build word frequency across all sentences
   const freq = new Map<string, number>();
@@ -440,6 +444,7 @@ export class MemOS {
         maxQueueSize: this.config.embeddingQueue.maxQueueSize ?? 10_000,
         maxRetries: this.config.embeddingQueue.maxRetries ?? 3,
         retryBackoffMs: this.config.embeddingQueue.retryBackoffMs ?? 250,
+        batchLingerMs: this.config.embeddingQueue.batchLingerMs,
         onPersist: async (nodeId, vector, model) => {
           await this.storage.saveEmbedding!(nodeId, vector, model);
         },
@@ -652,6 +657,12 @@ export class MemOS {
    */
   async search(queryOrFilter: string | SearchFilter): Promise<ScoredMemory[]> {
     this.assertInit();
+
+    // Drain pending embedding jobs first: the queue coalesces rapid
+    // sequential stores with a short linger before batching them, so
+    // without this a search issued right after store() would silently miss
+    // the just-stored memories. No-op when the queue is empty.
+    await this.flushEmbeddings();
 
     const filter: SearchFilter =
       typeof queryOrFilter === "string"
@@ -1259,6 +1270,10 @@ export class MemOS {
         "Semantic search is experimental. Enable it with experimental: { semanticSearch: true }",
       );
     }
+
+    // Same store-then-search guarantee as search(): drain the embedding
+    // queue so just-stored memories are visible. No-op when empty.
+    await this.flushEmbeddings();
 
     if (this.embeddingProvider && this.storage.querySimilarEmbeddings) {
       // Route queries through `embedQuery` when the provider supports it:
@@ -3126,8 +3141,32 @@ export class MemOS {
   private async backfillEmbeddings(): Promise<void> {
     if (!this.embeddingProvider) return;
     const nodes = this.graph.getAllNodes();
+    // Bulk-fetch embedding metadata once instead of one SELECT per node
+    // (N+1) — on a 5k-node store the per-node lookups cost ~100ms of init.
+    let infoByNode: Map<
+      string,
+      { model: string; dimensions: number; updatedAt: number }
+    > | null = null;
+    if (this.storage.getAllEmbeddingInfos) {
+      const infos = await this.storage.getAllEmbeddingInfos();
+      infoByNode = new Map(infos.map((i) => [i.nodeId, i]));
+    }
+    const isFresh = async (node: MemoryNode): Promise<boolean> => {
+      if (!this.embeddingProvider) return false;
+      const info = infoByNode
+        ? (infoByNode.get(node.id) ?? null)
+        : this.storage.getEmbeddingInfo
+          ? await this.storage.getEmbeddingInfo(node.id)
+          : null;
+      return Boolean(
+        info &&
+        info.model === this.embeddingProvider.model &&
+        info.dimensions === this.embeddingProvider.dimensions &&
+        info.updatedAt >= node.updatedAt,
+      );
+    };
     for (const node of nodes) {
-      if (await this.hasFreshEmbedding(node)) {
+      if (await isFresh(node)) {
         // Already up to date — no need to re-embed, but track status.
         this.recordEmbeddingStatus(node.id, "ready", null);
         continue;
@@ -3136,17 +3175,6 @@ export class MemOS {
     }
     // Backfill is fire-and-forget by design. The queue will eventually
     // call `persistEmbedding` for each job.
-  }
-
-  private async hasFreshEmbedding(node: MemoryNode): Promise<boolean> {
-    if (!this.embeddingProvider || !this.storage.getEmbeddingInfo) return false;
-    const info = await this.storage.getEmbeddingInfo(node.id);
-    return Boolean(
-      info &&
-      info.model === this.embeddingProvider.model &&
-      info.dimensions === this.embeddingProvider.dimensions &&
-      info.updatedAt >= node.updatedAt,
-    );
   }
 
   private async hybridSearch(

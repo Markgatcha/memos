@@ -102,6 +102,21 @@ export interface EmbeddingQueueConfig {
   maxRetries?: number;
   /** Base backoff in ms; retries use exponential backoff. Default 250. */
   retryBackoffMs?: number;
+  /**
+   * Coalescing delay in ms before a fully-idle queue picks up newly-enqueued
+   * work. Default 5.
+   *
+   * Why: `schedule()` used to defer pickup with a bare `queueMicrotask`,
+   * so sequential `await store()` calls each formed a single-job group and
+   * `batchEmbed` was never called — one provider round trip per memory.
+   * A short linger lets rapid sequential enqueues coalesce into full
+   * `batchSize` groups (N round trips become N/batchSize). The linger only
+   * applies when no worker is busy; while workers run, pending jobs
+   * accumulate on their own and are picked up immediately. Ordering and
+   * completion guarantees are unchanged; `flush()` still drains
+   * everything. Set to 0 to restore the immediate microtask pickup.
+   */
+  batchLingerMs?: number;
   /** Persist callback — invoked once per job on success. Optional. */
   onPersist?: PersistEmbeddingFn;
   /** Status-change callback — fires on every state transition. Optional. */
@@ -113,6 +128,7 @@ const DEFAULT_BATCH_SIZE = 1;
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_BACKOFF_MS = 250;
+const DEFAULT_BATCH_LINGER_MS = 5;
 
 /** Generate a short, unique job id without pulling in a uuid dep. */
 function generateJobId(): string {
@@ -146,6 +162,7 @@ export class EmbeddingQueue {
   private readonly maxQueueSize: number;
   private readonly maxRetries: number;
   private readonly retryBackoffMs: number;
+  private readonly batchLingerMs: number;
   private readonly onPersist?: PersistEmbeddingFn;
   private readonly onStatusChange?: EmbeddingStatusChangeFn;
 
@@ -159,7 +176,7 @@ export class EmbeddingQueue {
   private readonly drainWaiters: Array<() => void> = [];
   /** Set true after `close()` so enqueue can reject and workers exit. */
   private closed = false;
-  /** Guards one-at-a-time microtask deferral of group pickup (see schedule()). */
+  /** Guards one-at-a-time deferred group pickup (see schedule()). */
   private scheduleQueued = false;
 
   constructor(config: EmbeddingQueueConfig) {
@@ -174,6 +191,10 @@ export class EmbeddingQueue {
     this.retryBackoffMs = Math.max(
       0,
       config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS,
+    );
+    this.batchLingerMs = Math.max(
+      0,
+      config.batchLingerMs ?? DEFAULT_BATCH_LINGER_MS,
     );
     this.onPersist = config.onPersist;
     this.onStatusChange = config.onStatusChange;
@@ -303,10 +324,24 @@ export class EmbeddingQueue {
   private schedule(): void {
     if (this.scheduleQueued) return;
     this.scheduleQueued = true;
-    queueMicrotask(() => {
-      this.scheduleQueued = false;
-      this.scheduleNow();
-    });
+    // Coalescing linger: when the queue is fully idle, wait `batchLingerMs`
+    // before picking up work so rapid sequential enqueues (e.g. `await
+    // store()` in a loop) form full `batchSize` groups instead of one
+    // single-job group each. While workers are already busy, pending jobs
+    // accumulate on their own — pick those up immediately with no added
+    // latency. A linger of 0 restores the immediate microtask pickup.
+    const lingerIdle = this.batchLingerMs > 0 && this.activeCount() === 0;
+    if (!lingerIdle) {
+      queueMicrotask(() => {
+        this.scheduleQueued = false;
+        this.scheduleNow();
+      });
+    } else {
+      setTimeout(() => {
+        this.scheduleQueued = false;
+        this.scheduleNow();
+      }, this.batchLingerMs);
+    }
   }
 
   private scheduleNow(): void {

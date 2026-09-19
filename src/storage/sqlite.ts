@@ -36,6 +36,43 @@ export function defaultDbPath(): string {
 }
 
 /**
+ * Return the top `k` pairs by descending score without sorting the whole
+ * array: a binary min-heap of capacity `k` keeps the largest K seen so far
+ * (O(N log K)), then sorts just those K (O(K log K)). Identical result to
+ * `pairs.sort(desc).slice(0, k)` — same elements, same order.
+ */
+function takeTopK<T extends { score: number }>(pairs: T[], k: number): T[] {
+  if (k <= 0) return [];
+  if (pairs.length <= k) return pairs.sort((a, b) => b.score - a.score);
+  // heap[i] is the smallest of the current top-K; children at 2i+1, 2i+2.
+  const heap: T[] = pairs.slice(0, k);
+  const siftDown = (i: number): void => {
+    for (;;) {
+      const left = 2 * i + 1;
+      const right = left + 1;
+      let smallest = i;
+      if (left < k && heap[left].score < heap[smallest].score) smallest = left;
+      if (right < k && heap[right].score < heap[smallest].score)
+        smallest = right;
+      if (smallest === i) break;
+      const tmp = heap[i];
+      heap[i] = heap[smallest];
+      heap[smallest] = tmp;
+      i = smallest;
+    }
+  };
+  for (let i = (k >> 1) - 1; i >= 0; i -= 1) siftDown(i); // heapify
+  for (let i = k; i < pairs.length; i += 1) {
+    const p = pairs[i];
+    if (p.score > heap[0].score) {
+      heap[0] = p;
+      siftDown(0);
+    }
+  }
+  return heap.sort((a, b) => b.score - a.score);
+}
+
+/**
  * Minimal function-word stoplist for FTS5 query tokenization.
  *
  * Deliberately SMALL: only grammatical glue words. Content words
@@ -321,6 +358,11 @@ export class SQLiteStorage implements StorageAdapter {
         model      TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
+
+      -- Covering index for the semantic id-select: every query filters on
+      -- (dimensions, model) before scoring, so without this SQLite walks
+      -- the whole table even when the caller needs no node-side filters.
+      CREATE INDEX IF NOT EXISTS idx_embeddings_model_dims ON embeddings(dimensions, model);
     `);
 
     // Migration: add expires_at column if missing
@@ -459,23 +501,30 @@ export class SQLiteStorage implements StorageAdapter {
    * Replace the `node_tags` rows for a single node. Used after
    * `saveNode` / `updateNode` to keep the join table in lockstep with
    * the JSON column.
+   *
+   * Runs inside the caller's transaction (saveNode/updateNode wrap their
+   * write + this call in one `db.transaction`) and reuses cached prepared
+   * statements — previously each call paid two uncached `db.prepare()`
+   * parses plus its own transaction commit.
    */
   private writeNodeTags(nodeId: string, tags: string[]): void {
-    this.db.prepare("DELETE FROM node_tags WHERE node_id = ?").run(nodeId);
+    const deleteStmt = this.getPreparedStatement(
+      "writeNodeTags::delete",
+      "DELETE FROM node_tags WHERE node_id = ?",
+    );
+    deleteStmt.run(nodeId);
     if (tags.length === 0) return;
-    const insert = this.db.prepare(
+    const insert = this.getPreparedStatement(
+      "writeNodeTags::insert",
       "INSERT OR IGNORE INTO node_tags (node_id, tag) VALUES (?, ?)",
     );
     const seen = new Set<string>();
-    const tx = this.db.transaction(() => {
-      for (const tag of tags) {
-        if (typeof tag !== "string" || tag.length === 0) continue;
-        if (seen.has(tag)) continue;
-        seen.add(tag);
-        insert.run(nodeId, tag);
-      }
-    });
-    tx();
+    for (const tag of tags) {
+      if (typeof tag !== "string" || tag.length === 0) continue;
+      if (seen.has(tag)) continue;
+      seen.add(tag);
+      insert.run(nodeId, tag);
+    }
   }
 
   /**
@@ -508,7 +557,15 @@ export class SQLiteStorage implements StorageAdapter {
        VALUES (@id, @content, @summary, @type, @metadata, @importance, @createdAt, @updatedAt, @accessCount, @lastAccessed, @expiresAt, @tags, @namespace, @validFrom, @validTo, @source, @trustScore, @pool)`,
     );
 
-    stmt.run({
+    // One transaction for the row INSERT plus the tag-join mirror:
+    // previously each ran in its own autocommit transaction (three commits
+    // per store), and writeNodeTags also paid two uncached prepares.
+    const tx = this.db.transaction((params: Record<string, unknown>) => {
+      stmt.run(params);
+      // Mirror to the join table for index-backed tag lookups.
+      this.writeNodeTags(node.id, node.tags);
+    });
+    tx({
       id: node.id,
       content: node.content,
       summary: node.summary,
@@ -532,9 +589,6 @@ export class SQLiteStorage implements StorageAdapter {
       trustScore: node.trustScore,
       pool: node.pool ?? "event",
     });
-
-    // Mirror to the join table for index-backed tag lookups.
-    this.writeNodeTags(node.id, node.tags);
 
     return node;
   }
@@ -646,41 +700,45 @@ export class SQLiteStorage implements StorageAdapter {
       updatedAt: Date.now(),
     };
 
-    this.db
-      .prepare(
-        `UPDATE nodes SET content = @content, summary = @summary, type = @type,
+    const updateStmt = this.getPreparedStatement(
+      "updateNode",
+      `UPDATE nodes SET content = @content, summary = @summary, type = @type,
          metadata = @metadata, importance = @importance, updated_at = @updatedAt,
          tags = @tags, namespace = @namespace,
          valid_from = @validFrom, valid_to = @validTo, source = @source, trust_score = @trustScore
          WHERE id = @id`,
-      )
-      .run({
-        id: updated.id,
-        content: updated.content,
-        summary: updated.summary,
-        type: updated.type,
-        metadata: JSON.stringify({
-          ...updated.metadata,
-          // Keep the node-level evidence state in sync with the persisted
-          // metadata blob — rowToNode reads confidence/evidenceCount back
-          // from here, so omitting this silently drops reinforcement.
-          confidence: updated.confidence,
-          evidenceCount: updated.evidenceCount,
-        }),
-        importance: updated.importance,
-        updatedAt: updated.updatedAt,
-        tags: JSON.stringify(updated.tags),
-        namespace: updated.namespace,
-        validFrom: updated.validFrom,
-        validTo: updated.validTo,
-        source: updated.source,
-        trustScore: updated.trustScore,
-      });
+    );
+    const params = {
+      id: updated.id,
+      content: updated.content,
+      summary: updated.summary,
+      type: updated.type,
+      metadata: JSON.stringify({
+        ...updated.metadata,
+        // Keep the node-level evidence state in sync with the persisted
+        // metadata blob — rowToNode reads confidence/evidenceCount back
+        // from here, so omitting this silently drops reinforcement.
+        confidence: updated.confidence,
+        evidenceCount: updated.evidenceCount,
+      }),
+      importance: updated.importance,
+      updatedAt: updated.updatedAt,
+      tags: JSON.stringify(updated.tags),
+      namespace: updated.namespace,
+      validFrom: updated.validFrom,
+      validTo: updated.validTo,
+      source: updated.source,
+      trustScore: updated.trustScore,
+    };
 
-    // Keep the tag join table in sync when the tag set changed.
-    if (input.tags !== undefined) {
-      this.writeNodeTags(updated.id, updated.tags);
-    }
+    // Keep the tag join table in sync when the tag set changed — in the
+    // same transaction as the row UPDATE (previously two commits).
+    const syncTags = input.tags !== undefined;
+    const tx = this.db.transaction(() => {
+      updateStmt.run(params);
+      if (syncTags) this.writeNodeTags(updated.id, updated.tags);
+    });
+    tx();
 
     return updated;
   }
@@ -1018,11 +1076,10 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   async getEmbeddingInfo(nodeId: string): Promise<EmbeddingRecordInfo | null> {
-    const row = this.db
-      .prepare(
-        "SELECT model, dimensions, updated_at FROM embeddings WHERE node_id = ?",
-      )
-      .get(nodeId) as Record<string, unknown> | undefined;
+    const row = this.getPreparedStatement(
+      "getEmbeddingInfo",
+      "SELECT model, dimensions, updated_at FROM embeddings WHERE node_id = ?",
+    ).get(nodeId) as Record<string, unknown> | undefined;
 
     if (!row) return null;
     return {
@@ -1030,6 +1087,21 @@ export class SQLiteStorage implements StorageAdapter {
       dimensions: row.dimensions as number,
       updatedAt: row.updated_at as number,
     };
+  }
+
+  async getAllEmbeddingInfos(): Promise<
+    Array<{ nodeId: string } & EmbeddingRecordInfo>
+  > {
+    const rows = this.getPreparedStatement(
+      "getAllEmbeddingInfos",
+      "SELECT node_id, model, dimensions, updated_at FROM embeddings",
+    ).all() as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      nodeId: row.node_id as string,
+      model: row.model as string,
+      dimensions: row.dimensions as number,
+      updatedAt: row.updated_at as number,
+    }));
   }
 
   async getAllEmbeddings(): Promise<
@@ -1065,6 +1137,11 @@ export class SQLiteStorage implements StorageAdapter {
   ): Promise<ScoredMemory[]> {
     const conditions: string[] = [];
     const params: unknown[] = [vector.length];
+    // True as soon as any node-side (`n.*`) condition is added — only then
+    // do we need the JOIN. The common case (no type/namespace/pool/tags/
+    // importance/metadata filter) selects ids straight from `embeddings`,
+    // which the idx_embeddings_model_dims index serves without a scan.
+    let needsNodeJoin = false;
 
     // Only compare vectors produced by compatible models/dimensions; cosine
     // similarity is meaningless when the stored vector length differs, and
@@ -1078,41 +1155,52 @@ export class SQLiteStorage implements StorageAdapter {
     if (filter.type) {
       conditions.push("n.type = ?");
       params.push(filter.type);
+      needsNodeJoin = true;
     }
     if (filter.minImportance !== undefined) {
       conditions.push("n.importance >= ?");
       params.push(filter.minImportance);
+      needsNodeJoin = true;
     }
     if (filter.maxImportance !== undefined) {
       conditions.push("n.importance <= ?");
       params.push(filter.maxImportance);
+      needsNodeJoin = true;
     }
     if (filter.namespace) {
       conditions.push("n.namespace = ?");
       params.push(filter.namespace);
+      needsNodeJoin = true;
     }
     if (filter.namespacePrefix) {
       conditions.push("n.namespace LIKE ? ESCAPE '\\'");
       params.push(escapeLikePrefix(filter.namespacePrefix) + "%");
+      needsNodeJoin = true;
     }
     if (filter.pool !== undefined) {
       const pools = Array.isArray(filter.pool) ? filter.pool : [filter.pool];
       if (pools.length > 0) {
         conditions.push(`n.pool IN (${pools.map(() => "?").join(", ")})`);
         params.push(...pools);
+        needsNodeJoin = true;
       }
     }
     const metadata = this.buildMetadataFilter(filter.metadata, "n");
     conditions.push(...metadata.conditions);
     params.push(...metadata.params);
+    if (metadata.conditions.length > 0) needsNodeJoin = true;
     if (filter.tags && filter.tags.length > 0) {
       for (const tag of filter.tags) {
         conditions.push("n.tags LIKE ?");
         params.push(`%${JSON.stringify(tag)}%`);
       }
+      needsNodeJoin = true;
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const fromClause = needsNodeJoin
+      ? "FROM embeddings e JOIN nodes n ON n.id = e.node_id"
+      : "FROM embeddings e";
 
     // Lazy hydration: score every candidate vector, but fully hydrate
     // (JSON.parse metadata + tags + timestamps) ONLY the top-`limit` rows.
@@ -1122,18 +1210,18 @@ export class SQLiteStorage implements StorageAdapter {
     // without a vector index), but the expensive per-row hydration now
     // runs at most `limit` times instead of N times.
     //
-    // Statement cache key includes the built WHERE clause: the filter
-    // composition above varies the SQL text, and reusing one prepared
-    // statement across different SQL would return wrong results.
+    // Statement cache key includes the built WHERE clause AND the join
+    // shape: the filter composition above varies the SQL text, and reusing
+    // one prepared statement across different SQL would return wrong
+    // results.
     // Two-phase retrieval: ids are cheap to select; vectors come from the
     // in-memory cache when warm, so repeat queries skip re-fetching every
     // BLOB (tens of MB per query on large stores). Statement cache keys
     // include the WHERE clause — filter composition varies the SQL.
     const idRows = this.getPreparedStatement(
-      `querySimilarEmbeddingsIds::${where}`,
+      `querySimilarEmbeddingsIds::${needsNodeJoin ? "jn" : "noj"}::${where}`,
       `SELECT e.node_id
-       FROM embeddings e
-       JOIN nodes n ON n.id = e.node_id
+       ${fromClause}
        ${where}`,
     ).all(...params) as Array<{ node_id: string }>;
 
@@ -1177,8 +1265,10 @@ export class SQLiteStorage implements StorageAdapter {
       }
     }
 
-    scoredPairs.sort((a, b) => b.score - a.score);
-    const top = scoredPairs.slice(0, limit);
+    // Top-K via min-heap instead of a full sort: scoring is O(N) pairs but
+    // only `limit` survive, so this is O(N log K) rather than O(N log N).
+    // The returned K keep the same descending-score order as a full sort.
+    const top = takeTopK(scoredPairs, limit);
 
     // Hydrate only the survivors, preserving score order.
     const results: ScoredMemory[] = [];

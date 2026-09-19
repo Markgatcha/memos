@@ -39,124 +39,144 @@ export function textSimilarity(a: string, b: string): number {
 
   if (tokensA.size === 0 || tokensB.size === 0) return 0;
 
-  const intersection = new Set<string>();
-  for (const token of tokensA) {
-    if (tokensB.has(token)) intersection.add(token);
+  return tokenSetSimilarity(tokensA, tokensB);
+}
+
+/**
+ * Cosine similarity of two pre-tokenized bags (binary term frequency).
+ * Exported for reuse by GraphEngine.autoLink, which tokenizes the new node
+ * once and reuses cached token sets for existing nodes instead of
+ * re-tokenizing both sides on every comparison.
+ */
+export function tokenSetSimilarity(
+  tokensA: Set<string>,
+  tokensB: Set<string>,
+): number {
+  if (tokensA.size === 0 || tokensB.size === 0) return 0;
+
+  let intersection = 0;
+  // Iterate the smaller set for fewer hash lookups.
+  const [small, large] =
+    tokensA.size <= tokensB.size ? [tokensA, tokensB] : [tokensB, tokensA];
+  for (const token of small) {
+    if (large.has(token)) intersection += 1;
   }
 
-  // Cosine similarity with binary term frequency
-  return intersection.size / Math.sqrt(tokensA.size * tokensB.size);
+  return intersection / Math.sqrt(tokensA.size * tokensB.size);
 }
 
 /**
  * Tokenise text into a set of lowercased, de-stopped words.
  */
-function bagOfWords(text: string): Set<string> {
-  const STOP_WORDS = new Set([
-    "a",
-    "an",
-    "the",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "being",
-    "have",
-    "has",
-    "had",
-    "do",
-    "does",
-    "did",
-    "will",
-    "would",
-    "shall",
-    "should",
-    "may",
-    "might",
-    "must",
-    "can",
-    "could",
-    "to",
-    "of",
-    "in",
-    "for",
-    "on",
-    "with",
-    "at",
-    "by",
-    "from",
-    "as",
-    "into",
-    "through",
-    "during",
-    "before",
-    "after",
-    "above",
-    "below",
-    "between",
-    "and",
-    "but",
-    "or",
-    "nor",
-    "not",
-    "so",
-    "yet",
-    "both",
-    "either",
-    "neither",
-    "each",
-    "every",
-    "all",
-    "any",
-    "few",
-    "more",
-    "most",
-    "other",
-    "some",
-    "such",
-    "no",
-    "only",
-    "own",
-    "same",
-    "than",
-    "too",
-    "very",
-    "just",
-    "because",
-    "about",
-    "up",
-    "out",
-    "it",
-    "its",
-    "this",
-    "that",
-    "these",
-    "those",
-    "i",
-    "me",
-    "my",
-    "we",
-    "our",
-    "you",
-    "your",
-    "he",
-    "him",
-    "his",
-    "she",
-    "her",
-    "they",
-    "them",
-    "their",
-  ]);
 
+// Module-level: bagOfWords runs O(N) times per autoLink() call, so the
+// ~100-word Set must not be re-allocated on every invocation.
+const BAG_OF_WORDS_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "shall",
+  "should",
+  "may",
+  "might",
+  "must",
+  "can",
+  "could",
+  "to",
+  "of",
+  "in",
+  "for",
+  "on",
+  "with",
+  "at",
+  "by",
+  "from",
+  "as",
+  "into",
+  "through",
+  "during",
+  "before",
+  "after",
+  "above",
+  "below",
+  "between",
+  "and",
+  "but",
+  "or",
+  "nor",
+  "not",
+  "so",
+  "yet",
+  "both",
+  "either",
+  "neither",
+  "each",
+  "every",
+  "all",
+  "any",
+  "few",
+  "more",
+  "most",
+  "other",
+  "some",
+  "such",
+  "no",
+  "only",
+  "own",
+  "same",
+  "than",
+  "too",
+  "very",
+  "just",
+  "because",
+  "about",
+  "up",
+  "out",
+  "it",
+  "its",
+  "this",
+  "that",
+  "these",
+  "those",
+  "i",
+  "me",
+  "my",
+  "we",
+  "our",
+  "you",
+  "your",
+  "he",
+  "him",
+  "his",
+  "she",
+  "her",
+  "they",
+  "them",
+  "their",
+]);
+
+function bagOfWords(text: string): Set<string> {
   return new Set(
     text
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, "")
       .split(/\s+/)
-      .filter((w) => w.length > 1 && !STOP_WORDS.has(w)),
+      .filter((w) => w.length > 1 && !BAG_OF_WORDS_STOP_WORDS.has(w)),
   );
 }
 
@@ -170,6 +190,12 @@ export class GraphEngine {
   private edges: Map<string, MemoryEdge> = new Map();
   /** Node lookup: nodeId → MemoryNode. */
   private nodes: Map<string, MemoryNode> = new Map();
+  /**
+   * Lazily-computed bag-of-words token sets per node, for autoLink().
+   * Populated on first use and invalidated on update/remove — avoids
+   * re-tokenizing every existing node on every store().
+   */
+  private tokenCache = new Map<string, Set<string>>();
 
   /**
    * Add a node to the graph.
@@ -178,6 +204,8 @@ export class GraphEngine {
    */
   addNode(node: MemoryNode): void {
     this.nodes.set(node.id, node);
+    // Fresh content for this id — drop any cached token set.
+    this.tokenCache.delete(node.id);
     if (!this.adjacency.has(node.id)) {
       this.adjacency.set(node.id, new Set());
     }
@@ -202,6 +230,7 @@ export class GraphEngine {
 
     this.nodes.delete(id);
     this.adjacency.delete(id);
+    this.tokenCache.delete(id);
     return true;
   }
 
@@ -210,6 +239,8 @@ export class GraphEngine {
    */
   updateNode(node: MemoryNode): void {
     this.nodes.set(node.id, node);
+    // Content may have changed — drop the cached token set.
+    this.tokenCache.delete(node.id);
   }
 
   /**
@@ -255,6 +286,19 @@ export class GraphEngine {
     this.adjacency.get(edge.targetId)?.delete(id);
     this.edges.delete(id);
     return true;
+  }
+
+  /**
+   * Lazily-computed bag-of-words token set for a node, cached across
+   * autoLink() calls. The cache is invalidated on add/update/remove/clear.
+   */
+  private tokensFor(node: MemoryNode): Set<string> {
+    let tokens = this.tokenCache.get(node.id);
+    if (!tokens) {
+      tokens = bagOfWords(node.content);
+      this.tokenCache.set(node.id, tokens);
+    }
+    return tokens;
   }
 
   /**
@@ -319,10 +363,14 @@ export class GraphEngine {
     // similarity) rather than whichever happened to be iterated first.
     const candidates: Array<{ id: string; sim: number }> = [];
 
+    // Tokenize the new node ONCE and reuse cached token sets for existing
+    // nodes: previously both sides were re-tokenized on every comparison
+    // (2 x N bagOfWords calls per store).
+    const tokensNew = this.tokensFor(node);
     for (const [id, existing] of this.nodes) {
       if (id === node.id) continue;
 
-      const sim = textSimilarity(node.content, existing.content);
+      const sim = tokenSetSimilarity(tokensNew, this.tokensFor(existing));
       if (sim >= threshold) {
         candidates.push({ id, sim });
       }
@@ -418,6 +466,7 @@ export class GraphEngine {
     this.nodes.clear();
     this.edges.clear();
     this.adjacency.clear();
+    this.tokenCache.clear();
   }
 }
 

@@ -655,6 +655,13 @@ export interface EmbeddingQueueConfig {
   /** Base backoff in ms; retries use exponential backoff. Default 250. */
   retryBackoffMs?: number;
   /**
+   * Coalescing delay in ms before a fully-idle queue picks up
+   * newly-enqueued work. Default 5. Lets rapid sequential `store()` calls
+   * form full `batchSize` groups instead of one single-job group each.
+   * Set to 0 for immediate microtask pickup.
+   */
+  batchLingerMs?: number;
+  /**
    * If true, `store()` waits for the embedding to complete before
    * returning. Default false — background mode. Tests and the CLI
    * `memos flush-embeddings` command benefit from this being false.
@@ -747,6 +754,16 @@ export interface StorageAdapter {
 
   /** Return stored embedding metadata for startup backfill decisions. */
   getEmbeddingInfo?(nodeId: string): Promise<EmbeddingRecordInfo | null>;
+
+  /**
+   * Return stored embedding metadata for every node in one round trip.
+   * Optional bulk counterpart to `getEmbeddingInfo` — lets startup
+   * backfill avoid one SELECT per node. Storages that don't implement it
+   * fall back to per-node `getEmbeddingInfo` calls.
+   */
+  getAllEmbeddingInfos?(): Promise<
+    Array<{ nodeId: string } & EmbeddingRecordInfo>
+  >;
 
   /** Query nodes by vector similarity. */
   querySimilarEmbeddings?(
