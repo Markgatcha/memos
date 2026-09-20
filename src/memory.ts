@@ -28,7 +28,15 @@ import {
   serializeContextPack,
 } from "./context-pack.js";
 import type { ContextPack } from "./context-pack.js";
-import { fuseResults } from "./retrieval.js";
+import { compareScoredMemories, fuseResults } from "./retrieval.js";
+import {
+  DEFAULT_GRAPH_EXPANSION_ALPHA,
+  DEFAULT_GRAPH_EXPANSION_HOPS,
+  DEFAULT_GRAPH_EXPANSION_SEEDS,
+  DEFAULT_PPR_MAX_INJECTED,
+  DEFAULT_PPR_MIN_INJECT_SCORE,
+  personalizedPageRank,
+} from "./graph-expansion.js";
 import {
   canonicalizeEntities,
   extractQueryEntities,
@@ -1685,6 +1693,9 @@ export class MemOS {
     const filter: SearchFilter = {
       query: opts.query,
       limit: limit * 4,
+      // Forward the pack-level graph-expansion opt-out to the hybrid
+      // search's PPR-lite expansion (undefined keeps the default on).
+      graphExpansion: opts.graphExpansion,
       ...scopeFilter,
     };
     const items = this.embeddingProvider
@@ -3559,7 +3570,8 @@ export class MemOS {
     const resolved = await this.applyContradictionResolution(fused);
 
     const expanded = await this.applyGraphExpansion(resolved);
-    const withSessions = await this.applySessionExpansion(expanded, filter);
+    const pprExpanded = await this.applyPprGraphExpansion(expanded, filter);
+    const withSessions = await this.applySessionExpansion(pprExpanded, filter);
     const reranked = opts.internal
       ? withSessions
       : await this.applyRerank(withSessions, filter);
@@ -3713,6 +3725,276 @@ export class MemOS {
 
     if (injected.size === 0) return fused;
     return [...fused, ...injected.values()].sort((a, b) => b.score - a.score);
+  }
+
+  /**
+   * PPR-lite graph expansion (single-step, HippoRAG-style). Runs after
+   * fusion (and after the experimental neighbour-injection leg): the top
+   * `graphExpansionSeeds` fused results seed a personalized PageRank walk
+   * (damping 0.5, `graphExpansionHops` hops) over graph edges plus
+   * shared-entity links, and the final score blends as
+   * `(1 - graphExpansionAlpha) * fused + graphExpansionAlpha * pprNorm`
+   * with PPR scores normalized to [0,1]. Graph neighbours of seeds that
+   * neither retrieval leg surfaced can enter the results this way.
+   *
+   * Controlled by `config.fusion`: `graphExpansion` (default true),
+   * `graphExpansionAlpha` (default 0.2), `graphExpansionHops` (default 2),
+   * `graphExpansionSeeds` (default 10). `filter.graphExpansion === false`
+   * disables it for a single query. With expansion disabled (or
+   * alpha <= 0) the fused list is returned untouched — byte-identical to
+   * the pre-expansion pipeline.
+   *
+   * Cost: one bounded BFS + power iteration over the seed neighbourhood
+   * (no LLM, no embedding calls) plus at most `DEFAULT_PPR_MAX_INJECTED`
+   * `peekNode` reads for newly injected neighbours.
+   */
+  private async applyPprGraphExpansion(
+    fused: ScoredMemory[],
+    filter: SearchFilter,
+  ): Promise<ScoredMemory[]> {
+    const fusion = this.config.fusion ?? {};
+    const enabled =
+      filter.graphExpansion !== false && (fusion.graphExpansion ?? true);
+    const seedCount =
+      fusion.graphExpansionSeeds ?? DEFAULT_GRAPH_EXPANSION_SEEDS;
+    const hops = fusion.graphExpansionHops ?? DEFAULT_GRAPH_EXPANSION_HOPS;
+    const alpha = fusion.graphExpansionAlpha ?? DEFAULT_GRAPH_EXPANSION_ALPHA;
+    if (!enabled || fused.length === 0 || seedCount <= 0 || alpha <= 0) {
+      return fused;
+    }
+
+    const seeds = fused.slice(0, Math.min(seedCount, fused.length));
+    const seedScores = new Map(seeds.map((s) => [s.node.id, s.score]));
+    const pprScores = personalizedPageRank(
+      seedScores,
+      this.buildPprNeighbors(fused),
+      { maxHops: hops },
+    );
+
+    let maxPpr = 0;
+    for (const value of pprScores.values()) {
+      if (value > maxPpr) maxPpr = value;
+    }
+    if (!(maxPpr > 0)) return fused;
+
+    const byId = new Map(fused.map((r) => [r.node.id, r]));
+    const rescored: ScoredMemory[] = [];
+    const unseen: { id: string; pprNorm: number }[] = [];
+    // Every fused candidate is blended per the formula; candidates the
+    // walk never reached get pprNorm 0 (i.e. downweighted by (1 - alpha)).
+    for (const result of fused) {
+      const raw = pprScores.get(result.node.id);
+      const pprNorm = raw === undefined ? 0 : raw / maxPpr;
+      const score = (1 - alpha) * result.score + alpha * pprNorm;
+      rescored.push({
+        node: result.node,
+        score,
+        scores: { ...result.scores, ppr: pprNorm, hybrid: score },
+      });
+    }
+    for (const [id, raw] of pprScores) {
+      if (byId.has(id)) continue;
+      const pprNorm = raw / maxPpr;
+      if (pprNorm >= DEFAULT_PPR_MIN_INJECT_SCORE) {
+        unseen.push({ id, pprNorm });
+      }
+    }
+
+    // Inject the walk's top unseen neighbours (bounded): these are the
+    // multi-hop recall wins — nodes connected to seeds that neither
+    // retrieval leg surfaced. Visibility follows the same guards as the
+    // experimental expansion leg: same namespace as a seed, same
+    // historical/current visibility (an injected stale fact must never
+    // appear when defaults hide history). The remaining structured
+    // filters are enforced by `pprInjectedNodePassesFilter` below:
+    // traversal crosses the pool/type/tag/metadata/importance/trust/
+    // temporal boundaries that the SQL legs filter at scan time.
+    const seedNamespaces = new Set(seeds.map((s) => s.node.namespace));
+    const seedHistorical = new Set(seeds.map((s) => s.node.validTo !== null));
+    const now = Date.now();
+    unseen.sort((a, b) => b.pprNorm - a.pprNorm || (a.id < b.id ? -1 : 1));
+    const injected: ScoredMemory[] = [];
+    for (const { id, pprNorm } of unseen.slice(0, DEFAULT_PPR_MAX_INJECTED)) {
+      const node = this.storage.peekNode
+        ? await this.storage.peekNode(id)
+        : await this.storage.getNode(id);
+      if (!node) continue;
+      if (!seedNamespaces.has(node.namespace)) continue;
+      if (!seedHistorical.has(node.validTo !== null)) continue;
+      if (!this.pprInjectedNodePassesFilter(node, filter, now)) continue;
+      const score = alpha * pprNorm;
+      injected.push({
+        node,
+        score,
+        scores: { ppr: pprNorm, hybrid: score },
+      });
+    }
+
+    return [...rescored, ...injected].sort(compareScoredMemories);
+  }
+
+  /**
+   * In-memory mirror of the SQLite `queryNodes` structured-filter
+   * semantics, applied to PPR-injected neighbours. The SQL legs filter
+   * type, pool, tags, metadata, importance/trust bounds, and temporal
+   * windows at scan time; graph traversal bypasses all of that, so an
+   * injected node must satisfy the same constraints or the expansion
+   * would leak across filter boundaries (e.g. a procedure-only search
+   * surfacing an event-pool neighbour).
+   *
+   * Namespace scoping is enforced separately by the seed-namespace
+   * guard (stricter: the injected node must share a seed's namespace,
+   * and seeds already passed the query's namespace/scope filter). The
+   * query text itself is intentionally not re-applied — injected nodes
+   * are recall wins the keyword/semantic legs missed.
+   */
+  private pprInjectedNodePassesFilter(
+    node: MemoryNode,
+    filter: SearchFilter,
+    now: number,
+  ): boolean {
+    if (filter.type !== undefined && node.type !== filter.type) return false;
+    if (
+      filter.minImportance !== undefined &&
+      node.importance < filter.minImportance
+    ) {
+      return false;
+    }
+    if (
+      filter.maxImportance !== undefined &&
+      node.importance > filter.maxImportance
+    ) {
+      return false;
+    }
+    if (filter.source !== undefined && node.source !== filter.source) {
+      return false;
+    }
+    if (
+      filter.minTrustScore !== undefined &&
+      node.trustScore < filter.minTrustScore
+    ) {
+      return false;
+    }
+    if (filter.tags !== undefined && filter.tags.length > 0) {
+      // AND logic like the SQL leg. Exact membership is the safe
+      // direction: the SQL `LIKE '%"tag"%'` is looser (substring), so
+      // anything this rejects, the fused legs could also have rejected.
+      const nodeTags = new Set(node.tags ?? []);
+      for (const tag of filter.tags) {
+        if (!nodeTags.has(tag)) return false;
+      }
+    }
+    if (filter.metadata !== undefined) {
+      for (const [key, value] of Object.entries(filter.metadata)) {
+        if (!/^[A-Za-z0-9_-]+$/.test(key)) continue;
+        // SQL `json_extract(metadata, '$.key') = NULL` never matches.
+        if (value === null || value === undefined) return false;
+        const actual: unknown = node.metadata?.[key];
+        if (actual === undefined) return false;
+        const matches =
+          typeof value === "object" || typeof actual === "object"
+            ? JSON.stringify(actual) === JSON.stringify(value)
+            : actual === value;
+        if (!matches) return false;
+      }
+    }
+    if (filter.pool !== undefined) {
+      const pools = Array.isArray(filter.pool) ? filter.pool : [filter.pool];
+      // Pre-pool memories read as "event" (matches the SQL migration).
+      if (pools.length > 0 && !pools.includes(node.pool ?? "event")) {
+        return false;
+      }
+    }
+    // Temporal windows mirror the structured branch.
+    if (filter.validAt !== undefined) {
+      if (
+        typeof node.validFrom === "number" &&
+        node.validFrom > filter.validAt
+      ) {
+        return false;
+      }
+      if (typeof node.validTo === "number" && node.validTo < filter.validAt) {
+        return false;
+      }
+    } else if (filter.includeHistorical !== true) {
+      // Strict `<=`: mirrors the SQL `valid_to > now` exclusion.
+      if (typeof node.validTo === "number" && node.validTo <= now) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Neighbour lookup for the PPR walk, over two link types:
+   *
+   * (a) Graph edges — from the in-memory `GraphEngine` adjacency (both
+   *     endpoints, i.e. undirected traversal). Cheapest source: no
+   *     storage I/O, O(1) per node.
+   * (b) Shared-entity links — nodes in the fused candidate set sharing a
+   *     tag or `metadata.entities` entry (exact match, lowercased),
+   *     built in-memory over the candidate set. There is no
+   *     entity→memories inverted table on this branch, so this is the
+   *     zero-I/O analogue; nodes discovered via edges at hop 2+ do not
+   *     contribute entity links (their tags are never fetched, keeping
+   *     the hot path bounded) but remain reachable/expandable via edges.
+   *
+   * The returned list is sorted for deterministic iteration; fan-out
+   * capping happens inside {@link personalizedPageRank}.
+   */
+  private buildPprNeighbors(fused: ScoredMemory[]): (id: string) => string[] {
+    const byId = new Map<string, MemoryNode>();
+    const entityToIds = new Map<string, Set<string>>();
+    const indexEntities = (node: MemoryNode): void => {
+      const entities = new Set<string>();
+      for (const tag of node.tags ?? [])
+        entities.add(String(tag).toLowerCase());
+      const metaEntities = node.metadata?.entities;
+      if (Array.isArray(metaEntities)) {
+        for (const entity of metaEntities) {
+          entities.add(String(entity).toLowerCase());
+        }
+      }
+      for (const entity of entities) {
+        let ids = entityToIds.get(entity);
+        if (!ids) {
+          ids = new Set<string>();
+          entityToIds.set(entity, ids);
+        }
+        ids.add(node.id);
+      }
+    };
+    for (const result of fused) {
+      byId.set(result.node.id, result.node);
+      indexEntities(result.node);
+    }
+
+    return (id: string): string[] => {
+      const neighbours = new Set<string>();
+      for (const edge of this.graph.getEdgesForNode(id)) {
+        neighbours.add(edge.sourceId === id ? edge.targetId : edge.sourceId);
+      }
+      const node = byId.get(id);
+      if (node) {
+        const entities = new Set<string>();
+        for (const tag of node.tags ?? []) {
+          entities.add(String(tag).toLowerCase());
+        }
+        const metaEntities = node.metadata?.entities;
+        if (Array.isArray(metaEntities)) {
+          for (const entity of metaEntities) {
+            entities.add(String(entity).toLowerCase());
+          }
+        }
+        for (const entity of entities) {
+          for (const other of entityToIds.get(entity) ?? []) {
+            if (other !== id) neighbours.add(other);
+          }
+        }
+      }
+      neighbours.delete(id);
+      return [...neighbours].sort();
+    };
   }
 
   /**

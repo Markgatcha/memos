@@ -442,6 +442,15 @@ export interface SearchFilter {
    * duplicate otherwise. Off by default.
    */
   semanticDedup?: boolean;
+  /**
+   * Per-query opt-out of the PPR-lite graph expansion
+   * (`config.fusion.graphExpansion`). Default true: the top fused results
+   * seed a personalized PageRank walk whose neighbours can join the
+   * ranking. Set to false to disable expansion for this query
+   * (byte-identical to the pre-expansion pipeline). `contextPack`
+   * forwards its own `graphExpansion: false` through this flag.
+   */
+  graphExpansion?: boolean;
 }
 
 /**
@@ -491,7 +500,9 @@ export interface ScoredMemory {
   /** Relevance score returned by the search algorithm. */
   score: number;
   /** Optional score breakdown for hybrid retrieval. `graph` marks a
-   * node injected by the graph-expansion leg, `session` one pulled in
+   * node injected by the graph-expansion leg, `ppr` the normalized
+   * personalized-PageRank score from the PPR-lite expansion blend,
+   * `session` one pulled in
    * by session-sibling expansion, `rerank` the cross-encoder score
    * (squashed to [0,1]) from the two-stage reranking pass, `entity` the
    * query-entity overlap (in [0,1]) that earned the entity-fusion boost,
@@ -502,6 +513,7 @@ export interface ScoredMemory {
     semantic?: number;
     hybrid?: number;
     graph?: number;
+    ppr?: number;
     session?: number;
     rerank?: number;
     entity?: number;
@@ -1120,6 +1132,28 @@ export interface FusionOptions {
    * 0.5. Set to 0 to disable the leg.
    */
   entityLegWeight?: number;
+  /**
+   * Single-step PPR-lite graph expansion after fusion (HippoRAG-style,
+   * see `src/graph-expansion.ts`). The top `graphExpansionSeeds` fused
+   * results seed a personalized PageRank (damping 0.5, `graphExpansionHops`
+   * hops) over graph edges plus shared-entity links; the final score
+   * blends as `(1 - graphExpansionAlpha) * fused + graphExpansionAlpha *
+   * pprNorm` with PPR scores normalized to [0,1]. Graph neighbours of
+   * seeds that neither retrieval leg surfaced can enter the results this
+   * way — the multi-hop recall win without iterative LLM retrieval.
+   * Default: true. Set to false for byte-identical pre-expansion
+   * behaviour (no extra storage reads, no score changes).
+   */
+  graphExpansion?: boolean;
+  /**
+   * Blend weight of the normalized PPR score in the post-fusion blend.
+   * Default 0.2.
+   */
+  graphExpansionAlpha?: number;
+  /** PPR neighbourhood depth explored from each seed. Default 2. */
+  graphExpansionHops?: number;
+  /** How many top fused results seed the PPR walk. Default 10. */
+  graphExpansionSeeds?: number;
 }
 
 /**

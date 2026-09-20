@@ -131,3 +131,18 @@ export {
   DEFAULT_ENTITY_LEG_WEIGHT,
 } from "./retrieval.js";
 export type { FusionOptions } from "./retrieval.js";
+export {
+  personalizedPageRank,
+  type PersonalizedPageRankOptions,
+  DEFAULT_PPR_DAMPING,
+  DEFAULT_PPR_MAX_HOPS,
+  DEFAULT_PPR_MAX_FANOUT,
+  DEFAULT_PPR_MAX_NODES,
+  DEFAULT_PPR_MAX_ITERATIONS,
+  DEFAULT_PPR_TOLERANCE,
+  DEFAULT_GRAPH_EXPANSION_ALPHA,
+  DEFAULT_GRAPH_EXPANSION_SEEDS,
+  DEFAULT_GRAPH_EXPANSION_HOPS,
+  DEFAULT_PPR_MAX_INJECTED,
+  DEFAULT_PPR_MIN_INJECT_SCORE,
+} from "./graph-expansion.js";
