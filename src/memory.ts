@@ -15,6 +15,8 @@ import { readFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import {
   parseExternalMemoryExport,
+  parseExportDirectory,
+  synthesizeImportInsights,
   type DetectedExportSource,
   type ExternalImportSource,
 } from "./external-import.js";
@@ -1074,17 +1076,29 @@ export class MemOS {
    * @returns Import result with counts.
    */
   /**
-   * Import memories from a third-party AI assistant export (ChatGPT or
-   * Claude data exports). The parser sniffs each entry, extracts
-   * user-side text, and every item is stored with `source:
-   * "external_data"` (lower trust by default) plus provenance tags, so
-   * imported memories are rankable but never outrank first-party facts.
+   * Import memories from a third-party export: ChatGPT
+   * (`conversations.json`), Claude (export directory or file), or Slack
+   * (export directory). The parser sniffs each entry, maps messages to
+   * timestamped memories, dedupes by content hash, and every item is
+   * stored with `source: "external_data"` (lower trust by default) plus
+   * provenance tags (`imported`, `<source>`), so imported memories are
+   * rankable but never outrank first-party facts.
+   *
+   * With `synthesize: true`, a post-import pass extracts structured
+   * decisions / preferences / milestones from the imported text using
+   * rule-based heuristics (no LLM) and stores them as tagged memories.
    */
   async importExternal(opts: {
     /** Path to the export JSON file. Mutually exclusive with `data`. */
     file?: string;
     /** Pre-loaded export payload (JSON string or decoded value). */
     data?: unknown;
+    /**
+     * Path to an export directory. Required for `slack`; for
+     * `chatgpt`/`claude` scans every `*.json`/`*.jsonl` file in the
+     * directory. Mutually exclusive with `file`/`data`.
+     */
+    dir?: string;
     /** Parser hint. Default `"auto"` sniffs the shape. */
     source?: ExternalImportSource;
     namespace?: string;
@@ -1093,6 +1107,12 @@ export class MemOS {
     maxItems?: number;
     /** Extra tags applied to every imported memory. */
     tags?: string[];
+    /**
+     * Post-import synthesis pass: rule-based extraction of decisions,
+     * preferences, and milestones into structured memories. Default
+     * false.
+     */
+    synthesize?: boolean;
   }): Promise<{
     detected: DetectedExportSource;
     total: number;
@@ -1101,27 +1121,36 @@ export class MemOS {
     dryRun: boolean;
     durationMs: number;
     sampleIds: string[];
+    synthesized: { decisions: number; preferences: number; milestones: number };
   }> {
     this.assertInit();
     const start = Date.now();
     const dryRun = opts.dryRun ?? false;
+    const maxItems = opts.maxItems ?? 500;
+    const source = opts.source ?? "auto";
 
-    let payload: unknown = opts.data;
-    if (payload === undefined && opts.file) {
-      payload = await readFile(opts.file, "utf8");
+    let parsed;
+    if (opts.dir) {
+      if (source !== "chatgpt" && source !== "claude" && source !== "slack") {
+        throw new Error(
+          'importExternal with `dir` requires `source` to be "chatgpt", "claude", or "slack".',
+        );
+      }
+      parsed = await parseExportDirectory(opts.dir, source, maxItems);
+    } else {
+      let payload: unknown = opts.data;
+      if (payload === undefined && opts.file) {
+        payload = await readFile(opts.file, "utf8");
+      }
+      if (payload === undefined) {
+        throw new Error("importExternal requires `file`, `data`, or `dir`.");
+      }
+      parsed = parseExternalMemoryExport(payload, source, maxItems);
     }
-    if (payload === undefined) {
-      throw new Error("importExternal requires `file` or `data`.");
-    }
-
-    const parsed = parseExternalMemoryExport(
-      payload,
-      opts.source ?? "auto",
-      opts.maxItems ?? 500,
-    );
 
     const sampleIds: string[] = [];
     let imported = 0;
+    const storedNodes: Array<{ id: string; content: string }> = [];
     if (!dryRun) {
       for (const item of parsed.items) {
         try {
@@ -1130,11 +1159,65 @@ export class MemOS {
             tags: ["imported", parsed.detected, ...(opts.tags ?? [])],
             ...(opts.namespace ? { namespace: opts.namespace } : {}),
             ...(item.createdAt ? { validFrom: item.createdAt } : {}),
+            metadata: {
+              importSource: parsed.detected,
+              ...(item.author ? { importAuthor: item.author } : {}),
+              ...(item.channel ? { importChannel: item.channel } : {}),
+              ...(item.conversation
+                ? { importConversation: item.conversation }
+                : {}),
+            },
           });
           imported += 1;
+          storedNodes.push({ id: stored.node.id, content: item.content });
           if (sampleIds.length < 5) sampleIds.push(stored.node.id);
         } catch {
           // Retain-filter or other soft failure — count as skipped.
+        }
+      }
+    }
+
+    // Post-import synthesis: rule-based extraction of decisions,
+    // preferences, and milestones (no LLM). Runs on the imported items
+    // (or the parsed items in dry-run, without storing).
+    const synthesized = { decisions: 0, preferences: 0, milestones: 0 };
+    if (opts.synthesize) {
+      const insights = synthesizeImportInsights(
+        (dryRun ? parsed.items : storedNodes).map((item, i) => ({
+          content: item.content,
+          index: i,
+        })),
+      );
+      for (const insight of insights) {
+        synthesized[
+          insight.kind === "decision"
+            ? "decisions"
+            : insight.kind === "preference"
+              ? "preferences"
+              : "milestones"
+        ] += 1;
+        if (!dryRun) {
+          try {
+            await this.store(insight.text, {
+              source: "external_data",
+              type: insight.kind === "preference" ? "preference" : "fact",
+              tags: [
+                "synthesized",
+                "imported",
+                parsed.detected,
+                insight.kind,
+                ...(opts.tags ?? []),
+              ],
+              ...(opts.namespace ? { namespace: opts.namespace } : {}),
+              metadata: {
+                importSource: parsed.detected,
+                synthesized: true,
+                synthesizedKind: insight.kind,
+              },
+            });
+          } catch {
+            // Soft failure — the count above already reflects detection.
+          }
         }
       }
     }
@@ -1147,6 +1230,7 @@ export class MemOS {
       dryRun,
       durationMs: Date.now() - start,
       sampleIds,
+      synthesized,
     };
   }
 

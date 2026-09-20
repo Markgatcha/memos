@@ -1,0 +1,3 @@
+{"type": "human", "message": {"content": "We settled on SQLite for local storage."}}
+{"type": "assistant", "message": {"content": "SQLite is a good fit for local-first."}}
+{"role": "user", "content": "We decided to run benchmarks nightly."}

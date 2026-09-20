@@ -633,6 +633,9 @@ Commands:
   import-external <file>  Import a ChatGPT/Claude memory export
                           (--source auto|chatgpt|claude|generic, --dry-run,
                           --max-items <n>, --namespace <ns>)
+  import                  Import a chat export: --from chatgpt|claude|slack
+                          (--file <path> | --dir <path>, --synthesize,
+                          --dry-run, --max-items <n>, --namespace <ns>)
   learn "<lesson>"        Capture a procedural lesson — behavioral guidance,
                           not a fact (--context <ctx>, --tags a,b)
   lesson <id>             Record lesson outcome: --outcome success|failure
@@ -1031,6 +1034,72 @@ async function main(): Promise<void> {
           console.log(
             `Import from ${result.detected} export ${result.dryRun ? "(dry run)" : "complete"}: ${result.imported} imported, ${result.skipped} skipped of ${result.total} item(s)`,
           );
+        }
+        break;
+      }
+
+      case "import": {
+        const fromIdx = args.indexOf("--from");
+        const from = fromIdx !== -1 ? args[fromIdx + 1] : undefined;
+        if (from !== "chatgpt" && from !== "claude" && from !== "slack") {
+          console.error(
+            "Error: --from is required.\\n  Usage: memos import --from chatgpt|claude|slack (--file <path> | --dir <path>) [--synthesize] [--dry-run] [--max-items <n>] [--namespace <ns>] [--tags a,b]",
+          );
+          process.exit(1);
+        }
+        const fileIdx = args.indexOf("--file");
+        const file = fileIdx !== -1 ? args[fileIdx + 1] : undefined;
+        const dirIdx = args.indexOf("--dir");
+        const dir = dirIdx !== -1 ? args[dirIdx + 1] : undefined;
+        if (!file && !dir) {
+          console.error(
+            "Error: --file or --dir is required.\\n  Usage: memos import --from chatgpt|claude|slack (--file <path> | --dir <path>)",
+          );
+          process.exit(1);
+        }
+        if (from === "slack" && !dir) {
+          console.error(
+            "Error: Slack imports require --dir (the export folder with channels.json).",
+          );
+          process.exit(1);
+        }
+        const maxItemsIdx = args.indexOf("--max-items");
+        const maxItems =
+          maxItemsIdx !== -1 ? parseInt(args[maxItemsIdx + 1], 10) : undefined;
+        const nsIdx = args.indexOf("--namespace");
+        const namespace = nsIdx !== -1 ? args[nsIdx + 1] : undefined;
+        const tagsIdx = args.indexOf("--tags");
+        const importTags =
+          tagsIdx !== -1
+            ? args[tagsIdx + 1]
+                .split(",")
+                .map((t) => t.trim())
+                .filter((t) => t.length > 0)
+            : undefined;
+        const result = await memos.importExternal({
+          source: from,
+          ...(file ? { file } : {}),
+          ...(dir ? { dir } : {}),
+          ...(maxItems !== undefined && !Number.isNaN(maxItems)
+            ? { maxItems }
+            : {}),
+          ...(namespace ? { namespace } : {}),
+          ...(importTags ? { tags: importTags } : {}),
+          dryRun: args.includes("--dry-run"),
+          synthesize: args.includes("--synthesize"),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(
+            `Import from ${result.detected} export${result.dryRun ? " (dry run)" : ""}: ${result.imported} imported, ${result.skipped} skipped of ${result.total} item(s)`,
+          );
+          const s = result.synthesized;
+          if (s.decisions + s.preferences + s.milestones > 0) {
+            console.log(
+              `Synthesized: ${s.decisions} decision(s), ${s.preferences} preference(s), ${s.milestones} milestone(s)`,
+            );
+          }
         }
         break;
       }

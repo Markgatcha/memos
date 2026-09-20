@@ -167,3 +167,16 @@ export {
   LESSON_SUCCESS_STEP,
   type RankedProceduralLesson,
 } from "./procedural.js";
+export {
+  contentHash,
+  parseExportDirectory,
+  parseExternalMemoryExport,
+  parseSlackExportDirectory,
+  synthesizeImportInsights,
+  type DetectedExportSource,
+  type ExternalImportSource,
+  type ExternalMemoryItem,
+  type ParsedExternalExport,
+  type SynthesizedInsight,
+  type SynthesizedKind,
+} from "./external-import.js";
