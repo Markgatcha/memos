@@ -103,8 +103,11 @@ function WritePathDiagram() {
       </text>
       <VArrow x={160} y1={172} y2={186} marker="wp-arr" />
       <DBox x={16} y={190} w={288} lines={["irreversible write"]} tone="amber" />
-      <DNote x={16} y={268} fill="#fcd34d">
-        {"every UPDATE bets you'll never need the old version"}
+      <DNote x={16} y={262} fill="#fcd34d">
+        {"every UPDATE bets you'll"}
+      </DNote>
+      <DNote x={16} y={278} fill="#fcd34d">
+        {"never need the old version"}
       </DNote>
 
       <DCaption x={336} y={22}>
@@ -176,12 +179,12 @@ function VersionTimeline() {
       <line x1={108} y1={154} x2={264} y2={122} stroke="#f87171" strokeWidth={2} />
       <HArrow x1={280} x2={296} y={140} marker="vt-arr" />
       <DBox x={300} y={112} w={180} lines={["Alice @ Globex"]} />
-      <DNote x={96} y={196} fill="#f87171">
+      <DNote x={96} y={190} fill="#f87171">
         {"✕ overwritten — “where did Alice work in March?” is unanswerable"}
       </DNote>
 
       <DCaption x={16} y={236}>
-        {"add-only · invalidate, don't delete"}
+        {"add-only · invalidate"}
       </DCaption>
       <DBox x={96} y={246} w={220} lines={["v1 · Alice @ Acme"]} />
       <rect
@@ -222,7 +225,7 @@ function VersionTimeline() {
         {"t_valid  jun → now"}
       </text>
       <path
-        d="M 440 240 C 400 206, 262 206, 222 240"
+        d="M 440 236 C 400 198, 262 198, 222 236"
         fill="none"
         stroke="#a1a1aa"
         strokeWidth={1.5}
@@ -231,7 +234,7 @@ function VersionTimeline() {
       />
       <text
         x={331}
-        y={231}
+        y={234}
         textAnchor="middle"
         fill="#a1a1aa"
         fontSize={11}
