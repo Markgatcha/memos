@@ -36,6 +36,29 @@ export {
   type RevertScopeInput,
   type ParsedRevertArgs,
 } from "./revert.js";
+export {
+  parseTemporal,
+  parseDuration,
+  addDuration,
+  type ParsedTemporal,
+  type TemporalDuration,
+  type TemporalGrain,
+} from "./temporal.js";
+export {
+  detectEvent,
+  detectEventUpdate,
+  extractEventKind,
+  splitRemindText,
+  isScheduledEventNode,
+  listReminders,
+  type DetectedEvent,
+  type EventMetadata,
+  type EventStatus,
+  type EventUpdate,
+  type ReminderEntry,
+  type ListRemindersOptions,
+  type ReminderSource,
+} from "./event-memory.js";
 export { GraphEngine, textSimilarity, generateId } from "./graph.js";
 export {
   // Fidelity-level compaction (L0–L3): cheap representations of every

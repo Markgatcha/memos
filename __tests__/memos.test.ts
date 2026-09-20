@@ -140,6 +140,7 @@ describe("MemOS MCP adapter", () => {
       "memos_usage",
       "memos_history",
       "memos_revert",
+      "memos_reminders",
     ]);
   });
 });

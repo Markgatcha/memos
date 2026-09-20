@@ -31,6 +31,8 @@ import { MemOS } from "./memory.js";
 import { graphToMermaid } from "./graph-mermaid.js";
 import { parseScopeArg } from "./scope.js";
 import { parseRevertCliArgs } from "./revert.js";
+import { listReminders, splitRemindText } from "./event-memory.js";
+import { parseTemporal } from "./temporal.js";
 import type { MemoryPool } from "./types.js";
 import type { CreateMemoryInput, ExportFormat } from "./types.js";
 import type { ChildProcess } from "node:child_process";
@@ -662,6 +664,12 @@ Commands:
                           (--last | --id <id> | --about <topic> |
                           "<natural language>"; --dry-run, --reason <r>,
                           --actor <a>)
+  reminders               List scheduled event reminders, earliest first
+                          (--due: only reminders due as of now;
+                          --namespace <ns>, --json)
+  remind "<text>" at <when>
+                          Store a reminder firing at <when>
+                          (e.g. memos remind "call mom" at tomorrow 9am)
   digest                  Run consolidation now and print a summary
   consolidate             Offline maintenance pass: merge duplicates, archive
                           stale memories, supersede decayed ones (kept as
@@ -1558,6 +1566,97 @@ async function main(): Promise<void> {
         } catch (err) {
           console.error(`Error: ${(err as Error).message}`);
           process.exit(1);
+        }
+        break;
+      }
+
+      case "reminders": {
+        const dueOnly = args.includes("--due");
+        const nsIdx = args.indexOf("--namespace");
+        const namespace =
+          nsIdx !== -1 && args[nsIdx + 1] && !args[nsIdx + 1]!.startsWith("--")
+            ? args[nsIdx + 1]
+            : undefined;
+        const reminders = await listReminders(memos, {
+          now: new Date(),
+          dueOnly,
+          ...(namespace !== undefined ? { namespace } : {}),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(reminders, null, 2));
+        } else if (reminders.length === 0) {
+          console.log(
+            dueOnly ? "No reminders due." : "No scheduled reminders.",
+          );
+        } else {
+          for (const r of reminders) {
+            const when = new Date(r.reminderAt).toLocaleString();
+            console.log(
+              `• ${when} — ${r.label}${r.due && !dueOnly ? " (due)" : ""}`,
+            );
+            console.log(`  ${r.content.slice(0, 100)}`);
+          }
+        }
+        break;
+      }
+
+      case "remind": {
+        // Strip global flags before parsing the "<text> at <when>" shape.
+        const remindArgs: string[] = [];
+        const remindRaw = args.slice(1);
+        let remindNamespace: string | undefined;
+        for (let i = 0; i < remindRaw.length; i++) {
+          const a = remindRaw[i]!;
+          if (a === "--json") continue;
+          if (a === "--db" || a === "--key") {
+            i++;
+            continue;
+          }
+          if (a === "--namespace") {
+            remindNamespace = remindRaw[i + 1];
+            i++;
+            continue;
+          }
+          remindArgs.push(a);
+        }
+        const input = remindArgs.join(" ");
+        const split = splitRemindText(input);
+        if (!split) {
+          console.error(
+            'Error: could not find a temporal expression.\n  Usage: memos remind "<text>" at <when>\n  Example: memos remind "call mom" at tomorrow 9am',
+          );
+          process.exit(1);
+        }
+        const parsed = parseTemporal(split.temporal, new Date());
+        if (!parsed) {
+          console.error(
+            `Error: could not parse a time from "${split.temporal}".`,
+          );
+          process.exit(1);
+        }
+        const at = parsed.at.toISOString();
+        const result = await memos.store(split.text, {
+          ...(remindNamespace !== undefined
+            ? { namespace: remindNamespace }
+            : {}),
+          metadata: {
+            event: {
+              kind: "reminder",
+              label: split.text,
+              at,
+              grain: parsed.grain,
+              status: "scheduled",
+              reminder_at: at,
+            },
+          },
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(result.node, null, 2));
+        } else {
+          console.log(
+            `Reminder set: "${split.text}" at ${parsed.at.toLocaleString()}`,
+          );
+          console.log(`  Memory: ${result.node.id}`);
         }
         break;
       }

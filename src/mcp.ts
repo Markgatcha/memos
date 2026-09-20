@@ -16,6 +16,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 import { MemOS } from "./memory.js";
+import { listReminders } from "./event-memory.js";
 import { graphToMermaid } from "./graph-mermaid.js";
 import type { MemOSConfig, ScoredMemory } from "./types.js";
 import { getSdkVersion } from "./version.js";
@@ -975,6 +976,55 @@ function registerTools(server: McpServer, memos: MemOS): void {
       }
     },
   );
+
+  server.registerTool(
+    "memos_reminders",
+    {
+      title: "List Event Reminders",
+      description:
+        "List scheduled event reminders from memory (deterministic " +
+        "temporal event memory — no LLM involved). Events are extracted " +
+        'at store() time from utterances like "I have a meeting tomorrow", ' +
+        'and natural-language updates ("that meeting got moved 3 days ' +
+        'later", "the meeting is cancelled") reschedule or cancel them ' +
+        "across harnesses sharing the same DB file. " +
+        "HARNESS POLLING PATTERN: call this on the harness's own schedule " +
+        "(e.g. each turn); MemOS surfaces due reminders but does NOT " +
+        "push-notify — delivery is the harness's job.",
+      inputSchema: z.object({
+        due: z
+          .boolean()
+          .optional()
+          .describe(
+            "When true, only reminders due as of now (reminder_at <= now). " +
+              "Default false: all scheduled reminders, earliest first.",
+          ),
+        namespace: z.string().optional().describe("Namespace (default)."),
+      }),
+      outputSchema: z.object({ reminders: z.unknown() }),
+    },
+    async ({ due, namespace }) => {
+      const reminders = await listReminders(memos, {
+        now: new Date(),
+        dueOnly: due ?? false,
+        ...(namespace !== undefined ? { namespace } : {}),
+      });
+      const lines = reminders.map(
+        (r) =>
+          `${new Date(r.reminderAt).toLocaleString()} — ${r.label}` +
+          (r.due ? " (due)" : ""),
+      );
+      const text =
+        reminders.length === 0
+          ? "No scheduled reminders."
+          : `${reminders.length} scheduled reminder(s):\n` +
+            lines.map((l) => `• ${l}`).join("\n");
+      return {
+        content: [{ type: "text" as const, text }],
+        structuredContent: { reminders },
+      };
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1461,6 +1511,23 @@ const TOOL_METADATA: McpToolInfo[] = [
       string,
       unknown
     >,
+  },
+  {
+    name: "memos_reminders",
+    description:
+      "List scheduled event reminders (deterministic temporal event memory). " +
+      "Pass due=true for reminders due as of now; otherwise all scheduled " +
+      "reminders, earliest first. Poll on the harness's own schedule — " +
+      "MemOS surfaces due reminders but does not push-notify.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        due: z.boolean().optional(),
+        namespace: z.string().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({ reminders: z.unknown() }),
+    ) as Record<string, unknown>,
   },
 ];
 

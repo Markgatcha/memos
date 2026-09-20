@@ -294,6 +294,13 @@ export interface CreateMemoryInput {
    * node every time (use dedupe()/consolidate() for explicit merging).
    */
   evidenceLearning?: boolean;
+  /**
+   * Reference time (Unix ms) for this write. Overrides `Date.now()` as
+   * the write timestamp AND as the reference time for deterministic
+   * temporal parsing (event extraction / update resolution). Primarily
+   * a testing hook — omit in production so the wall clock is used.
+   */
+  now?: number;
 }
 
 /**

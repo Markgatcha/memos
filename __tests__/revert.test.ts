@@ -227,7 +227,7 @@ describe("resolveRevertTarget", () => {
   it("resolves a named entity to the most recent match and lists alternatives", async () => {
     await withMemos(async (memos) => {
       const older = await memos.store("my dentist appointment is tuesday");
-      const newer = await memos.store("my dentist appointment moved to friday");
+      const newer = await memos.store("my dentist appointment is on friday");
       await memos.store("unrelated note about gardening");
       const { target, alternatives } = await memos.resolveRevertTarget(
         "revert what I said about the dentist",
@@ -431,6 +431,6 @@ describe("memos_revert MCP tool", () => {
     const revert = tools.find((t) => t.name === "memos_revert");
     expect(revert).toBeDefined();
     expect(revert!.description).toMatch(/dryRun/i);
-    expect(tools).toHaveLength(18);
+    expect(tools).toHaveLength(19);
   });
 });

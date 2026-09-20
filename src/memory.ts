@@ -147,6 +147,14 @@ import {
 import type { ContradictionRecord } from "./types.js";
 import { detectRevertIntent } from "./revert.js";
 import {
+  detectEvent,
+  detectEventUpdate,
+  isScheduledEventNode,
+  type EventMetadata,
+  type EventUpdate,
+} from "./event-memory.js";
+import { addDuration } from "./temporal.js";
+import {
   QUARANTINE_RELEASED_METADATA_KEY,
   isProvenanceTier,
   quarantineVisible,
@@ -577,6 +585,19 @@ export class MemOS {
     content: string,
     opts: Omit<CreateMemoryInput, "content"> = {},
   ): Promise<{ node: MemoryNode; links: MemoryEdge[] }> {
+    return this.storeInner(content, opts, false);
+  }
+
+  /**
+   * Inner write path. `skipEventUpdate` is true only for the event-update
+   * machinery below (prevents the replacement write from re-triggering
+   * update detection on its own text — infinite recursion otherwise).
+   */
+  private async storeInner(
+    content: string,
+    opts: Omit<CreateMemoryInput, "content">,
+    skipEventUpdate: boolean,
+  ): Promise<{ node: MemoryNode; links: MemoryEdge[] }> {
     this.assertInit();
 
     // Hermes-style retain pre-filter (v1.6.26). When `filterRetain` is set,
@@ -592,7 +613,9 @@ export class MemOS {
 
     // Strictly monotonic per instance: two stores in the same millisecond
     // would otherwise be indistinguishable in every time-ordered view.
-    let now = Date.now();
+    // `opts.now` (test hook) overrides the wall clock — it is also the
+    // reference time for deterministic temporal parsing below.
+    let now = opts.now ?? Date.now();
     if (now <= this.lastStoreTime) now = this.lastStoreTime + 1;
     this.lastStoreTime = now;
     // Namespaces are always on now (promoted from experimental). Explicit
@@ -601,6 +624,25 @@ export class MemOS {
     const namespace = opts.scope
       ? composeScope(opts.scope)
       : (opts.namespace ?? "default");
+
+    // Deterministic temporal event updates ("never mind that meeting got
+    // moved 3 days later", "the meeting is cancelled"): resolve BEFORE
+    // the normal write. When an update/cancel resolves to an open event,
+    // the replacement is written and the old version superseded via the
+    // bitemporal mechanism; the resolved write is returned directly.
+    // Fail-safe: unresolvable updates fall through to a normal write.
+    // Skipped when the caller manages the event lifecycle directly
+    // (`opts.metadata.event` preset, e.g. `memos remind`) or on the
+    // replacement write itself (`skipEventUpdate`).
+    if (!skipEventUpdate && opts.metadata?.event === undefined) {
+      const handled = await this.applyEventUpdate(
+        content,
+        new Date(now),
+        namespace,
+        opts,
+      );
+      if (handled) return handled;
+    }
     const source: MemorySource = opts.source ?? "user_input";
     const type = opts.type ?? "fact";
     const tags = opts.tags ?? [];
@@ -648,6 +690,18 @@ export class MemOS {
           this.config.entityAliases,
         );
       }
+    }
+
+    // Deterministic temporal event extraction: an event noun co-occurring
+    // with a temporal expression becomes structured `metadata.event`
+    // (feeds `listReminders` / `memos_reminders`). Additive — plain
+    // memories are untouched. An explicit `opts.metadata.event` always
+    // wins (e.g. `memos remind`, or the update machinery's replacement
+    // write). Year-less dates and recurring references are stored with
+    // `status: "recurring"` and never produce reminders.
+    if (metadata.event === undefined) {
+      const detected = detectEvent(content, new Date(now));
+      if (detected) metadata.event = detected;
     }
 
     // Contextual enrichment (contextual retrieval): an explicit
@@ -794,6 +848,137 @@ export class MemOS {
     }
 
     return { node, links };
+  }
+
+  /**
+   * Resolve a natural-language event update/cancel against the store.
+   *
+   * Cross-harness rule: the target is resolved from the CURRENT rows in
+   * the shared DB file (same deterministic rules in every harness), so
+   * model B can update an event stored by model A with no shared
+   * conversation state.
+   *
+   * Deterministic tiebreaks:
+   * - kind named ("that meeting") → newest open event whose kind matches
+   *   `metadata.event.kind`, or whose label contains the kind;
+   *   createdAt desc, id asc.
+   * - kind unnamed ("it got moved") → the single open event if exactly
+   *   one exists; zero or ambiguous → null (fail safe, never guess).
+   *
+   * @returns The resolved replacement write, or null when nothing
+   *   resolves (the caller falls through to a normal write).
+   */
+  private async applyEventUpdate(
+    content: string,
+    now: Date,
+    namespace: string,
+    opts: Omit<CreateMemoryInput, "content">,
+  ): Promise<{ node: MemoryNode; links: MemoryEdge[] } | null> {
+    const update: EventUpdate | null = detectEventUpdate(content, now);
+    if (!update) return null;
+    const target = await this.resolveOpenEventTarget(update.kind, namespace);
+    if (!target) return null;
+    const oldEvent = target.metadata.event as EventMetadata;
+    const oldAt = new Date(oldEvent.at);
+    if (Number.isNaN(oldAt.getTime())) return null;
+
+    const eventBase = {
+      kind: oldEvent.kind,
+      label: oldEvent.label,
+      grain: oldEvent.grain,
+    };
+
+    if (update.intent === "cancel") {
+      // Cancellation: supersede the old version and record a cancelled
+      // event node carrying the same label/at (audit trail, add-only).
+      const cancelled: EventMetadata = {
+        ...eventBase,
+        at: oldEvent.at,
+        status: "cancelled",
+        reminder_at: oldEvent.reminder_at,
+      };
+      const created = await this.storeInner(
+        content,
+        {
+          ...opts,
+          now: now.getTime(),
+          metadata: { ...(opts.metadata ?? {}), event: cancelled },
+        },
+        true,
+      );
+      await this.supersede(target.id, created.node.id);
+      return created;
+    }
+
+    // Update: "moved 3 days later" anchors the duration to the EVENT's
+    // datetime (not now); "moved to Friday" parses absolute-ish vs now.
+    let newAt: Date;
+    let grain = oldEvent.grain;
+    if (update.duration) {
+      newAt = addDuration(oldAt, update.duration);
+    } else if (update.newTime) {
+      newAt = new Date(update.newTime.at);
+      grain = update.newTime.grain;
+    } else {
+      return null; // Unreachable: detectEventUpdate guarantees one.
+    }
+    const at = newAt.toISOString();
+    const rescheduled: EventMetadata = {
+      ...eventBase,
+      at,
+      grain,
+      status: "scheduled",
+      reminder_at: at,
+    };
+    const created = await this.storeInner(
+      content,
+      {
+        ...opts,
+        now: now.getTime(),
+        metadata: { ...(opts.metadata ?? {}), event: rescheduled },
+      },
+      true,
+    );
+    await this.supersede(target.id, created.node.id);
+    return created;
+  }
+
+  /**
+   * Find the currently-open scheduled event an update/cancel refers to.
+   * See `applyEventUpdate` for the deterministic tiebreak rules.
+   */
+  private async resolveOpenEventTarget(
+    kind: string | undefined,
+    namespace: string,
+  ): Promise<MemoryNode | null> {
+    // Structured scan: default filters already exclude historical
+    // (valid_to) and quarantined rows; the explicit validTo check below
+    // keeps only strictly-current intervals.
+    const rows = await this.storage.queryNodes({ namespace, limit: 10_000 });
+    const open = rows
+      .map((r) => r.node)
+      .filter((n) => n.validTo === null && isScheduledEventNode(n))
+      // Newest first; id asc as the final deterministic tiebreak.
+      .sort(
+        (a, b) =>
+          b.createdAt - a.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
+    if (kind !== undefined) {
+      const k = kind.toLowerCase();
+      return (
+        open.find((n) => {
+          const event = n.metadata.event as EventMetadata;
+          return (
+            event.kind === k ||
+            (typeof event.label === "string" &&
+              event.label.toLowerCase().includes(k))
+          );
+        }) ?? null
+      );
+    }
+    // No kind named: only resolve when exactly one open event exists —
+    // with several, guessing would be wrong; fail safe instead.
+    return open.length === 1 ? (open[0] ?? null) : null;
   }
 
   /**
