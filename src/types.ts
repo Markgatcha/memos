@@ -300,8 +300,24 @@ export interface MemoryEdge {
   weight: number;
   /** Arbitrary metadata bag. */
   metadata: Record<string, unknown>;
-  /** Creation timestamp (Unix ms). */
+  /**
+   * Transaction/ingest time (Unix ms): when MemOS learned the fact.
+   * This is the bitemporal transaction-time axis — it is never renamed
+   * or repurposed; event-time validity lives in `validFrom`/`validTo`.
+   */
   createdAt: number;
+  /**
+   * Event-time validity start (Unix ms): when the fact became true in the
+   * world. `null`/undefined = open-ended (still true, or unknown).
+   */
+  validFrom?: number | null;
+  /**
+   * Event-time validity end (Unix ms): when the fact ceased to be true.
+   * `null`/undefined = open-ended (still true). Supersession stamps this
+   * instead of deleting the row, preserving add-only history for as-of
+   * (time-travel) reads.
+   */
+  validTo?: number | null;
 }
 
 /**
@@ -313,6 +329,16 @@ export interface CreateEdgeInput {
   relation?: EdgeRelation;
   weight?: number;
   metadata?: Record<string, unknown>;
+  /**
+   * Event-time validity start (Unix ms): when the fact became true in the
+   * world. `null`/undefined = open-ended.
+   */
+  validFrom?: number | null;
+  /**
+   * Event-time validity end (Unix ms): when the fact ceased to be true.
+   * `null`/undefined = open-ended.
+   */
+  validTo?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -751,6 +777,14 @@ export interface StorageAdapter {
   /** Delete an edge by ID. */
   deleteEdge(id: string): Promise<boolean>;
 
+  /**
+   * Close (invalidate) the currently-valid edges incident to a node by
+   * stamping `valid_to = validTo`. Rows are updated, never deleted, so
+   * as-of reads at earlier timestamps still return them.
+   * Returns the number of edges closed.
+   */
+  closeEdgesForNode?(nodeId: string, validTo: number): Promise<number>;
+
   /** Query nodes with filters. */
   queryNodes(filter: SearchFilter): Promise<ScoredMemory[]>;
 
@@ -800,6 +834,12 @@ export interface StorageAdapter {
     sourceId?: string;
     targetId?: string;
     relation?: EdgeRelation;
+    /**
+     * Bitemporal as-of read: when provided, only edges whose event-time
+     * validity interval covers this Unix-ms timestamp are returned
+     * (NULL bounds are open-ended). Default returns all edges.
+     */
+    validAt?: number;
   }): Promise<MemoryEdge[]>;
 
   /** Return the full graph (nodes + edges). */

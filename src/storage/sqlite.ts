@@ -340,6 +340,9 @@ export class SQLiteStorage implements StorageAdapter {
         relation    TEXT NOT NULL DEFAULT 'relates_to',
         weight      REAL NOT NULL DEFAULT 0.5,
         metadata    TEXT NOT NULL DEFAULT '{}',
+        -- Bitemporal transaction time: when MemOS learned the fact.
+        -- Never renamed/repurposed; event-time validity lives in
+        -- valid_from / valid_to (added by migration below).
         created_at  INTEGER NOT NULL,
         UNIQUE(source_id, target_id, relation)
       );
@@ -388,6 +391,20 @@ export class SQLiteStorage implements StorageAdapter {
     // Migration: multi-granularity retrieval pool (event | note | procedure).
     // Every pre-pool memory reads as "event", matching the legacy semantics.
     this.migrateAddColumn("nodes", "pool", "TEXT NOT NULL DEFAULT 'event'");
+
+    // Migration: bitemporal event-time validity on edges. `created_at`
+    // remains the transaction/ingest time — it is NOT renamed; it is the
+    // transaction-time axis of the bitemporal pair.
+    this.migrateAddColumn("edges", "valid_from", "INTEGER DEFAULT NULL");
+    this.migrateAddColumn("edges", "valid_to", "INTEGER DEFAULT NULL");
+
+    // Index for edge validity-interval queries (as-of / time-travel reads).
+    // Created here rather than in the schema block above because the
+    // columns only exist after the migrations run on pre-existing DBs.
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_edges_valid_from ON edges(valid_from);
+      CREATE INDEX IF NOT EXISTS idx_edges_valid_to ON edges(valid_to);
+    `);
 
     // Index for TTL sweep
     this.db.exec(`
@@ -755,8 +772,8 @@ export class SQLiteStorage implements StorageAdapter {
   async saveEdge(edge: MemoryEdge): Promise<MemoryEdge> {
     const stmt = this.getPreparedStatement(
       "saveEdge",
-      `INSERT INTO edges (id, source_id, target_id, relation, weight, metadata, created_at)
-       VALUES (@id, @sourceId, @targetId, @relation, @weight, @metadata, @createdAt)`,
+      `INSERT INTO edges (id, source_id, target_id, relation, weight, metadata, created_at, valid_from, valid_to)
+       VALUES (@id, @sourceId, @targetId, @relation, @weight, @metadata, @createdAt, @validFrom, @validTo)`,
     );
 
     stmt.run({
@@ -767,6 +784,8 @@ export class SQLiteStorage implements StorageAdapter {
       weight: edge.weight,
       metadata: JSON.stringify(edge.metadata),
       createdAt: edge.createdAt,
+      validFrom: edge.validFrom ?? null,
+      validTo: edge.validTo ?? null,
     });
 
     return edge;
@@ -781,8 +800,8 @@ export class SQLiteStorage implements StorageAdapter {
     if (edges.length === 0) return [];
     const stmt = this.getPreparedStatement(
       "saveEdge",
-      `INSERT INTO edges (id, source_id, target_id, relation, weight, metadata, created_at)
-       VALUES (@id, @sourceId, @targetId, @relation, @weight, @metadata, @createdAt)`,
+      `INSERT INTO edges (id, source_id, target_id, relation, weight, metadata, created_at, valid_from, valid_to)
+       VALUES (@id, @sourceId, @targetId, @relation, @weight, @metadata, @createdAt, @validFrom, @validTo)`,
     );
     const insert = (edge: MemoryEdge) =>
       stmt.run({
@@ -793,6 +812,8 @@ export class SQLiteStorage implements StorageAdapter {
         weight: edge.weight,
         metadata: JSON.stringify(edge.metadata),
         createdAt: edge.createdAt,
+        validFrom: edge.validFrom ?? null,
+        validTo: edge.validTo ?? null,
       });
     const tx = this.db.transaction(() => {
       for (const edge of edges) insert(edge);
@@ -828,6 +849,22 @@ export class SQLiteStorage implements StorageAdapter {
   async deleteEdge(id: string): Promise<boolean> {
     const result = this.db.prepare("DELETE FROM edges WHERE id = ?").run(id);
     return result.changes > 0;
+  }
+
+  /**
+   * Close (invalidate) the currently-valid edges incident to a node by
+   * stamping `valid_to`. Rows are updated, never deleted — as-of reads at
+   * earlier timestamps still return them. Returns the number of edges closed.
+   */
+  async closeEdgesForNode(nodeId: string, validTo: number): Promise<number> {
+    const result = this.db
+      .prepare(
+        `UPDATE edges SET valid_to = ?
+         WHERE (source_id = ? OR target_id = ?)
+           AND (valid_to IS NULL OR valid_to > ?)`,
+      )
+      .run(validTo, nodeId, nodeId, validTo);
+    return result.changes;
   }
 
   // -----------------------------------------------------------------------
@@ -1308,6 +1345,7 @@ export class SQLiteStorage implements StorageAdapter {
       sourceId?: string;
       targetId?: string;
       relation?: EdgeRelation;
+      validAt?: number;
     } = {},
   ): Promise<MemoryEdge[]> {
     const conditions: string[] = [];
@@ -1325,6 +1363,14 @@ export class SQLiteStorage implements StorageAdapter {
     if (filter.relation) {
       conditions.push("relation = ?");
       params.push(filter.relation);
+    }
+    if (filter.validAt !== undefined) {
+      // Bitemporal as-of read: the event-time validity interval must cover
+      // the timestamp. NULL bounds are open-ended.
+      conditions.push("(valid_from IS NULL OR valid_from <= ?)");
+      params.push(filter.validAt);
+      conditions.push("(valid_to IS NULL OR valid_to > ?)");
+      params.push(filter.validAt);
     }
 
     const where = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
@@ -1462,6 +1508,8 @@ export class SQLiteStorage implements StorageAdapter {
       weight: row.weight as number,
       metadata: JSON.parse((row.metadata as string) || "{}"),
       createdAt: row.created_at as number,
+      validFrom: (row.valid_from as number | null) ?? null,
+      validTo: (row.valid_to as number | null) ?? null,
     };
   }
 

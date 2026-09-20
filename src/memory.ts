@@ -435,6 +435,10 @@ export class MemOS {
         relation: edge.relation,
         weight: edge.weight,
         metadata: edge.metadata,
+        // Bitemporal event-time validity — preserved so the in-memory
+        // mirror answers as-of reads the same way storage does.
+        validFrom: edge.validFrom ?? null,
+        validTo: edge.validTo ?? null,
       });
     }
 
@@ -2498,6 +2502,15 @@ export class MemOS {
       (await this.storage.peekNode?.(id)) ?? (await this.storage.getNode(id));
     if (!current) return null;
     const node = await this.setValidity(id, current.validFrom, now);
+    if (node) {
+      // Read-time invalidation (add-only): close the validity interval of
+      // the superseded node's currently-valid edges instead of deleting
+      // them. As-of reads at earlier timestamps still return them.
+      if (this.storage.closeEdgesForNode) {
+        await this.storage.closeEdgesForNode(id, now);
+      }
+      this.graph.closeEdgesForNode(id, now);
+    }
     if (node && replacementId) {
       const edgeInput = {
         sourceId: id,
@@ -2505,6 +2518,9 @@ export class MemOS {
         relation: "temporal_precedes" as const,
         weight: 1.0,
         metadata: { superseded: true, at: now },
+        // The replacement relationship holds from the supersession moment —
+        // it must not appear in as-of reads of the earlier state.
+        validFrom: now,
       };
       await this.storage.saveEdge({
         ...edgeInput,

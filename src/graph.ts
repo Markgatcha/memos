@@ -181,6 +181,20 @@ function bagOfWords(text: string): Set<string> {
 }
 
 /**
+ * Bitemporal validity predicate: an edge is valid at `timeMs` when its
+ * event-time interval covers it. NULL/undefined bounds are open-ended.
+ * (eqeqeq-safe explicit null checks — the lint config forbids `== null`.)
+ */
+function isEdgeValidAt(edge: MemoryEdge, timeMs: number): boolean {
+  const fromOpen = edge.validFrom === undefined || edge.validFrom === null;
+  const toOpen = edge.validTo === undefined || edge.validTo === null;
+  return (
+    (fromOpen || edge.validFrom! <= timeMs) &&
+    (toOpen || edge.validTo! > timeMs)
+  );
+}
+
+/**
  * Graph engine managing the in-memory representation of the memory graph.
  */
 export class GraphEngine {
@@ -246,7 +260,9 @@ export class GraphEngine {
   /**
    * Add an edge to the graph.
    *
-   * @param input — Edge creation input.
+   * @param input — Edge creation input. `validFrom`/`validTo` define the
+   *   bitemporal event-time validity interval (`createdAt` stays the
+   *   transaction/ingest time); omitted bounds are open-ended.
    * @returns The created edge.
    */
   addEdge(input: CreateEdgeInput): MemoryEdge {
@@ -258,6 +274,8 @@ export class GraphEngine {
       weight: input.weight ?? 0.5,
       metadata: input.metadata ?? {},
       createdAt: Date.now(),
+      validFrom: input.validFrom ?? null,
+      validTo: input.validTo ?? null,
     };
 
     this.edges.set(edge.id, edge);
@@ -450,6 +468,41 @@ export class GraphEngine {
    */
   getAllEdges(): MemoryEdge[] {
     return [...this.edges.values()];
+  }
+
+  /**
+   * Bitemporal as-of read: edges whose event-time validity interval covers
+   * `timeMs`. NULL bounds are open-ended. Superseded edges (whose
+   * `validTo` was stamped by invalidation) are excluded for timestamps
+   * at or after their `validTo`, but returned by as-of reads at earlier
+   * times — nothing is deleted.
+   *
+   * @param timeMs — The as-of timestamp (Unix ms).
+   */
+  edgesValidAt(timeMs: number): MemoryEdge[] {
+    return [...this.edges.values()].filter((edge) =>
+      isEdgeValidAt(edge, timeMs),
+    );
+  }
+
+  /**
+   * Close (invalidate) the currently-valid edges incident to a node by
+   * stamping `validTo`. In-memory edges are mutated in place so the mirror
+   * stays consistent with storage; nothing is deleted (add-only).
+   *
+   * @param nodeId — Node whose incident edges to close.
+   * @param timeMs — The invalidation timestamp (Unix ms), usually `now`.
+   * @returns The edges that were closed.
+   */
+  closeEdgesForNode(nodeId: string, timeMs: number): MemoryEdge[] {
+    const closed: MemoryEdge[] = [];
+    for (const edge of this.getEdgesForNode(nodeId)) {
+      if (isEdgeValidAt(edge, timeMs)) {
+        edge.validTo = timeMs;
+        closed.push(edge);
+      }
+    }
+    return closed;
   }
 
   /**
