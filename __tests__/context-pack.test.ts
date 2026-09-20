@@ -16,6 +16,7 @@ import {
   CONTEXT_PACK_SCHEMA,
   packToToon,
   packToToonCompact,
+  parseToonCompact,
   serializeContextPack,
   type ContextPack,
   type ContextPackItem,
@@ -92,7 +93,7 @@ describe("AI Trio context pack contract", () => {
     expect(pack.items).toHaveLength(1);
   });
 
-  test("items are sorted by descending relevance", () => {
+  test("items use U-shape ordering: best first, 2nd-best pinned last", () => {
     const items = [
       memosToScoredMemory(makeNode("a", 0.1, ["t1"]), 0.1),
       memosToScoredMemory(makeNode("b", 0.9, ["t2"]), 0.9),
@@ -104,7 +105,8 @@ describe("AI Trio context pack contract", () => {
       tokenBudget: 1000,
       items,
     });
-    expect(pack.items.map((i) => i.id)).toEqual(["b", "c", "a"]);
+    // Lost-in-the-middle: first slot is the most-read, last is second-most.
+    expect(pack.items.map((i) => i.id)).toEqual(["b", "a", "c"]);
   });
 
   test("trust and source are preserved on every item", () => {
@@ -391,8 +393,9 @@ describe("Cache-prefix stability (prompt-cache friendly layout)", () => {
     });
     // Byte-identical across JSON, TOON, and compact TOON.
     expect(serializeAll(packA)).toEqual(serializeAll(packB));
-    // And the tiebreak is by node id, not input order.
-    expect(packA.items.map((i) => i.id)).toEqual(["a", "b", "c"]);
+    // And the tiebreak is by node id, not input order; U-shape ordering
+    // pins the 2nd-best (tiebreak-resolved) item last.
+    expect(packA.items.map((i) => i.id)).toEqual(["a", "c", "b"]);
   });
 
   test("scores breakdown uses a fixed key order regardless of leg order", () => {
@@ -426,5 +429,186 @@ describe("Cache-prefix stability (prompt-cache friendly layout)", () => {
     expect([a, b, c].sort(compareScoredMemories).map((s) => s.node.id)).toEqual(
       ["z", "a", "b"],
     );
+  });
+});
+
+describe("U-shape evidence ordering (lost-in-the-middle mitigation)", () => {
+  const baseOpts = {
+    query: "dark mode",
+    namespace: "default",
+    tokenBudget: 10000,
+  };
+
+  /** Distinct-content items with explicit scores, in a given input order. */
+  function scored(order: Array<[string, number]>): ScoredMemory[] {
+    return order.map(([id, score]) =>
+      memosToScoredMemory(
+        makeNode(
+          id,
+          0.7,
+          [`tag-${id}`],
+          `Entirely unique fact content about ${id} number ${id.repeat(6)}`,
+        ),
+        score,
+      ),
+    );
+  }
+
+  test("best first, 2nd-best pinned last, remainder in descending order", () => {
+    const pack = buildContextPack({
+      ...baseOpts,
+      items: scored([
+        ["a", 0.1],
+        ["b", 0.9],
+        ["c", 0.5],
+        ["d", 0.7],
+        ["e", 0.3],
+      ]),
+    });
+    // Descending would be b,d,c,e,a — the 2nd-best (d) moves to the last
+    // slot (the second-most-attended position).
+    expect(pack.items.map((i) => i.id)).toEqual(["b", "c", "e", "a", "d"]);
+    expect(pack.items[0].score).toBe(0.9);
+    expect(pack.items[pack.items.length - 1].score).toBe(0.7);
+  });
+
+  test("ties resolve deterministically across shuffled inputs", () => {
+    const order1 = scored([
+      ["a", 0.5],
+      ["b", 0.5],
+      ["c", 0.5],
+      ["d", 0.2],
+    ]);
+    const order2 = scored([
+      ["d", 0.2],
+      ["c", 0.5],
+      ["a", 0.5],
+      ["b", 0.5],
+    ]);
+    const pack1 = buildContextPack({ ...baseOpts, items: order1 });
+    const pack2 = buildContextPack({ ...baseOpts, items: order2 });
+    // Tied scores break by node id (a,b,c), then the 2nd-best (b) is
+    // pinned last — identical regardless of input order.
+    expect(pack1.items.map((i) => i.id)).toEqual(["a", "c", "d", "b"]);
+    expect(pack2.items.map((i) => i.id)).toEqual(["a", "c", "d", "b"]);
+    // Byte-identical across serializers (cache-prefix contract).
+    expect(packToToon(pack1)).toBe(packToToon(pack2));
+    expect(packToToonCompact(pack1)).toBe(packToToonCompact(pack2));
+    expect(JSON.stringify(pack1)).toBe(JSON.stringify(pack2));
+  });
+
+  test("repeated builds of the same pack are byte-identical", () => {
+    const make = () =>
+      buildContextPack({
+        ...baseOpts,
+        items: scored([
+          ["z", 0.4],
+          ["m", 0.8],
+          ["q", 0.6],
+          ["k", 0.95],
+        ]),
+      });
+    const pack1 = make();
+    const pack2 = make();
+    expect(pack1.items.map((i) => i.id)).toEqual(["k", "q", "z", "m"]);
+    expect(packToToon(pack1)).toBe(packToToon(pack2));
+    expect(packToToonCompact(pack1)).toBe(packToToonCompact(pack2));
+    expect(JSON.stringify(pack1)).toBe(JSON.stringify(pack2));
+  });
+
+  test("0-2 items keep plain descending order", () => {
+    const two = buildContextPack({
+      ...baseOpts,
+      items: scored([
+        ["b", 0.9],
+        ["a", 0.1],
+      ]),
+    });
+    expect(two.items.map((i) => i.id)).toEqual(["b", "a"]);
+    const one = buildContextPack({
+      ...baseOpts,
+      items: scored([["a", 0.5]]),
+    });
+    expect(one.items.map((i) => i.id)).toEqual(["a"]);
+    const none = buildContextPack({ ...baseOpts, items: [] });
+    expect(none.items).toHaveLength(0);
+  });
+
+  test("reordering does not change token accounting", () => {
+    const pack = buildContextPack({
+      ...baseOpts,
+      items: scored([
+        ["a", 0.1],
+        ["b", 0.9],
+        ["c", 0.5],
+      ]),
+    });
+    // Same multiset of items, same token budget fields — only the order
+    // changed, and order is free.
+    expect(pack.tokenBudget).toBe(baseOpts.tokenBudget);
+    expect(new Set(pack.items.map((i) => i.id)).size).toBe(3);
+  });
+});
+
+describe("Query-before-and-after evidence (TOON)", () => {
+  const baseOpts = {
+    query: "dark mode",
+    namespace: "default",
+    tokenBudget: 10000,
+  };
+
+  function scored(ids: string[]): ScoredMemory[] {
+    return ids.map((id, i) =>
+      memosToScoredMemory(
+        makeNode(
+          id,
+          0.7,
+          [`tag-${id}`],
+          `Entirely unique fact content about ${id} number ${id.repeat(6)}`,
+        ),
+        0.9 - i * 0.1,
+      ),
+    );
+  }
+
+  test("packToToon repeats the query in the header and trailer", () => {
+    const pack = buildContextPack({ ...baseOpts, items: scored(["a", "b"]) });
+    const toon = packToToon(pack);
+    // Header (before evidence).
+    expect(toon).toContain(`# toon:pipe-delimited|q=${baseOpts.query}|`);
+    // Trailer (after evidence): the last line.
+    const lines = toon.split("\n");
+    expect(lines[lines.length - 1]).toBe(`# q=${baseOpts.query}`);
+  });
+
+  test("packToToonCompact repeats the query in the envelope and trailer", () => {
+    const pack = buildContextPack({ ...baseOpts, items: scored(["a", "b"]) });
+    const toon = packToToonCompact(pack);
+    expect(toon).toContain(`|q=${baseOpts.query}|`);
+    const lines = toon.split("\n");
+    expect(lines[lines.length - 1]).toBe(`# q=${baseOpts.query}`);
+  });
+
+  test("parseToonCompact tolerates the trailer (round-trip)", () => {
+    const pack = buildContextPack({
+      ...baseOpts,
+      items: scored(["a", "b", "c"]),
+    });
+    const parsed = parseToonCompact(packToToonCompact(pack));
+    // Trailer line ignored — one item per evidence row.
+    expect(parsed).toHaveLength(pack.items.length);
+    // Order preserved (U-shaped), contents intact.
+    expect(parsed.map((i) => i.id)).toEqual(pack.items.map((i) => i.id));
+    expect(parsed[0].content).toBe(pack.items[0].content);
+  });
+
+  test("trailer is emitted even for empty packs (fixed layout)", () => {
+    const pack = buildContextPack({ ...baseOpts, items: [] });
+    expect(packToToon(pack).split("\n").pop()).toBe(`# q=${baseOpts.query}`);
+    expect(packToToonCompact(pack).split("\n").pop()).toBe(
+      `# q=${baseOpts.query}`,
+    );
+    // Empty compact pack still parses to zero items.
+    expect(parseToonCompact(packToToonCompact(pack))).toHaveLength(0);
   });
 });

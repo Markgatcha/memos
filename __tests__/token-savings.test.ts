@@ -260,6 +260,7 @@ describe("buildContextPack token savings", () => {
       embeddings,
       includeSummary: false,
     });
-    expect(pack.items.map((i) => i.id)).toEqual(["n1", "n2", "n3"]);
+    // U-shape ordering: best first (n1), 2nd-best (n2) pinned last.
+    expect(pack.items.map((i) => i.id)).toEqual(["n1", "n3", "n2"]);
   });
 });

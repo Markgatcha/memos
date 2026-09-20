@@ -220,14 +220,20 @@ const DEFAULT_DEDUP_THRESHOLD = 0.85;
  * LLM providers discount cached input tokens (up to ~90%) only when the
  * prompt prefix is byte-identical across calls. Everything this module
  * emits is built to be byte-stable for identical inputs:
- *   - items are ordered by descending score with the node id as the final
- *     tiebreak, so equal scores can never surface input-order noise;
+ *   - evidence items are U-shape ordered (lost-in-the-middle mitigation):
+ *     the highest-scoring item comes FIRST, the second-best item is pinned
+ *     LAST (the two most-attended positions), and the rest follow in
+ *     descending score order. Deterministic: it reuses the score-desc /
+ *     node-id-tiebreak sort below, so equal scores can never surface
+ *     input-order noise;
  *   - the `scores` breakdown is re-emitted in a fixed key order
  *     (keyword, semantic, entity, hybrid) no matter which retrieval legs
  *     produced it — fusion builds that object in leg-dependent order;
  *   - serializers use a fixed section/field order and always emit every
  *     section (empty packs still emit their headers), so a missing section
- *     can never shift the bytes of a later one.
+ *     can never shift the bytes of a later one. TOON serializers append one
+ *     fixed trailer line (`# q=<query>`) after the last evidence row so a
+ *     reader scanning bottom-up re-anchors on the query.
  *
  * Rule of thumb for future edits: compress *contents* all you want, but
  * never reorder *layout* — layout churn breaks cache prefixes and raises
@@ -442,12 +448,26 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     if (vector) outputVectors.push({ id: item.id, vector });
   }
 
+  // U-shape evidence ordering (lost-in-the-middle mitigation).
+  //
+  // Reader attention over long contexts is U-shaped: strongest at the
+  // start and end, weakest in the middle (Liu et al. 2023). The most
+  // useful position is first, the second-most is last — never a dumping
+  // ground. `output` is a subsequence of `sorted` above (dedup and the
+  // budget pass only ever REMOVE items), so it is still in score-desc /
+  // node-id-tiebreak order: the first two entries are exactly best and
+  // 2nd-best, no re-sort needed. With 0-2 items plain descending order
+  // already satisfies best-first/2nd-last, so the list is left untouched.
+  // Token counts are unaffected: this only permutes the final list.
+  const ordered =
+    output.length >= 3 ? [output[0], ...output.slice(2), output[1]] : output;
+
   return {
     schema: CONTEXT_PACK_SCHEMA,
     query,
     namespace,
     tokenBudget,
-    items: output,
+    items: ordered,
     tokensSaved,
   };
 }
@@ -465,6 +485,11 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
  *   # fields: id|score|trust|source|updatedAt|tags|content
  *   mem_abc123|0.95|local|user_input|2026-06-18T12:00:00Z|user;preference|User likes dark mode
  *   mem_def456|0.87|local|user_input|2026-06-18T11:30:00Z|work|User works at Google
+ *   # q=<query>
+ *
+ * The trailer line repeats the query AFTER the evidence block (the header
+ * already states it BEFORE) — a reader scanning bottom-up re-anchors on
+ * the query. It is a `#` comment line, so line-based consumers skip it.
  *
  * Token savings vs JSON: 60-90% on typical context packs (where JSON
  * overhead like braces, quotes, and field names dominate).
@@ -488,6 +513,9 @@ export function packToToon(pack: ContextPack): string {
       `${item.id}|${item.score.toFixed(3)}|${item.trust}|${item.source}|${item.updatedAt}|${safeTags}|${safeContent}`,
     );
   }
+  // Query trailer: repeat the query after the evidence block (see the
+  // docstring). Always emitted — fixed layout keeps cache prefixes stable.
+  lines.push(`# q=${pack.query}`);
   return lines.join("\n");
 }
 
@@ -657,6 +685,8 @@ function headerParam(line: string, key: string, fallback: string): string {
  *   # memos.search.v2|e=<minEpoch>|t=<tagDict>
  *   # f=~id|s|t|c|e|g|ct
  *   ~Ab3xZ9|950|9|ui|-86400|0;2|User likes dark mode
+ *   # q=<query>                <- pack path only: query trailer for
+ *                                 bottom-up readers; skipped by the parser
  *
  * Optimizations vs the v1 compact format:
  *   1. IDs: pure-hex IDs (incl. dashed UUIDs) re-packed to base64url with a
@@ -698,7 +728,11 @@ export function packToToonCompact(
   const envelope =
     `# ${CONTEXT_PACK_SCHEMA}|q=${pack.query}|n=${pack.namespace}` +
     `|b=${pack.tokenBudget}|s=${pack.tokensSaved}`;
-  return `${envelope}\n${body}`;
+  // Query trailer: repeat the query AFTER the evidence block (the envelope
+  // already states it BEFORE) — a reader scanning bottom-up re-anchors on
+  // the query. A `#` comment line, so `parseToonCompact` skips it.
+  const trailer = `# q=${pack.query}`;
+  return `${envelope}\n${body}\n${trailer}`;
 }
 
 /**
@@ -822,6 +856,10 @@ function serializeCompactRows(rows: CompactRow[]): string {
  * v2 headers carry an epoch anchor (`e=`) and optional tag dictionary
  * (`t=`); rows reference tags by index when the dictionary is present.
  * v1 strings (no `e=` in the header) keep their absolute-epoch semantics.
+ *
+ * All `#` comment lines are skipped — including the query trailer
+ * (`# q=<query>`) that pack serializers append after the last evidence
+ * row, so packs round-trip with the trailer intact-but-ignored.
  *
  * @param toon — The compact TOON string (header lines are skipped).
  * @returns Array of decoded ContextPackItem objects.
