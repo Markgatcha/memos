@@ -554,6 +554,69 @@ export interface ContradictionRecord {
 }
 
 // ---------------------------------------------------------------------------
+// Command-driven belief revision ("natural-language revert")
+// ---------------------------------------------------------------------------
+
+/** How to address the memory a revert applies to. */
+export type RevertScopeInput =
+  | { kind: "last" }
+  | { kind: "id"; id: string }
+  | { kind: "entity"; entity: string }
+  | { kind: "text"; text: string };
+
+/**
+ * Options for {@link MemOS.revert}.
+ */
+export interface RevertOptions {
+  /** Who issued the revert (free text, e.g. "user", "agent:coder"). Default "user". */
+  actor?: string;
+  /** Why the revert was issued — recorded on the audit event. */
+  reason?: string;
+  /** If true, resolve and report the target without writing anything. Default false. */
+  dryRun?: boolean;
+  /** Namespace to resolve "last"/named scopes in. Default "default". */
+  namespace?: string;
+}
+
+/**
+ * The resolved target of a revert command, plus the other candidates
+ * that matched (empty when the scope was unambiguous). When several
+ * memories match a named target, the most recently created valid memory
+ * wins and the rest are reported here for confirmation.
+ */
+export interface RevertTargetResolution {
+  /** The memory that would be (or was) reverted. */
+  target: MemoryNode;
+  /** The scope that produced this target. */
+  scope: RevertScopeInput;
+  /** Other memories that matched the scope (most recent first). */
+  alternatives: ScoredMemory[];
+}
+
+/**
+ * The outcome of {@link MemOS.revert}.
+ *
+ * Ledger mechanics: the target's validity interval is closed at `at`
+ * (add-only — the row stays in history), the predecessor's interval is
+ * reopened (`validTo = null`), and the revert itself is recorded as an
+ * audit event node (tags `audit`/`revert`, metadata.audit === "revert").
+ */
+export interface RevertResult {
+  /** The reverted-away memory — now historical (validTo = at). */
+  target: MemoryNode;
+  /** The reactivated predecessor — the belief recall returns now. */
+  predecessor: MemoryNode;
+  /** ID of the audit event node, or null on dry-run. */
+  auditId: string | null;
+  /** Unix ms when the revert executed (0 on dry-run). */
+  at: number;
+  /** True when nothing was written. */
+  dryRun: boolean;
+  /** Other candidates that matched the scope. */
+  alternatives: ScoredMemory[];
+}
+
+// ---------------------------------------------------------------------------
 // Procedural memory (self-editing instructions)
 // ---------------------------------------------------------------------------
 
@@ -1447,6 +1510,7 @@ export type MemOSEvent =
   | "facts:extracted"
   | "memory:reinforced"
   | "memory:superseded"
+  | "memory:reverted"
   | "contradiction:detected";
 
 /** Event listener signature. */

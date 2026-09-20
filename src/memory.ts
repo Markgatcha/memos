@@ -98,6 +98,10 @@ import type {
   ConsolidateOptions,
   ConsolidateResult,
   SummarizeClusterOptions,
+  RevertOptions,
+  RevertResult,
+  RevertTargetResolution,
+  RevertScopeInput,
   SummarizeClusterResult,
   ClusterSummary,
   ConversationMessage,
@@ -124,6 +128,7 @@ import {
   resolveContradictionsAtRead,
 } from "./contradictions.js";
 import type { ContradictionRecord } from "./types.js";
+import { detectRevertIntent } from "./revert.js";
 
 /**
  * Minimum cosine similarity for a memory to enter the semantic leg of
@@ -291,6 +296,14 @@ function extractiveSummary(text: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Revert audit events are stored as event-pool nodes; they must never be
+ * picked up by "last"-scope resolution or named-entity candidate lists.
+ */
+function isRevertAuditNode(node: MemoryNode): boolean {
+  return isRecord(node.metadata) && node.metadata.audit === "revert";
 }
 
 function normalizeMemoryType(value: unknown): MemoryType {
@@ -2880,6 +2893,270 @@ export class MemOS {
       this.graph.addEdge(edgeInput);
     }
     return node;
+  }
+
+  // -----------------------------------------------------------------------
+  // Revert — command-driven belief revision ("natural-language revert")
+  // -----------------------------------------------------------------------
+
+  /**
+   * Find the predecessor of a memory in its version ledger — the older
+   * version the target superseded. Signals, in priority order:
+   *
+   * 1. `temporal_precedes` edges where the target is the newer endpoint
+   *    (written by supersede(id, replacementId));
+   * 2. `resolved` contradiction pairs involving the target (written by the
+   *    evidence state machine's contradict path). Pair ids are stored in
+   *    canonical sorted order, so direction is recovered from validity —
+   *    the historical (validTo-stamped) endpoint is the predecessor.
+   *
+   * The most recently created candidate wins. Returns null when the
+   * memory has no supersession history.
+   */
+  async findRevertPredecessor(targetId: string): Promise<MemoryNode | null> {
+    this.assertInit();
+    const candidateIds = new Set<string>();
+    for (const edge of this.graph.getEdgesForNode(targetId)) {
+      if (edge.relation === "temporal_precedes" && edge.targetId === targetId) {
+        candidateIds.add(edge.sourceId);
+      }
+    }
+    if (this.storage.getContradictionPairsFor) {
+      try {
+        const pairs = await this.storage.getContradictionPairsFor([targetId]);
+        for (const pair of pairs) {
+          if (pair.status !== "resolved") continue;
+          candidateIds.add(pair.nodeA === targetId ? pair.nodeB : pair.nodeA);
+        }
+      } catch {
+        // Best-effort: the edge signal alone is enough to restore a belief.
+      }
+    }
+    candidateIds.delete(targetId);
+    const candidates: MemoryNode[] = [];
+    for (const id of candidateIds) {
+      const node =
+        (await this.storage.peekNode?.(id)) ?? (await this.storage.getNode(id));
+      // The predecessor is the historical endpoint — the version that was
+      // valid before the target superseded it.
+      if (node && node.validTo !== null) candidates.push(node);
+    }
+    candidates.sort((a, b) => b.createdAt - a.createdAt);
+    return candidates[0] ?? null;
+  }
+
+  /**
+   * The most recent currently-valid, non-audit memory in a namespace —
+   * what "revert that" / "revert the last thing" resolves to. Revert
+   * audit events are excluded so a revert can never target its own
+   * record.
+   */
+  private async mostRecentRevertible(
+    namespace: string,
+  ): Promise<MemoryNode | null> {
+    const rows = await this.storage.queryNodes({
+      namespace,
+      limit: 50,
+      includeHistorical: false,
+    });
+    const nodes = rows
+      .map((r) => r.node)
+      .filter((n) => n.validTo === null && !isRevertAuditNode(n))
+      .sort((a, b) => b.createdAt - a.createdAt);
+    return nodes[0] ?? null;
+  }
+
+  /**
+   * Resolve a named entity to the best-matching memory. Disambiguation
+   * rule: when several valid memories match, the most recently created
+   * one wins and the rest are returned as `alternatives` for confirmation
+   * (CLI --dry-run, MCP dry_run) instead of being guessed over.
+   */
+  private async resolveRevertEntity(
+    entity: string,
+    namespace: string,
+  ): Promise<RevertTargetResolution> {
+    const matches = await this.search({ query: entity, namespace, limit: 10 });
+    const candidates = matches
+      .filter((m) => m.node.validTo === null && !isRevertAuditNode(m.node))
+      .sort((a, b) => b.node.createdAt - a.node.createdAt);
+    if (candidates.length === 0) {
+      throw new Error(
+        `No memory matches "${entity}" in namespace "${namespace}".`,
+      );
+    }
+    const [target, ...alternatives] = candidates;
+    return {
+      target: target!.node,
+      scope: { kind: "entity", entity },
+      alternatives,
+    };
+  }
+
+  /**
+   * Resolve a revert scope to a concrete target memory.
+   *
+   * - `{ kind: "id" }` — the memory with that ID.
+   * - `{ kind: "last" }` — the most recent currently-valid, non-audit
+   *   memory in the namespace (durable across processes).
+   * - `{ kind: "entity" }` — named-entity search, most-recent-wins.
+   * - `{ kind: "text" }` — natural language run through the local intent
+   *   detector (`detectRevertIntent`); "last"-scope phrasing resolves as
+   *   "last", named phrasing as an entity. Throws when no revert intent
+   *   is detected.
+   */
+  async resolveRevertTarget(
+    scope: RevertScopeInput | string,
+    namespace = "default",
+  ): Promise<RevertTargetResolution> {
+    this.assertInit();
+    const input: RevertScopeInput =
+      typeof scope === "string" ? { kind: "text", text: scope } : scope;
+    switch (input.kind) {
+      case "id": {
+        const node =
+          (await this.storage.peekNode?.(input.id)) ??
+          (await this.storage.getNode(input.id));
+        if (!node) throw new Error(`Memory ${input.id} not found.`);
+        return { target: node, scope: input, alternatives: [] };
+      }
+      case "last": {
+        const target = await this.mostRecentRevertible(namespace);
+        if (!target) {
+          throw new Error(
+            `No revertible memory in namespace "${namespace}": the store is empty (or holds only audit events).`,
+          );
+        }
+        return { target, scope: input, alternatives: [] };
+      }
+      case "entity":
+        return this.resolveRevertEntity(input.entity, namespace);
+      case "text": {
+        const intent = detectRevertIntent(input.text);
+        if (!intent.detected) {
+          throw new Error(
+            `No revert intent detected in "${input.text}". Try "revert that", "revert the last thing", or "revert what I said about <topic>".`,
+          );
+        }
+        if (intent.scope === "last") {
+          return this.resolveRevertTarget({ kind: "last" }, namespace);
+        }
+        return this.resolveRevertEntity(intent.target ?? input.text, namespace);
+      }
+    }
+  }
+
+  /**
+   * Revert a memory to its previous version — the command-driven belief
+   * revision primitive. The user/agent says "revert that" / "go back" /
+   * "that last thing was wrong"; MemOS closes the target's validity
+   * interval NOW and reactivates the predecessor, so the next recall
+   * returns the pre-correction belief with full provenance.
+   *
+   * Add-only: the reverted-away version stays in history (validTo
+   * stamped, the row is never deleted), and the revert itself is recorded
+   * as an audit event node (tags `audit`/`revert`, metadata.audit =
+   * "revert") capturing who/when/why. Edge validity intervals closed by
+   * the earlier supersession are NOT reopened — edges stay add-only; the
+   * node-level belief is what recall returns.
+   *
+   * @param scope — where the target comes from (or a raw string, run
+   *   through the intent detector).
+   * @param opts — actor / reason (recorded on the audit event), dryRun,
+   *   namespace. Defaults are unchanged everywhere else.
+   * @throws When no target resolves, the target is already historical, or
+   *   it has no supersession history to restore.
+   */
+  async revert(
+    scope: RevertScopeInput | string,
+    opts: RevertOptions = {},
+  ): Promise<RevertResult> {
+    this.assertInit();
+    const namespace = opts.namespace ?? "default";
+    const { target, alternatives } = await this.resolveRevertTarget(
+      scope,
+      namespace,
+    );
+    if (target.validTo !== null) {
+      throw new Error(
+        `Memory ${target.id} is already historical (validTo set) — nothing to revert.`,
+      );
+    }
+    const predecessor = await this.findRevertPredecessor(target.id);
+    if (!predecessor) {
+      throw new Error(
+        `No earlier version to restore for ${target.id}: it has no supersession history ` +
+          `(no temporal_precedes edge or resolved contradiction pair).`,
+      );
+    }
+    const at = Date.now();
+    if (opts.dryRun) {
+      return {
+        target,
+        predecessor,
+        auditId: null,
+        at,
+        dryRun: true,
+        alternatives,
+      };
+    }
+    // Close the target's validity interval NOW (mirrors supersede()).
+    await this.setValidity(target.id, target.validFrom, at);
+    if (this.storage.closeEdgesForNode) {
+      await this.storage.closeEdgesForNode(target.id, at);
+    }
+    this.graph.closeEdgesForNode(target.id, at);
+    // Reactivate the predecessor — reopen its interval, keep validFrom.
+    await this.setValidity(predecessor.id, predecessor.validFrom, null);
+    this.invalidateSearchCache();
+    // Audit event: who/when/why, add-only, excluded from future
+    // "last"-scope resolution via metadata.audit === "revert".
+    const actor = opts.actor ?? "user";
+    const reason = opts.reason ?? "manual revert";
+    const audit = await this.store(
+      `Reverted memory ${target.id.slice(0, 8)} ("${target.content.slice(0, 80)}") — ` +
+        `restored predecessor ${predecessor.id.slice(0, 8)}. Reason: ${reason}`,
+      {
+        type: "custom",
+        pool: "event",
+        namespace,
+        source: "system",
+        importance: 0.1,
+        tags: ["audit", "revert"],
+        metadata: {
+          audit: "revert",
+          revert: {
+            targetId: target.id,
+            predecessorId: predecessor.id,
+            actor,
+            reason,
+            at,
+          },
+        },
+      },
+    );
+    this.emit("memory:reverted", {
+      targetId: target.id,
+      predecessorId: predecessor.id,
+      actor,
+      reason,
+      at,
+      auditId: audit.node.id,
+    });
+    const targetNow =
+      (await this.storage.peekNode?.(target.id)) ??
+      (await this.storage.getNode(target.id));
+    const predecessorNow =
+      (await this.storage.peekNode?.(predecessor.id)) ??
+      (await this.storage.getNode(predecessor.id));
+    return {
+      target: targetNow ?? target,
+      predecessor: predecessorNow ?? predecessor,
+      auditId: audit.node.id,
+      at,
+      dryRun: false,
+      alternatives,
+    };
   }
 
   // -----------------------------------------------------------------------

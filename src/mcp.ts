@@ -771,6 +771,121 @@ function registerTools(server: McpServer, memos: MemOS): void {
       };
     },
   );
+
+  server.registerTool(
+    "memos_revert",
+    {
+      title: "Revert Memory to Previous Version",
+      description:
+        "Command-driven belief revision: revert a memory to the version " +
+        'it superseded ("revert that", "undo what I just told you", ' +
+        '"that last thing was wrong"). Closes the target\'s validity ' +
+        "interval and reactivates the predecessor — the reverted-away " +
+        "version stays in history (add-only, never deleted), and the " +
+        "revert is recorded as an audit event. " +
+        "CONFIRM SCOPE FIRST: call with dryRun=true (the default) and show " +
+        "the would-be target to the user; only call with dryRun=false " +
+        "after they confirm.",
+      inputSchema: z.object({
+        text: z
+          .string()
+          .optional()
+          .describe(
+            "Natural-language revert request, e.g. 'revert that' or " +
+              "'revert what I said about the dentist'.",
+          ),
+        id: z.string().optional().describe("Memory ID to revert directly."),
+        last: z
+          .boolean()
+          .optional()
+          .describe("Revert the most recent memory in the namespace."),
+        about: z
+          .string()
+          .optional()
+          .describe("Entity/topic to resolve the target memory by."),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe(
+            "Resolve and report the target without writing anything. " +
+              "Default true — confirm scope before executing.",
+          ),
+        reason: z
+          .string()
+          .optional()
+          .describe("Why the revert was issued (recorded on the audit event)."),
+        actor: z
+          .string()
+          .optional()
+          .describe("Who issued the revert (recorded on the audit event)."),
+        namespace: z.string().optional().describe("Namespace (default)."),
+      }),
+      outputSchema: z.object({ revert: z.unknown() }),
+    },
+    async ({ text, id, last, about, dryRun, reason, actor, namespace }) => {
+      const scope = id
+        ? { kind: "id" as const, id }
+        : last
+          ? { kind: "last" as const }
+          : about
+            ? { kind: "entity" as const, entity: about }
+            : text
+              ? { kind: "text" as const, text }
+              : null;
+      if (!scope) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "No revert target given: pass text, id, last, or about.",
+            },
+          ],
+          structuredContent: { revert: { error: "missing scope" } },
+        };
+      }
+      try {
+        const result = await memos.revert(scope, {
+          dryRun: dryRun ?? true,
+          ...(reason !== undefined ? { reason } : {}),
+          ...(actor !== undefined ? { actor } : {}),
+          ...(namespace !== undefined ? { namespace } : {}),
+        });
+        const summarize = (n: {
+          id: string;
+          content: string;
+          createdAt: number;
+        }) => ({
+          id: n.id,
+          summary: n.content.slice(0, 120),
+          createdAt: n.createdAt,
+        });
+        const textOut = result.dryRun
+          ? `Dry run — would revert ${result.target.id.slice(0, 8)} ("${result.target.content.slice(0, 60)}") and restore predecessor ${result.predecessor.id.slice(0, 8)}. Confirm with dryRun=false to execute.`
+          : `Reverted ${result.target.id.slice(0, 8)} — predecessor ${result.predecessor.id.slice(0, 8)} is now the believed version. Audit event: ${result.auditId}.`;
+        return {
+          content: [{ type: "text" as const, text: textOut }],
+          structuredContent: {
+            revert: {
+              dryRun: result.dryRun,
+              target: summarize(result.target),
+              predecessor: summarize(result.predecessor),
+              alternatives: result.alternatives.map((a) => summarize(a.node)),
+              auditId: result.auditId,
+              at: result.at,
+            },
+          },
+        };
+      } catch (err) {
+        const message = (err as Error).message;
+        return {
+          content: [
+            { type: "text" as const, text: `Revert failed: ${message}` },
+          ],
+          structuredContent: { revert: { error: message } },
+        };
+      }
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,6 +1343,32 @@ const TOOL_METADATA: McpToolInfo[] = [
       }),
     ) as Record<string, unknown>,
     outputSchema: z.toJSONSchema(z.object({ history: z.unknown() })) as Record<
+      string,
+      unknown
+    >,
+  },
+  {
+    name: "memos_revert",
+    description:
+      "Revert a memory to the version it superseded (command-driven belief " +
+      "revision). Closes the target's validity interval and reactivates the " +
+      "predecessor; the reverted-away version stays in history (add-only) " +
+      "and the revert is recorded as an audit event. Confirm scope first: " +
+      "call with dryRun=true (default) and show the would-be target, then " +
+      "call again with dryRun=false to execute.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        text: z.string().optional(),
+        id: z.string().optional(),
+        last: z.boolean().optional(),
+        about: z.string().optional(),
+        dryRun: z.boolean().optional(),
+        reason: z.string().optional(),
+        actor: z.string().optional(),
+        namespace: z.string().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(z.object({ revert: z.unknown() })) as Record<
       string,
       unknown
     >,

@@ -139,6 +139,7 @@ describe("MemOS MCP adapter", () => {
       "memos_consolidate",
       "memos_usage",
       "memos_history",
+      "memos_revert",
     ]);
   });
 });
@@ -314,7 +315,10 @@ describe("MemOS", () => {
 
 describe("MemOS Experimental", () => {
   test("semantic search works without the experimental flag", async () => {
-    const memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
+    const memos = new MemOS({
+      dbPath: TEST_DB,
+      embeddings: { enabled: false },
+    });
     await memos.init();
     await memos.store("User prefers dark mode");
     await memos.store("Project uses TypeScript");
@@ -354,7 +358,10 @@ describe("MemOS Experimental", () => {
   });
 
   test("semanticSearch accepts an options object", async () => {
-    const memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
+    const memos = new MemOS({
+      dbPath: TEST_DB,
+      embeddings: { enabled: false },
+    });
     await memos.init();
     await memos.store("User prefers dark mode", { type: "preference" });
     await memos.store("Project uses TypeScript");
@@ -384,7 +391,10 @@ describe("MemOS Experimental", () => {
   });
 
   test("graphViz requires experimental flag", async () => {
-    const memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
+    const memos = new MemOS({
+      dbPath: TEST_DB,
+      embeddings: { enabled: false },
+    });
     await memos.init();
 
     await expect(memos.graphViz()).rejects.toThrow(
@@ -411,7 +421,10 @@ describe("MemOS Experimental", () => {
   });
 
   test("namespaces are always on (promoted from experimental)", async () => {
-    const memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
+    const memos = new MemOS({
+      dbPath: TEST_DB,
+      embeddings: { enabled: false },
+    });
     await memos.init();
 
     // Namespaces were promoted: the gate is gone, listing works flag-free.
@@ -439,7 +452,10 @@ describe("MemOS Experimental", () => {
   });
 
   test("context injection requires experimental flag", async () => {
-    const memos = new MemOS({ dbPath: TEST_DB, embeddings: { enabled: false } });
+    const memos = new MemOS({
+      dbPath: TEST_DB,
+      embeddings: { enabled: false },
+    });
     await memos.init();
     const { node } = await memos.store("Test");
 

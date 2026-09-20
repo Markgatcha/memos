@@ -1,9 +1,10 @@
 # MemOS plugin for Claude Code
 
 Local-first persistent memory for your agent. Installing this plugin registers
-the MemOS MCP server (17 tools: store, search, retrieve, forget, graph,
-context packs, temporal search, trust, fact extraction, diagnostics, …),
-plus the `/memos`, `/recall`, `/forget`, and `/timeline` slash commands and
+the MemOS MCP server (18 tools: store, search, retrieve, forget, revert,
+graph, context packs, temporal search, trust, fact extraction,
+diagnostics, …),
+plus the `/memos`, `/recall`, `/forget`, `/revert`, and `/timeline` slash commands and
 the `memos-memory` skill.
 
 ## Install
@@ -21,6 +22,7 @@ The MCP server runs via `npx -y @mem-os/sdk mcp` and stores everything in
 - `/memos <fact>` — store a durable fact
 - `/recall <query>` — recall relevant memories
 - `/forget <what>` — fuzzy-match a memory, confirm, delete it
+- `/revert <what>` — revert a memory to its previous version ("that", "the last thing", "what I said about X"), confirm first
 - `/timeline [limit]` — show what MemOS has learned recently, newest first
 
 ## Hooks

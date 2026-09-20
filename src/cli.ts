@@ -9,6 +9,7 @@
  *   memos history <id>
  *   memos retrieve <id>
  *   memos forget <id>
+ *   memos revert --last | --id <id> | --about <topic> | "<revert request>" [--dry-run]
  *   memos summarize
  *   memos graph [--mermaid]
  *   memos browse
@@ -29,6 +30,7 @@
 import { MemOS } from "./memory.js";
 import { graphToMermaid } from "./graph-mermaid.js";
 import { parseScopeArg } from "./scope.js";
+import { parseRevertCliArgs } from "./revert.js";
 import type { MemoryPool } from "./types.js";
 import type { CreateMemoryInput, ExportFormat } from "./types.js";
 import type { ChildProcess } from "node:child_process";
@@ -51,7 +53,8 @@ const command = args[0];
 
 /**
  * Filter out flags and their values from an argument list.
- * Flags that take a value: --db, --type, --ttl, --limit, --format, --output
+ * Flags that take a value: --db, --type, --ttl, --limit, --format, --output,
+ * --id, --about, --reason, --actor, --namespace
  * Boolean flags: --json
  */
 function nonFlagArgs(args: string[], startIndex: number): string[] {
@@ -62,6 +65,11 @@ function nonFlagArgs(args: string[], startIndex: number): string[] {
     "--limit",
     "--format",
     "--output",
+    "--id",
+    "--about",
+    "--reason",
+    "--actor",
+    "--namespace",
   ]);
   const result: string[] = [];
   let skipNext = false;
@@ -646,6 +654,10 @@ Commands:
                           full source memory
   history <id>            Version timeline for one memory: supersedes,
                           superseded by, derived notes
+  revert                  Revert a memory to its previous version
+                          (--last | --id <id> | --about <topic> |
+                          "<natural language>"; --dry-run, --reason <r>,
+                          --actor <a>)
   digest                  Run consolidation now and print a summary
   consolidate             Offline maintenance pass: merge duplicates, archive
                           stale memories, supersede decayed ones (kept as
@@ -1419,6 +1431,53 @@ async function main(): Promise<void> {
           console.log(
             "\nNo related versions found (this is the only version).",
           );
+        }
+        break;
+      }
+
+      case "revert": {
+        const parsed = parseRevertCliArgs(args.slice(1));
+        if (parsed.error) {
+          console.error(`Error: ${parsed.error}`);
+          process.exit(1);
+        }
+        try {
+          const result = await memos.revert(parsed.scope, {
+            dryRun: parsed.dryRun,
+            ...(parsed.reason ? { reason: parsed.reason } : {}),
+            ...(parsed.actor ? { actor: parsed.actor } : {}),
+            ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
+          });
+          if (jsonFlag) {
+            console.log(JSON.stringify(result, null, 2));
+          } else if (result.dryRun) {
+            console.log("Dry run — nothing was changed.");
+            console.log(
+              `  Would revert:  ${result.target.id.slice(0, 8)} — ${result.target.content.slice(0, 80)}`,
+            );
+            console.log(
+              `  Would restore: ${result.predecessor.id.slice(0, 8)} — ${result.predecessor.content.slice(0, 80)}`,
+            );
+            if (result.alternatives.length > 0) {
+              console.log("  Other candidates (not chosen):");
+              for (const alt of result.alternatives) {
+                console.log(
+                  `    ${alt.node.id.slice(0, 8)} — ${alt.node.content.slice(0, 60)}`,
+                );
+              }
+            }
+          } else {
+            console.log(
+              `Reverted ${result.target.id.slice(0, 8)} — restored predecessor ${result.predecessor.id.slice(0, 8)}.`,
+            );
+            console.log(
+              `  Now believed: ${result.predecessor.content.slice(0, 100)}`,
+            );
+            console.log(`  Audit event: ${result.auditId}`);
+          }
+        } catch (err) {
+          console.error(`Error: ${(err as Error).message}`);
+          process.exit(1);
         }
         break;
       }

@@ -27,6 +27,15 @@ export {
   type RetainDecision,
 } from "./retain-filter.js";
 export { getMcpTools, runMcpServer } from "./mcp.js";
+export {
+  detectRevertIntent,
+  normalizeRevertTarget,
+  parseRevertCliArgs,
+  type RevertIntent,
+  type RevertScopeKind,
+  type RevertScopeInput,
+  type ParsedRevertArgs,
+} from "./revert.js";
 export { GraphEngine, textSimilarity, generateId } from "./graph.js";
 export {
   LocalHashEmbeddingProvider,
@@ -111,6 +120,9 @@ export type {
   LessonOutcome,
   NewProceduralLesson,
   ProceduralLesson,
+  RevertOptions,
+  RevertResult,
+  RevertTargetResolution,
 } from "./types.js";
 export { DEFAULT_TRUST_SCORES } from "./types.js";
 export {
