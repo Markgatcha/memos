@@ -196,8 +196,8 @@ describe("hybridSearch PPR-lite graph expansion", () => {
     }
   });
 
-  test("default-on: a graph neighbour of a seed enters the results", async () => {
-    const { results, a, b } = await searchChain();
+  test("opt-in: a graph neighbour of a seed enters the results", async () => {
+    const { results, a, b } = await searchChain({ graphExpansion: true });
     const ids = results.map((r) => r.node.id);
     expect(ids[0]).toBe(a);
     expect(ids).toContain(b);
@@ -210,7 +210,7 @@ describe("hybridSearch PPR-lite graph expansion", () => {
 
   test("blend formula: (1 - alpha) * fused + alpha * pprNorm", async () => {
     const baseline = await searchChain({ graphExpansion: false });
-    const expanded = await searchChain();
+    const expanded = await searchChain({ graphExpansion: true });
     const fusedScore = baseline.results[0]!.score;
     const head = expanded.results[0]!;
     expect(head.node.id).toBe(expanded.a);
@@ -220,26 +220,38 @@ describe("hybridSearch PPR-lite graph expansion", () => {
   });
 
   test("graphExpansionHops: 1-hop reaches B only, 2-hop reaches C", async () => {
-    const one = await searchChain({ graphExpansionHops: 1 });
+    const one = await searchChain({
+      graphExpansion: true,
+      graphExpansionHops: 1,
+    });
     expect(one.results.map((r) => r.node.id)).toEqual([one.a, one.b]);
 
-    const two = await searchChain({ graphExpansionHops: 2 });
+    const two = await searchChain({
+      graphExpansion: true,
+      graphExpansionHops: 2,
+    });
     expect(two.results.map((r) => r.node.id)).toEqual([two.a, two.b, two.c]);
     const cResult = two.results.find((r) => r.node.id === two.c)!;
     expect(cResult.scores?.ppr).toBeGreaterThan(0);
   });
 
   test("graphExpansionAlpha: 0 disables blending cleanly", async () => {
-    const { results, a } = await searchChain({ graphExpansionAlpha: 0 });
+    const { results, a } = await searchChain({
+      graphExpansion: true,
+      graphExpansionAlpha: 0,
+    });
     expect(results).toHaveLength(1);
     expect(results[0]!.node.id).toBe(a);
     expect(results[0]!.scores?.ppr).toBeUndefined();
   });
 
   test("per-query graphExpansion:false disables expansion for one search", async () => {
-    const { results, a } = await searchChain(undefined, {
-      graphExpansion: false,
-    });
+    const { results, a } = await searchChain(
+      { graphExpansion: true },
+      {
+        graphExpansion: false,
+      },
+    );
     expect(results).toHaveLength(1);
     expect(results[0]!.node.id).toBe(a);
     for (const r of results) {
@@ -248,7 +260,7 @@ describe("hybridSearch PPR-lite graph expansion", () => {
   });
 
   test("structured filters apply to injected neighbours (no cross-type leak)", async () => {
-    const memos = makeMemos();
+    const memos = makeMemos({ graphExpansion: true });
     await memos.init();
     const a = await memos.store("zebra migration patterns", { type: "fact" });
     const b = await memos.store("savanna rainfall statistics", {
@@ -273,8 +285,8 @@ describe("hybridSearch PPR-lite graph expansion", () => {
   });
 
   test("expansion is deterministic across identical instances", async () => {
-    const first = await searchChain();
-    const second = await searchChain();
+    const first = await searchChain({ graphExpansion: true });
+    const second = await searchChain({ graphExpansion: true });
     // Node ids are random per instance; compare length + scores only.
     expect(second.results).toHaveLength(first.results.length);
     expect(second.results.map((r) => r.score)).toEqual(

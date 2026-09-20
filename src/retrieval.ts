@@ -61,12 +61,16 @@ export const DEFAULT_ENTITY_WEIGHT = 0.15;
 
 /**
  * ── item2: entity leg ── default weight of the entity-inverted-index RRF
- * leg (`entityResults`). Rank-1 in the entity leg scores
- * `0.5 / (rrfK + 1)`: above a semantic-only rank-1 (0.2) but below a
- * keyword-only rank-1 (0.8) — entity matches are high-precision but the
- * extractor is lexical, so exact term matches still win ties.
+ * leg (`entityResults`). Deliberately subordinate to the semantic leg:
+ * rank-1 in the entity leg scores `0.1 / (rrfK + 1)`, below a
+ * semantic-only rank-1 (`0.2 / (rrfK + 1)`). The extractor is lexical,
+ * so on dialogue-heavy corpora a 0.5 weight let entity-matched
+ * near-duplicates outrank genuine semantic hits — measured as a LoCoMo
+ * nDCG regression at 0.5, neutral at 0.1. The leg's job is recall
+ * (surfacing entity-matched memories the other legs missed), not
+ * re-ranking.
  */
-export const DEFAULT_ENTITY_LEG_WEIGHT = 0.5;
+export const DEFAULT_ENTITY_LEG_WEIGHT = 0.1;
 
 /**
  * Lower bound of the trust multiplier. A memory with trustScore 0 is

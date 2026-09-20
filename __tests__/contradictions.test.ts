@@ -406,7 +406,7 @@ describe("write-time detection + read-time resolution (integration)", () => {
     await memos.close();
   });
 
-  test("search() demotes the older member of a recorded pair", async () => {
+  test("search() does NOT demote members of unresolved heuristic pairs", async () => {
     const memos = makeMemos();
     await memos.init();
 
@@ -424,6 +424,55 @@ describe("write-time detection + read-time resolution (integration)", () => {
     const old = await memos.store("Alice moved to Berlin last year");
     const fresh = await memos.store("Alice no longer lives in Berlin");
     await detected;
+
+    // The heuristic pair is recorded as unresolved ...
+    const storage = (memos as unknown as { storage: SQLiteStorage }).storage;
+    const pairs = await storage.getContradictionPairsFor([
+      old.node.id,
+      fresh.node.id,
+    ]);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]!.status).toBe("unresolved");
+
+    // ... and unresolved pairs never touch ranking: at corpus scale the
+    // candidate rule's precision is too low for unreviewed pairs to
+    // demote results.
+    const results = await memos.search("Berlin");
+    for (const r of results) {
+      expect(r.scores?.contradiction_demoted).toBeUndefined();
+    }
+
+    await memos.close();
+  });
+
+  test("search() demotes the older member of a resolved pair", async () => {
+    const memos = makeMemos();
+    await memos.init();
+
+    const detected = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("contradiction:detected never fired")),
+        10000,
+      );
+      memos.on("contradiction:detected", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
+    const old = await memos.store("Alice moved to Berlin last year");
+    const fresh = await memos.store("Alice no longer lives in Berlin");
+    await detected;
+
+    // Adjudication (e.g. the future sleep-time loop, or the evidence
+    // state machine's supersession path) confirms the pair.
+    const storage = (memos as unknown as { storage: SQLiteStorage }).storage;
+    const pairs = await storage.getContradictionPairsFor([
+      old.node.id,
+      fresh.node.id,
+    ]);
+    expect(pairs).toHaveLength(1);
+    await storage.updateContradictionStatus(pairs[0]!.id, "resolved");
 
     const results = await memos.search("Berlin");
     const oldResult = results.find((r) => r.node.id === old.node.id);

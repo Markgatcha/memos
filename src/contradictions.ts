@@ -21,9 +21,15 @@
  *    (add-only: both versions are kept, with provenance).
  *
  * 2. Read time — {@link resolveContradictionsAtRead}: when BOTH members
- *    of a recorded contradiction pair appear in a result set, demote the
- *    OLDER one (multiply its score by {@link CONTRADICTION_DEMOTION_FACTOR})
- *    so the newer version wins. Never removes anything. Deterministic.
+ *    of a CONFIRMED contradiction pair (`status: "resolved"`, e.g. via
+ *    the evidence state machine's supersession path) appear in a result
+ *    set, demote the OLDER one (multiply its score by
+ *    {@link CONTRADICTION_DEMOTION_FACTOR}) so the newer version wins.
+ *    Heuristic write-time candidates stay `unresolved` — persisted for
+ *    future sleep-time adjudication — and never affect ranking, because
+ *    at corpus scale the candidate rule's precision is too low for
+ *    unreviewed pairs to demote results. Never removes anything.
+ *    Deterministic.
  *
  * No LLM anywhere on this path — detection and resolution are
  * rule-based. LLM adjudication (e.g. in the sleep-time dreaming loop)
@@ -183,6 +189,10 @@ export function findContradictionCandidates(
  *   - Never removes results. Add-only is preserved: both versions stay
  *     in the set; the newer one simply outranks the older.
  *   - Pairs with only ONE member in the set are untouched.
+ *   - The caller is responsible for passing only CONFIRMED pairs
+ *     (`status: "resolved"`); heuristic `unresolved` candidates are
+ *     persisted for future adjudication and must not reach this
+ *     function (see `applyContradictionResolution` in `src/memory.ts`).
  *   - Deterministic: pairs are processed in canonical (node_a, node_b)
  *     order and the output is re-sorted with `compareScoredMemories`.
  *   - Pure: inputs are not mutated — demoted results are new objects

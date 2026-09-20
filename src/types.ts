@@ -443,11 +443,11 @@ export interface SearchFilter {
    */
   semanticDedup?: boolean;
   /**
-   * Per-query opt-out of the PPR-lite graph expansion
-   * (`config.fusion.graphExpansion`). Default true: the top fused results
-   * seed a personalized PageRank walk whose neighbours can join the
-   * ranking. Set to false to disable expansion for this query
-   * (byte-identical to the pre-expansion pipeline). `contextPack`
+   * Per-query override for the PPR-lite graph expansion
+   * (`config.fusion.graphExpansion`). `true` forces expansion on for this
+   * query, `false` disables it (byte-identical to the pre-expansion
+   * pipeline); `undefined` falls back to the fusion-config default (off).
+   * `contextPack`
    * forwards its own `graphExpansion: false` through this flag.
    */
   graphExpansion?: boolean;
@@ -1129,7 +1129,8 @@ export interface FusionOptions {
    * (the third retrieval signal alongside keyword and semantic). Applied
    * as `entityLegWeight / (rrfK + rank)` per candidate, so entity-matched
    * memories surface even when FTS and embeddings missed them. Default
-   * 0.5. Set to 0 to disable the leg.
+   * 0.1 (deliberately below the semantic leg's 0.2 weight — see
+   * DEFAULT_ENTITY_LEG_WEIGHT). Set to 0 to disable the leg.
    */
   entityLegWeight?: number;
   /**
@@ -1141,8 +1142,10 @@ export interface FusionOptions {
    * pprNorm` with PPR scores normalized to [0,1]. Graph neighbours of
    * seeds that neither retrieval leg surfaced can enter the results this
    * way — the multi-hop recall win without iterative LLM retrieval.
-   * Default: true. Set to false for byte-identical pre-expansion
-   * behaviour (no extra storage reads, no score changes).
+   * Default: false (opt-in; expansion is off unless enabled here or per
+   * query via `SearchFilter.graphExpansion: true`). When disabled the
+   * pipeline is byte-identical to pre-expansion behaviour (no extra
+   * storage reads, no score changes).
    */
   graphExpansion?: boolean;
   /**

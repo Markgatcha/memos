@@ -3411,8 +3411,16 @@ export class MemOS {
         await this.storage.getContradictionPairsFor(
           results.map((r) => r.node.id),
         );
-      if (pairs.length === 0) return results;
-      return resolveContradictionsAtRead(results, pairs);
+      // Read-time resolution acts ONLY on confirmed (`resolved`) pairs —
+      // e.g. contradictions the evidence state machine verified via
+      // supersession. Heuristic write-time candidates stay `unresolved`
+      // (persisted for future sleep-time adjudication) and never touch
+      // ranking: at corpus scale the candidate rule's precision is too
+      // low for unreviewed pairs to demote results (measured: hundreds
+      // of spurious pairs per few hundred dialogue utterances).
+      const confirmed = pairs.filter((p) => p.status === "resolved");
+      if (confirmed.length === 0) return results;
+      return resolveContradictionsAtRead(results, confirmed);
     } catch {
       // Resolution is a scoring nudge — never break the read path.
       return results;
@@ -3754,7 +3762,8 @@ export class MemOS {
   ): Promise<ScoredMemory[]> {
     const fusion = this.config.fusion ?? {};
     const enabled =
-      filter.graphExpansion !== false && (fusion.graphExpansion ?? true);
+      filter.graphExpansion === true ||
+      (filter.graphExpansion !== false && (fusion.graphExpansion ?? false));
     const seedCount =
       fusion.graphExpansionSeeds ?? DEFAULT_GRAPH_EXPANSION_SEEDS;
     const hops = fusion.graphExpansionHops ?? DEFAULT_GRAPH_EXPANSION_HOPS;
