@@ -503,7 +503,39 @@ export interface ScoredMemory {
     session?: number;
     rerank?: number;
     entity?: number;
+    /**
+     * Present when read-time contradiction resolution demoted this
+     * result: the demotion factor applied (see
+     * CONTRADICTION_DEMOTION_FACTOR in src/contradictions.ts).
+     */
+    contradiction_demoted?: number;
   };
+}
+
+/**
+ * Lifecycle status of a recorded contradiction pair.
+ *
+ * - `unresolved`: detected at write time by the rule-based detector;
+ *   both versions are kept (add-only). Read-time resolution demotes the
+ *   older member. Sleep-time LLM adjudication (future) may resolve it.
+ * - `resolved`: a contradiction outcome was confirmed through the
+ *   evidence state machine (e.g. an old memory superseded by a new
+ *   version) — the pair is recorded for provenance.
+ */
+export type ContradictionStatus = "unresolved" | "resolved";
+
+/**
+ * A recorded contradiction pair: two memory nodes about the same
+ * subject that disagree. Node ids are stored in canonical (sorted)
+ * order so the UNIQUE(node_a, node_b) constraint dedups pairs
+ * regardless of insertion order.
+ */
+export interface ContradictionRecord {
+  id: string;
+  nodeA: string;
+  nodeB: string;
+  detectedAt: number;
+  status: ContradictionStatus;
 }
 
 // ---------------------------------------------------------------------------
@@ -826,6 +858,15 @@ export interface StorageAdapter {
   /** Counts of stored embeddings grouped by model (reindex/audit support). */
   getEmbeddingModelCounts?(): Promise<Array<{ model: string; count: number }>>;
 
+  /**
+   * Bulk-fetch stored embedding vectors for the given node ids.
+   * Used by write-time contradiction detection to avoid one SELECT per
+   * neighbor. Returns only ids that have a stored vector.
+   */
+  getEmbeddingVectors?(
+    nodeIds: string[],
+  ): Promise<Map<string, EmbeddingVector>>;
+
   /** Delete all embedding rows stored by the given model. Returns the count. */
   deleteEmbeddingsByModel?(model: string): Promise<number>;
 
@@ -841,6 +882,31 @@ export interface StorageAdapter {
      */
     validAt?: number;
   }): Promise<MemoryEdge[]>;
+
+  /**
+   * Record a contradiction pair between two memory nodes. Node ids are
+   * canonicalized (sorted) by the implementation so the UNIQUE constraint
+   * dedups reversed pairs. Insert is idempotent (no-op when the pair is
+   * already recorded).
+   */
+  addContradiction?(
+    nodeA: string,
+    nodeB: string,
+    status?: ContradictionStatus,
+  ): Promise<ContradictionRecord>;
+
+  /**
+   * Return recorded contradiction pairs where node_a OR node_b is in
+   * `nodeIds` — the bounded read-time lookup for
+   * `resolveContradictionsAtRead`.
+   */
+  getContradictionPairsFor?(nodeIds: string[]): Promise<ContradictionRecord[]>;
+
+  /** Transition a contradiction record between `unresolved`/`resolved`. */
+  updateContradictionStatus?(
+    id: string,
+    status: ContradictionStatus,
+  ): Promise<void>;
 
   /** Return the full graph (nodes + edges). */
   getGraph(): Promise<GraphSnapshot>;
@@ -1251,7 +1317,8 @@ export type MemOSEvent =
   | "validity:changed"
   | "facts:extracted"
   | "memory:reinforced"
-  | "memory:superseded";
+  | "memory:superseded"
+  | "contradiction:detected";
 
 /** Event listener signature. */
 export type MemOSEventListener = (data: unknown) => void;

@@ -10,11 +10,14 @@
 import Database from "better-sqlite3";
 import type { Statement } from "better-sqlite3";
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { escapeLikePrefix } from "../scope.js";
 import type {
   StorageAdapter,
+  ContradictionRecord,
+  ContradictionStatus,
   MemoryNode,
   MemoryEdge,
   SearchFilter,
@@ -366,6 +369,24 @@ export class SQLiteStorage implements StorageAdapter {
       -- (dimensions, model) before scoring, so without this SQLite walks
       -- the whole table even when the caller needs no node-side filters.
       CREATE INDEX IF NOT EXISTS idx_embeddings_model_dims ON embeddings(dimensions, model);
+
+      -- Contradiction pairs (accuracy item 4): write-time rule-based
+      -- detection records node pairs that disagree (similarity in the
+      -- 0.5–0.85 band + entity overlap + shared subject). Add-only is
+      -- preserved — both versions are kept; read-time resolution demotes
+      -- the older member instead of deleting anything. node_a/node_b are
+      -- stored in canonical (sorted) order so the UNIQUE constraint
+      -- dedups pairs regardless of insertion order.
+      CREATE TABLE IF NOT EXISTS contradictions (
+        id          TEXT PRIMARY KEY,
+        node_a      TEXT NOT NULL,
+        node_b      TEXT NOT NULL,
+        detected_at INTEGER NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'unresolved',
+        UNIQUE(node_a, node_b)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_contradictions_nodes ON contradictions(node_a, node_b);
     `);
 
     // Migration: add expires_at column if missing
@@ -1123,6 +1144,118 @@ export class SQLiteStorage implements StorageAdapter {
       model: row.model as string,
       dimensions: row.dimensions as number,
       updatedAt: row.updated_at as number,
+    };
+  }
+
+  /**
+   * Bulk-fetch stored embedding vectors for the given node ids —
+   * the write-time contradiction scan's bounded neighbor lookup.
+   * Cache hits are zero-cost; misses are fetched in chunks of 500
+   * (SQLite bound-parameter limits). Returns only ids with a stored
+   * vector.
+   */
+  async getEmbeddingVectors(
+    nodeIds: string[],
+  ): Promise<Map<string, EmbeddingVector>> {
+    const result = new Map<string, EmbeddingVector>();
+    const missing: string[] = [];
+    for (const id of nodeIds) {
+      const cached = this.vectorCacheGet(id);
+      if (cached) {
+        result.set(id, Array.from(cached));
+      } else if (!missing.includes(id)) {
+        missing.push(id);
+      }
+    }
+    for (let start = 0; start < missing.length; start += 500) {
+      const chunk = missing.slice(start, start + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = this.getPreparedStatement(
+        `getEmbeddingVectors::${chunk.length}`,
+        `SELECT node_id, vector FROM embeddings WHERE node_id IN (${placeholders})`,
+      ).all(...chunk) as Array<{ node_id: string; vector: unknown }>;
+      for (const row of rows) {
+        if (Buffer.isBuffer(row.vector) || row.vector instanceof Uint8Array) {
+          this.vectorCacheSet(
+            row.node_id,
+            this.parseEmbeddingF32(row.vector as Buffer | Uint8Array),
+          );
+          result.set(row.node_id, this.parseEmbedding(row.vector));
+        } else {
+          const parsed = this.parseEmbedding(row.vector);
+          if (parsed.length > 0) result.set(row.node_id, parsed);
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Record a contradiction pair. Node ids are canonicalized (sorted)
+   * so the UNIQUE(node_a, node_b) constraint dedups reversed pairs;
+   * INSERT OR IGNORE makes repeat detection idempotent.
+   */
+  async addContradiction(
+    nodeA: string,
+    nodeB: string,
+    status: ContradictionStatus = "unresolved",
+  ): Promise<ContradictionRecord> {
+    const [a, b] = nodeA < nodeB ? [nodeA, nodeB] : [nodeB, nodeA];
+    const existing = this.db
+      .prepare("SELECT * FROM contradictions WHERE node_a = ? AND node_b = ?")
+      .get(a, b) as Record<string, unknown> | undefined;
+    if (existing) return this.rowToContradiction(existing);
+    const record: ContradictionRecord = {
+      id: randomUUID(),
+      nodeA: a,
+      nodeB: b,
+      detectedAt: Date.now(),
+      status,
+    };
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO contradictions (id, node_a, node_b, detected_at, status)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(record.id, a, b, record.detectedAt, status);
+    return record;
+  }
+
+  /**
+   * Bounded read-time lookup: recorded contradiction pairs where
+   * node_a OR node_b is in `nodeIds`. Empty input returns [] without
+   * touching the database.
+   */
+  async getContradictionPairsFor(
+    nodeIds: string[],
+  ): Promise<ContradictionRecord[]> {
+    if (nodeIds.length === 0) return [];
+    const placeholders = nodeIds.map(() => "?").join(",");
+    const rows = this.getPreparedStatement(
+      `getContradictionPairsFor::${nodeIds.length}`,
+      `SELECT * FROM contradictions WHERE node_a IN (${placeholders}) OR node_b IN (${placeholders})`,
+    ).all(...nodeIds, ...nodeIds) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToContradiction(row));
+  }
+
+  async updateContradictionStatus(
+    id: string,
+    status: ContradictionStatus,
+  ): Promise<void> {
+    this.db
+      .prepare("UPDATE contradictions SET status = ? WHERE id = ?")
+      .run(status, id);
+  }
+
+  private rowToContradiction(
+    row: Record<string, unknown>,
+  ): ContradictionRecord {
+    return {
+      id: row.id as string,
+      nodeA: row.node_a as string,
+      nodeB: row.node_b as string,
+      detectedAt: row.detected_at as number,
+      status: row.status as ContradictionStatus,
     };
   }
 

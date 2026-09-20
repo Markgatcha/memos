@@ -92,6 +92,14 @@ import {
   classifyEvidence,
   sharesSubject,
 } from "./confidence-machine.js";
+import {
+  CONTRADICTION_SCAN_LIMIT,
+  CONTRADICTION_SIM_MIN,
+  findContradictionCandidates,
+  nodeContradictionCandidates,
+  resolveContradictionsAtRead,
+} from "./contradictions.js";
+import type { ContradictionRecord } from "./types.js";
 
 /**
  * Minimum cosine similarity for a memory to enter the semantic leg of
@@ -345,6 +353,14 @@ export class MemOS {
    * store timestamps are kept strictly monotonic per instance.
    */
   private lastStoreTime = 0;
+  /**
+   * Node ids written by `store()` whose embeddings have not been scanned
+   * for contradiction candidates yet. The write-time scan runs when the
+   * embedding is persisted (see `onEmbeddingPersisted`) — the gate keeps
+   * the scan off the startup backfill path and off re-embeddings from
+   * `update()`, so detection stays a bounded per-write cost.
+   */
+  private contradictionScanPending = new Set<string>();
 
   /**
    * Lifetime token-savings telemetry for context packs (in-process —
@@ -456,7 +472,7 @@ export class MemOS {
         retryBackoffMs: this.config.embeddingQueue.retryBackoffMs ?? 250,
         batchLingerMs: this.config.embeddingQueue.batchLingerMs,
         onPersist: async (nodeId, vector, model) => {
-          await this.storage.saveEmbedding!(nodeId, vector, model);
+          await this.onEmbeddingPersisted(nodeId, vector, model);
         },
         onStatusChange: (nodeId, status, error) => {
           // Map internal queue states onto the public node-level states.
@@ -574,6 +590,7 @@ export class MemOS {
     //   - partial_conflict / unrelated → fall through (new node).
     // Matching uses the same embedding space as retrieval when available,
     // falling back to bag-of-words similarity otherwise.
+    let supersededNodeId: string | null = null;
     if (opts.evidenceLearning === true) {
       const evidence = await this.applyStoreEvidence(
         content,
@@ -586,6 +603,9 @@ export class MemOS {
       // "superseded": the old version was marked historical by
       // applyStoreEvidence — continue below to persist the replacement.
       // "new": fall through and write the node.
+      if (evidence.action === "superseded") {
+        supersededNodeId = evidence.nodeId;
+      }
     }
 
     const node: MemoryNode = {
@@ -616,6 +636,30 @@ export class MemOS {
     this.graph.addNode(node);
     this.scheduleEmbedding(node);
     this.invalidateSearchCache();
+
+    // Register the node for the write-time contradiction scan: once its
+    // embedding is persisted, `onEmbeddingPersisted` runs the bounded
+    // neighbor scan and records candidate pairs (see
+    // `detectContradictionsForNode`). Fail-soft — detection never blocks
+    // the write path.
+    this.contradictionScanPending.add(node.id);
+
+    // Provenance for the evidence state machine: when the contradicted
+    // outcome already superseded an old version above, record the pair
+    // in the contradictions table (status `resolved`). This feeds the
+    // existing `applyEvidence` wiring into the new persistence — the
+    // read-time resolver uses the same pairs.
+    if (supersededNodeId && this.storage.addContradiction) {
+      try {
+        await this.storage.addContradiction(
+          supersededNodeId,
+          node.id,
+          "resolved",
+        );
+      } catch {
+        // Best-effort provenance — never fails the store.
+      }
+    }
 
     // Auto-link — batch save edges for performance
     const links: MemoryEdge[] = [];
@@ -2981,7 +3025,7 @@ export class MemOS {
     source: MemorySource,
   ): Promise<
     | { action: "reinforced"; node: MemoryNode }
-    | { action: "superseded" }
+    | { action: "superseded"; nodeId: string }
     | { action: "new" }
   > {
     void source; // reserved: per-source thresholds may differ later
@@ -3071,7 +3115,7 @@ export class MemOS {
           nodeId: bestNode.id,
           by: content,
         });
-        return { action: "superseded" };
+        return { action: "superseded", nodeId: bestNode.id };
       }
 
       // partial_conflict or unrelated: keep both versions — the
@@ -3128,11 +3172,98 @@ export class MemOS {
     if (!this.embeddingProvider || !this.storage.saveEmbedding) return;
     const text = this.embeddedTextFor(node);
     const vector = await this.embeddingProvider.embed(text);
-    await this.storage.saveEmbedding(
+    await this.onEmbeddingPersisted(
       node.id,
       vector,
       this.embeddingProvider.model,
     );
+  }
+
+  /**
+   * Runs after an embedding vector is persisted for a node — all three
+   * persist paths (background queue, synchronous queue fallback, inline
+   * fallback) funnel through here.
+   *
+   * Beyond persisting, this is the write-time contradiction-detection
+   * hook: when the node was freshly written by `store()` (the pending
+   * gate), a bounded semantic-neighbor scan flags contradiction
+   * candidates and persists them. The scan runs in the embedding
+   * background context — never on the synchronous `store()` path — so
+   * write-path overhead stays bounded. Best-effort: detection failures
+   * must never break embedding persistence.
+   */
+  private async onEmbeddingPersisted(
+    nodeId: string,
+    vector: EmbeddingVector,
+    model: string,
+  ): Promise<void> {
+    await this.storage.saveEmbedding!(nodeId, vector, model);
+    if (!this.contradictionScanPending.has(nodeId)) return;
+    this.contradictionScanPending.delete(nodeId);
+    try {
+      await this.detectContradictionsForNode(nodeId, vector, model);
+    } catch {
+      // Detection is best-effort — the write itself already succeeded.
+    }
+  }
+
+  /**
+   * Write-time contradiction candidate detection.
+   *
+   * Scans a BOUNDED set of semantic neighbors (top
+   * {@link CONTRADICTION_SCAN_LIMIT} above
+   * {@link CONTRADICTION_SIM_MIN}, same namespace, same embedding
+   * model — one indexed query, never a full table scan), flags pairs
+   * in the contradiction band via `findContradictionCandidates`, and
+   * persists them as `unresolved` pairs. Confirmed `contradicted`
+   * outcomes from the evidence state machine are recorded separately
+   * by `store()` with status `resolved` (see the provenance block
+   * there).
+   */
+  private async detectContradictionsForNode(
+    nodeId: string,
+    vector: EmbeddingVector,
+    model: string,
+  ): Promise<void> {
+    if (
+      !this.storage.querySimilarEmbeddings ||
+      !this.storage.getEmbeddingVectors ||
+      !this.storage.addContradiction
+    ) {
+      return;
+    }
+    const node = this.graph.getNode(nodeId);
+    if (!node) return;
+
+    const neighbors = await this.storage.querySimilarEmbeddings(
+      vector,
+      { namespace: node.namespace },
+      CONTRADICTION_SCAN_LIMIT,
+      CONTRADICTION_SIM_MIN,
+      model,
+    );
+    if (neighbors.length === 0) return;
+
+    const neighborIds = neighbors
+      .map((r) => r.node.id)
+      .filter((id) => id !== nodeId);
+    const vectors = await this.storage.getEmbeddingVectors(neighborIds);
+    const candidates = nodeContradictionCandidates(
+      neighbors.map((r) => r.node),
+      vectors,
+      nodeId,
+    );
+    const flagged = findContradictionCandidates(
+      node.content,
+      vector,
+      candidates,
+    );
+    for (const pair of flagged) {
+      await this.storage.addContradiction(nodeId, pair.id);
+    }
+    if (flagged.length > 0) {
+      this.emit("contradiction:detected", { nodeId, pairs: flagged });
+    }
   }
 
   /**
@@ -3155,7 +3286,7 @@ export class MemOS {
       void (async () => {
         try {
           const vector = await this.embeddingProvider!.embed(text);
-          await this.storage.saveEmbedding!(
+          await this.onEmbeddingPersisted(
             node.id,
             vector,
             this.embeddingProvider!.model,
@@ -3248,6 +3379,35 @@ export class MemOS {
     // call `persistEmbedding` for each job.
   }
 
+  /**
+   * Read-time contradiction resolution (accuracy item 4).
+   *
+   * Fetches recorded contradiction pairs for the ids in the fused
+   * result set (one bounded IN-query) and applies
+   * {@link resolveContradictionsAtRead}: when both members of a pair
+   * are present, the older one is score-demoted so the newer version
+   * wins. Best-effort and storage-agnostic — any failure or a storage
+   * without the contradictions table returns the input untouched.
+   */
+  private async applyContradictionResolution(
+    results: ScoredMemory[],
+  ): Promise<ScoredMemory[]> {
+    if (results.length < 2 || !this.storage.getContradictionPairsFor) {
+      return results;
+    }
+    try {
+      const pairs: ContradictionRecord[] =
+        await this.storage.getContradictionPairsFor(
+          results.map((r) => r.node.id),
+        );
+      if (pairs.length === 0) return results;
+      return resolveContradictionsAtRead(results, pairs);
+    } catch {
+      // Resolution is a scoring nudge — never break the read path.
+      return results;
+    }
+  }
+
   private async hybridSearch(
     filter: SearchFilter,
     opts: { internal?: boolean } = {},
@@ -3303,7 +3463,13 @@ export class MemOS {
       ),
     });
 
-    const expanded = await this.applyGraphExpansion(fused);
+    // Contradiction resolution (accuracy item 4): when both members of
+    // a recorded contradiction pair appear in the fused set, demote the
+    // older one so the newer version wins. Pure scoring nudge — nothing
+    // is removed, and the lookup is bounded by the fused set size.
+    const resolved = await this.applyContradictionResolution(fused);
+
+    const expanded = await this.applyGraphExpansion(resolved);
     const withSessions = await this.applySessionExpansion(expanded, filter);
     const reranked = opts.internal
       ? withSessions
