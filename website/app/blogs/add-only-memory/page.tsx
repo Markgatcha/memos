@@ -108,7 +108,7 @@ function WritePathDiagram() {
       </DNote>
 
       <DCaption x={336} y={22}>
-        {"add-only write path · decide at read time"}
+        {"add-only · decide at read time"}
       </DCaption>
       <DBox x={336} y={34} w={288} lines={["new observation"]} />
       <VArrow x={480} y1={94} y2={108} marker="wp-arr" />
@@ -121,8 +121,11 @@ function WritePathDiagram() {
         lines={["version chain grows"]}
         tone="emerald"
       />
-      <DNote x={336} y={268}>
-        {"contradictions resolved at read time, with the query in hand"}
+      <DNote x={336} y={260}>
+        {"contradictions resolved at read time,"}
+      </DNote>
+      <DNote x={336} y={276}>
+        {"with the query in hand"}
       </DNote>
     </Figure>
   );
@@ -228,7 +231,7 @@ function VersionTimeline() {
       />
       <text
         x={331}
-        y={200}
+        y={231}
         textAnchor="middle"
         fill="#a1a1aa"
         fontSize={11}

@@ -22,7 +22,10 @@ export default function Reveal({ children, delay = 0, className = "" }: RevealPr
           observer.disconnect();
         }
       },
-      { threshold: 0.15 }
+      // threshold 0 (not 0.15): a fractional threshold can never be reached
+      // by elements taller than viewportHeight/threshold — e.g. a full
+      // article body on mobile — leaving them stuck at opacity 0 forever.
+      { threshold: 0 }
     );
     observer.observe(el);
     return () => observer.disconnect();
