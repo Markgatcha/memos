@@ -671,6 +671,9 @@ Commands:
   decrypt                 Remove encryption in place (--key <key>)
   stats                   Token-savings telemetry for this process
                           (packs built, tokens injected vs naive baseline)
+  compact                 Fidelity backfill: generate missing L1/L2 levels
+                          for stored memories (--stats shows avg tokens per
+                          level, --namespace <ns>, --limit <n>, --dry-run)
   doctor                  Health-check the store, embedding config and endpoints
   consolidate             Offline maintenance pass: merge duplicates, archive
                           stale memories, supersede decayed ones (kept as
@@ -1237,6 +1240,43 @@ async function main(): Promise<void> {
           console.log(
             `  saved:           ${usage.savedTokens} tok (${usage.savedPct}%)`,
           );
+        }
+        break;
+      }
+
+      case "compact": {
+        const nsIdx = args.indexOf("--namespace");
+        const namespace = nsIdx !== -1 ? args[nsIdx + 1] : undefined;
+        const limitIdx = args.indexOf("--limit");
+        const limit =
+          limitIdx !== -1 ? parseInt(args[limitIdx + 1]!, 10) : undefined;
+        const dryRun = args.includes("--dry-run");
+        const showStats = args.includes("--stats") || dryRun;
+        const result = await memos.compact({
+          ...(namespace ? { namespace } : {}),
+          ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
+          stats: showStats,
+          dryRun,
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          if (showStats) {
+            console.log(
+              `Fidelity levels (${result.stats?.[0]?.count ?? 0} memories${namespace ? `, namespace ${namespace}` : ""}):`,
+            );
+            for (const s of result.stats ?? []) {
+              const saved = (s.savingsVsVerbatim * 100).toFixed(1);
+              console.log(
+                `  ${s.level}  ${s.label.padEnd(18)} avg ${s.avgTokens.toFixed(1).padStart(7)} tok   -${saved}% vs verbatim`,
+              );
+            }
+          }
+          if (!args.includes("--stats")) {
+            console.log(
+              `compact: scanned ${result.scanned}, backfilled ${result.backfilled}, skipped ${result.skipped}${dryRun ? " (dry run)" : ""}`,
+            );
+          }
         }
         break;
       }
