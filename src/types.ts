@@ -494,7 +494,9 @@ export interface ScoredMemory {
    * node injected by the graph-expansion leg, `session` one pulled in
    * by session-sibling expansion, `rerank` the cross-encoder score
    * (squashed to [0,1]) from the two-stage reranking pass, `entity` the
-   * query-entity overlap (in [0,1]) that earned the entity-fusion boost. */
+   * query-entity overlap (in [0,1]) that earned the entity-fusion boost,
+   * and `entityLeg` the matched-entity count from the entity-inverted-index
+   * RRF leg (recall signal, distinct from the `entity` scoring boost). */
   scores?: {
     keyword?: number;
     semantic?: number;
@@ -509,6 +511,7 @@ export interface ScoredMemory {
      * CONTRADICTION_DEMOTION_FACTOR in src/contradictions.ts).
      */
     contradiction_demoted?: number;
+    entityLeg?: number;
   };
 }
 
@@ -938,6 +941,19 @@ export interface StorageAdapter {
   /** Get all nodes with a specific tag. */
   queryNodesByTag(tag: string): Promise<MemoryNode[]>;
 
+  /**
+   * ── item2: entity leg ── candidate generation for hybrid search: node
+   * ids whose indexed entities intersect `entities`, ranked by number of
+   * matched entities (desc), node id tiebreak. Backed by the
+   * `entity_index` inverted table in the SQLite storage. Optional —
+   * storages without an entity index omit this and the entity RRF leg
+   * degrades to no candidates.
+   */
+  searchByEntities?(
+    entities: string[],
+    limit: number,
+  ): Promise<Array<{ nodeId: string; matches: number }>>;
+
   /** Delete all nodes and edges (batch operation). */
   deleteAllNodes(): Promise<void>;
 
@@ -1089,8 +1105,21 @@ export interface FusionOptions {
   /**
    * Strength of the entity-overlap boost: `score *= 1 + entityWeight *
    * overlap`. Default 0.15. Set to 0 to disable entity-fused scoring.
+   *
+   * Distinct from `entityLegWeight`: the overlap boost only re-scores
+   * candidates the keyword/semantic legs already retrieved, while the
+   * entity leg adds recall (entity-matched memories the other legs
+   * missed enter the candidate pool).
    */
   entityWeight?: number;
+  /**
+   * ── item2: entity leg ── weight of the entity-inverted-index RRF leg
+   * (the third retrieval signal alongside keyword and semantic). Applied
+   * as `entityLegWeight / (rrfK + rank)` per candidate, so entity-matched
+   * memories surface even when FTS and embeddings missed them. Default
+   * 0.5. Set to 0 to disable the leg.
+   */
+  entityLegWeight?: number;
 }
 
 /**

@@ -128,5 +128,6 @@ export {
   DEFAULT_KEYWORD_WEIGHT,
   DEFAULT_SEMANTIC_WEIGHT,
   DEFAULT_TRUST_FLOOR,
+  DEFAULT_ENTITY_LEG_WEIGHT,
 } from "./retrieval.js";
 export type { FusionOptions } from "./retrieval.js";

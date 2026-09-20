@@ -60,6 +60,15 @@ export const DEFAULT_SEMANTIC_WEIGHT = 0.2;
 export const DEFAULT_ENTITY_WEIGHT = 0.15;
 
 /**
+ * ── item2: entity leg ── default weight of the entity-inverted-index RRF
+ * leg (`entityResults`). Rank-1 in the entity leg scores
+ * `0.5 / (rrfK + 1)`: above a semantic-only rank-1 (0.2) but below a
+ * keyword-only rank-1 (0.8) — entity matches are high-precision but the
+ * extractor is lexical, so exact term matches still win ties.
+ */
+export const DEFAULT_ENTITY_LEG_WEIGHT = 0.5;
+
+/**
  * Lower bound of the trust multiplier. A memory with trustScore 0 is
  * multiplied by `trustFloor`; trustScore 1 by 1.0. Kept gentle (0.7)
  * so trust nudges ranking without dominating pure relevance.
@@ -103,23 +112,29 @@ export const DEFAULT_RECENCY_HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
 export const RECENCY_EPSILON = 1e-9;
 
 /**
- * Fuse two ranked retrieval lists into one via weighted Reciprocal Rank
- * Fusion, then apply trust weighting.
+ * Fuse two (optionally three) ranked retrieval lists into one via
+ * weighted Reciprocal Rank Fusion, then apply trust weighting.
  *
- * Both legs are expected to be pre-ranked best-first (as returned by
- * FTS5 bm25 and cosine-similarity search). Candidates appearing in both
- * legs accumulate both RRF contributions.
+ * All legs are expected to be pre-ranked best-first (as returned by FTS5
+ * bm25, cosine-similarity search, and the entity-inverted-index lookup).
+ * Candidates appearing in multiple legs accumulate each leg's RRF
+ * contribution.
  *
  * @param keywordResults — Ranked keyword/FTS5 leg (best first).
  * @param semanticResults — Ranked semantic/embedding leg (best first).
  * @param options — Tunable weights; see {@link FusionOptions}.
- * @returns Fused list sorted by descending hybrid score, with a
- *   `scores` breakdown (`keyword`, `semantic`, `hybrid`) on each entry.
+ * @param entityResults — Ranked entity-inverted-index leg (best first).
+ *   Optional third RRF leg: memories sharing entities with the query that
+ *   the keyword/semantic legs missed still enter the candidate pool.
+ * @returns Fused list sorted by descending hybrid score, with a `scores`
+ *   breakdown (`keyword`, `semantic`, `entityLeg`, `hybrid`, plus `entity`
+ *   when the entity-overlap boost fires) on each entry.
  */
 export function fuseResults(
   keywordResults: ScoredMemory[],
   semanticResults: ScoredMemory[],
   options: FusionOptions = {},
+  entityResults: ScoredMemory[] = [],
 ): ScoredMemory[] {
   const rrfK = options.rrfK ?? DEFAULT_RRF_K;
   const keywordWeight = options.keywordWeight ?? DEFAULT_KEYWORD_WEIGHT;
@@ -169,10 +184,48 @@ export function fuseResults(
     }
   }
 
+  // ── item2: entity leg ── third RRF leg from the entity→memories
+  // inverted index (`src/entity-index.ts`). Unlike the multiplicative
+  // entity-overlap boost below — which only re-scores candidates the
+  // keyword/semantic legs already retrieved — this leg ADDS RECALL:
+  // entity-matched memories that FTS and embeddings both missed enter
+  // the candidate pool here.
+  //
+  // Score-breakdown naming: this leg records `scores.entityLeg` (the
+  // per-candidate matched-entity count feeding the RRF vote), while the
+  // boost below records `scores.entity` (the [0,1] query/candidate
+  // entity-overlap multiplier). Same signal family, different roles —
+  // recall vs scoring.
+  const entityLegWeight = options.entityLegWeight ?? DEFAULT_ENTITY_LEG_WEIGHT;
+  if (entityLegWeight > 0 && entityResults.length > 0) {
+    for (const [index, result] of entityResults.entries()) {
+      const entityRrf = entityLegWeight / (rrfK + index + 1);
+      const existing = merged.get(result.node.id);
+      if (existing) {
+        existing.score += entityRrf;
+        existing.scores.entityLeg = Math.max(0, result.score);
+        existing.scores.hybrid = existing.score;
+      } else {
+        merged.set(result.node.id, {
+          node: result.node,
+          score: entityRrf,
+          scores: {
+            keyword: 0,
+            semantic: 0,
+            entityLeg: Math.max(0, result.score),
+            hybrid: entityRrf,
+          },
+        });
+      }
+    }
+  }
+
   // Entity-fused scoring: a third signal on top of keyword + semantic.
   // Memories whose stored entities / tags overlap the query's entities get
   // a gentle multiplicative boost. No-op unless the caller supplied query
-  // entities (hybridSearch extracts them per query).
+  // entities (hybridSearch extracts them per query). Records
+  // `scores.entity` — the overlap ratio — distinct from the
+  // `scores.entityLeg` RRF-leg vote above (see the item2 comment).
   if (entityWeight > 0 && queryEntities.length > 0) {
     for (const entry of merged.values()) {
       const overlap = entityOverlap(queryEntities, {

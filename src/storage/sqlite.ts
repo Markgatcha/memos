@@ -14,6 +14,13 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { escapeLikePrefix } from "../scope.js";
+import {
+  backfillEntityIndex,
+  ensureEntityIndexTable,
+  extractContentEntities,
+  searchByEntities as searchEntityIndex,
+  writeEntityIndexRows,
+} from "../entity-index.js";
 import type {
   StorageAdapter,
   ContradictionRecord,
@@ -492,6 +499,12 @@ export class SQLiteStorage implements StorageAdapter {
     // existing rows. Safe to run on every init — INSERT OR IGNORE means
     // already-synced rows are no-ops.
     this.migrateBackfillNodeTags();
+
+    // ── item2: entity leg ── entity→memories inverted index (first-class
+    // entity channel). Mirrors the node_tags pattern: join table with a
+    // (entity) lookup index, backfilled from existing rows on init.
+    ensureEntityIndexTable(this.db);
+    this.migrateBackfillEntityIndex();
   }
 
   /**
@@ -536,6 +549,18 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   /**
+   * One-time backfill of the `entity_index` inverted table for pre-existing
+   * rows (databases created before the table existed). Idempotent — nodes
+   * already present in the index are skipped. Delegates to
+   * `src/entity-index.ts`, which prefers each row's stored
+   * `metadata.entities` (canonicalized with the deployment's aliases at
+   * write time) and falls back to extracting from content.
+   */
+  private migrateBackfillEntityIndex(): void {
+    backfillEntityIndex(this.db);
+  }
+
+  /**
    * Replace the `node_tags` rows for a single node. Used after
    * `saveNode` / `updateNode` to keep the join table in lockstep with
    * the JSON column.
@@ -563,6 +588,27 @@ export class SQLiteStorage implements StorageAdapter {
       seen.add(tag);
       insert.run(nodeId, tag);
     }
+  }
+
+  /**
+   * ── item2: entity leg ── mirror a node's entities into the
+   * `entity_index` inverted table, keeping it in lockstep with the node
+   * row (the entity analogue of `writeNodeTags`). Runs inside the
+   * caller's transaction (`saveNode` / `updateNode`).
+   *
+   * Prefers the write-time canonicalized `metadata.entities` — `MemOS.store`
+   * canonicalizes with the deployment's `entityAliases`, so reusing it
+   * keeps the index consistent with query-time canonicalization. Falls
+   * back to extracting from content (built-in aliases) for rows written
+   * straight through storage.
+   */
+  private writeNodeEntities(node: MemoryNode): void {
+    const stored = (node.metadata as Record<string, unknown> | undefined)
+      ?.entities;
+    const entities = Array.isArray(stored)
+      ? stored
+      : extractContentEntities(node.content);
+    writeEntityIndexRows(this.db, node.id, entities);
   }
 
   /**
@@ -602,6 +648,12 @@ export class SQLiteStorage implements StorageAdapter {
       stmt.run(params);
       // Mirror to the join table for index-backed tag lookups.
       this.writeNodeTags(node.id, node.tags);
+      // ── item2: entity leg ── mirror the node's entities into the
+      // entity→memories inverted index (same transaction). Prefer the
+      // write-time canonicalized `metadata.entities` (deployment aliases
+      // applied in `MemOS.store`); fall back to content extraction for
+      // rows written straight through storage.
+      this.writeNodeEntities(node);
     });
     tx({
       id: node.id,
@@ -772,9 +824,14 @@ export class SQLiteStorage implements StorageAdapter {
     // Keep the tag join table in sync when the tag set changed — in the
     // same transaction as the row UPDATE (previously two commits).
     const syncTags = input.tags !== undefined;
+    // ── item2: entity leg ── the entity signal may have changed when the
+    // content or metadata was updated; re-sync the inverted index rows.
+    const syncEntities =
+      input.content !== undefined || input.metadata !== undefined;
     const tx = this.db.transaction(() => {
       updateStmt.run(params);
       if (syncTags) this.writeNodeTags(updated.id, updated.tags);
+      if (syncEntities) this.writeNodeEntities(updated);
     });
     tx();
 
@@ -1571,6 +1628,19 @@ export class SQLiteStorage implements StorageAdapter {
       )
       .all(tag) as Record<string, unknown>[];
     return rows.map((r) => this.rowToNode(r));
+  }
+
+  /**
+   * ── item2: entity leg ── candidate generation for hybrid search: node
+   * ids whose indexed entities intersect `entities`, ranked by number of
+   * matched entities (desc), node id tiebreak. Backed by the
+   * `entity_index` inverted table — O(indexed entities), no content scan.
+   */
+  async searchByEntities(
+    entities: string[],
+    limit: number,
+  ): Promise<Array<{ nodeId: string; matches: number }>> {
+    return searchEntityIndex(this.db, entities, limit);
   }
 
   // -----------------------------------------------------------------------

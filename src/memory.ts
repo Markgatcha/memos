@@ -3408,15 +3408,90 @@ export class MemOS {
     }
   }
 
+  /**
+   * ── item2: entity leg ── candidate generation from the entity→memories
+   * inverted index (`src/entity-index.ts`). Returns ranked `ScoredMemory`s
+   * (score = number of matched query entities, rank = match count desc /
+   * node id tiebreak) for fusion as the third RRF leg in `fuseResults`.
+   *
+   * Applies the same namespace / type / pool / tag / temporal scoping as
+   * the keyword and semantic legs, so the entity leg can never leak
+   * out-of-scope memories into results. Degrades to `[]` when the query
+   * has no entities or the storage has no entity index (custom adapters).
+   */
+  private async fetchEntityLeg(
+    queryEntities: readonly string[],
+    filter: SearchFilter,
+    candidateLimit: number,
+  ): Promise<ScoredMemory[]> {
+    if (queryEntities.length === 0) return [];
+    const storage = this.storage;
+    if (!storage.searchByEntities) return [];
+    const matches = await storage.searchByEntities(
+      [...queryEntities],
+      candidateLimit,
+    );
+    if (matches.length === 0) return [];
+
+    const now = Date.now();
+    const poolFilter = filter.pool
+      ? Array.isArray(filter.pool)
+        ? filter.pool
+        : [filter.pool]
+      : null;
+    const results: ScoredMemory[] = [];
+    for (const { nodeId, matches: matchCount } of matches) {
+      const node = storage.peekNode
+        ? await storage.peekNode(nodeId)
+        : await storage.getNode(nodeId);
+      if (!node) continue;
+      // Scope parity with the keyword/semantic legs (see `queryNodes` and
+      // the semantic-search filter loop).
+      if (filter.namespace && node.namespace !== filter.namespace) continue;
+      if (
+        filter.namespacePrefix &&
+        !node.namespace.startsWith(filter.namespacePrefix)
+      ) {
+        continue;
+      }
+      if (filter.type && node.type !== filter.type) continue;
+      if (poolFilter && !poolFilter.includes(node.pool ?? "event")) continue;
+      if (filter.tags && filter.tags.some((t) => !node.tags.includes(t))) {
+        continue;
+      }
+      if (filter.source && node.source !== filter.source) continue;
+      if (filter.validAt !== undefined) {
+        if (node.validFrom !== null && node.validFrom > filter.validAt) {
+          continue;
+        }
+        if (node.validTo !== null && node.validTo < filter.validAt) continue;
+      } else if (
+        filter.includeHistorical !== true &&
+        node.validTo !== null &&
+        node.validTo <= now
+      ) {
+        continue;
+      }
+      results.push({
+        node,
+        score: matchCount,
+        scores: { entityLeg: matchCount },
+      });
+    }
+    return results;
+  }
+
   private async hybridSearch(
     filter: SearchFilter,
     opts: { internal?: boolean } = {},
   ): Promise<ScoredMemory[]> {
     const limit = filter.limit ?? 20;
     const offset = filter.offset ?? 0;
-    // Pull a wider candidate set from both retrieval modes, then merge. This
-    // keeps exact keyword matches visible while letting embeddings rescue
-    // semantically related memories that FTS cannot match lexically.
+    // Pull a wider candidate set from all three retrieval legs, then merge.
+    // This keeps exact keyword matches visible while letting embeddings
+    // rescue semantically related memories that FTS cannot match lexically,
+    // and the entity leg surface memories that share entities with the
+    // query but neither leg found.
     // `filter.candidateDepth` widens the pool on demand (two-stage reranking
     // or expansion stages narrow it afterwards).
     const candidateLimit = Math.max(
@@ -3425,8 +3500,18 @@ export class MemOS {
       20,
     );
 
-    // Run keyword and semantic retrieval in parallel for lower latency.
-    const [semanticResults, keywordResults] = await Promise.all([
+    // ── item2: entity leg ── query entities are extracted once and feed
+    // both the inverted-index candidate leg (recall: entity-matched
+    // memories the other legs missed) and the post-fusion overlap boost
+    // (scoring) in fuseResults.
+    const queryEntities = canonicalizeEntities(
+      extractQueryEntities(filter.query ?? ""),
+      this.config.entityAliases,
+    );
+
+    // Run keyword, semantic, and entity retrieval in parallel for lower
+    // latency.
+    const [semanticResults, keywordResults, entityResults] = await Promise.all([
       // Threshold floor: cosine-0 memories are unrelated and must not
       // vote in fusion (nor occupy candidate slots). A small positive
       // floor keeps genuine paraphrase matches (typically >= 0.3 for real
@@ -3446,22 +3531,26 @@ export class MemOS {
         limit: candidateLimit,
         offset: 0,
       }),
+      this.fetchEntityLeg(queryEntities, filter, candidateLimit),
     ]);
 
-    // Fuse the two legs via weighted Reciprocal Rank Fusion + trust
+    // Fuse the three legs via weighted Reciprocal Rank Fusion + trust
     // weighting. The fusion logic lives in `src/retrieval.ts` so it can
     // be unit-tested without storage or embeddings. Weights come from
     // `config.fusion` so deployments with a stronger embedding model can
-    // rebalance the legs (defaults: keyword 0.8 / semantic 0.2, tuned
-    // for the hash baseline). Query entities are extracted here (not
-    // stored) so the entity-fusion signal always reflects the live query.
-    const fused = fuseResults(keywordResults, semanticResults, {
-      ...this.config.fusion,
-      queryEntities: canonicalizeEntities(
-        extractQueryEntities(filter.query ?? ""),
-        this.config.entityAliases,
-      ),
-    });
+    // rebalance the legs (defaults: keyword 0.8 / semantic 0.2, entity
+    // leg 0.5 — tuned for the hash baseline). Query entities are extracted
+    // here (not stored) so the entity-fusion signal always reflects the
+    // live query.
+    const fused = fuseResults(
+      keywordResults,
+      semanticResults,
+      {
+        ...this.config.fusion,
+        queryEntities,
+      },
+      entityResults,
+    );
 
     // Contradiction resolution (accuracy item 4): when both members of
     // a recorded contradiction pair appear in the fused set, demote the
