@@ -17,8 +17,10 @@ import { z } from "zod";
 
 import { MemOS } from "./memory.js";
 import { graphToMermaid } from "./graph-mermaid.js";
-import type { MemOSConfig } from "./types.js";
+import type { MemOSConfig, ScoredMemory } from "./types.js";
 import { getSdkVersion } from "./version.js";
+import { citationToken } from "./citations.js";
+import { decorateTrustFlags, isUntrustedForAgent } from "./provenance.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas for MemoryNode / MemoryEdge / ScoredMemory (output validation)
@@ -44,6 +46,12 @@ const memoryNodeSchema = z.object({
   trustScore: z.number(),
   confidence: z.number().optional(),
   evidenceCount: z.number().optional(),
+  // Provenance-trust layer (optional: third-party storage adapters may
+  // not populate them).
+  provenance: z.string().optional(),
+  quarantined: z.boolean().optional(),
+  quarantinedAt: z.number().nullable().optional(),
+  quarantineReason: z.string().nullable().optional(),
 });
 
 const memoryEdgeSchema = z.object({
@@ -64,9 +72,34 @@ const scoredMemorySchema = z.object({
       keyword: z.number().optional(),
       semantic: z.number().optional(),
       hybrid: z.number().optional(),
+      provenance: z.number().optional(),
     })
     .optional(),
+  // Provenance-trust read-time policy: low-trust channels
+  // (imported/tool-output tiers, quarantined-then-released) are flagged
+  // so the host agent confirms instead of silently injecting them.
+  provenance: z.string().optional(),
+  citation: z.string().optional(),
+  untrustedSource: z.boolean().optional(),
+  untrusted_source: z.boolean().optional(),
 });
+
+/**
+ * Shape a scored memory for the MCP wire: provenance tier, citable
+ * `[mem:hex]` token tracing the memory to its source episode, and the
+ * read-time trust flag (`untrusted_source: true` for low-trust
+ * channels). `provenance` carries the tier string; `untrusted_source`
+ * is the snake_case flag host agents check.
+ */
+function toMcpResult(r: ScoredMemory): Record<string, unknown> {
+  return {
+    ...r,
+    provenance: r.provenance ?? r.node.provenance,
+    citation: r.citation ?? citationToken(r.node.id),
+    untrustedSource: r.untrustedSource ?? isUntrustedForAgent(r.node),
+    untrusted_source: r.untrustedSource ?? isUntrustedForAgent(r.node),
+  };
+}
 
 // Shared multi-scope input (composed into a namespace string in fixed
 // order user -> agent -> run; hierarchical match by default).
@@ -120,13 +153,31 @@ function registerTools(server: McpServer, memos: MemOS): void {
             "One line of situational context (contextual retrieval) — " +
               "prepended to the embedded text and shown in context packs.",
           ),
+        provenance: z
+          .enum(["user-verified", "user", "tool-output", "chat", "imported"])
+          .optional()
+          .describe(
+            'Provenance tier override. Pass "tool-output" when storing ' +
+              'results returned by tools, "imported" for bulk imports. ' +
+              "Defaults from the content's origin when omitted.",
+          ),
       }),
       outputSchema: z.object({
         node: memoryNodeSchema,
         links: z.array(memoryEdgeSchema),
       }),
     },
-    async ({ content, type, tags, ttl, namespace, pool, context, scope }) => {
+    async ({
+      content,
+      type,
+      tags,
+      ttl,
+      namespace,
+      pool,
+      context,
+      scope,
+      provenance,
+    }) => {
       const stored = await memos.store(content, {
         type:
           (type as
@@ -142,6 +193,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
         ...(pool ? { pool } : {}),
         ...(context ? { context } : {}),
         ...(scope ? { scope } : {}),
+        ...(provenance ? { provenance } : {}),
       });
       return {
         content: [
@@ -157,12 +209,27 @@ function registerTools(server: McpServer, memos: MemOS): void {
     {
       title: "Search Memories",
       description:
-        "Search local memories by full-text query. Pass compact: true for token-lean output.",
+        "Search local memories by full-text query. Pass compact: true for token-lean output. " +
+        "Results carry provenance trust flags: `provenance` (tier), `citation` ([mem:hex] token " +
+        "tracing the memory to its source episode), and `untrusted_source: true` for low-trust " +
+        "channels (imported/tool-output tiers, quarantined-then-released) — confirm those with " +
+        "the user instead of silently injecting them as context.",
       inputSchema: z.object({
         query: z.string().describe("Search query."),
         limit: z.number().optional().describe("Maximum result count."),
         tags: z.array(z.string()).optional().describe("Optional tag filter."),
         namespace: z.string().optional().describe("Optional namespace filter."),
+        provenance: z
+          .enum(["user-verified", "user", "tool-output", "chat", "imported"])
+          .optional()
+          .describe("Filter by provenance tier."),
+        includeQuarantined: z
+          .boolean()
+          .optional()
+          .describe(
+            "Include quarantined memories in results. Default false " +
+              "(quarantined memories are excluded from recall).",
+          ),
         pool: z
           .union([
             z.enum(["event", "note", "procedure"]),
@@ -189,28 +256,49 @@ function registerTools(server: McpServer, memos: MemOS): void {
               score: z.number(),
               type: z.string().optional(),
               tags: z.array(z.string()).optional(),
+              provenance: z.string().optional(),
+              citation: z.string().optional(),
+              untrusted_source: z.boolean().optional(),
             }),
           ),
           compact: z.literal(true),
         }),
       ]),
     },
-    async ({ query, limit, tags, namespace, pool, scope, compact }) => {
+    async ({
+      query,
+      limit,
+      tags,
+      namespace,
+      provenance,
+      includeQuarantined,
+      pool,
+      scope,
+      compact,
+    }) => {
       const found = await memos.search({
         query,
         limit: limit ?? 10,
         ...(tags ? { tags } : {}),
         ...(namespace ? { namespace } : {}),
+        ...(provenance ? { provenance } : {}),
+        ...(includeQuarantined !== undefined ? { includeQuarantined } : {}),
         ...(pool !== undefined ? { pool } : {}),
         ...(scope ? { scope } : {}),
       });
+      // Read-time trust policy: flag low-trust channels so the host
+      // agent confirms instead of silently injecting them as context.
+      const flagged = decorateTrustFlags(found);
       if (compact) {
-        const trimmed = found.map((r) => ({
+        const trimmed = flagged.map((r) => ({
           id: r.node.id,
           content: r.node.content,
           score: Number(r.score.toFixed(4)),
           ...(r.node.type ? { type: r.node.type } : {}),
           ...(r.node.tags.length > 0 ? { tags: r.node.tags } : {}),
+          provenance: r.provenance ?? r.node.provenance,
+          citation: r.citation ?? citationToken(r.node.id),
+          untrusted_source: r.untrustedSource ?? false,
         }));
         return {
           content: [
@@ -220,7 +308,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
                 trimmed
                   .map(
                     (r) =>
-                      `[${r.id.slice(0, 8)}] (${r.score}) ${r.type ?? "fact"}: ${r.content}`,
+                      `[${r.id.slice(0, 8)}] (${r.score}) ${r.type ?? "fact"}${r.untrusted_source ? ` [untrusted:${r.provenance}]` : ""}: ${r.content}`,
                   )
                   .join("\n") || "No memories found.",
             },
@@ -230,9 +318,9 @@ function registerTools(server: McpServer, memos: MemOS): void {
       }
       return {
         content: [
-          { type: "text" as const, text: `Found ${found.length} memories.` },
+          { type: "text" as const, text: `Found ${flagged.length} memories.` },
         ],
-        structuredContent: { results: found },
+        structuredContent: { results: flagged.map(toMcpResult) },
       };
     },
   );
@@ -442,11 +530,12 @@ function registerTools(server: McpServer, memos: MemOS): void {
         ...(limit ? { limit } : {}),
         ...(namespace ? { namespace } : {}),
       });
+      const flagged = decorateTrustFlags(results);
       return {
         content: [
-          { type: "text" as const, text: `Found ${results.length} memories.` },
+          { type: "text" as const, text: `Found ${flagged.length} memories.` },
         ],
-        structuredContent: { results },
+        structuredContent: { results: flagged.map(toMcpResult) },
       };
     },
   );

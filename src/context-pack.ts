@@ -29,10 +29,7 @@ import { compareScoredMemories } from "./retrieval.js";
 // plus pure math — neither imports this module, so no cycle.
 import { assignCitationTokens } from "./citations.js";
 import { lessonCitationToken } from "./procedural.js";
-// Fidelity levels are pure functions over nodes (fidelity.ts imports
-// nothing from this module), so no cycle is introduced.
-import { levelText, routeFidelity } from "./fidelity.js";
-import type { FidelityLevel } from "./fidelity.js";
+import { isUntrustedForAgent } from "./provenance.js";
 
 /** The single source of truth for the context-pack schema id. */
 export const CONTEXT_PACK_SCHEMA = "ai-trio.memos.context-pack.v1";
@@ -47,12 +44,6 @@ export interface ContextPackItem {
   citation?: string;
   content: string;
   summary: string | null;
-  /**
-   * Fidelity level this item's content was rendered at. Present only
-   * when the pack was built with the `fidelity` option; `undefined`
-   * means L3 verbatim (the default).
-   */
-  fidelity?: FidelityLevel;
   score: number;
   scores: {
     keyword?: number;
@@ -67,6 +58,18 @@ export interface ContextPackItem {
   trustScore?: number;
   /** Per-node provenance source. Used by compact TOON for 2-char code. */
   nodeSource?: string;
+  /**
+   * Provenance tier of the item's channel (`user-verified` > `user` >
+   * `tool-output` > `chat` > `imported`). Lets pack consumers apply the
+   * read-time trust policy.
+   */
+  provenance?: string;
+  /**
+   * True when the item comes from a low-trust channel (`imported` /
+   * `tool-output` tier, or quarantined-then-released): the host agent
+   * should confirm it instead of silently injecting it as context.
+   */
+  untrustedSource?: boolean;
   tags: string[];
   updatedAt: string;
 }
@@ -81,30 +84,11 @@ export interface ContextPack {
   /** Number of tokens saved by debloating + dedup. 0 when neither ran. */
   tokensSaved: number;
   /**
-   * Fidelity metadata: which level the pack was rendered at and what it
-   * cost vs verbatim, so token savings are visible. Present only when
-   * the pack was built with the `fidelity` option.
-   */
-  fidelity?: ContextPackFidelityMeta;
-  /**
    * Procedural lessons injected as an "operating instructions" section.
    * Present only when the pack was built with lessons requested
    * (`MemOS.contextPack({ lessons })`).
    */
   lessons?: ProceduralLesson[];
-}
-
-/**
- * Pack-level fidelity metadata. `contentTokens` is what the packed item
- * contents cost at the chosen level; `verbatimTokens` is what the SAME
- * items would have cost at L3 — the difference is the fidelity saving.
- */
-export interface ContextPackFidelityMeta {
-  level: FidelityLevel;
-  /** True when the level came from the query-adaptive router. */
-  adaptive: boolean;
-  contentTokens: number;
-  verbatimTokens: number;
 }
 
 /** Options for building a context pack. */
@@ -174,14 +158,6 @@ export interface BuildContextPackOptions {
    * here when calling `buildContextPack` directly.
    */
   lessons?: ProceduralLesson[];
-  /**
-   * Fidelity level for item contents: a fixed level or `"adaptive"`
-   * (the query-adaptive router picks the starting level from query
-   * signals). Default `undefined` = L3 verbatim — current behavior
-   * preserved exactly. The resolved level is recorded per item
-   * (`item.fidelity`) and in the pack metadata (`pack.fidelity`).
-   */
-  fidelity?: FidelityLevel | "adaptive";
 }
 
 // ---------------------------------------------------------------------------
@@ -375,19 +351,11 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     semanticDedupThreshold = DEFAULT_SEMANTIC_DEDUP_THRESHOLD,
     citations = false,
     lessons,
-    fidelity,
   } = opts;
 
   // Sort by descending score, node id as the final tiebreak (cache-prefix
   // stability: equal scores must not surface input-order noise).
   const sorted = [...items].sort(compareScoredMemories);
-
-  // Fidelity level: "adaptive" routes per-query; a fixed level renders
-  // every item at that level; undefined keeps the historical default of
-  // L3 verbatim text.
-  const resolvedLevel: FidelityLevel | undefined =
-    fidelity === "adaptive" ? routeFidelity(query).level : fidelity;
-  const fidelityAdaptive = fidelity === "adaptive";
 
   // Phase 1: debloat, elide redundant summaries, and compute token counts.
   //
@@ -397,13 +365,7 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
   // forms a SECOND time after building the item (6 calls/item worst case);
   // the counts are now computed once and reused everywhere below.
   const prepared = sorted.map((scored) => {
-    // Fidelity rendering happens BEFORE debloat: a summary or entity
-    // list has no filler worth stripping, and applying it first keeps
-    // the token math consistent with the budget trimming below.
-    const rawContent =
-      resolvedLevel === undefined
-        ? scored.node.content
-        : levelText(scored.node, resolvedLevel);
+    const rawContent = scored.node.content;
     const content = debloat ? debloatContent(rawContent) : rawContent;
     const rawSummaryText = scored.node.summary || "";
     let summary = includeSummary
@@ -450,9 +412,6 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
       id: scored.node.id,
       content,
       summary,
-      // Present only when the pack was built with `fidelity` — keeps the
-      // default object shape byte-identical to before.
-      ...(resolvedLevel !== undefined && { fidelity: resolvedLevel }),
       score: scored.score,
       // Fixed key order — fusion builds this object in leg-dependent
       // order, which would otherwise shift JSON bytes between calls.
@@ -462,6 +421,11 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
       // Per-node provenance for compact TOON encoding
       trustScore: scored.node.trustScore,
       nodeSource: scored.node.source,
+      // Provenance-trust layer: tier + read-time trust flag, so every
+      // pack item handed to an agent is traceable to its channel and
+      // low-trust items are explicitly marked.
+      provenance: scored.node.provenance,
+      untrustedSource: isUntrustedForAgent(scored.node),
       tags: [...scored.node.tags],
       updatedAt: new Date(scored.node.updatedAt).toISOString(),
     };
@@ -562,11 +526,6 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     }
   }
 
-  // Item id -> source node, for fidelity verbatim-token accounting.
-  const itemById = new Map(
-    sorted.map((scored) => [scored.node.id, scored.node] as const),
-  );
-
   return {
     schema: CONTEXT_PACK_SCHEMA,
     query,
@@ -575,27 +534,6 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     items: ordered,
     tokensSaved,
     ...(lessons && lessons.length > 0 ? { lessons } : {}),
-    // Fidelity metadata: contentTokens is what the packed contents cost
-    // at the resolved level; verbatimTokens is what the same items would
-    // have cost at L3. Absent unless the pack was built with `fidelity`.
-    ...(resolvedLevel !== undefined
-      ? {
-          fidelity: {
-            level: resolvedLevel,
-            adaptive: fidelityAdaptive,
-            contentTokens: ordered.reduce(
-              (sum, item) => sum + tokenCounter(item.content),
-              0,
-            ),
-            verbatimTokens: ordered.reduce((sum, item) => {
-              const node = itemById.get(item.id);
-              return (
-                sum + tokenCounter(node ? levelText(node, "L3") : item.content)
-              );
-            }, 0),
-          } satisfies ContextPackFidelityMeta,
-        }
-      : {}),
   };
 }
 
@@ -621,10 +559,6 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
  * Token savings vs JSON: 60-90% on typical context packs (where JSON
  * overhead like braces, quotes, and field names dominate).
  *
- * Fidelity: when the pack was built with the `fidelity` option, a
- * `# fidelity=<level>` header line is emitted so the rendered level is
- * visible (and cacheable) in the serialized form.
- *
  * @param pack — The ContextPack to serialize.
  * @returns A TOON-formatted string.
  */
@@ -636,12 +570,6 @@ export function packToToon(pack: ContextPack): string {
     `# toon:pipe-delimited|q=${pack.query}|n=${pack.namespace}|b=${pack.tokenBudget}|s=${pack.tokensSaved}`,
   );
   lines.push("# fields: id|score|trust|source|updatedAt|tags|content");
-  // Fidelity header: records the level item contents were rendered at
-  // (cache-prefix stability — the layout only ever grows this line when
-  // the pack was actually built with `fidelity`).
-  if (pack.fidelity) {
-    lines.push(`# fidelity=${pack.fidelity.level}`);
-  }
   for (const item of pack.items) {
     // Escape pipe characters in content by replacing with ¦
     const safeContent = item.content.replace(/\|/g, "¦").replace(/\n/g, " ");
@@ -890,19 +818,14 @@ export function packToToonCompact(
       updatedAtMs: new Date(item.updatedAt).getTime(),
       tags: item.tags,
       content: item.content,
-      fidelity: item.fidelity,
     })),
   );
   // Prepend the pack envelope (schema/query/namespace/budget) as a header
   // line so the pack path keeps its provenance. The search-result path
   // omits it — nothing to say there.
-  // The fidelity level rides in the envelope as `f=<level>` when the pack
-  // was built with the `fidelity` option — so the wire form carries the
-  // level without a schema bump.
-  const fidelityParam = pack.fidelity ? `|f=${pack.fidelity.level}` : "";
   const envelope =
     `# ${CONTEXT_PACK_SCHEMA}|q=${pack.query}|n=${pack.namespace}` +
-    `|b=${pack.tokenBudget}|s=${pack.tokensSaved}${fidelityParam}`;
+    `|b=${pack.tokenBudget}|s=${pack.tokensSaved}`;
   // Query trailer: repeat the query AFTER the evidence block (the envelope
   // already states it BEFORE) — a reader scanning bottom-up re-anchors on
   // the query. A `#` comment line, so `parseToonCompact` skips it.
@@ -948,13 +871,6 @@ interface CompactRow {
   updatedAtMs: number;
   tags: string[];
   content: string;
-  /**
-   * Fidelity level the content was rendered at. Only pack rows carry it
-   * (search-result rows never do), and only when the pack was built
-   * with the `fidelity` option — otherwise the row keeps its legacy
-   * 7-field shape.
-   */
-  fidelity?: FidelityLevel;
 }
 
 /**
@@ -1030,21 +946,10 @@ function serializeCompactRows(rows: CompactRow[]): string {
     const safeTags = tagIndex
       ? r.tags.map((t) => String(tagIndex.get(t) ?? t)).join(";")
       : r.tags.join(";");
-    // Optional 8th field: the fidelity level the row's content was
-    // rendered at. Only pack rows carry it (search-result rows never do),
-    // and only when the pack was built with `fidelity`.
-    const fidelityField = r.fidelity ? [r.fidelity] : [];
     lines.push(
-      [
-        shortId,
-        scoreInt,
-        trustCode,
-        srcCode,
-        epochDelta,
-        safeTags,
-        cited,
-        ...fidelityField,
-      ].join("|"),
+      [shortId, scoreInt, trustCode, srcCode, epochDelta, safeTags, cited].join(
+        "|",
+      ),
     );
   }
 
@@ -1082,19 +987,8 @@ export function parseToonCompact(toon: string): ContextPackItem[] {
     const parts = line.split("|");
     if (parts.length < 7) continue;
 
-    // Optional 8th field: fidelity level (pack rows built with the
-    // `fidelity` option). Legacy 7-field rows parse unchanged. The last
-    // field is only treated as fidelity when it exactly matches a known
-    // level, so content containing raw pipes is never misread.
-    const [id, scoreInt, trustCode, srcCode, ts, tags, ...rest] = parts;
-    const fidelityLevels = new Set(["L0", "L1", "L2", "L3"]);
-    const lastField = rest[rest.length - 1];
-    const fidelity =
-      rest.length > 1 && lastField && fidelityLevels.has(lastField)
-        ? (lastField as FidelityLevel)
-        : undefined;
-    const content =
-      fidelity !== undefined ? rest.slice(0, -1).join("|") : rest.join("|");
+    const [id, scoreInt, trustCode, srcCode, ts, tags, ...contentParts] = parts;
+    const content = contentParts.join("|"); // rejoin in case of ¦ escapes
 
     // Reverse source code mapping.
     const source = CODE_SOURCE[srcCode] ?? srcCode;
@@ -1127,7 +1021,6 @@ export function parseToonCompact(toon: string): ContextPackItem[] {
       nodeSource: source,
       tags: resolvedTags,
       updatedAt: new Date(epoch * 1000).toISOString(),
-      ...(fidelity !== undefined && { fidelity }),
     };
     items.push(item);
   }

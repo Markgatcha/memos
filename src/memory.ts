@@ -54,22 +54,6 @@ import {
   canonicalizeEntities,
   extractQueryEntities,
 } from "./entity-extraction.js";
-import {
-  fidelityStats,
-  hasFidelityCache,
-  levelText,
-  nextFidelityLevel,
-  resolveRecallLevels,
-  scoreLevelCorpus,
-  stampFidelityCache,
-} from "./fidelity.js";
-import type {
-  CompactOptions,
-  CompactResult,
-  FidelityLevel,
-  FidelityRecallOptions,
-  FidelityRecallResult,
-} from "./fidelity.js";
 import { composeScope } from "./scope.js";
 import { decideRetain } from "./retain-filter.js";
 import type {
@@ -128,6 +112,7 @@ import type {
   LessonOutcome,
   NewProceduralLesson,
   ProceduralLesson,
+  ProvenanceTier,
 } from "./types.js";
 import { DEFAULT_TRUST_SCORES } from "./types.js";
 import {
@@ -145,6 +130,14 @@ import {
 } from "./contradictions.js";
 import type { ContradictionRecord } from "./types.js";
 import { detectRevertIntent } from "./revert.js";
+import {
+  QUARANTINE_RELEASED_METADATA_KEY,
+  isProvenanceTier,
+  quarantineVisible,
+  resolveProvenance,
+} from "./provenance.js";
+import { screenWrite } from "./quarantine.js";
+import type { QuarantineVerdict } from "./quarantine.js";
 
 /**
  * Minimum cosine similarity for a memory to enter the semantic leg of
@@ -596,6 +589,33 @@ export class MemOS {
     const type = opts.type ?? "fact";
     const tags = opts.tags ?? [];
 
+    // Provenance tier for this write: an explicit `provenance` option
+    // wins; otherwise the source-derived default applies (`user_input`
+    // → `user`, `external_data` → `imported`, …). `user-verified` is
+    // never assigned automatically — see `resolveProvenance`.
+    const provenance = resolveProvenance({
+      provenance: opts.provenance,
+      source,
+    });
+
+    // Write-gate quarantine: the local-heuristic classifier
+    // (`screenWrite` — pure regex scoring, no LLM on the hot path) runs
+    // on every write unless `quarantineScreen: false` opts out. Flagged
+    // content is still stored (add-only is preserved) but marked
+    // quarantined, which excludes it from recall by default until a
+    // human reviews it via `memos quarantine list|release`.
+    let quarantined = false;
+    let quarantinedAt: number | null = null;
+    let quarantineReason: string | null = null;
+    if (opts.quarantineScreen !== false) {
+      const verdict = screenWrite(content);
+      if (verdict.flagged) {
+        quarantined = true;
+        quarantinedAt = now;
+        quarantineReason = verdict.reason;
+      }
+    }
+
     // Write-time entity capture for fused retrieval scoring: entities are
     // extracted once here and stored in metadata, so the query-time overlap
     // check (see `fuseResults`) is a set intersection instead of a rescan.
@@ -680,16 +700,16 @@ export class MemOS {
       source,
       pool: opts.pool ?? "event",
       trustScore: opts.trustScore ?? DEFAULT_TRUST_SCORES[source],
+      // Provenance-trust layer: write-time tier + write-gate quarantine
+      // state (see the gate above).
+      provenance,
+      quarantined,
+      quarantinedAt,
+      quarantineReason,
       // Initialize confidence state machine values
       confidence: opts.confidence ?? INITIAL_CONFIDENCE,
       evidenceCount: opts.evidenceCount ?? 0,
     };
-
-    // Fidelity-level compaction: generate L1 (typed facts) and L2
-    // (extractive summary) at write time into the reserved
-    // `metadata.fidelity` slot. L0 derives free from tags/entities; L3 is
-    // the content column. Deterministic, zero LLM.
-    stampFidelityCache(node);
 
     await this.storage.saveNode(node);
     this.graph.addNode(node);
@@ -836,159 +856,6 @@ export class MemOS {
 
     const results = await this.storage.queryNodes(filter);
     return this.postSortResults(results, filter);
-  }
-
-  // -----------------------------------------------------------------------
-  // Fidelity-level recall & compaction
-  // -----------------------------------------------------------------------
-
-  /**
-   * Fidelity-aware recall: retrieve memories at the CHEAPEST fidelity
-   * level that satisfies the query, escalating L0→L1→L2→L3 within the
-   * same call when the result set looks insufficient.
-   *
-   * This is an ADDITIVE API — `search()` / `semanticSearch()` are
-   * untouched. Scoring is a local IDF-weighted term-coverage pass over
-   * the level corpus (zero LLM, zero embeddings); each result carries
-   * the full node plus the level it was served at.
-   *
-   * Default behavior is L3-equivalent (verbatim text, no routing, no
-   * escalation): existing consumers see the same output shape as a
-   * plain search. Pass `fidelity: "adaptive"` (or a fixed lower level)
-   * to opt into token savings.
-   *
-   * @example
-   * ```ts
-   * // Entity lookup served at L0 (~tens of tokens instead of verbatim)
-   * const hits = await memos.recall("postgres pool size", {
-   *   fidelity: "adaptive",
-   *   maxFidelity: "L2",
-   * });
-   * for (const h of hits) console.log(h.level, h.text);
-   * ```
-   */
-  async recall(
-    query: string,
-    opts: FidelityRecallOptions = {},
-  ): Promise<FidelityRecallResult[]> {
-    this.assertInit();
-    const { start, max, route } = resolveRecallLevels(query, opts);
-    const limit = opts.limit ?? 20;
-    const threshold = opts.threshold ?? 0.15;
-    const minResults = opts.minResults ?? 1;
-
-    // Candidate set: live graph nodes scoped by the caller's filter.
-    // Sorted by id for deterministic scoring and tie order.
-    const nodes = this.applyRecallFilter(
-      this.graph.getAllNodes(),
-      opts.filter ?? {},
-    ).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-
-    // Start low, escalate on demand: re-score the corpus at each level
-    // until enough hits clear the threshold or the ceiling is reached.
-    const escalations: FidelityRecallResult["escalations"] = [];
-    let level = start;
-    let hits: Array<{ node: MemoryNode; score: number }> = [];
-    for (;;) {
-      const docs = nodes.map((n) => levelText(n, level));
-      const scores = scoreLevelCorpus(query, docs);
-      hits = nodes
-        .map((node, i) => ({ node, score: scores[i]! }))
-        .filter((h) => h.score >= threshold)
-        .sort((a, b) => b.score - a.score || (a.node.id < b.node.id ? -1 : 1))
-        .slice(0, limit);
-      if (hits.length >= minResults || level === max) break;
-      level = nextFidelityLevel(level)!;
-      escalations.push(level);
-    }
-
-    return hits.map((h) => ({
-      node: h.node,
-      level,
-      text: levelText(h.node, level),
-      score: h.score,
-      escalations: [...escalations],
-      ...(route ? { route } : {}),
-    }));
-  }
-
-  /**
-   * Scope the recall candidate set. Mirrors the `SearchFilter` fields
-   * that make sense for an in-memory scan (namespace / type / tags /
-   * pool); full-text and vector legs live in `search()`.
-   */
-  private applyRecallFilter(
-    nodes: MemoryNode[],
-    filter: SearchFilter,
-  ): MemoryNode[] {
-    const pools = filter.pool
-      ? Array.isArray(filter.pool)
-        ? filter.pool
-        : [filter.pool]
-      : null;
-    return nodes.filter((n) => {
-      if (filter.namespace && n.namespace !== filter.namespace) return false;
-      if (
-        filter.namespacePrefix &&
-        !n.namespace.startsWith(filter.namespacePrefix)
-      )
-        return false;
-      if (filter.type && n.type !== filter.type) return false;
-      if (pools && !pools.includes(n.pool ?? "event")) return false;
-      if (filter.tags && filter.tags.some((t) => !n.tags.includes(t)))
-        return false;
-      return true;
-    });
-  }
-
-  /**
-   * Eager fidelity backfill: generate missing L1/L2 levels for stored
-   * memories and persist them into the reserved `metadata.fidelity`
-   * slot. Idempotent — memories that already carry cached levels are
-   * skipped. Reads (`recall`, `contextPack`) also generate lazily, so
-   * this command is an optimization, not a requirement.
-   *
-   * `memos compact --stats` reports per-level token averages without
-   * writing anything.
-   */
-  async compact(opts: CompactOptions = {}): Promise<CompactResult> {
-    this.assertInit();
-    const scoped = this.graph
-      .getAllNodes()
-      .filter((n) => !opts.namespace || n.namespace === opts.namespace)
-      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const work =
-      opts.limit === undefined
-        ? scoped
-        : scoped.slice(0, Math.max(0, opts.limit));
-
-    let backfilled = 0;
-    let skipped = 0;
-    for (const node of work) {
-      if (hasFidelityCache(node)) {
-        skipped += 1;
-        continue;
-      }
-      if (opts.dryRun) continue;
-      const metadata = { ...(node.metadata ?? {}) };
-      stampFidelityCache({ ...node, metadata });
-      const updated = await this.storage.updateNode(node.id, { metadata });
-      if (updated) {
-        this.graph.updateNode(updated);
-        backfilled += 1;
-      }
-    }
-
-    const result: CompactResult = {
-      scanned: work.length,
-      backfilled,
-      skipped,
-    };
-    if (opts.stats) {
-      // Stats describe the namespace scope, independent of `limit`.
-      result.stats = fidelityStats(scoped, estimateTokens);
-    }
-    return result;
   }
 
   /**
@@ -1589,6 +1456,86 @@ export class MemOS {
     return formatCitationResolution(resolution, asJson);
   }
 
+  // -----------------------------------------------------------------------
+  // Provenance-trust layer: write gate, quarantine review, tier promotion
+  // -----------------------------------------------------------------------
+
+  /**
+   * Screen text with the write-gate classifier without storing
+   * anything. Useful for pre-flight checks and for testing the
+   * classifier's verdict on a given input.
+   */
+  screenContent(content: string): QuarantineVerdict {
+    return screenWrite(content);
+  }
+
+  /**
+   * List quarantined memories — the review queue — most recently
+   * flagged first. Quarantined memories are excluded from recall by
+   * default; this is the explicit review path.
+   */
+  async listQuarantined(
+    opts: { limit?: number; namespace?: string } = {},
+  ): Promise<MemoryNode[]> {
+    this.assertInit();
+    const results = await this.storage.queryNodes({
+      quarantinedOnly: true,
+      limit: opts.limit ?? 50,
+      sortBy: "createdAt",
+      sortOrder: "desc",
+      ...(opts.namespace ? { namespace: opts.namespace } : {}),
+    });
+    return results.map((r) => r.node);
+  }
+
+  /**
+   * Release a memory from quarantine: it becomes recallable again, but
+   * stays flagged as low-trust for agent consumption — the
+   * `releasedFromQuarantine` metadata marker keeps
+   * `untrusted_source: true` on in MCP responses so a host agent
+   * confirms it instead of silently injecting it as context.
+   * Idempotent: releasing a non-quarantined memory is a no-op.
+   * Add-only: `quarantinedAt`/`quarantineReason` are preserved as the
+   * audit trail of the original flagging.
+   */
+  async releaseFromQuarantine(id: string): Promise<MemoryNode> {
+    this.assertInit();
+    const node = this.storage.peekNode
+      ? await this.storage.peekNode(id)
+      : await this.storage.getNode(id);
+    if (!node) throw new Error(`Node not found: ${id}`);
+    if (!node.quarantined) return node;
+    const updated = await this.storage.updateNode(id, {
+      quarantined: false,
+      metadata: {
+        ...node.metadata,
+        [QUARANTINE_RELEASED_METADATA_KEY]: true,
+        quarantineReleasedAt: Date.now(),
+      },
+    });
+    if (!updated) throw new Error(`Node not found: ${id}`);
+    this.graph.updateNode(updated);
+    this.invalidateSearchCache();
+    return updated;
+  }
+
+  /**
+   * Set a memory's provenance tier. This is the only path to the
+   * `user-verified` tier — explicit user confirmation, never assigned
+   * automatically at write time.
+   */
+  async setProvenance(id: string, tier: ProvenanceTier): Promise<MemoryNode> {
+    this.assertInit();
+    if (!isProvenanceTier(tier)) {
+      throw new Error(`Unknown provenance tier: ${String(tier)}`);
+    }
+    const updated = await this.storage.updateNode(id, { provenance: tier });
+    if (!updated) throw new Error(`Node not found: ${id}`);
+    this.graph.updateNode(updated);
+    this.invalidateSearchCache();
+    return updated;
+  }
+
   async importMemories(opts: ImportOptions): Promise<ImportResult> {
     this.assertInit();
 
@@ -1850,6 +1797,9 @@ export class MemOS {
       ) {
         continue;
       }
+      // Provenance-trust: quarantined memories stay out of recall by
+      // default (the write-gate guarantee), like the SQL legs.
+      if (!quarantineVisible(node.quarantined, resolvedFilter)) continue;
       const score = textSimilarity(query, node.content);
       if (score >= resolvedThreshold) {
         scored.push({ node, score });
@@ -1989,16 +1939,8 @@ export class MemOS {
     input: UpdateMemoryInput,
   ): Promise<MemoryNode | null> {
     this.assertInit();
-    let node = await this.storage.updateNode(id, input);
+    const node = await this.storage.updateNode(id, input);
     if (node) {
-      // The cached L1/L2 describe the old text — regenerate when the
-      // content changed and persist the refreshed cache. Not hot-path
-      // (explicit updates only).
-      if (input.content !== undefined) {
-        const metadata = { ...(node.metadata ?? {}) };
-        stampFidelityCache({ ...node, metadata });
-        node = (await this.storage.updateNode(id, { metadata })) ?? node;
-      }
       this.graph.updateNode(node);
       if (input.content !== undefined || input.summary !== undefined) {
         this.scheduleEmbedding(node);
@@ -2103,15 +2045,6 @@ export class MemOS {
     trust?: string;
     source?: string;
     includeSummary?: boolean;
-    /**
-     * Fidelity level for pack item contents: a fixed level or
-     * `"adaptive"` (the query-adaptive router picks the starting level
-     * per query). Default `undefined` = L3 verbatim — current behavior
-     * preserved exactly. Lower levels cut tokens per item; the chosen
-     * level is recorded per item (`item.fidelity`) and in the pack
-     * metadata (`pack.fidelity`).
-     */
-    fidelity?: FidelityLevel | "adaptive";
     /** Output format: "json" (default), "toon", or "toon-compact" */
     format?: "json" | "toon" | "toon-compact";
     /**
@@ -2198,6 +2131,7 @@ export class MemOS {
               maxAdded: 5,
               scoreFactor: 0.85,
             },
+            filter,
           );
 
     // Semantic dedup needs each candidate's stored vector. Pull them in
@@ -2220,7 +2154,6 @@ export class MemOS {
       trust: opts.trust,
       source: opts.source,
       includeSummary: opts.includeSummary,
-      fidelity: opts.fidelity,
       embeddings,
       citations: opts.citations,
       ...(await this.packLessons(opts, namespace)),
@@ -4256,6 +4189,9 @@ export class MemOS {
       ) {
         continue;
       }
+      // Provenance-trust: quarantined memories stay out of recall by
+      // default, like every other retrieval leg (see `queryNodes`).
+      if (!quarantineVisible(node.quarantined, filter)) continue;
       results.push({
         node,
         score: matchCount,
@@ -4342,7 +4278,11 @@ export class MemOS {
     // is removed, and the lookup is bounded by the fused set size.
     const resolved = await this.applyContradictionResolution(fused);
 
-    const expanded = await this.applyGraphExpansion(resolved);
+    const expanded = await this.applyGraphExpansion(
+      resolved,
+      undefined,
+      filter,
+    );
     const pprExpanded = await this.applyPprGraphExpansion(expanded, filter);
     const withSessions = await this.applySessionExpansion(pprExpanded, filter);
     const reranked = opts.internal
@@ -4459,6 +4399,7 @@ export class MemOS {
     fused: ScoredMemory[],
     config: NonNullable<ExperimentalConfig["graphExpansion"]> | undefined = this
       .experimental.graphExpansion,
+    filter: SearchFilter = {},
   ): Promise<ScoredMemory[]> {
     if (!config?.enabled || fused.length === 0) return fused;
 
@@ -4486,6 +4427,9 @@ export class MemOS {
         // stale fact must never appear when defaults hide history.
         const seedHistorical = seed.node.validTo !== null;
         if ((neighbour.validTo !== null) !== seedHistorical) continue;
+        // Provenance-trust: a quarantined neighbour must not ride into
+        // recall along a graph edge — same visibility rule as the legs.
+        if (!quarantineVisible(neighbour.quarantined, filter)) continue;
         present.add(neighbourId);
         injected.set(neighbourId, {
           node: neighbour,
@@ -4627,6 +4571,9 @@ export class MemOS {
     filter: SearchFilter,
     now: number,
   ): boolean {
+    // Provenance-trust: quarantined neighbours must not ride into recall
+    // along a PPR walk — same visibility rule as the SQL legs.
+    if (!quarantineVisible(node.quarantined, filter)) return false;
     if (filter.type !== undefined && node.type !== filter.type) return false;
     if (
       filter.minImportance !== undefined &&

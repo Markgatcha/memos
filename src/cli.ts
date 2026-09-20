@@ -652,6 +652,10 @@ Commands:
                           --limit <n>)
   cite <id>               Trace a [mem:xxxx] citation token back to its
                           full source memory
+  quarantine <list|release>
+                          Review the write-gate quarantine queue: list
+                          flagged memories, release one back into recall
+                          (--limit <n>, --json)
   history <id>            Version timeline for one memory: supersedes,
                           superseded by, derived notes
   revert                  Revert a memory to its previous version
@@ -671,9 +675,6 @@ Commands:
   decrypt                 Remove encryption in place (--key <key>)
   stats                   Token-savings telemetry for this process
                           (packs built, tokens injected vs naive baseline)
-  compact                 Fidelity backfill: generate missing L1/L2 levels
-                          for stored memories (--stats shows avg tokens per
-                          level, --namespace <ns>, --limit <n>, --dry-run)
   doctor                  Health-check the store, embedding config and endpoints
   consolidate             Offline maintenance pass: merge duplicates, archive
                           stale memories, supersede decayed ones (kept as
@@ -1226,6 +1227,42 @@ async function main(): Promise<void> {
         break;
       }
 
+      case "quarantine": {
+        const { formatQuarantineList, releaseQuarantined } =
+          await import("./quarantine-commands.js");
+        const sub = args[1];
+        if (sub === "list") {
+          const limitIdx = args.indexOf("--limit");
+          const limit =
+            limitIdx !== -1 ? parseInt(args[limitIdx + 1]!, 10) : undefined;
+          const nodes = await memos.listQuarantined(
+            limit !== undefined && !Number.isNaN(limit) ? { limit } : {},
+          );
+          console.log(formatQuarantineList(nodes, jsonFlag));
+          break;
+        }
+        if (sub === "release") {
+          const id = args[2];
+          if (!id) {
+            console.error(
+              "Error: memory ID is required.\n  Usage: memos quarantine release <id>",
+            );
+            process.exit(1);
+          }
+          try {
+            console.log(await releaseQuarantined(memos, id, jsonFlag));
+          } catch (err) {
+            console.error(`Error: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          break;
+        }
+        console.error(
+          "Error: subcommand is required.\n  Usage: memos quarantine <list|release>  (list [--limit <n>] [--json], release <id> [--json])",
+        );
+        process.exit(1);
+      }
+
       case "stats": {
         const usage = memos.usageStats();
         if (jsonFlag) {
@@ -1240,43 +1277,6 @@ async function main(): Promise<void> {
           console.log(
             `  saved:           ${usage.savedTokens} tok (${usage.savedPct}%)`,
           );
-        }
-        break;
-      }
-
-      case "compact": {
-        const nsIdx = args.indexOf("--namespace");
-        const namespace = nsIdx !== -1 ? args[nsIdx + 1] : undefined;
-        const limitIdx = args.indexOf("--limit");
-        const limit =
-          limitIdx !== -1 ? parseInt(args[limitIdx + 1]!, 10) : undefined;
-        const dryRun = args.includes("--dry-run");
-        const showStats = args.includes("--stats") || dryRun;
-        const result = await memos.compact({
-          ...(namespace ? { namespace } : {}),
-          ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
-          stats: showStats,
-          dryRun,
-        });
-        if (jsonFlag) {
-          console.log(JSON.stringify(result, null, 2));
-        } else {
-          if (showStats) {
-            console.log(
-              `Fidelity levels (${result.stats?.[0]?.count ?? 0} memories${namespace ? `, namespace ${namespace}` : ""}):`,
-            );
-            for (const s of result.stats ?? []) {
-              const saved = (s.savingsVsVerbatim * 100).toFixed(1);
-              console.log(
-                `  ${s.level}  ${s.label.padEnd(18)} avg ${s.avgTokens.toFixed(1).padStart(7)} tok   -${saved}% vs verbatim`,
-              );
-            }
-          }
-          if (!args.includes("--stats")) {
-            console.log(
-              `compact: scanned ${result.scanned}, backfilled ${result.backfilled}, skipped ${result.skipped}${dryRun ? " (dry run)" : ""}`,
-            );
-          }
         }
         break;
       }

@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { escapeLikePrefix } from "../scope.js";
 import { clampLessonScore } from "../procedural.js";
+import { isProvenanceTier } from "../provenance.js";
 import {
   backfillEntityIndex,
   ensureEntityIndexTable,
@@ -444,6 +445,18 @@ export class SQLiteStorage implements StorageAdapter {
     // Migration: multi-granularity retrieval pool (event | note | procedure).
     // Every pre-pool memory reads as "event", matching the legacy semantics.
     this.migrateAddColumn("nodes", "pool", "TEXT NOT NULL DEFAULT 'event'");
+    // Migration: provenance-trust layer. Every pre-layer memory reads as
+    // the "user" tier (ordinary statements) with no quarantine history —
+    // the exclusion default below is a no-op for legacy rows, so recall
+    // behaviour on existing databases is unchanged.
+    this.migrateAddColumn(
+      "nodes",
+      "provenance",
+      "TEXT NOT NULL DEFAULT 'user'",
+    );
+    this.migrateAddColumn("nodes", "quarantined", "INTEGER NOT NULL DEFAULT 0");
+    this.migrateAddColumn("nodes", "quarantined_at", "INTEGER DEFAULT NULL");
+    this.migrateAddColumn("nodes", "quarantine_reason", "TEXT DEFAULT NULL");
 
     // Migration: bitemporal event-time validity on edges. `created_at`
     // remains the transaction/ingest time — it is NOT renamed; it is the
@@ -662,8 +675,8 @@ export class SQLiteStorage implements StorageAdapter {
   async saveNode(node: MemoryNode): Promise<MemoryNode> {
     const stmt = this.getPreparedStatement(
       "saveNode",
-      `INSERT INTO nodes (id, content, summary, type, metadata, importance, created_at, updated_at, access_count, last_accessed, expires_at, tags, namespace, valid_from, valid_to, source, trust_score, pool)
-       VALUES (@id, @content, @summary, @type, @metadata, @importance, @createdAt, @updatedAt, @accessCount, @lastAccessed, @expiresAt, @tags, @namespace, @validFrom, @validTo, @source, @trustScore, @pool)`,
+      `INSERT INTO nodes (id, content, summary, type, metadata, importance, created_at, updated_at, access_count, last_accessed, expires_at, tags, namespace, valid_from, valid_to, source, trust_score, pool, provenance, quarantined, quarantined_at, quarantine_reason)
+       VALUES (@id, @content, @summary, @type, @metadata, @importance, @createdAt, @updatedAt, @accessCount, @lastAccessed, @expiresAt, @tags, @namespace, @validFrom, @validTo, @source, @trustScore, @pool, @provenance, @quarantined, @quarantinedAt, @quarantineReason)`,
     );
 
     // One transaction for the row INSERT plus the tag-join mirror:
@@ -703,6 +716,13 @@ export class SQLiteStorage implements StorageAdapter {
       source: node.source,
       trustScore: node.trustScore,
       pool: node.pool ?? "event",
+      // Provenance-trust columns: default at the storage boundary so
+      // node literals built before the layer (or by custom adapters)
+      // still save — the columns stay NOT NULL in the schema.
+      provenance: node.provenance ?? "user",
+      quarantined: node.quarantined ? 1 : 0,
+      quarantinedAt: node.quarantinedAt ?? null,
+      quarantineReason: node.quarantineReason ?? null,
     });
 
     return node;
@@ -812,6 +832,19 @@ export class SQLiteStorage implements StorageAdapter {
       source: input.source ?? existing.source,
       trustScore:
         input.trustScore !== undefined ? input.trustScore : existing.trustScore,
+      provenance: input.provenance ?? existing.provenance,
+      quarantined:
+        input.quarantined !== undefined
+          ? input.quarantined
+          : existing.quarantined,
+      quarantinedAt:
+        input.quarantinedAt !== undefined
+          ? input.quarantinedAt
+          : existing.quarantinedAt,
+      quarantineReason:
+        input.quarantineReason !== undefined
+          ? input.quarantineReason
+          : existing.quarantineReason,
       updatedAt: Date.now(),
     };
 
@@ -820,7 +853,8 @@ export class SQLiteStorage implements StorageAdapter {
       `UPDATE nodes SET content = @content, summary = @summary, type = @type,
          metadata = @metadata, importance = @importance, updated_at = @updatedAt,
          tags = @tags, namespace = @namespace,
-         valid_from = @validFrom, valid_to = @validTo, source = @source, trust_score = @trustScore
+         valid_from = @validFrom, valid_to = @validTo, source = @source, trust_score = @trustScore,
+         provenance = @provenance, quarantined = @quarantined, quarantined_at = @quarantinedAt, quarantine_reason = @quarantineReason
          WHERE id = @id`,
     );
     const params = {
@@ -844,6 +878,10 @@ export class SQLiteStorage implements StorageAdapter {
       validTo: updated.validTo,
       source: updated.source,
       trustScore: updated.trustScore,
+      provenance: updated.provenance,
+      quarantined: updated.quarantined ? 1 : 0,
+      quarantinedAt: updated.quarantinedAt,
+      quarantineReason: updated.quarantineReason,
     };
 
     // Keep the tag join table in sync when the tag set changed — in the
@@ -996,6 +1034,19 @@ export class SQLiteStorage implements StorageAdapter {
       extraConds.push("n.trust_score >= ?");
       extraParams.push(filter.minTrustScore);
     }
+    if (filter.provenance) {
+      extraConds.push("n.provenance = ?");
+      extraParams.push(filter.provenance);
+    }
+    // Provenance-trust: quarantine visibility. Quarantined memories are
+    // excluded from recall by default (the write-gate guarantee);
+    // `includeQuarantined: true` shows everything, `quarantinedOnly: true`
+    // shows only quarantined rows (the review queue).
+    if (filter.quarantinedOnly === true) {
+      extraConds.push("n.quarantined = 1");
+    } else if (filter.includeQuarantined !== true) {
+      extraConds.push("n.quarantined = 0");
+    }
     // Temporal: exclude historical (validTo in the past) unless
     // includeHistorical is explicitly true. Also support validAt.
     const now = Date.now();
@@ -1140,6 +1191,17 @@ export class SQLiteStorage implements StorageAdapter {
       if (filter.source) {
         conditions.push("source = ?");
         params.push(filter.source);
+      }
+      if (filter.provenance) {
+        conditions.push("provenance = ?");
+        params.push(filter.provenance);
+      }
+      // Provenance-trust: quarantine visibility (see the FTS branch above
+      // for the rationale — excluded from recall by default).
+      if (filter.quarantinedOnly === true) {
+        conditions.push("quarantined = 1");
+      } else if (filter.includeQuarantined !== true) {
+        conditions.push("quarantined = 0");
       }
       if (filter.minTrustScore !== undefined) {
         conditions.push("trust_score >= ?");
@@ -1596,6 +1658,16 @@ export class SQLiteStorage implements StorageAdapter {
       }
       needsNodeJoin = true;
     }
+    // Provenance-trust: quarantine visibility (see `queryNodes` — excluded
+    // from recall by default; the entity-leg and graph-expansion paths in
+    // MemOS apply the same rule via `quarantineVisible`).
+    if (filter.quarantinedOnly === true) {
+      conditions.push("n.quarantined = 1");
+      needsNodeJoin = true;
+    } else if (filter.includeQuarantined !== true) {
+      conditions.push("n.quarantined = 0");
+      needsNodeJoin = true;
+    }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const fromClause = needsNodeJoin
@@ -1869,6 +1941,10 @@ export class SQLiteStorage implements StorageAdapter {
       source: (row.source as MemoryNode["source"]) || "user_input",
       trustScore: (row.trust_score as number) ?? 1.0,
       pool: ((row.pool as string) || "event") as MemoryNode["pool"],
+      provenance: isProvenanceTier(row.provenance) ? row.provenance : "user",
+      quarantined: (row.quarantined as number) === 1,
+      quarantinedAt: (row.quarantined_at as number) ?? null,
+      quarantineReason: (row.quarantine_reason as string) ?? null,
       // Load confidence state machine values from metadata
       confidence: metadata.confidence as number | undefined,
       evidenceCount: metadata.evidenceCount as number | undefined,

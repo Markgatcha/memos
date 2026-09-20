@@ -38,38 +38,6 @@ export {
 } from "./revert.js";
 export { GraphEngine, textSimilarity, generateId } from "./graph.js";
 export {
-  // Fidelity-level compaction (L0–L3): cheap representations of every
-  // memory, a query-adaptive router, and in-call escalation.
-  FIDELITY_LEVELS,
-  FIDELITY_LEVEL_LABELS,
-  FIDELITY_LEVEL_DESCRIPTIONS,
-  hasFidelityCache,
-  stampFidelityCache,
-  levelText,
-  fidelityL0,
-  fidelityL1,
-  fidelityL2,
-  splitSentences,
-  nodeEntities,
-  rankSentencesByCentrality,
-  nextFidelityLevel,
-  clampFidelityLevel,
-  parseFidelityLevel,
-  routeFidelity,
-  routerEntities,
-  scoreLevelCorpus,
-  resolveRecallLevels,
-  fidelityStats,
-  type FidelityLevel,
-  type FidelitySignals,
-  type FidelityRoute,
-  type FidelityRecallOptions,
-  type FidelityRecallResult,
-  type CompactOptions,
-  type CompactResult,
-  type FidelityLevelStats,
-} from "./fidelity.js";
-export {
   LocalHashEmbeddingProvider,
   OllamaEmbeddingProvider,
   OpenAICompatibleEmbeddingProvider,
@@ -103,13 +71,13 @@ export {
   type ContextPack,
   type ContextPackItem,
   type BuildContextPackOptions,
-  type ContextPackFidelityMeta,
 } from "./context-pack.js";
 export type {
   MemoryNode,
   MemoryEdge,
   MemoryType,
   MemorySource,
+  ProvenanceTier,
   EdgeRelation,
   CreateMemoryInput,
   UpdateMemoryInput,
@@ -236,3 +204,24 @@ export {
   type SynthesizedInsight,
   type SynthesizedKind,
 } from "./external-import.js";
+export {
+  PROVENANCE_TIER_ORDER,
+  LOW_TRUST_TIERS,
+  PROVENANCE_TRUST,
+  DEFAULT_PROVENANCE_WEIGHT_STRENGTH,
+  QUARANTINE_RELEASED_METADATA_KEY,
+  isProvenanceTier,
+  defaultProvenanceForSource,
+  resolveProvenance,
+  compareProvenanceTier,
+  isUntrustedForAgent,
+  quarantineVisible,
+  provenanceMultiplier,
+  decorateTrustFlags,
+} from "./provenance.js";
+export {
+  screenWrite,
+  QUARANTINE_FLAG_THRESHOLD,
+  type QuarantineSignal,
+  type QuarantineVerdict,
+} from "./quarantine.js";

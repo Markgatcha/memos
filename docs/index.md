@@ -105,5 +105,6 @@ Application → SDK/HTTP → Memory Engine → Graph → SQLite
 - [Installation](installation.md) — step-by-step setup for every platform (start here)
 - [API Reference](api-reference.md) — full method documentation
 - [Adapters](adapters.md) — framework integrations (Ollama, LangChain, CrewAI)
+- [Provenance Trust](provenance-trust.md) — provenance tiers, write-gate quarantine, and read-time trust flags
 - [Benchmarks](benchmark-comparison.md) — how MemOS measures up (spoiler: 95.9% recall on BEAM-1M)
 - [GitHub](https://github.com/Markgatcha/memos) — source code, issues, and the star button ⭐

@@ -26,6 +26,11 @@ import type { FusionOptions, MemoryNode, ScoredMemory } from "./types.js";
 export type { FusionOptions } from "./types.js";
 import { confidenceWeight } from "./confidence-machine.js";
 import { entityOverlap } from "./entity-extraction.js";
+import {
+  DEFAULT_PROVENANCE_WEIGHT_STRENGTH,
+  isProvenanceTier,
+  provenanceMultiplier,
+} from "./provenance.js";
 
 /** Default RRF constant (Cormack et al., 2009). */
 export const DEFAULT_RRF_K = 60;
@@ -250,6 +255,31 @@ export function fuseResults(
     entry.score *=
       trustFloor + (entry.node.trustScore ?? 1.0) * (1 - trustFloor);
     entry.scores.hybrid = entry.score;
+  }
+
+  // Provenance-trust weighting: fold the write-time provenance tier into
+  // scoring alongside relevance. Low-trust channels (imported,
+  // tool-output, chat) are gently down-ranked via
+  // `score *= 1 - strength * (1 - tierTrust)` — the maximum penalty at
+  // the default strength (0.5) is ~14% for the imported tier, so
+  // relevance ordering dominates unless channels genuinely differ.
+  // Uniform across same-tier result sets, so single-channel corpora
+  // (including the retrieval eval) keep byte-identical ranking —
+  // neutral-or-better by construction. Records `scores.provenance`.
+  const provenanceStrength =
+    options.provenanceWeightStrength ?? DEFAULT_PROVENANCE_WEIGHT_STRENGTH;
+  if (provenanceStrength > 0) {
+    for (const entry of merged.values()) {
+      // Nodes without a tier (legacy fixtures, custom adapters that
+      // predate the layer) are left exactly neutral — the weighting is
+      // additive and never rewrites historical scores.
+      const tier = entry.node.provenance;
+      if (!isProvenanceTier(tier)) continue;
+      const multiplier = provenanceMultiplier(tier, provenanceStrength);
+      entry.score *= multiplier;
+      entry.scores.provenance = multiplier;
+      entry.scores.hybrid = entry.score;
+    }
   }
 
   // Confidence-aware ranking: fold in the evidence state machine. A
