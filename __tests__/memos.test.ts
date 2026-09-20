@@ -126,6 +126,8 @@ describe("MemOS MCP adapter", () => {
       "memos_search",
       "memos_retrieve",
       "memos_forget",
+      "memos_link",
+      "memos_quarantine_release",
       "memos_graph",
       "memos_context",
       "memos_context_pack",

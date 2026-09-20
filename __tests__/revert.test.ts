@@ -431,6 +431,6 @@ describe("memos_revert MCP tool", () => {
     const revert = tools.find((t) => t.name === "memos_revert");
     expect(revert).toBeDefined();
     expect(revert!.description).toMatch(/dryRun/i);
-    expect(tools).toHaveLength(19);
+    expect(tools).toHaveLength(21);
   });
 });

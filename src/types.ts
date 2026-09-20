@@ -1210,6 +1210,14 @@ export interface StorageAdapter {
   getGraph(): Promise<GraphSnapshot>;
 
   /**
+   * Return the graph as of a bitemporal timestamp (unix ms): nodes and
+   * edges whose validity interval covers `atTime`. Optional so
+   * third-party adapters are not forced to implement history; callers
+   * should fall back to filtering `getGraph()` with the same predicates.
+   */
+  getGraphAtTime?(atTime: number): Promise<GraphSnapshot>;
+
+  /**
    * Return every persisted embedding (node id + vector + model). Used
    * by memory consolidation. Implementations may return an empty
    * array when embeddings are not stored.

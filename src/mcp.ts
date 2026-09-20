@@ -11,13 +11,20 @@
  * Transport: stdio only (the shipped transport). HTTP/SSE is deferred.
  */
 
-import { McpServer } from "@modelcontextprotocol/server";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 import { MemOS } from "./memory.js";
 import { listReminders } from "./event-memory.js";
 import { graphToMermaid } from "./graph-mermaid.js";
+import {
+  ExplorerUriTemplate,
+  buildExplorerFallbackMarkdown,
+  buildExplorerHtml,
+  buildExplorerSnapshot,
+  resolveExplorerMode,
+} from "./apps/explorer.js";
 import type { MemOSConfig, ScoredMemory } from "./types.js";
 import { getSdkVersion } from "./version.js";
 import { citationToken } from "./citations.js";
@@ -387,6 +394,84 @@ function registerTools(server: McpServer, memos: MemOS): void {
           },
         ],
         structuredContent: { id, deleted },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_link",
+    {
+      title: "Link Two Memories",
+      description:
+        "Create a typed edge between two memories (e.g. relates_to, " +
+        "supports, contradicts). Used by the MCP Apps explorer's " +
+        "UI→tool consent bridge; callable directly too.",
+      inputSchema: z.object({
+        sourceId: z.string().describe("Source memory ID."),
+        targetId: z.string().describe("Target memory ID."),
+        relation: z
+          .enum([
+            "relates_to",
+            "contradicts",
+            "supports",
+            "derived_from",
+            "part_of",
+            "temporal_precedes",
+            "custom",
+          ])
+          .optional()
+          .describe("Relation type. Default relates_to."),
+        weight: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe("Edge weight [0,1]. Default 0.5."),
+      }),
+      outputSchema: z.object({ edge: memoryEdgeSchema }),
+    },
+    async ({ sourceId, targetId, relation, weight }) => {
+      const edge = await memos.link(
+        sourceId,
+        targetId,
+        relation ?? "relates_to",
+        weight ?? 0.5,
+      );
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Linked ${sourceId} → ${targetId} (${edge.relation}).`,
+          },
+        ],
+        structuredContent: { edge },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_quarantine_release",
+    {
+      title: "Release Memory From Quarantine",
+      description:
+        "Release a quarantined memory back into recall. Idempotent; the " +
+        "quarantine audit trail (quarantinedAt/reason) is preserved. Used " +
+        "by the MCP Apps explorer's UI→tool consent bridge.",
+      inputSchema: z.object({
+        id: z.string().describe("Quarantined memory ID."),
+      }),
+      outputSchema: z.object({ node: memoryNodeSchema }),
+    },
+    async ({ id }) => {
+      const node = await memos.releaseFromQuarantine(id);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Released ${id} from quarantine.`,
+          },
+        ],
+        structuredContent: { node },
       };
     },
   );
@@ -1113,6 +1198,80 @@ function registerResourcesAndPrompts(server: McpServer, memos: MemOS): void {
     },
   );
 
+  server.registerResource(
+    "explorer",
+    new ResourceTemplate(new ExplorerUriTemplate(), { list: undefined }),
+    {
+      title: "MemOS Memory Explorer (MCP App)",
+      description:
+        "Interactive memory-graph explorer (MCP App): nodes colored by " +
+        "provenance tier, edges labeled by relation, plus a bitemporal " +
+        "as-of scrubber for time-travel. Query variables: asOf (unix ms, " +
+        "render the graph at a past timestamp), mode (app forces the HTML " +
+        "app, text forces the markdown fallback), nodeLimit, edgeLimit. " +
+        "Without ?mode=app — or a host MCP Apps signal in _meta — this " +
+        "serves a text/markdown fallback (mermaid + summary) instead of " +
+        "HTML. Mutating UI actions arrive as intents translated to normal " +
+        "tool calls (memos_forget, memos_link, memos_quarantine_release) " +
+        "under the host's consent UI; the app itself cannot write.",
+      mimeType: "text/html",
+    },
+    async (uri, variables, ctx) => {
+      const strVar = (v: unknown): string | null =>
+        typeof v === "string" ? v : Array.isArray(v) ? String(v[0]) : null;
+      const asOfRaw = strVar(variables.asOf);
+      const asOf = asOfRaw !== null && asOfRaw !== "" ? Number(asOfRaw) : NaN;
+      const hasAsOf = Number.isFinite(asOf);
+      const nodeLimitRaw = strVar(variables.nodeLimit);
+      const edgeLimitRaw = strVar(variables.edgeLimit);
+      const nodeLimit =
+        nodeLimitRaw !== null && nodeLimitRaw !== ""
+          ? Number(nodeLimitRaw)
+          : undefined;
+      const edgeLimit =
+        edgeLimitRaw !== null && edgeLimitRaw !== ""
+          ? Number(edgeLimitRaw)
+          : undefined;
+
+      const graph = hasAsOf
+        ? await memos.getGraphAtTime(asOf)
+        : await memos.getGraph();
+      const snapshot = buildExplorerSnapshot(graph, {
+        ...(nodeLimit !== undefined ? { nodeCap: nodeLimit } : {}),
+        ...(edgeLimit !== undefined ? { edgeCap: edgeLimit } : {}),
+        ...(hasAsOf ? { asOf } : {}),
+      });
+      const mode = resolveExplorerMode({
+        modeParam: strVar(variables.mode),
+        meta: ctx.mcpReq._meta,
+      });
+      if (mode === "app") {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: buildExplorerHtml(snapshot, {
+                ...(hasAsOf ? { asOf } : {}),
+              }),
+              mimeType: "text/html",
+            },
+          ],
+        };
+      }
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: buildExplorerFallbackMarkdown(snapshot, {
+              ...(hasAsOf ? { asOf } : {}),
+            }),
+            mimeType: "text/markdown",
+          },
+        ],
+      };
+    },
+  );
+
   server.registerPrompt(
     "recall",
     {
@@ -1295,6 +1454,42 @@ const TOOL_METADATA: McpToolInfo[] = [
     >,
     outputSchema: z.toJSONSchema(
       z.object({ id: z.string(), deleted: z.boolean() }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_link",
+    description: "Create a typed edge between two memories.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        sourceId: z.string(),
+        targetId: z.string(),
+        relation: z
+          .enum([
+            "relates_to",
+            "contradicts",
+            "supports",
+            "derived_from",
+            "part_of",
+            "temporal_precedes",
+            "custom",
+          ])
+          .optional(),
+        weight: z.number().min(0).max(1).optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({ edge: memoryEdgeSchema }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_quarantine_release",
+    description: "Release a quarantined memory back into recall.",
+    inputSchema: z.toJSONSchema(z.object({ id: z.string() })) as Record<
+      string,
+      unknown
+    >,
+    outputSchema: z.toJSONSchema(
+      z.object({ node: memoryNodeSchema }),
     ) as Record<string, unknown>,
   },
   {

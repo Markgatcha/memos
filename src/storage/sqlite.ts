@@ -1866,6 +1866,34 @@ export class SQLiteStorage implements StorageAdapter {
     };
   }
 
+  /**
+   * Bitemporal as-of graph read: nodes and edges whose validity interval
+   * covers `atTime` (unix ms). Predicates mirror the existing as-of read
+   * paths exactly — nodes use `valid_to >= ?` (see the `validAt` search
+   * filter), edges use strict `valid_to > ?` (see `queryEdges`).
+   */
+  async getGraphAtTime(atTime: number): Promise<GraphSnapshot> {
+    const nodes = this.db
+      .prepare(
+        `SELECT * FROM nodes
+         WHERE (valid_from IS NULL OR valid_from <= ?)
+           AND (valid_to IS NULL OR valid_to >= ?)`,
+      )
+      .all(atTime, atTime) as Record<string, unknown>[];
+    const edges = this.db
+      .prepare(
+        `SELECT * FROM edges
+         WHERE (valid_from IS NULL OR valid_from <= ?)
+           AND (valid_to IS NULL OR valid_to > ?)`,
+      )
+      .all(atTime, atTime) as Record<string, unknown>[];
+
+    return {
+      nodes: nodes.map((r) => this.rowToNode(r)),
+      edges: edges.map((r) => this.rowToEdge(r)),
+    };
+  }
+
   // -----------------------------------------------------------------------
   // TTL
   // -----------------------------------------------------------------------

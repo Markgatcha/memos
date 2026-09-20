@@ -2546,6 +2546,39 @@ export class MemOS {
   }
 
   /**
+   * Get the graph as of a bitemporal timestamp (unix ms) — time-travel
+   * over add-only history. Backs the MCP Apps explorer's as-of scrubber.
+   * Reads from storage (the in-memory graph only reflects live state);
+   * adapters without `getGraphAtTime` fall back to filtering the live
+   * snapshot with the same as-of predicates.
+   */
+  async getGraphAtTime(atTime: number): Promise<GraphSnapshot> {
+    this.assertInit();
+    if (typeof this.storage.getGraphAtTime === "function") {
+      return this.storage.getGraphAtTime(atTime);
+    }
+    const graph = await this.storage.getGraph();
+    return {
+      nodes: graph.nodes.filter(
+        (n) =>
+          (n.validFrom === null ||
+            n.validFrom === undefined ||
+            n.validFrom <= atTime) &&
+          (n.validTo === null ||
+            n.validTo === undefined ||
+            n.validTo >= atTime),
+      ),
+      edges: graph.edges.filter(
+        (e) =>
+          (e.validFrom === null ||
+            e.validFrom === undefined ||
+            e.validFrom <= atTime) &&
+          (e.validTo === null || e.validTo === undefined || e.validTo > atTime),
+      ),
+    };
+  }
+
+  /**
    * Get direct neighbours of a memory node.
    */
   async getNeighbours(nodeId: string): Promise<MemoryNode[]> {
