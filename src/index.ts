@@ -38,6 +38,38 @@ export {
 } from "./revert.js";
 export { GraphEngine, textSimilarity, generateId } from "./graph.js";
 export {
+  // Fidelity-level compaction (L0–L3): cheap representations of every
+  // memory, a query-adaptive router, and in-call escalation.
+  FIDELITY_LEVELS,
+  FIDELITY_LEVEL_LABELS,
+  FIDELITY_LEVEL_DESCRIPTIONS,
+  hasFidelityCache,
+  stampFidelityCache,
+  levelText,
+  fidelityL0,
+  fidelityL1,
+  fidelityL2,
+  splitSentences,
+  nodeEntities,
+  rankSentencesByCentrality,
+  nextFidelityLevel,
+  clampFidelityLevel,
+  parseFidelityLevel,
+  routeFidelity,
+  routerEntities,
+  scoreLevelCorpus,
+  resolveRecallLevels,
+  fidelityStats,
+  type FidelityLevel,
+  type FidelitySignals,
+  type FidelityRoute,
+  type FidelityRecallOptions,
+  type FidelityRecallResult,
+  type CompactOptions,
+  type CompactResult,
+  type FidelityLevelStats,
+} from "./fidelity.js";
+export {
   LocalHashEmbeddingProvider,
   OllamaEmbeddingProvider,
   OpenAICompatibleEmbeddingProvider,
@@ -71,6 +103,7 @@ export {
   type ContextPack,
   type ContextPackItem,
   type BuildContextPackOptions,
+  type ContextPackFidelityMeta,
 } from "./context-pack.js";
 export type {
   MemoryNode,
