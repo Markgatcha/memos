@@ -18,6 +18,11 @@ import {
   type DetectedExportSource,
   type ExternalImportSource,
 } from "./external-import.js";
+import {
+  DEFAULT_LESSON_PACK_K,
+  applyLessonOutcome,
+  rankProceduralLessons,
+} from "./procedural.js";
 import { createEmbeddingProvider, cosineSimilarity } from "./embeddings.js";
 import { EmbeddingQueue } from "./embedding-queue.js";
 import {
@@ -92,6 +97,9 @@ import type {
   ExtractFactsOptions,
   ExtractFactsResult,
   DiagnosticsResult,
+  LessonOutcome,
+  NewProceduralLesson,
+  ProceduralLesson,
 } from "./types.js";
 import { DEFAULT_TRUST_SCORES } from "./types.js";
 import {
@@ -1142,6 +1150,128 @@ export class MemOS {
     };
   }
 
+  // -----------------------------------------------------------------------
+  // Procedural memory (self-editing instructions)
+  // -----------------------------------------------------------------------
+
+  private lessonStorage(): Pick<
+    StorageAdapter,
+    | "saveProceduralLesson"
+    | "getProceduralLesson"
+    | "updateProceduralLesson"
+    | "listProceduralLessons"
+  > {
+    const s = this.storage;
+    if (
+      !s.saveProceduralLesson ||
+      !s.getProceduralLesson ||
+      !s.updateProceduralLesson ||
+      !s.listProceduralLessons
+    ) {
+      throw new Error(
+        "Procedural memory requires a storage adapter with procedural-lesson support (SQLiteStorage).",
+      );
+    }
+    return s;
+  }
+
+  /**
+   * Capture a procedural lesson — behavioral guidance for future tasks,
+   * not a fact. Starts at the neutral prior score (0.5); outcome
+   * feedback via `recordLessonOutcome` moves it from there.
+   */
+  async memorizeProcedural(
+    lesson: string,
+    opts: {
+      context?: string;
+      tags?: string[];
+      namespace?: string;
+      scope?: MemoryScope;
+      initialScore?: number;
+    } = {},
+  ): Promise<ProceduralLesson> {
+    this.assertInit();
+    if (!lesson || lesson.trim().length === 0) {
+      throw new Error("memorizeProcedural requires a non-empty lesson.");
+    }
+    const storage = this.lessonStorage();
+    const namespace = opts.scope
+      ? composeScope(opts.scope)
+      : (opts.namespace ?? "default");
+    const input: NewProceduralLesson = {
+      lesson: lesson.trim(),
+      ...(opts.context ? { context: opts.context } : {}),
+      ...(opts.tags ? { tags: opts.tags } : {}),
+      namespace,
+      ...(opts.initialScore !== undefined
+        ? { initialScore: opts.initialScore }
+        : {}),
+    };
+    return storage.saveProceduralLesson!(input);
+  }
+
+  /**
+   * Record an outcome for a lesson. Successes reinforce
+   * (`score += (1 - score) * 0.2`), failures demote
+   * (`score -= score * 0.3`) — pure local math, fully transparent.
+   * Also bumps `useCount` and refreshes timestamps (which resets the
+   * read-time decay clock).
+   */
+  async recordLessonOutcome(
+    id: string,
+    outcome: LessonOutcome,
+  ): Promise<ProceduralLesson> {
+    this.assertInit();
+    if (outcome !== "success" && outcome !== "failure") {
+      throw new Error(
+        'recordLessonOutcome outcome must be "success" or "failure".',
+      );
+    }
+    const storage = this.lessonStorage();
+    const current = await storage.getProceduralLesson!(id);
+    if (!current) {
+      throw new Error(`No procedural lesson found for id: ${id}`);
+    }
+    const updated = applyLessonOutcome(current, outcome);
+    const saved = await storage.updateProceduralLesson!(id, updated);
+    if (!saved) throw new Error(`No procedural lesson found for id: ${id}`);
+    return saved;
+  }
+
+  /**
+   * Retrieve the top-k procedural lessons for a query, ranked by a
+   * blend of decayed score (60%) and query-token relevance (40%).
+   * Lessons with no query overlap are skipped unless the query is
+   * empty (empty query = top lessons by score).
+   */
+  async recallProcedural(
+    query: string,
+    k: number = DEFAULT_LESSON_PACK_K,
+    opts: { namespace?: string; scope?: MemoryScope } = {},
+  ): Promise<ProceduralLesson[]> {
+    this.assertInit();
+    const storage = this.lessonStorage();
+    const namespace = opts.scope ? composeScope(opts.scope) : opts.namespace;
+    const lessons = await storage.listProceduralLessons!(namespace);
+    return rankProceduralLessons(lessons, query, k).map(
+      ({ effectiveScore: _e, relevance: _r, rankScore: _s, ...lesson }) =>
+        lesson,
+    );
+  }
+
+  /** List procedural lessons, highest score first. */
+  async listProceduralLessons(
+    opts: {
+      namespace?: string;
+      scope?: MemoryScope;
+    } = {},
+  ): Promise<ProceduralLesson[]> {
+    this.assertInit();
+    const storage = this.lessonStorage();
+    const namespace = opts.scope ? composeScope(opts.scope) : opts.namespace;
+    return storage.listProceduralLessons!(namespace);
+  }
+
   async importMemories(opts: ImportOptions): Promise<ImportResult> {
     this.assertInit();
 
@@ -1674,6 +1804,12 @@ export class MemOS {
      * `experimental.graphExpansion` settings take precedence when set.
      */
     graphExpansion?: boolean;
+    /**
+     * Inject top procedural lessons as an "operating instructions"
+     * section (additive; default off). `true` injects the top 3 lessons
+     * for the query; a number sets k. Uses the pack's namespace.
+     */
+    lessons?: boolean | number;
   }): Promise<ContextPack | string> {
     this.assertInit();
     const scopeFilter = this.resolveScopeFilter({
@@ -1744,6 +1880,7 @@ export class MemOS {
       source: opts.source,
       includeSummary: opts.includeSummary,
       embeddings,
+      ...(await this.packLessons(opts, namespace)),
     });
     // Telemetry: the naive baseline is what dumping the SAME candidates as
     // full raw node JSON would cost (the "no memory layer" approach) —
@@ -1768,6 +1905,27 @@ export class MemOS {
       naiveBaselineTokens,
     );
     return pack;
+  }
+
+  /**
+   * Fetch procedural lessons for pack injection. Returns `{}` when the
+   * caller didn't ask for lessons or the storage adapter has no lesson
+   * support — packs stay additive and never fail on lessons.
+   */
+  private async packLessons(
+    opts: { query: string; lessons?: boolean | number },
+    namespace: string,
+  ): Promise<{ lessons?: ProceduralLesson[] }> {
+    if (!opts.lessons) return {};
+    if (!this.storage.listProceduralLessons) return {};
+    const k =
+      opts.lessons === true
+        ? DEFAULT_LESSON_PACK_K
+        : Math.max(1, Math.floor(opts.lessons));
+    const lessons = await this.recallProcedural(opts.query, k, {
+      namespace,
+    }).catch(() => [] as ProceduralLesson[]);
+    return lessons.length > 0 ? { lessons } : {};
   }
 
   /**

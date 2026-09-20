@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { escapeLikePrefix } from "../scope.js";
+import { clampLessonScore } from "../procedural.js";
 import {
   backfillEntityIndex,
   ensureEntityIndexTable,
@@ -25,6 +26,8 @@ import type {
   StorageAdapter,
   ContradictionRecord,
   ContradictionStatus,
+  NewProceduralLesson,
+  ProceduralLesson,
   MemoryNode,
   MemoryEdge,
   SearchFilter,
@@ -394,6 +397,28 @@ export class SQLiteStorage implements StorageAdapter {
       );
 
       CREATE INDEX IF NOT EXISTS idx_contradictions_nodes ON contradictions(node_a, node_b);
+
+      -- Procedural lessons (self-editing instructions): behavioral
+      -- guidance rather than facts. Scores are adjusted by outcome
+      -- feedback (success reinforces, failure demotes) with a mild
+      -- read-time decay; all scoring math lives in src/procedural.ts.
+      CREATE TABLE IF NOT EXISTS procedural_lessons (
+        id            TEXT PRIMARY KEY,
+        lesson        TEXT NOT NULL,
+        context       TEXT NOT NULL DEFAULT '',
+        tags          TEXT NOT NULL DEFAULT '[]',
+        score         REAL NOT NULL DEFAULT 0.5,
+        success_count INTEGER NOT NULL DEFAULT 0,
+        failure_count INTEGER NOT NULL DEFAULT 0,
+        use_count     INTEGER NOT NULL DEFAULT 0,
+        namespace     TEXT NOT NULL DEFAULT 'default',
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL,
+        last_used_at  INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_procedural_lessons_namespace ON procedural_lessons(namespace);
+      CREATE INDEX IF NOT EXISTS idx_procedural_lessons_score ON procedural_lessons(score);
     `);
 
     // Migration: add expires_at column if missing
@@ -1313,6 +1338,134 @@ export class SQLiteStorage implements StorageAdapter {
       nodeB: row.node_b as string,
       detectedAt: row.detected_at as number,
       status: row.status as ContradictionStatus,
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Procedural lessons (self-editing instructions)
+  // -----------------------------------------------------------------------
+
+  async saveProceduralLesson(
+    input: NewProceduralLesson,
+  ): Promise<ProceduralLesson> {
+    const now = Date.now();
+    const score = clampLessonScore(input.initialScore ?? 0.5);
+    const lesson: ProceduralLesson = {
+      id: randomUUID(),
+      lesson: input.lesson,
+      context: input.context ?? "",
+      tags: input.tags ?? [],
+      score,
+      successCount: 0,
+      failureCount: 0,
+      useCount: 0,
+      namespace: input.namespace ?? "default",
+      createdAt: now,
+      updatedAt: now,
+      lastUsedAt: 0,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO procedural_lessons
+           (id, lesson, context, tags, score, success_count, failure_count,
+            use_count, namespace, created_at, updated_at, last_used_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        lesson.id,
+        lesson.lesson,
+        lesson.context,
+        JSON.stringify(lesson.tags),
+        lesson.score,
+        lesson.successCount,
+        lesson.failureCount,
+        lesson.useCount,
+        lesson.namespace,
+        lesson.createdAt,
+        lesson.updatedAt,
+        lesson.lastUsedAt,
+      );
+    return lesson;
+  }
+
+  async getProceduralLesson(id: string): Promise<ProceduralLesson | null> {
+    const row = this.getPreparedStatement(
+      "getProceduralLesson",
+      "SELECT * FROM procedural_lessons WHERE id = ?",
+    ).get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToProceduralLesson(row) : null;
+  }
+
+  async updateProceduralLesson(
+    id: string,
+    patch: Partial<ProceduralLesson>,
+  ): Promise<ProceduralLesson | null> {
+    const current = await this.getProceduralLesson(id);
+    if (!current) return null;
+    const next: ProceduralLesson = { ...current, ...patch, id: current.id };
+    this.db
+      .prepare(
+        `UPDATE procedural_lessons
+         SET lesson = ?, context = ?, tags = ?, score = ?,
+             success_count = ?, failure_count = ?, use_count = ?,
+             namespace = ?, updated_at = ?, last_used_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        next.lesson,
+        next.context,
+        JSON.stringify(next.tags),
+        next.score,
+        next.successCount,
+        next.failureCount,
+        next.useCount,
+        next.namespace,
+        next.updatedAt,
+        next.lastUsedAt,
+        id,
+      );
+    return next;
+  }
+
+  async listProceduralLessons(namespace?: string): Promise<ProceduralLesson[]> {
+    const rows = (
+      namespace
+        ? this.getPreparedStatement(
+            "listProceduralLessons::ns",
+            "SELECT * FROM procedural_lessons WHERE namespace = ? ORDER BY score DESC, updated_at DESC",
+          ).all(namespace)
+        : this.getPreparedStatement(
+            "listProceduralLessons::all",
+            "SELECT * FROM procedural_lessons ORDER BY score DESC, updated_at DESC",
+          ).all()
+    ) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToProceduralLesson(row));
+  }
+
+  private rowToProceduralLesson(
+    row: Record<string, unknown>,
+  ): ProceduralLesson {
+    let tags: string[] = [];
+    try {
+      const parsed: unknown = JSON.parse((row.tags as string) ?? "[]");
+      if (Array.isArray(parsed))
+        tags = parsed.filter((t) => typeof t === "string");
+    } catch {
+      tags = [];
+    }
+    return {
+      id: row.id as string,
+      lesson: row.lesson as string,
+      context: (row.context as string) ?? "",
+      tags,
+      score: row.score as number,
+      successCount: row.success_count as number,
+      failureCount: row.failure_count as number,
+      useCount: row.use_count as number,
+      namespace: (row.namespace as string) ?? "default",
+      createdAt: row.created_at as number,
+      updatedAt: row.updated_at as number,
+      lastUsedAt: (row.last_used_at as number) ?? 0,
     };
   }
 

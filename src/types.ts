@@ -554,6 +554,48 @@ export interface ContradictionRecord {
 }
 
 // ---------------------------------------------------------------------------
+// Procedural memory (self-editing instructions)
+// ---------------------------------------------------------------------------
+
+/** Outcome feedback for a procedural lesson. */
+export type LessonOutcome = "success" | "failure";
+
+/**
+ * A procedural lesson: behavioral guidance ("check rate limits before
+ * batch calls") rather than a fact. Captured via `memorizeProcedural`,
+ * reinforced/demoted by `recordLessonOutcome`, and surfaced via
+ * `recallProcedural` / context-pack injection. Scoring is pure local
+ * math — see `src/procedural.ts`.
+ */
+export interface ProceduralLesson {
+  id: string;
+  /** The lesson text — an instruction for future behavior. */
+  lesson: string;
+  /** When/where the lesson applies (free text). */
+  context: string;
+  tags: string[];
+  /** Stored score in [0.01, 0.99]; read-time decay is applied lazily. */
+  score: number;
+  successCount: number;
+  failureCount: number;
+  useCount: number;
+  namespace: string;
+  createdAt: number;
+  updatedAt: number;
+  lastUsedAt: number;
+}
+
+/** Input for creating a procedural lesson (id/timestamps assigned). */
+export interface NewProceduralLesson {
+  lesson: string;
+  context?: string;
+  tags?: string[];
+  namespace?: string;
+  /** Override the neutral 0.5 prior. Clamped to [0.01, 0.99]. */
+  initialScore?: number;
+}
+
+// ---------------------------------------------------------------------------
 // Embeddings
 // ---------------------------------------------------------------------------
 
@@ -923,6 +965,19 @@ export interface StorageAdapter {
     status: ContradictionStatus,
   ): Promise<void>;
 
+  /**
+   * Procedural lessons (optional — only SQLiteStorage implements these
+   * today). `updateProceduralLesson` applies a partial patch (score,
+   * counts, timestamps) and returns the updated record, or null when
+   * the id is unknown.
+   */
+  saveProceduralLesson?(lesson: NewProceduralLesson): Promise<ProceduralLesson>;
+  getProceduralLesson?(id: string): Promise<ProceduralLesson | null>;
+  updateProceduralLesson?(
+    id: string,
+    patch: Partial<ProceduralLesson>,
+  ): Promise<ProceduralLesson | null>;
+  listProceduralLessons?(namespace?: string): Promise<ProceduralLesson[]>;
   /** Return the full graph (nodes + edges). */
   getGraph(): Promise<GraphSnapshot>;
 

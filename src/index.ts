@@ -108,6 +108,9 @@ export type {
   ExtractFactsOptions,
   ExtractFactsResult,
   DiagnosticsResult,
+  LessonOutcome,
+  NewProceduralLesson,
+  ProceduralLesson,
 } from "./types.js";
 export { DEFAULT_TRUST_SCORES } from "./types.js";
 export {
@@ -146,3 +149,21 @@ export {
   DEFAULT_PPR_MAX_INJECTED,
   DEFAULT_PPR_MIN_INJECT_SCORE,
 } from "./graph-expansion.js";
+export {
+  applyLessonOutcome,
+  clampLessonScore,
+  effectiveLessonScore,
+  lessonCitationToken,
+  lessonShortId,
+  rankProceduralLessons,
+  DEFAULT_LESSON_PACK_K,
+  LESSON_DECAY_HALF_LIFE_DAYS,
+  LESSON_FAILURE_STEP,
+  LESSON_INITIAL_SCORE,
+  LESSON_RELEVANCE_WEIGHT,
+  LESSON_SCORE_CAP,
+  LESSON_SCORE_FLOOR,
+  LESSON_SCORE_WEIGHT,
+  LESSON_SUCCESS_STEP,
+  type RankedProceduralLesson,
+} from "./procedural.js";

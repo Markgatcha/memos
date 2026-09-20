@@ -18,12 +18,14 @@
  */
 
 import type { EmbeddingVector, ScoredMemory } from "./types.js";
+import type { ProceduralLesson } from "./types.js";
 // Runtime import is safe: embeddings.ts has no runtime imports of its own
 // (type-only), so this cannot create a module cycle.
 import { cosineSimilarity } from "./embeddings.js";
 // Stable score-desc/id-asc ordering shared with retrieval fusion.
 // retrieval.ts does not import this module, so no cycle is introduced.
 import { compareScoredMemories } from "./retrieval.js";
+import { lessonCitationToken } from "./procedural.js";
 
 /** The single source of truth for the context-pack schema id. */
 export const CONTEXT_PACK_SCHEMA = "ai-trio.memos.context-pack.v1";
@@ -60,6 +62,12 @@ export interface ContextPack {
   items: ContextPackItem[];
   /** Number of tokens saved by debloating + dedup. 0 when neither ran. */
   tokensSaved: number;
+  /**
+   * Procedural lessons injected as an "operating instructions" section.
+   * Present only when the pack was built with lessons requested
+   * (`MemOS.contextPack({ lessons })`).
+   */
+  lessons?: ProceduralLesson[];
 }
 
 /** Options for building a context pack. */
@@ -112,6 +120,13 @@ export interface BuildContextPackOptions {
    * distinct-but-related facts).
    */
   semanticDedupThreshold?: number;
+  /**
+   * Procedural lessons to inject as an "operating instructions" section
+   * (additive; does not consume the item token budget). Fetched via
+   * `recallProcedural` by `MemOS.contextPack` — pass pre-fetched rows
+   * here when calling `buildContextPack` directly.
+   */
+  lessons?: ProceduralLesson[];
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +318,7 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     dedupThreshold = DEFAULT_DEDUP_THRESHOLD,
     embeddings,
     semanticDedupThreshold = DEFAULT_SEMANTIC_DEDUP_THRESHOLD,
+    lessons,
   } = opts;
 
   // Sort by descending score, node id as the final tiebreak (cache-prefix
@@ -469,6 +485,7 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     tokenBudget,
     items: ordered,
     tokensSaved,
+    ...(lessons && lessons.length > 0 ? { lessons } : {}),
   };
 }
 
@@ -516,7 +533,34 @@ export function packToToon(pack: ContextPack): string {
   // Query trailer: repeat the query after the evidence block (see the
   // docstring). Always emitted — fixed layout keeps cache prefixes stable.
   lines.push(`# q=${pack.query}`);
+  // Operating-instructions section: procedural lessons ride after the
+  // trailer as comment lines, so line-based TOON consumers skip them
+  // unless they opt into lessons.
+  appendLessonsSection(lines, pack.lessons);
   return lines.join("\n");
+}
+
+/**
+ * Append the procedural-lessons "operating instructions" section to a
+ * verbose-TOON line buffer. Lessons render as `#`-comment lines so
+ * existing parsers ignore them; each carries its own `[lesson:…]`
+ * token for stable reference.
+ */
+function appendLessonsSection(
+  lines: string[],
+  lessons: ProceduralLesson[] | undefined,
+): void {
+  if (!lessons || lessons.length === 0) return;
+  lines.push("# operating-instructions: learned lessons");
+  for (const lesson of lessons) {
+    const text = lesson.lesson.replace(/\|/g, "¦").replace(/\n/g, " ");
+    const context = lesson.context
+      ? ` (when: ${lesson.context.replace(/\|/g, "¦").replace(/\n/g, " ")})`
+      : "";
+    lines.push(
+      `# - ${lessonCitationToken(lesson.id)} ${text}${context} [score ${lesson.score.toFixed(2)}, ${lesson.useCount} uses]`,
+    );
+  }
 }
 
 /**
@@ -732,7 +776,16 @@ export function packToToonCompact(
   // already states it BEFORE) — a reader scanning bottom-up re-anchors on
   // the query. A `#` comment line, so `parseToonCompact` skips it.
   const trailer = `# q=${pack.query}`;
-  return `${envelope}\n${body}\n${trailer}`;
+  // Lessons ride as `#` comment lines after the trailer — the compact
+  // parser skips every `#` line, so the wire format stays parse-stable.
+  const lessonLines: string[] = [];
+  for (const lesson of pack.lessons ?? []) {
+    const text = lesson.lesson.replace(/\|/g, "¦").replace(/\n/g, " ");
+    lessonLines.push(
+      `# L|${lessonCitationToken(lesson.id)}|${lesson.score.toFixed(2)}|${text}`,
+    );
+  }
+  return [`${envelope}\n${body}\n${trailer}`, ...lessonLines].join("\n");
 }
 
 /**

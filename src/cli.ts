@@ -633,6 +633,12 @@ Commands:
   import-external <file>  Import a ChatGPT/Claude memory export
                           (--source auto|chatgpt|claude|generic, --dry-run,
                           --max-items <n>, --namespace <ns>)
+  learn "<lesson>"        Capture a procedural lesson — behavioral guidance,
+                          not a fact (--context <ctx>, --tags a,b)
+  lesson <id>             Record lesson outcome: --outcome success|failure
+                          (reinforces or demotes the lesson score)
+  lessons                 List procedural lessons (--namespace <ns>,
+                          --limit <n>)
   history <id>            Version timeline for one memory: supersedes,
                           superseded by, derived notes
   digest                  Run consolidation now and print a summary
@@ -1025,6 +1031,97 @@ async function main(): Promise<void> {
           console.log(
             `Import from ${result.detected} export ${result.dryRun ? "(dry run)" : "complete"}: ${result.imported} imported, ${result.skipped} skipped of ${result.total} item(s)`,
           );
+        }
+        break;
+      }
+
+      case "learn": {
+        const lesson = args[1];
+        if (!lesson) {
+          console.error(
+            'Error: lesson text is required.\\n  Usage: memos learn "<lesson>" [--context <ctx>] [--tags a,b] [--namespace <ns>]',
+          );
+          process.exit(1);
+        }
+        const contextIdx = args.indexOf("--context");
+        const context = contextIdx !== -1 ? args[contextIdx + 1] : undefined;
+        const tagsIdx = args.indexOf("--tags");
+        const tags =
+          tagsIdx !== -1
+            ? args[tagsIdx + 1]
+                .split(",")
+                .map((t) => t.trim())
+                .filter((t) => t.length > 0)
+            : undefined;
+        const nsIdx = args.indexOf("--namespace");
+        const namespace = nsIdx !== -1 ? args[nsIdx + 1] : undefined;
+        const saved = await memos.memorizeProcedural(lesson, {
+          ...(context ? { context } : {}),
+          ...(tags ? { tags } : {}),
+          ...(namespace ? { namespace } : {}),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(saved, null, 2));
+        } else {
+          console.log(
+            `Learned [${saved.id.slice(0, 8)}] (score ${saved.score.toFixed(2)}): ${saved.lesson}`,
+          );
+        }
+        break;
+      }
+
+      case "lesson": {
+        const id = args[1];
+        const outcomeIdx = args.indexOf("--outcome");
+        const outcome = outcomeIdx !== -1 ? args[outcomeIdx + 1] : undefined;
+        if (!id || (outcome !== "success" && outcome !== "failure")) {
+          console.error(
+            "Error: lesson ID and --outcome are required.\\n  Usage: memos lesson <id> --outcome success|failure",
+          );
+          process.exit(1);
+        }
+        try {
+          const updated = await memos.recordLessonOutcome(id, outcome);
+          if (jsonFlag) {
+            console.log(JSON.stringify(updated, null, 2));
+          } else {
+            console.log(
+              `Lesson [${updated.id.slice(0, 8)}] ${outcome}: score ${updated.score.toFixed(2)} (${updated.successCount} success, ${updated.failureCount} failure, ${updated.useCount} uses)`,
+            );
+          }
+        } catch (err) {
+          console.error(
+            `Error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(1);
+        }
+        break;
+      }
+
+      case "lessons": {
+        const nsIdx = args.indexOf("--namespace");
+        const namespace = nsIdx !== -1 ? args[nsIdx + 1] : undefined;
+        const limitIdx = args.indexOf("--limit");
+        const limit = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : 20;
+        const lessons = await memos.listProceduralLessons({
+          ...(namespace ? { namespace } : {}),
+        });
+        const shown = Number.isNaN(limit) ? lessons : lessons.slice(0, limit);
+        if (jsonFlag) {
+          console.log(JSON.stringify(shown, null, 2));
+        } else if (shown.length === 0) {
+          console.log(
+            'No procedural lessons yet. Teach one: memos learn "..."',
+          );
+        } else {
+          console.log(`Procedural lessons (${shown.length}):\\n`);
+          for (const l of shown) {
+            console.log(
+              `  [${l.id.slice(0, 8)}] score ${l.score.toFixed(2)} · ${l.useCount} uses (${l.successCount}✓/${l.failureCount}✗)`,
+            );
+            console.log(`    ${l.lesson}`);
+            if (l.context) console.log(`    when: ${l.context}`);
+          }
         }
         break;
       }
