@@ -179,11 +179,13 @@ export function findContradictionCandidates(
  *
  * For every recorded contradiction pair whose BOTH members appear in
  * `results`, demote the OLDER member (smaller `createdAt`; id as the
- * tiebreak) by multiplying its score with
- * {@link CONTRADICTION_DEMOTION_FACTOR}. The demoted result carries a
- * `scores.contradiction_demoted` marker (the factor) and its
+ * tiebreak) by {@link CONTRADICTION_DEMOTION_FACTOR}. The demoted result
+ * carries a `scores.contradiction_demoted` marker (the factor) and its
  * `scores.hybrid` is refreshed to the demoted score — mirroring the
- * convention in `fuseResults`.
+ * convention in `fuseResults`. Demotion is sign-aware: the keyword leg
+ * yields negative bm25 ranks, where a plain multiplication would
+ * promote instead of demote, so negative scores are divided by the
+ * factor (more negative = ranks worse under the descending sort).
  *
  * Rules:
  *   - Never removes results. Add-only is preserved: both versions stay
@@ -248,7 +250,16 @@ export function resolveContradictionsAtRead(
         : idxB;
     if (demoted.has(adjusted[olderIdx]!.node.id)) continue; // already demoted via another pair
     const target = adjusted[olderIdx]!;
-    const newScore = target.score * CONTRADICTION_DEMOTION_FACTOR;
+    // Sign-aware demotion: scores from the keyword leg are negative
+    // bm25 ranks, and `score * 0.5` would promote a negative score
+    // (closer to zero) instead of demoting it. Dividing a negative
+    // score by the factor pushes it further negative, i.e. ranks worse
+    // under the descending sort — a true demotion for either sign.
+    // Non-negative scores keep the exact historical behavior.
+    const newScore =
+      target.score >= 0
+        ? target.score * CONTRADICTION_DEMOTION_FACTOR
+        : target.score / CONTRADICTION_DEMOTION_FACTOR;
     adjusted[olderIdx] = {
       ...target,
       score: newScore,

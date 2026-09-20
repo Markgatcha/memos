@@ -129,6 +129,9 @@ import type {
   NewProceduralLesson,
   ProceduralLesson,
   ProvenanceTier,
+  HarnessCount,
+  HarnessMergeOptions,
+  HarnessMergeResult,
 } from "./types.js";
 import { DEFAULT_TRUST_SCORES } from "./types.js";
 import {
@@ -146,6 +149,7 @@ import {
 } from "./contradictions.js";
 import type { ContradictionRecord } from "./types.js";
 import { detectRevertIntent } from "./revert.js";
+import { detectHarness } from "./harness.js";
 import {
   detectEvent,
   detectEventUpdate,
@@ -779,6 +783,13 @@ export class MemOS {
       quarantined,
       quarantinedAt,
       quarantineReason,
+      // Harness attribution ("one memory, every harness"): stamp which
+      // agent harness authored this memory. An explicit `opts.harness`
+      // wins; otherwise detect from the environment. Updates never
+      // re-stamp — each version keeps its own author's tag, so a
+      // cross-harness supersession shows A on the old version and B on
+      // the replacement.
+      harness: opts.harness ?? detectHarness(),
       // Initialize confidence state machine values
       confidence: opts.confidence ?? INITIAL_CONFIDENCE,
       evidenceCount: opts.evidenceCount ?? 0,
@@ -1112,6 +1123,7 @@ export class MemOS {
     const nodes = this.applyRecallFilter(
       this.graph.getAllNodes(),
       opts.filter ?? {},
+      opts.harness,
     ).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
     // Start low, escalate on demand: re-score the corpus at each level
@@ -1145,17 +1157,21 @@ export class MemOS {
   /**
    * Scope the recall candidate set. Mirrors the `SearchFilter` fields
    * that make sense for an in-memory scan (namespace / type / tags /
-   * pool); full-text and vector legs live in `search()`.
+   * pool); full-text and vector legs live in `search()`. The harness
+   * scope comes from the explicit argument first, then
+   * `filter.harness` — `"all"` (or unset) keeps every harness.
    */
   private applyRecallFilter(
     nodes: MemoryNode[],
     filter: SearchFilter,
+    harness?: string,
   ): MemoryNode[] {
     const pools = filter.pool
       ? Array.isArray(filter.pool)
         ? filter.pool
         : [filter.pool]
       : null;
+    const harnessScope = harness ?? filter.harness;
     return nodes.filter((n) => {
       if (filter.namespace && n.namespace !== filter.namespace) return false;
       if (
@@ -1166,6 +1182,12 @@ export class MemOS {
       if (filter.type && n.type !== filter.type) return false;
       if (pools && !pools.includes(n.pool ?? "event")) return false;
       if (filter.tags && filter.tags.some((t) => !n.tags.includes(t)))
+        return false;
+      if (
+        harnessScope &&
+        harnessScope !== "all" &&
+        (n.harness ?? "unknown") !== harnessScope
+      )
         return false;
       return true;
     });
@@ -1897,6 +1919,196 @@ export class MemOS {
     this.graph.updateNode(updated);
     this.invalidateSearchCache();
     return updated;
+  }
+
+  /**
+   * Per-harness memory counts — "which harnesses wrote what lives in
+   * this database". Powers `memos harness list`. Memories written
+   * before harness attribution existed (or by clients that never set
+   * the tag) read as `"unknown"`.
+   */
+  async getHarnessCounts(): Promise<HarnessCount[]> {
+    this.assertInit();
+    if (this.storage.getHarnessCounts) {
+      return this.storage.getHarnessCounts();
+    }
+    // Fallback for custom storage adapters: page through the whole
+    // store (historical + quarantined included) and count in JS.
+    const counts = new Map<string, number>();
+    const pageSize = 1000;
+    let offset = 0;
+    for (;;) {
+      const rows = await this.storage.queryNodes({
+        includeHistorical: true,
+        includeQuarantined: true,
+        limit: pageSize,
+        offset,
+      });
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        const h = r.node.harness ?? "unknown";
+        counts.set(h, (counts.get(h) ?? 0) + 1);
+      }
+      offset += rows.length;
+    }
+    return [...counts.entries()]
+      .map(([harness, count]) => ({ harness, count }))
+      .sort((a, b) => b.count - a.count || (a.harness < b.harness ? -1 : 1));
+  }
+
+  /**
+   * Merge another harness's database file into this one — "one memory,
+   * every harness."
+   *
+   * The merge is a faithful row-level import, not a re-write: every
+   * source node keeps its id (remapped only on collision), timestamps,
+   * bitemporal validity interval (`validFrom`/`validTo`), provenance
+   * tier, trust score, tags, quarantine state, and harness tag. Edges
+   * follow their endpoints through the id remap.
+   *
+   * Cross-harness duplicates and contradictions are NOT resolved here:
+   * imported nodes go through the exact same post-write path as
+   * `store()` — re-embedded by the local provider and registered for
+   * the existing write-time contradiction scan — so the established
+   * contradiction detection + read-time resolution machinery converges
+   * them exactly as if they had been written locally. No second
+   * resolution system exists, by design.
+   *
+   * Deterministic: nodes import in (createdAt, id) order; collisions
+   * get fresh UUIDs recorded in the result's id map.
+   *
+   * @param fromPath — Path to the source `.db` file.
+   * @param opts — `{ dryRun }` reports the plan without writing.
+   */
+  async mergeHarnessDb(
+    fromPath: string,
+    opts: HarnessMergeOptions = {},
+  ): Promise<HarnessMergeResult> {
+    this.assertInit();
+    const { existsSync } = await import("node:fs");
+    const start = Date.now();
+    const dryRun = opts.dryRun ?? false;
+    if (!existsSync(fromPath)) {
+      throw new Error(`Merge source not found: ${fromPath}`);
+    }
+
+    // Open the source as a plain SQLiteStorage. We never write through
+    // it, but init() must run so the harness migration applies to legacy
+    // source DBs too (additive, idempotent). Closed in the finally below.
+    const source = new SQLiteStorage(fromPath, false);
+    await source.init();
+    try {
+      const sourceNodes = await source.listAllNodes();
+      const sourceEdges = await source.listAllEdges();
+
+      const idMap = new Map<string, string>(); // source id → target id
+      const plan: HarnessMergeResult["nodes"] = [];
+      let nodesRemapped = 0;
+
+      // Deterministic import order: creation time, id tiebreak.
+      const ordered = [...sourceNodes].sort((a, b) =>
+        a.createdAt < b.createdAt
+          ? -1
+          : a.createdAt > b.createdAt
+            ? 1
+            : a.id < b.id
+              ? -1
+              : a.id > b.id
+                ? 1
+                : 0,
+      );
+      for (const node of ordered) {
+        const existing =
+          (await this.storage.peekNode?.(node.id)) ??
+          (await this.storage.getNode(node.id));
+        let targetId = node.id;
+        let remapped = false;
+        if (existing) {
+          // UUID collision across two independently-created DBs is
+          // near-impossible; when it happens, remap and rewrite every
+          // incident edge endpoint below. Citations ([mem:hex]) of the
+          // colliding node change — unavoidable and reported.
+          targetId = generateId();
+          remapped = true;
+          nodesRemapped += 1;
+        }
+        idMap.set(node.id, targetId);
+        plan.push({
+          sourceId: node.id,
+          targetId,
+          remapped,
+          harness: node.harness ?? "unknown",
+        });
+        if (!dryRun) {
+          const imported: MemoryNode = { ...node, id: targetId };
+          await this.storage.saveNode(imported);
+          this.graph.addNode(imported);
+          // Same post-write path as store(): re-embed under the local
+          // provider and register for the existing write-time
+          // contradiction scan. Cross-harness duplicates/contradictions
+          // converge through that machinery — nothing merge-specific.
+          this.scheduleEmbedding(imported);
+          this.contradictionScanPending.add(imported.id);
+          this.emit("node:created", imported);
+        }
+      }
+
+      let edgesImported = 0;
+      let edgesSkipped = 0;
+      for (const edge of sourceEdges) {
+        const mappedSource = idMap.get(edge.sourceId);
+        const mappedTarget = idMap.get(edge.targetId);
+        if (!mappedSource || !mappedTarget) {
+          edgesSkipped += 1;
+          continue;
+        }
+        if (dryRun) {
+          edgesImported += 1;
+          continue;
+        }
+        try {
+          const importedEdge = await this.storage.saveEdge({
+            ...edge,
+            id: generateId(),
+            sourceId: mappedSource,
+            targetId: mappedTarget,
+          });
+          this.graph.addEdge({
+            sourceId: mappedSource,
+            targetId: mappedTarget,
+            relation: edge.relation,
+            weight: edge.weight,
+            metadata: edge.metadata,
+            validFrom: edge.validFrom,
+            validTo: edge.validTo,
+          });
+          this.emit("edge:created", importedEdge);
+          edgesImported += 1;
+        } catch {
+          // UNIQUE(source_id, target_id, relation) already present in
+          // the target — the relation exists, nothing to import.
+          edgesSkipped += 1;
+        }
+      }
+
+      if (!dryRun) this.invalidateSearchCache();
+
+      return {
+        from: fromPath,
+        dryRun,
+        sourceNodes: sourceNodes.length,
+        sourceEdges: sourceEdges.length,
+        // In dry-run these are the would-import counts; nothing was written.
+        nodesImported: plan.length,
+        nodesRemapped,
+        edgesImported,
+        edgesSkipped,
+        nodes: plan,
+        durationMs: Date.now() - start,
+      };
+    } finally {
+      await source.close();
+    }
   }
 
   async importMemories(opts: ImportOptions): Promise<ImportResult> {

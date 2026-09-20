@@ -152,6 +152,10 @@ export type {
   ImportFormat,
   ImportOptions,
   ImportResult,
+  HarnessCount,
+  HarnessMergeNode,
+  HarnessMergeOptions,
+  HarnessMergeResult,
   ExperimentalConfig,
   EmbeddingProvider,
   EmbeddingVector,
@@ -247,6 +251,13 @@ export {
   CITATION_MIN_HEX,
   type CitationResolution,
 } from "./citations.js";
+export {
+  detectHarness,
+  normalizeHarness,
+  UNKNOWN_HARNESS,
+  MEMOS_HARNESS_ENV,
+  HARNESS_MARKERS,
+} from "./harness.js";
 export {
   contentHash,
   parseExportDirectory,

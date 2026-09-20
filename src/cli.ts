@@ -658,6 +658,9 @@ Commands:
                           Review the write-gate quarantine queue: list
                           flagged memories, release one back into recall
                           (--limit <n>, --json)
+  harness <list|merge>    Cross-harness memory: per-harness memory counts
+                          (list), or merge another harness's DB file into
+                          this one (merge --from <db-path> [--dry-run])
   history <id>            Version timeline for one memory: supersedes,
                           superseded by, derived notes
   revert                  Revert a memory to its previous version
@@ -708,6 +711,8 @@ Options:
   --type <type>           Memory type (store command)
   --ttl <seconds>         TTL in seconds (store command)
   --limit <n>             Result limit (search command)
+  --harness <name|all>    Scope search to one harness's memories
+                          (search command; default: all harnesses)
   --format <fmt>          Export format: json, markdown, obsidian
   --output <path>         Output path (export/backup)
   --tag <tag>             Tag filter (export/list)
@@ -934,6 +939,8 @@ async function main(): Promise<void> {
         const scopeIdx = args.indexOf("--scope");
         const scopeArg = scopeIdx !== -1 ? args[scopeIdx + 1] : undefined;
         const scope = scopeArg ? parseScopeArg(scopeArg) : undefined;
+        const harnessIdx = args.indexOf("--harness");
+        const harnessArg = harnessIdx !== -1 ? args[harnessIdx + 1] : undefined;
         const tagIdx = args.indexOf("--tag");
         let searchTags: string[] | undefined;
         if (tagIdx !== -1) {
@@ -950,6 +957,7 @@ async function main(): Promise<void> {
           tags: searchTags,
           ...(pool ? { pool } : {}),
           ...(scope && Object.keys(scope).length > 0 ? { scope } : {}),
+          ...(harnessArg ? { harness: harnessArg } : {}),
         });
         if (jsonFlag) {
           console.log(JSON.stringify(results, null, 2));
@@ -1270,6 +1278,68 @@ async function main(): Promise<void> {
         }
         console.error(
           "Error: subcommand is required.\n  Usage: memos quarantine <list|release>  (list [--limit <n>] [--json], release <id> [--json])",
+        );
+        process.exit(1);
+      }
+
+      case "harness": {
+        const sub = args[1];
+        if (sub === "list") {
+          const counts = await memos.getHarnessCounts();
+          if (jsonFlag) {
+            console.log(JSON.stringify(counts, null, 2));
+          } else if (counts.length === 0) {
+            console.log("No memories stored.");
+          } else {
+            const total = counts.reduce((n, c) => n + c.count, 0);
+            console.log(`Memories by harness (${total} total):\n`);
+            for (const c of counts) {
+              console.log(`  ${c.harness.padEnd(16)} ${c.count}`);
+            }
+          }
+          break;
+        }
+        if (sub === "merge") {
+          const fromIdx = args.indexOf("--from");
+          const from = fromIdx !== -1 ? args[fromIdx + 1] : undefined;
+          if (!from) {
+            console.error(
+              "Error: --from <db-path> is required.\n  Usage: memos harness merge --from <db-path> [--dry-run] [--json]",
+            );
+            process.exit(1);
+          }
+          const dryRun = args.includes("--dry-run");
+          const result = await memos.mergeHarnessDb(from, { dryRun });
+          if (jsonFlag) {
+            console.log(JSON.stringify(result, null, 2));
+          } else {
+            console.log(
+              `Merge ${dryRun ? "(dry run) " : ""}from ${result.from}:`,
+            );
+            console.log(
+              `  source: ${result.sourceNodes} nodes, ${result.sourceEdges} edges`,
+            );
+            console.log(
+              `  nodes: ${result.nodesImported} imported (${result.nodesRemapped} id remapped)`,
+            );
+            console.log(
+              `  edges: ${result.edgesImported} imported (${result.edgesSkipped} skipped)`,
+            );
+            for (const n of result.nodes) {
+              if (n.remapped) {
+                console.log(`  remapped ${n.sourceId} → ${n.targetId}`);
+              }
+            }
+            if (dryRun) {
+              console.log(
+                "  (dry run — nothing was written; run without --dry-run to merge)",
+              );
+            }
+          }
+          break;
+        }
+        console.error(
+          "Error: subcommand is required.\n  Usage: memos harness <list|merge>  (list [--json], merge --from <db-path> [--dry-run] [--json])",
         );
         process.exit(1);
       }

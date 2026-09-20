@@ -120,6 +120,7 @@ export function formatCitationResolution(
                 id: c.id,
                 token: citationToken(c.id),
                 content: c.content,
+                harness: c.harness ?? "unknown",
               })),
             }
           : { status: resolution.status, token: resolution.token },
@@ -148,6 +149,7 @@ export function formatCitationResolution(
     m.content,
     ``,
     `Type: ${m.type}  Source: ${m.source}  Trust: ${m.trustScore}`,
+    `Harness: ${m.harness ?? "unknown"}`,
     `Tags: ${m.tags.length > 0 ? m.tags.join(", ") : "(none)"}`,
     `Created: ${new Date(m.createdAt).toISOString()}`,
     `Updated: ${new Date(m.updatedAt).toISOString()}`,

@@ -97,6 +97,7 @@ function toMcpResult(r: ScoredMemory): Record<string, unknown> {
     ...r,
     provenance: r.provenance ?? r.node.provenance,
     citation: r.citation ?? citationToken(r.node.id),
+    harness: r.node.harness ?? "unknown",
     untrustedSource: r.untrustedSource ?? isUntrustedForAgent(r.node),
     untrusted_source: r.untrustedSource ?? isUntrustedForAgent(r.node),
   };
@@ -239,6 +240,13 @@ function registerTools(server: McpServer, memos: MemOS): void {
           .optional()
           .describe("Filter by retrieval pool (event, note, or procedure)."),
         scope: scopeInputSchema,
+        harness: z
+          .string()
+          .optional()
+          .describe(
+            "Filter by authoring harness (e.g. claude-code, cline, codex). " +
+              'Default "all": cross-harness recall.',
+          ),
         compact: z
           .boolean()
           .optional()
@@ -259,6 +267,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
               tags: z.array(z.string()).optional(),
               provenance: z.string().optional(),
               citation: z.string().optional(),
+              harness: z.string().optional(),
               untrusted_source: z.boolean().optional(),
             }),
           ),
@@ -275,6 +284,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
       includeQuarantined,
       pool,
       scope,
+      harness,
       compact,
     }) => {
       const found = await memos.search({
@@ -286,6 +296,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
         ...(includeQuarantined !== undefined ? { includeQuarantined } : {}),
         ...(pool !== undefined ? { pool } : {}),
         ...(scope ? { scope } : {}),
+        ...(harness ? { harness } : {}),
       });
       // Read-time trust policy: flag low-trust channels so the host
       // agent confirms instead of silently injecting them as context.
@@ -299,6 +310,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
           ...(r.node.tags.length > 0 ? { tags: r.node.tags } : {}),
           provenance: r.provenance ?? r.node.provenance,
           citation: r.citation ?? citationToken(r.node.id),
+          harness: r.node.harness ?? "unknown",
           untrusted_source: r.untrustedSource ?? false,
         }));
         return {

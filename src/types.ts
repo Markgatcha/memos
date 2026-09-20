@@ -187,6 +187,15 @@ export interface MemoryNode {
    */
   pool?: MemoryPool;
   /**
+   * Harness that wrote this memory (`"claude-code"`, `"cline"`,
+   * `"codex"`, `"gemini-cli"`, `"openclaw"`, or `"unknown"`). Stamped
+   * at write time by `store()` via `detectHarness()`; optional for
+   * backward compatibility with node literals and custom storage
+   * adapters — reads as `"unknown"` when absent. Legacy rows are
+   * backfilled as `"unknown"` by the schema migration.
+   */
+  harness?: string;
+  /**
    * Trust score in [0, 1]. Influences retrieval ranking. Starts at
    * 1.0 for `user_input`, 0.7 for `agent_inferred`, 0.5 for
    * `external_data`, 0.3 for `system`. Can be manually adjusted via
@@ -267,6 +276,12 @@ export interface CreateMemoryInput {
   context?: string;
   /** Trust score [0, 1]. Overrides the default for the chosen source. */
   trustScore?: number;
+  /**
+   * Harness attribution override (e.g. `"claude-code"`, `"cline"`).
+   * When omitted, `store()` stamps the harness detected from the
+   * environment via `detectHarness()` (see `src/harness.ts`).
+   */
+  harness?: string;
   /**
    * Dynamic confidence score [0, 1] for the confidence state machine.
    * Used to track how sure the system is that this memory is still true.
@@ -472,6 +487,14 @@ export interface SearchFilter {
    * Memories written before pools existed read as `"event"`.
    */
   pool?: MemoryPool | MemoryPool[];
+  /**
+   * Filter by authoring harness. Pass a harness slug stamped at write
+   * time (`"claude-code"`, `"cline"`, …) or `"all"` (default) for the
+   * behavior-preserving cross-harness recall. `"unknown"` matches
+   * unattributed rows, including everything written before harness
+   * attribution existed.
+   */
+  harness?: string;
   /** Filter by provenance source. */
   source?: MemorySource;
   /** Filter by provenance tier. */
@@ -1067,6 +1090,13 @@ export interface StorageAdapter {
   /** Query nodes with filters. */
   queryNodes(filter: SearchFilter): Promise<ScoredMemory[]>;
 
+  /**
+   * Per-harness memory counts (`SELECT harness, COUNT(*) … GROUP BY
+   * harness`). Optional — `MemOS.getHarnessCounts()` falls back to a
+   * paged `queryNodes` scan when the adapter does not implement it.
+   */
+  getHarnessCounts?(): Promise<HarnessCount[]>;
+
   /** Persist an embedding vector for a node. */
   saveEmbedding?(
     nodeId: string,
@@ -1620,6 +1650,71 @@ export interface ImportResult {
   count: number;
   /** Number of edges recreated (from wikilinks in obsidian format). */
   edgesCreated: number;
+}
+
+/**
+ * Per-harness memory count, as returned by `getHarnessCounts()` /
+ * `memos harness list`. Memories written before harness attribution
+ * existed read as `"unknown"`.
+ */
+export interface HarnessCount {
+  /** Harness slug (or `"unknown"` for unattributed rows). */
+  harness: string;
+  /** Number of memories stamped with this harness. */
+  count: number;
+}
+
+/** Options for `MemOS.mergeHarnessDb` (`memos harness merge`). */
+export interface HarnessMergeOptions {
+  /**
+   * When true, report the merge plan without writing anything.
+   * Default false.
+   */
+  dryRun?: boolean;
+}
+
+/**
+ * One source node in a harness-merge plan/result. `remapped` is true
+ * when the target DB already held a node with the same id — the source
+ * node is imported under a fresh id and every incident edge endpoint is
+ * rewritten to it.
+ */
+export interface HarnessMergeNode {
+  /** Original id in the source DB. */
+  sourceId: string;
+  /** Id under which the node is (or would be) stored in the target. */
+  targetId: string;
+  /** True when the id had to be remapped (collision in the target). */
+  remapped: boolean;
+  /** Harness that originally wrote the memory (preserved verbatim). */
+  harness: string;
+}
+
+/**
+ * Outcome of `MemOS.mergeHarnessDb` (`memos harness merge --from`).
+ * `dryRun: true` fills the plan fields and writes nothing.
+ */
+export interface HarnessMergeResult {
+  /** Source database path. */
+  from: string;
+  /** When true, no writes were performed. */
+  dryRun: boolean;
+  /** Source nodes examined. */
+  sourceNodes: number;
+  /** Source edges examined. */
+  sourceEdges: number;
+  /** Nodes imported (or that would be imported under `dryRun`). */
+  nodesImported: number;
+  /** Nodes whose ids collided and were remapped. */
+  nodesRemapped: number;
+  /** Edges imported (or that would be imported under `dryRun`). */
+  edgesImported: number;
+  /** Edges skipped because their endpoints were missing. */
+  edgesSkipped: number;
+  /** Per-node import plan (id mapping + preserved harness). */
+  nodes: HarnessMergeNode[];
+  /** Milliseconds the merge took. */
+  durationMs: number;
 }
 
 // ---------------------------------------------------------------------------

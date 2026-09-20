@@ -726,6 +726,13 @@ export interface FidelityRecallOptions {
   minResults?: number;
   /** Scope the candidate set (namespace/type/tags/pool). */
   filter?: SearchFilter;
+  /**
+   * Scope recall to one authoring harness (e.g. `"claude-code"`), or
+   * `"all"` (default) for the behavior-preserving cross-harness
+   * recall. `filter.harness` is honored too; this top-level option
+   * wins when both are set.
+   */
+  harness?: string;
 }
 
 /** One recalled memory with its served fidelity level. */

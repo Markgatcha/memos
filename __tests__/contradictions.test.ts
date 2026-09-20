@@ -203,6 +203,32 @@ describe("resolveContradictionsAtRead", () => {
     expect(resolved).toHaveLength(2);
   });
 
+  test("demotion is sign-aware for negative bm25-style scores", () => {
+    // The keyword leg yields negative bm25 ranks. Multiplying by the
+    // factor would move a negative score toward zero (promoting it);
+    // demotion must instead push it further negative so the newer
+    // version still wins under the descending sort.
+    const older = makeNode("node-a", 1000);
+    const newer = makeNode("node-b", 2000);
+    const results = [makeResult(older, -0.002), makeResult(newer, -0.003)];
+
+    const resolved = resolveContradictionsAtRead(results, [
+      makePair("node-a", "node-b"),
+    ]);
+
+    const byId = new Map(resolved.map((r) => [r.node.id, r]));
+    const demoted = byId.get("node-a")!;
+    expect(demoted.score).toBeCloseTo(
+      -0.002 / CONTRADICTION_DEMOTION_FACTOR,
+      10,
+    );
+    expect(demoted.scores?.contradiction_demoted).toBe(
+      CONTRADICTION_DEMOTION_FACTOR,
+    );
+    // The newer version now outranks the older one.
+    expect(resolved[0]!.node.id).toBe("node-b");
+  });
+
   test("leaves results untouched when only one member is present", () => {
     const older = makeNode("node-a", 1000);
     const stranger = makeNode("node-z", 1500);

@@ -457,6 +457,15 @@ export class SQLiteStorage implements StorageAdapter {
     this.migrateAddColumn("nodes", "quarantined", "INTEGER NOT NULL DEFAULT 0");
     this.migrateAddColumn("nodes", "quarantined_at", "INTEGER DEFAULT NULL");
     this.migrateAddColumn("nodes", "quarantine_reason", "TEXT DEFAULT NULL");
+    // Migration: harness attribution ("one memory, every harness").
+    // Every pre-attribution row reads as "unknown", so scoped recall
+    // treats legacy data as unscoped and `harness list` shows it under
+    // "unknown".
+    this.migrateAddColumn(
+      "nodes",
+      "harness",
+      "TEXT NOT NULL DEFAULT 'unknown'",
+    );
 
     // Migration: bitemporal event-time validity on edges. `created_at`
     // remains the transaction/ingest time — it is NOT renamed; it is the
@@ -484,6 +493,7 @@ export class SQLiteStorage implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS idx_nodes_trust_score ON nodes(trust_score);
       CREATE INDEX IF NOT EXISTS idx_nodes_source ON nodes(source);
       CREATE INDEX IF NOT EXISTS idx_nodes_pool ON nodes(pool);
+      CREATE INDEX IF NOT EXISTS idx_nodes_harness ON nodes(harness);
     `);
 
     // FTS5 virtual table for full-text search. The `porter unicode61`
@@ -675,8 +685,8 @@ export class SQLiteStorage implements StorageAdapter {
   async saveNode(node: MemoryNode): Promise<MemoryNode> {
     const stmt = this.getPreparedStatement(
       "saveNode",
-      `INSERT INTO nodes (id, content, summary, type, metadata, importance, created_at, updated_at, access_count, last_accessed, expires_at, tags, namespace, valid_from, valid_to, source, trust_score, pool, provenance, quarantined, quarantined_at, quarantine_reason)
-       VALUES (@id, @content, @summary, @type, @metadata, @importance, @createdAt, @updatedAt, @accessCount, @lastAccessed, @expiresAt, @tags, @namespace, @validFrom, @validTo, @source, @trustScore, @pool, @provenance, @quarantined, @quarantinedAt, @quarantineReason)`,
+      `INSERT INTO nodes (id, content, summary, type, metadata, importance, created_at, updated_at, access_count, last_accessed, expires_at, tags, namespace, valid_from, valid_to, source, trust_score, pool, provenance, quarantined, quarantined_at, quarantine_reason, harness)
+       VALUES (@id, @content, @summary, @type, @metadata, @importance, @createdAt, @updatedAt, @accessCount, @lastAccessed, @expiresAt, @tags, @namespace, @validFrom, @validTo, @source, @trustScore, @pool, @provenance, @quarantined, @quarantinedAt, @quarantineReason, @harness)`,
     );
 
     // One transaction for the row INSERT plus the tag-join mirror:
@@ -723,6 +733,9 @@ export class SQLiteStorage implements StorageAdapter {
       quarantined: node.quarantined ? 1 : 0,
       quarantinedAt: node.quarantinedAt ?? null,
       quarantineReason: node.quarantineReason ?? null,
+      // Harness attribution: same boundary defaulting — a missing tag
+      // (legacy literals, custom adapters) stores as "unknown".
+      harness: node.harness ?? "unknown",
     });
 
     return node;
@@ -1038,6 +1051,13 @@ export class SQLiteStorage implements StorageAdapter {
       extraConds.push("n.provenance = ?");
       extraParams.push(filter.provenance);
     }
+    // Harness attribution: "all" (or unset) is the behavior-preserving
+    // default — the filter applies to both the FTS and the structured
+    // path via extraConds.
+    if (filter.harness && filter.harness !== "all") {
+      extraConds.push("n.harness = ?");
+      extraParams.push(filter.harness);
+    }
     // Provenance-trust: quarantine visibility. Quarantined memories are
     // excluded from recall by default (the write-gate guarantee);
     // `includeQuarantined: true` shows everything, `quarantinedOnly: true`
@@ -1195,6 +1215,12 @@ export class SQLiteStorage implements StorageAdapter {
       if (filter.provenance) {
         conditions.push("provenance = ?");
         params.push(filter.provenance);
+      }
+      // Harness attribution (structured path; the FTS path applies the
+      // same rule via extraConds above).
+      if (filter.harness && filter.harness !== "all") {
+        conditions.push("harness = ?");
+        params.push(filter.harness);
       }
       // Provenance-trust: quarantine visibility (see the FTS branch above
       // for the rationale — excluded from recall by default).
@@ -1658,6 +1684,13 @@ export class SQLiteStorage implements StorageAdapter {
       }
       needsNodeJoin = true;
     }
+    // Harness attribution on the semantic leg: needs the node join.
+    // "all" (or unset) keeps the default cross-harness behavior.
+    if (filter.harness && filter.harness !== "all") {
+      conditions.push("n.harness = ?");
+      params.push(filter.harness);
+      needsNodeJoin = true;
+    }
     // Provenance-trust: quarantine visibility (see `queryNodes` — excluded
     // from recall by default; the entity-leg and graph-expansion paths in
     // MemOS apply the same rule via `quarantineVisible`).
@@ -1889,6 +1922,54 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   // -----------------------------------------------------------------------
+  // Harness attribution ("one memory, every harness")
+  // -----------------------------------------------------------------------
+
+  /**
+   * Per-harness memory counts for `memos harness list`. Legacy and
+   * unattributed rows read as `"unknown"` via the column default.
+   */
+  async getHarnessCounts(): Promise<Array<{ harness: string; count: number }>> {
+    const rows = this.db
+      .prepare(
+        `SELECT harness, COUNT(*) AS count FROM nodes
+         GROUP BY harness ORDER BY count DESC, harness ASC`,
+      )
+      .all() as Array<{ harness: string; count: number }>;
+    return rows.map((r) => ({
+      harness: (r.harness as string) || "unknown",
+      count: Number(r.count),
+    }));
+  }
+
+  /**
+   * Full node snapshot for harness merges (`memos harness merge
+   * --from`). Returns EVERYTHING — including historical (superseded)
+   * and quarantined rows — so the merge preserves the bitemporal
+   * version ledger verbatim. Read-only; the merge writes through the
+   * target storage's normal save path.
+   */
+  async listAllNodes(): Promise<MemoryNode[]> {
+    const rows = this.db.prepare("SELECT * FROM nodes").all() as Record<
+      string,
+      unknown
+    >[];
+    return rows.map((r) => this.rowToNode(r));
+  }
+
+  /**
+   * Full edge snapshot for harness merges. Endpoints are remapped by
+   * the merge when node ids collide in the target.
+   */
+  async listAllEdges(): Promise<MemoryEdge[]> {
+    const rows = this.db.prepare("SELECT * FROM edges").all() as Record<
+      string,
+      unknown
+    >[];
+    return rows.map((r) => this.rowToEdge(r));
+  }
+
+  // -----------------------------------------------------------------------
   // Bulk Operations
   // -----------------------------------------------------------------------
 
@@ -1945,6 +2026,9 @@ export class SQLiteStorage implements StorageAdapter {
       quarantined: (row.quarantined as number) === 1,
       quarantinedAt: (row.quarantined_at as number) ?? null,
       quarantineReason: (row.quarantine_reason as string) ?? null,
+      // Harness attribution reads as "unknown" for legacy rows (and for
+      // rows written by custom adapters that never set the tag).
+      harness: (row.harness as string) || "unknown",
       // Load confidence state machine values from metadata
       confidence: metadata.confidence as number | undefined,
       evidenceCount: metadata.evidenceCount as number | undefined,
