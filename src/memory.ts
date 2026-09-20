@@ -25,6 +25,12 @@ import {
   applyLessonOutcome,
   rankProceduralLessons,
 } from "./procedural.js";
+import {
+  citationToken,
+  formatCitationResolution,
+  parseCitationToken,
+  type CitationResolution,
+} from "./citations.js";
 import { createEmbeddingProvider, cosineSimilarity } from "./embeddings.js";
 import { EmbeddingQueue } from "./embedding-queue.js";
 import {
@@ -1356,6 +1362,45 @@ export class MemOS {
     return storage.listProceduralLessons!(namespace);
   }
 
+  // -----------------------------------------------------------------------
+  // Memory-grounded citations
+  // -----------------------------------------------------------------------
+
+  /**
+   * Trace a citation token (e.g. `[mem:a3f9]`, `a3f9`, or a full id)
+   * back to its source memory. Returns the full memory on an exact
+   * prefix match, `not_found` when nothing matches, and `ambiguous`
+   * with the candidate list when the token matches several memories
+   * (use a longer token to disambiguate).
+   */
+  async resolveCitation(token: string): Promise<CitationResolution> {
+    this.assertInit();
+    const hex = parseCitationToken(token);
+    if (!hex || !this.storage.findNodesByIdPrefix) {
+      return { status: "not_found", token: token.trim() };
+    }
+    const candidates = await this.storage.findNodesByIdPrefix(hex);
+    if (candidates.length === 0) {
+      return { status: "not_found", token: token.trim() };
+    }
+    if (candidates.length === 1) {
+      return {
+        status: "resolved",
+        token: citationToken(candidates[0]!.id),
+        memory: candidates[0]!,
+      };
+    }
+    return { status: "ambiguous", token: token.trim(), candidates };
+  }
+
+  /**
+   * Render a citation resolution exactly as `memos cite` prints it.
+   * Shared with the CLI so tests assert on the real output bytes.
+   */
+  formatCitation(resolution: CitationResolution, asJson = false): string {
+    return formatCitationResolution(resolution, asJson);
+  }
+
   async importMemories(opts: ImportOptions): Promise<ImportResult> {
     this.assertInit();
 
@@ -1889,6 +1934,13 @@ export class MemOS {
      */
     graphExpansion?: boolean;
     /**
+     * Memory-grounded citations (opt-in, default off): every pack item
+     * carries a `[mem:xxxx]` token (unique within the pack) rendered
+     * ahead of its content in TOON output, resolvable via
+     * `resolveCitation` / `memos cite`.
+     */
+    citations?: boolean;
+    /**
      * Inject top procedural lessons as an "operating instructions"
      * section (additive; default off). `true` injects the top 3 lessons
      * for the query; a number sets k. Uses the pack's namespace.
@@ -1964,6 +2016,7 @@ export class MemOS {
       source: opts.source,
       includeSummary: opts.includeSummary,
       embeddings,
+      citations: opts.citations,
       ...(await this.packLessons(opts, namespace)),
     });
     // Telemetry: the naive baseline is what dumping the SAME candidates as

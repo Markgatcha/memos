@@ -25,6 +25,9 @@ import { cosineSimilarity } from "./embeddings.js";
 // Stable score-desc/id-asc ordering shared with retrieval fusion.
 // retrieval.ts does not import this module, so no cycle is introduced.
 import { compareScoredMemories } from "./retrieval.js";
+// Citation tokens are pure string functions; procedural.ts is type-only
+// plus pure math — neither imports this module, so no cycle.
+import { assignCitationTokens } from "./citations.js";
 import { lessonCitationToken } from "./procedural.js";
 
 /** The single source of truth for the context-pack schema id. */
@@ -33,6 +36,11 @@ export const CONTEXT_PACK_SCHEMA = "ai-trio.memos.context-pack.v1";
 /** A single ranked, ready-to-fold memory item. */
 export interface ContextPackItem {
   id: string;
+  /**
+   * Citable token like `[mem:a3f9]`, unique within the pack. Present
+   * only when the pack was built with `citations: true`.
+   */
+  citation?: string;
   content: string;
   summary: string | null;
   score: number;
@@ -120,6 +128,16 @@ export interface BuildContextPackOptions {
    * distinct-but-related facts).
    */
   semanticDedupThreshold?: number;
+  /**
+   * Memory-grounded citations (opt-in, default off). When true, every
+   * pack item carries a `citation` token like `[mem:a3f9]` — unique
+   * within the pack, lengthened git-style on collision — and the TOON
+   * serializers render it ahead of the item's content so an agent can
+   * quote it and a verifier can trace it via `resolveCitation`.
+   * Opt-in because it changes the rendered bytes (cache-prefix rule:
+   * never reshuffle a layout mid-session unasked).
+   */
+  citations?: boolean;
   /**
    * Procedural lessons to inject as an "operating instructions" section
    * (additive; does not consume the item token budget). Fetched via
@@ -318,6 +336,7 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     dedupThreshold = DEFAULT_DEDUP_THRESHOLD,
     embeddings,
     semanticDedupThreshold = DEFAULT_SEMANTIC_DEDUP_THRESHOLD,
+    citations = false,
     lessons,
   } = opts;
 
@@ -478,6 +497,17 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
   const ordered =
     output.length >= 3 ? [output[0], ...output.slice(2), output[1]] : output;
 
+  // Memory-grounded citations: every rendered item gets a `[mem:xxxx]`
+  // token, unique within the pack (git-style lengthening on collision).
+  // Assigned AFTER ordering/trimming so tokens are unique among exactly
+  // the items the consumer will see.
+  if (citations) {
+    const tokens = assignCitationTokens(ordered.map((item) => item.id));
+    for (const item of ordered) {
+      item.citation = tokens.get(item.id);
+    }
+  }
+
   return {
     schema: CONTEXT_PACK_SCHEMA,
     query,
@@ -526,8 +556,13 @@ export function packToToon(pack: ContextPack): string {
     // Escape pipe characters in content by replacing with ¦
     const safeContent = item.content.replace(/\|/g, "¦").replace(/\n/g, " ");
     const safeTags = item.tags.join(";");
+    // Citation tokens render ahead of the content (not as a new field —
+    // the pipe layout stays fixed so existing line parsers keep working).
+    const cited = item.citation
+      ? `${item.citation} ${safeContent}`
+      : safeContent;
     lines.push(
-      `${item.id}|${item.score.toFixed(3)}|${item.trust}|${item.source}|${item.updatedAt}|${safeTags}|${safeContent}`,
+      `${item.id}|${item.score.toFixed(3)}|${item.trust}|${item.source}|${item.updatedAt}|${safeTags}|${cited}`,
     );
   }
   // Query trailer: repeat the query after the evidence block (see the
@@ -758,6 +793,7 @@ export function packToToonCompact(
   const body = serializeCompactRows(
     pack.items.map((item) => ({
       id: item.id,
+      citation: item.citation,
       score: item.score,
       trustScore: item.trustScore ?? 0.5,
       source: item.nodeSource ?? item.source,
@@ -809,6 +845,8 @@ export function searchResultsToToonCompact(results: ScoredMemory[]): string {
 /** Field-normalized row shape shared by both compact serializers. */
 interface CompactRow {
   id: string;
+  /** Rendered ahead of the content when the pack was built with citations. */
+  citation?: string;
   score: number;
   trustScore: number;
   source: string;
@@ -877,6 +915,9 @@ function serializeCompactRows(rows: CompactRow[]): string {
     : null;
   for (const r of rows) {
     const safeContent = r.content.replace(/\|/g, "¦").replace(/\n/g, " ");
+    // Citation token renders inside the content field — the pipe layout
+    // (and therefore the parser) is untouched.
+    const cited = r.citation ? `${r.citation} ${safeContent}` : safeContent;
     const scoreInt = Math.round(r.score * 1000);
     const srcCode = SOURCE_CODE[r.source] ?? r.source;
     const trustCode = Math.round(r.trustScore * 9);
@@ -888,15 +929,9 @@ function serializeCompactRows(rows: CompactRow[]): string {
       ? r.tags.map((t) => String(tagIndex.get(t) ?? t)).join(";")
       : r.tags.join(";");
     lines.push(
-      [
-        shortId,
-        scoreInt,
-        trustCode,
-        srcCode,
-        epochDelta,
-        safeTags,
-        safeContent,
-      ].join("|"),
+      [shortId, scoreInt, trustCode, srcCode, epochDelta, safeTags, cited].join(
+        "|",
+      ),
     );
   }
 

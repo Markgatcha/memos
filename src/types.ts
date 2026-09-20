@@ -978,6 +978,14 @@ export interface StorageAdapter {
     patch: Partial<ProceduralLesson>,
   ): Promise<ProceduralLesson | null>;
   listProceduralLessons?(namespace?: string): Promise<ProceduralLesson[]>;
+
+  /**
+   * Find memory nodes whose id (dashes ignored) starts with `prefix`
+   * (hex, case-insensitive). Backs citation resolution; capped by the
+   * implementation to a bounded candidate list.
+   */
+  findNodesByIdPrefix?(prefix: string): Promise<MemoryNode[]>;
+
   /** Return the full graph (nodes + edges). */
   getGraph(): Promise<GraphSnapshot>;
 

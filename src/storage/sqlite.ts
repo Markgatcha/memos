@@ -1469,6 +1469,26 @@ export class SQLiteStorage implements StorageAdapter {
     };
   }
 
+  /**
+   * Bounded id-prefix lookup backing citation resolution. Dashes in
+   * stored ids are ignored so `[mem:a3f9]` matches `a3f9c2e1-…`.
+   */
+  async findNodesByIdPrefix(prefix: string): Promise<MemoryNode[]> {
+    const clean = prefix.toLowerCase().replace(/[^0-9a-f]/g, "");
+    if (clean.length < 2) return [];
+    // `clean` is hex-only after the replace, so interpolation is safe —
+    // LIKE wildcards cannot appear in it.
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM nodes
+         WHERE replace(id, '-', '') LIKE '${clean}%'
+         ORDER BY updated_at DESC
+         LIMIT 25`,
+      )
+      .all() as Record<string, unknown>[];
+    return rows.map((row) => this.rowToNode(row));
+  }
+
   async getAllEmbeddingInfos(): Promise<
     Array<{ nodeId: string } & EmbeddingRecordInfo>
   > {

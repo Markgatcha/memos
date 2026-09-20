@@ -642,6 +642,8 @@ Commands:
                           (reinforces or demotes the lesson score)
   lessons                 List procedural lessons (--namespace <ns>,
                           --limit <n>)
+  cite <id>               Trace a [mem:xxxx] citation token back to its
+                          full source memory
   history <id>            Version timeline for one memory: supersedes,
                           superseded by, derived notes
   digest                  Run consolidation now and print a summary
@@ -1192,6 +1194,20 @@ async function main(): Promise<void> {
             if (l.context) console.log(`    when: ${l.context}`);
           }
         }
+        break;
+      }
+
+      case "cite": {
+        const id = args[1];
+        if (!id) {
+          console.error(
+            "Error: citation ID is required.\\n  Usage: memos cite <id>  (accepts [mem:a3f9], a3f9, or a full ID)",
+          );
+          process.exit(1);
+        }
+        const resolution = await memos.resolveCitation(id);
+        console.log(memos.formatCitation(resolution, jsonFlag));
+        if (resolution.status === "not_found") process.exit(1);
         break;
       }
 

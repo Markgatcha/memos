@@ -168,6 +168,17 @@ export {
   type RankedProceduralLesson,
 } from "./procedural.js";
 export {
+  assignCitationTokens,
+  citationToken,
+  citationTokenForHex,
+  formatCitationResolution,
+  parseCitationToken,
+  shortCitationId,
+  CITATION_MAX_HEX,
+  CITATION_MIN_HEX,
+  type CitationResolution,
+} from "./citations.js";
+export {
   contentHash,
   parseExportDirectory,
   parseExternalMemoryExport,
