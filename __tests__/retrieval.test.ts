@@ -261,8 +261,8 @@ describe("fuseResults — recency tie-break", () => {
 
   test("recencyHalfLifeMs=0 disables the tie-break entirely", () => {
     const fused = fuseResults(
-      [{ node: timedNode("old", NOW - 60 * 60 * 1000), score: 0.9 }],
-      [{ node: timedNode("new", NOW - 1 * 60 * 1000), score: 0.9 }],
+      [{ node: timedNode("aaa-old", NOW - 60 * 60 * 1000), score: 0.9 }],
+      [{ node: timedNode("zzz-new", NOW - 1 * 60 * 1000), score: 0.9 }],
       {
         nowMs: NOW,
         keywordWeight: 0.5,
@@ -271,9 +271,10 @@ describe("fuseResults — recency tie-break", () => {
         confidenceWeightStrength: 0,
       },
     );
-    // Keyword leg is merged first, so without the tie-break the stable
-    // sort keeps "old" on top.
-    expect(fused[0].node.id).toBe("old");
+    // Exact score tie (0.5/(K+1) on both legs); with the recency tie-break
+    // disabled the order falls back to the deterministic id tiebreak, so
+    // "aaa-old" stays on top regardless of freshness.
+    expect(fused[0].node.id).toBe("aaa-old");
   });
 
   test("older candidate trailing within epsilon does NOT jump ahead", () => {

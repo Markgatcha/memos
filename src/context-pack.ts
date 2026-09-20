@@ -21,6 +21,9 @@ import type { EmbeddingVector, ScoredMemory } from "./types.js";
 // Runtime import is safe: embeddings.ts has no runtime imports of its own
 // (type-only), so this cannot create a module cycle.
 import { cosineSimilarity } from "./embeddings.js";
+// Stable score-desc/id-asc ordering shared with retrieval fusion.
+// retrieval.ts does not import this module, so no cycle is introduced.
+import { compareScoredMemories } from "./retrieval.js";
 
 /** The single source of truth for the context-pack schema id. */
 export const CONTEXT_PACK_SCHEMA = "ai-trio.memos.context-pack.v1";
@@ -212,6 +215,49 @@ function jaccardSimilarity(a: string, b: string): number {
 const DEFAULT_DEDUP_THRESHOLD = 0.85;
 
 /**
+ * Cache-prefix stability contract.
+ *
+ * LLM providers discount cached input tokens (up to ~90%) only when the
+ * prompt prefix is byte-identical across calls. Everything this module
+ * emits is built to be byte-stable for identical inputs:
+ *   - items are ordered by descending score with the node id as the final
+ *     tiebreak, so equal scores can never surface input-order noise;
+ *   - the `scores` breakdown is re-emitted in a fixed key order
+ *     (keyword, semantic, entity, hybrid) no matter which retrieval legs
+ *     produced it — fusion builds that object in leg-dependent order;
+ *   - serializers use a fixed section/field order and always emit every
+ *     section (empty packs still emit their headers), so a missing section
+ *     can never shift the bytes of a later one.
+ *
+ * Rule of thumb for future edits: compress *contents* all you want, but
+ * never reorder *layout* — layout churn breaks cache prefixes and raises
+ * bills even while "saving" tokens.
+ */
+
+/** Fixed key order for the per-item score breakdown (see contract above). */
+const SCORE_KEY_ORDER = ["keyword", "semantic", "entity", "hybrid"] as const;
+
+/**
+ * Re-emit a score breakdown in the fixed {@link SCORE_KEY_ORDER} order.
+ * Unknown/future keys are appended afterwards in sorted order so nothing
+ * is dropped and the layout stays deterministic.
+ */
+function normalizeScores(
+  scores: Record<string, number> | undefined,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (scores) {
+    for (const key of SCORE_KEY_ORDER) {
+      if (scores[key] !== undefined) out[key] = scores[key] as number;
+    }
+    for (const key of Object.keys(scores).sort()) {
+      if (!(key in out)) out[key] = scores[key] as number;
+    }
+  }
+  return out;
+}
+
+/**
  * Summary elision: drop the summary when it costs at least this fraction
  * of its own content's tokens. Below that, a summary is a genuinely
  * cheaper carrier of the fact; above it, the full content is the better
@@ -253,8 +299,9 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     semanticDedupThreshold = DEFAULT_SEMANTIC_DEDUP_THRESHOLD,
   } = opts;
 
-  // Sort by descending score.
-  const sorted = [...items].sort((a, b) => b.score - a.score);
+  // Sort by descending score, node id as the final tiebreak (cache-prefix
+  // stability: equal scores must not surface input-order noise).
+  const sorted = [...items].sort(compareScoredMemories);
 
   // Phase 1: debloat, elide redundant summaries, and compute token counts.
   //
@@ -312,7 +359,9 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
       content,
       summary,
       score: scored.score,
-      scores: scored.scores ?? {},
+      // Fixed key order — fusion builds this object in leg-dependent
+      // order, which would otherwise shift JSON bytes between calls.
+      scores: normalizeScores(scored.scores),
       trust,
       source,
       // Per-node provenance for compact TOON encoding

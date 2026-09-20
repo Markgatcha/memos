@@ -15,10 +15,12 @@ import {
   buildContextPack,
   CONTEXT_PACK_SCHEMA,
   packToToon,
+  packToToonCompact,
   serializeContextPack,
   type ContextPack,
   type ContextPackItem,
 } from "../src/context-pack";
+import { compareScoredMemories } from "../src/retrieval";
 import type {
   EmbeddingProvider,
   EmbeddingVector,
@@ -298,7 +300,9 @@ describe("MemOS.contextPack() end-to-end", () => {
     // Same query -> same order.
     expect(pack1.items.map((i) => i.id)).toEqual(pack2.items.map((i) => i.id));
     // Highest item is one of the dark-mode notes.
-    expect(["dark mode", "dark themes for code"]).toContain(pack1.items[0].content);
+    expect(["dark mode", "dark themes for code"]).toContain(
+      pack1.items[0].content,
+    );
     // Trust defaults to "local", source defaults to "session".
     expect(pack1.items[0].trust).toBe("local");
     expect(pack1.items[0].source).toBe("session");
@@ -332,3 +336,95 @@ function makeNode(
     trustScore: 1.0,
   };
 }
+
+describe("Cache-prefix stability (prompt-cache friendly layout)", () => {
+  const baseOpts = {
+    query: "dark mode",
+    namespace: "default",
+    tokenBudget: 10000,
+  };
+
+  /** Same logical items in a given input order, all with tied scores. */
+  function tiedItems(order: string[]): ScoredMemory[] {
+    return order.map((id) =>
+      memosToScoredMemory(
+        makeNode(
+          id,
+          0.7,
+          [`tag-${id}`],
+          `Fact about ${id}: entirely distinct wording ${id.repeat(4)}`,
+        ),
+        0.9, // tied score — order must fall back to the id tiebreak
+      ),
+    );
+  }
+
+  function serializeAll(pack: ContextPack): string[] {
+    return [
+      JSON.stringify(pack),
+      packToToon(pack),
+      packToToonCompact(pack),
+      serializeContextPack(pack, "toon") as string,
+    ];
+  }
+
+  test("identical inputs produce byte-identical output in every format", () => {
+    const pack1 = buildContextPack({
+      ...baseOpts,
+      items: tiedItems(["a", "b", "c"]),
+    });
+    const pack2 = buildContextPack({
+      ...baseOpts,
+      items: tiedItems(["a", "b", "c"]),
+    });
+    expect(serializeAll(pack1)).toEqual(serializeAll(pack2));
+  });
+
+  test("shuffled input order with tied scores still packs byte-identically", () => {
+    const packA = buildContextPack({
+      ...baseOpts,
+      items: tiedItems(["b", "a", "c"]),
+    });
+    const packB = buildContextPack({
+      ...baseOpts,
+      items: tiedItems(["c", "b", "a"]),
+    });
+    // Byte-identical across JSON, TOON, and compact TOON.
+    expect(serializeAll(packA)).toEqual(serializeAll(packB));
+    // And the tiebreak is by node id, not input order.
+    expect(packA.items.map((i) => i.id)).toEqual(["a", "b", "c"]);
+  });
+
+  test("scores breakdown uses a fixed key order regardless of leg order", () => {
+    const withKeyOrder = (keys: string[]): ScoredMemory => ({
+      node: makeNode("n1", 0.7, ["t"], "Some unique standalone content one"),
+      score: 0.9,
+      scores: Object.fromEntries(keys.map((k) => [k, 0.5])),
+    });
+    const packA = buildContextPack({
+      ...baseOpts,
+      items: [withKeyOrder(["hybrid", "keyword"])],
+    });
+    const packB = buildContextPack({
+      ...baseOpts,
+      items: [withKeyOrder(["keyword", "hybrid"])],
+    });
+    expect(JSON.stringify(packA)).toBe(JSON.stringify(packB));
+    // Fixed order: keyword before hybrid.
+    expect(Object.keys(packA.items[0].scores)).toEqual(["keyword", "hybrid"]);
+  });
+
+  test("compareScoredMemories breaks score ties by node id", () => {
+    const a = memosToScoredMemory(makeNode("b", 0.7, [], "b content"), 0.5);
+    const b = memosToScoredMemory(makeNode("a", 0.7, [], "a content"), 0.5);
+    expect([a, b].sort(compareScoredMemories).map((s) => s.node.id)).toEqual([
+      "a",
+      "b",
+    ]);
+    // Unequal scores still sort by score first.
+    const c = memosToScoredMemory(makeNode("z", 0.7, [], "z content"), 0.9);
+    expect([a, b, c].sort(compareScoredMemories).map((s) => s.node.id)).toEqual(
+      ["z", "a", "b"],
+    );
+  });
+});

@@ -30,6 +30,21 @@ import { entityOverlap } from "./entity-extraction.js";
 /** Default RRF constant (Cormack et al., 2009). */
 export const DEFAULT_RRF_K = 60;
 
+/**
+ * Stable ordering for scored memories: descending score, node id as the
+ * final tiebreak. The id tiebreak keeps serialized output byte-identical
+ * for identical result sets — without it, equal scores surface
+ * input/iteration-order noise, which breaks LLM prompt-cache prefixes
+ * (providers only discount cached input when the prefix is byte-stable).
+ */
+export function compareScoredMemories(
+  a: ScoredMemory,
+  b: ScoredMemory,
+): number {
+  if (b.score !== a.score) return b.score - a.score;
+  return a.node.id < b.node.id ? -1 : a.node.id > b.node.id ? 1 : 0;
+}
+
 /** Default weight for the keyword (FTS5) leg. */
 export const DEFAULT_KEYWORD_WEIGHT = 0.8;
 
@@ -214,7 +229,7 @@ export function fuseResults(
       const ageMs = Math.max(0, nowMs - updatedAt);
       return Math.pow(0.5, ageMs / recencyHalfLifeMs); // 1.0 → fresh … → 0.0
     };
-    const ranked = [...merged.values()].sort((a, b) => b.score - a.score);
+    const ranked = [...merged.values()].sort(compareScoredMemories);
     for (let i = 1; i < ranked.length; i += 1) {
       const current = ranked[i]!;
       const prev = ranked[i - 1]!;
@@ -238,11 +253,9 @@ export function fuseResults(
     }
   }
 
-  return [...merged.values()]
-    .sort((a, b) => b.score - a.score)
-    .map((entry) => ({
-      node: entry.node,
-      score: entry.score,
-      scores: entry.scores,
-    }));
+  return [...merged.values()].sort(compareScoredMemories).map((entry) => ({
+    node: entry.node,
+    score: entry.score,
+    scores: entry.scores,
+  }));
 }
