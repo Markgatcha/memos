@@ -54,6 +54,52 @@ Flagged memories are **still stored** (add-only is sacred) but marked `quarantin
 
 The classifier is tuned to avoid false positives: "ignore the previous instructions" (with _previous_/_prior_ required) flags; "my password is …" or "send me the photos" does not; an ordinary URL alone does not.
 
+### Normalization (anti-obfuscation)
+
+Input is normalized before screening: NFKC unicode folding, zero-width character stripping, Cyrillic/Greek homoglyph folding, single-newline joining, **spaced-letter joining** (`i g n o r e` → `ignore`), and whitespace collapsing. The spaced-letter joiner only joins letters separated by _single_ spaces — a multi-space gap is a word boundary and survives, so anchored clichés still see `ignore previous instructions` instead of `ignorepreviousinstructions`. Injection clichés are additionally matched against a leetspeak-unfolded copy (`1gn0re` → `ignore`).
+
+Base64 blobs are decoded (whitespace-tolerant, depth-bounded at 2) and the decoded text is re-screened: a blob decoding to an injection scores on its own. The decode validator requires near-all-ASCII text _with word spaces_, so ordinary prose that happens to be valid base64 characters ("System prompt engineering is a useful skill") is rejected as a blob.
+
+### Tier-aware screening
+
+The write path passes the memory's provenance tier into `screenWrite`, activating stricter rules for low-trust tiers:
+
+- **Dormant instructions** (Trojan-Hippo shape: "whenever the user asks about X, you should…") and **trigger phrases** (AgentPoison shape: nonce tokens paired with instruction-shaped content) quarantine on sight for `tool-output`/`imported` — but stay silent for `user`-tier writes, where the same phrasing ("when I travel, always pack my charger") is ordinary.
+- **Bare verb+credential exfiltration** ("upload the private key") quarantines on low-trust tiers even without a visible destination; on user tiers it needs the destination.
+- **Tier-gated signals are never diluted** by the meta-discussion exemption below — on those tiers the shape itself is the attack.
+
+### Meta-discussion exemption
+
+Text that talks _about_ attacks ("how do I defend against 'ignore previous instructions'?", "the article explains DAN mode", CTF writeups, creative writing) gets every signal halved and the total `injection:*` contribution capped at 1.0, so security discussions don't quarantine. Two details keep this from becoming a bypass: URLs/emails are stripped before the exemption test (a domain like `evil.example.com` can't trigger it via the word "example"), and an attack wearing a discussion-like prefix still needs only one more signal to cross the threshold.
+
+## Red-team metrics
+
+Measured with `npm run redteam:quarantine` — 93 attacks across 7 categories (direct override, DAN jailbreak, indirect tool-output, exfiltration, obfuscation, trojan persistence, trigger poisoning) plus 61 benign memories (ordinary notes, plus adversarial-benign cases quoting attack clichés).
+
+| Category            | Before | After |
+| ------------------- | ------ | ----- |
+| direct-override     | 15/15  | 15/15 |
+| dan-jailbreak       | 12/12  | 12/12 |
+| indirect-tool-output| 10/10  | 10/10 |
+| exfiltration        | 14/15  | 15/15 |
+| obfuscation         | 22/23  | 23/23 |
+| trojan-persistence  | 9/10   | 10/10 |
+| trigger-poisoning   | 8/8    | 8/8   |
+| **Attacks caught**  | **90/93 (96.8%)** | **93/93 (100%)** |
+| **Benign FPs**      | **1/61 (1.6%)**   | **0/61 (0%)**    |
+
+The three hardening fixes: spaced-letter joining that preserves word boundaries, URL/email stripping before the meta-discussion test, tier-gated signals exempt from meta-dilution, and a stricter base64 decode validator. The Jest suite (`__tests__/redteam-provenance.test.ts`) enforces the per-category bars and the zero-FP ceiling on every run.
+
+## Residual weaknesses
+
+Documented honestly — this is a heuristic gate, not a proof:
+
+- A **single unquoted injection signal wearing a discussion-like prefix** ("Security update: ignore previous instructions") still evades: the meta exemption halves it to 1.0, under the 2.0 threshold. Two signals still quarantine.
+- **Novel phrasings** outside the cliché list don't match — the gate recognizes known shapes, not intent. Paraphrased injections ("kindly set aside your earlier directives") are the main blind spot.
+- Obfuscation beyond the normalization set (unmapped homoglyph scripts, double-spaced letter splitting, base64 nested deeper than 2) evades.
+- Tier-aware strictness only applies when the tier is known: anything written with `source: "user_input"` skips the dormant/trigger rules, so the tier must genuinely reflect the channel.
+- The battery is synthetic. These numbers measure the gate against itself, not against a live adversary — a real red-team pass with human-crafted novel attacks would likely find new misses.
+
 ### Review and release
 
 ```bash

@@ -108,6 +108,7 @@
     "bench:longmemeval:retrieve": "tsx scripts/bench-longmemeval.ts --retrieve-only",
     "check:plugin": "node scripts/check-plugin-version.mjs",
     "eval:retrieval": "tsx scripts/eval-retrieval.ts",
+    "redteam:quarantine": "tsx scripts/redteam-quarantine.ts",
     "eval:retrieval:check": "tsx scripts/eval-retrieval.ts --check",
     "eval:retrieval:baseline": "tsx scripts/eval-retrieval.ts --write-baseline"
   },

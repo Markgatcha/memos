@@ -616,15 +616,18 @@ export class MemOS {
 
     // Write-gate quarantine: the local-heuristic classifier
     // (`screenWrite` — pure regex scoring, no LLM on the hot path) runs
-    // on every write unless `quarantineScreen: false` opts out. Flagged
-    // content is still stored (add-only is preserved) but marked
+    // on every write unless `quarantineScreen: false` opts out. The
+    // write's provenance tier is passed through so tier-aware rules
+    // (dormant instructions, trigger phrases, strict exfiltration on
+    // `tool-output`/`imported`) actually activate on real writes.
+    // Flagged content is still stored (add-only is preserved) but marked
     // quarantined, which excludes it from recall by default until a
     // human reviews it via `memos quarantine list|release`.
     let quarantined = false;
     let quarantinedAt: number | null = null;
     let quarantineReason: string | null = null;
     if (opts.quarantineScreen !== false) {
-      const verdict = screenWrite(content);
+      const verdict = screenWrite(content, { tier: provenance });
       if (verdict.flagged) {
         quarantined = true;
         quarantinedAt = now;

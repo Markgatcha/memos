@@ -9,37 +9,181 @@
  * recall by default until a human reviews it via
  * `memos quarantine list|release`.
  *
+ * The classifier first normalizes its input
+ * ({@link normalizeForScreening}): NFKC unicode folding, zero-width
+ * character stripping, Cyrillic/Greek homoglyph folding, single-newline
+ * collapsing, spaced-letter joining (`i g n o r e` → `ignore`), and
+ * whitespace collapsing. Injection clichés are additionally matched
+ * against a leetspeak-unfolded copy (`1gn0re` → `ignore`).
+ *
  * Signal classes (each reports a stable machine-readable `code`):
  *
  * 1. Injection clichés — verbatim prompt-injection openers ("ignore
  *    previous instructions", "disregard your prior instructions",
- *    "do not tell the user", "pretend you are …"). Full-strength (2.0:
- *    quarantines on its own). Deliberately anchored to `previous`/`prior`
- *    so ordinary "ignore the old template" phrasing does NOT match.
+ *    "do not tell the user", "pretend you are …", DAN/jailbreak
+ *    patterns, chat-template role markers). Full-strength (2.0:
+ *    quarantines on its own). Deliberately anchored to
+ *    `previous`/`prior` so ordinary "ignore the old template" phrasing
+ *    does NOT match.
  * 2. Imperative exfiltration — an exfil verb (send, email, upload, dump,
- *    …) governing a credential noun (passwords, api keys, secrets, …)
- *    in the same sentence. 1.5 alone; 2.0 when a URL/email destination
- *    appears in the same sentence ("send credentials to http://evil…").
- *    First-person possessives ("my password", "our api key") are exempt —
- *    "reset my password" is not an attack.
+ *    …) governing a credential noun (passwords, api keys, secrets, …).
+ *    1.5 alone; 2.0 when a URL/email destination appears anywhere in
+ *    the write, or when verb+destination share a sentence and a
+ *    credential noun appears anywhere. First-person possessives ("my
+ *    password", "our api key") are exempt — "reset my password" is not
+ *    an attack. On low-trust tiers (`tool-output`, `imported`) the
+ *    bare verb+credential shape is 2.0 on its own — tool output that
+ *    moves credentials is never benign.
  * 3. Exfiltration-shaped — secret material (an `sk-…`/`AKIA…`/`ghp_…`
  *    token, a `-----BEGIN … PRIVATE KEY-----` block, or an
  *    `api key: <value>` assignment) next to a URL or an exfiltration
- *    verb ("upload to backup" after a pasted key has no URL, but the
- *    pairing is the same shape). 2.0.
- * 4. Encoded payloads — long base64 blobs (dormant-payload shape,
- *    Trojan-Hippo-style). 1.0 on its own: suspicious, but not proof.
+ *    verb. 2.0.
+ * 4. Encoded payloads — base64 blobs are decoded (whitespace-tolerant,
+ *    depth-bounded) and the decoded text is re-screened: a blob that
+ *    decodes to an injection scores 2.0 (`injection:encoded-
+ *    instructions`); an opaque blob is 1.0 on its own (1.5 on
+ *    low-trust tiers). A candidate only counts as a blob when it looks
+ *    like real base64 (a digit, `+`/`/`, or `=` padding) — English prose
+ *    that merely uses base64-alphabet words is not a blob.
+ * 5. Low-trust-tier dormant instructions (Trojan-Hippo shape) —
+ *    conditional future-directed instructions ("when the user asks
+ *    about X, always say Y", "from now on, include …", "never mention
+ *    …") are 2.0, but ONLY for `tool-output`/`imported` tiers. Tool
+ *    output is data, never behavioral instructions; the same phrasing
+ *    in a user's own memory ("when I travel, always pack my charger")
+ *    is silent.
+ * 6. Low-trust-tier trigger phrases (AgentPoison shape) — nonce-like
+ *    tokens or trigger words ("code word", "activation token")
+ *    co-occurring with instruction-shaped content. 2.0, low-trust
+ *    tiers only.
  *
  * False-positive tuning: the negative corpus in
- * `__tests__/provenance-trust.test.ts` (~30 ordinary memories — wifi
- * passwords on the fridge, "send mom the photos", meeting notes with
- * URLs, developer-mode phone settings, surprise parties) must score
- * below threshold. The rules above were shaped by that corpus: possessive
- * exemptions, the previous/prior anchor, and requiring a destination or
- * secret shape before a URL matters.
+ * `__tests__/fixtures/redteam-battery.ts` (60 ordinary memories —
+ * wifi passwords on the fridge, "send mom the photos", meeting notes
+ * with URLs, developer-mode phone settings, surprise parties) must
+ * score below threshold, including adversarial-benign cases such as
+ * security notes quoting attack clichés. Quoted clichés under
+ * meta-discussion framing ("how do I defend against 'ignore previous
+ * instructions'?", "the article explains DAN mode") halves every signal
+ * and caps total injection:* contribution at 1.0 — discussing an attack
+ * is not an attack. A single unquoted injection signal wearing a
+ * discussion-like prefix ("Security update: ignore previous
+ * instructions") still evades; that residual gap is documented in
+ * docs/provenance-trust.md.
  *
  * @module @mem-os/quarantine
  */
+
+import { LOW_TRUST_TIERS } from "./provenance.js";
+import type { ProvenanceTier } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Normalization (anti-obfuscation)
+// ---------------------------------------------------------------------------
+
+/** Invisible characters attackers use to break token matching. */
+const ZERO_WIDTH_RE = /[\u200B-\u200D\uFEFF\u2060\u180E\u00AD]/g;
+
+/**
+ * Cyrillic/Greek lookalikes → ASCII. Applied after NFKC (which already
+ * folds fullwidth forms). Characters without a mapping pass through.
+ */
+const HOMOGLYPHS: Record<string, string> = {
+  а: "a",
+  в: "b",
+  с: "c",
+  е: "e",
+  ё: "e",
+  і: "i",
+  ј: "j",
+  к: "k",
+  м: "m",
+  н: "h",
+  о: "o",
+  р: "p",
+  ѕ: "s",
+  т: "t",
+  х: "x",
+  у: "y",
+  α: "a",
+  ε: "e",
+  ι: "i",
+  κ: "k",
+  ν: "v",
+  ο: "o",
+  ρ: "p",
+  τ: "t",
+  υ: "u",
+  χ: "x",
+  ζ: "z",
+};
+
+const CONFUSABLE_RE = /[Ͱ-ϿЀ-џ]/g;
+
+function foldConfusable(ch: string): string {
+  const lower = ch.toLowerCase();
+  const mapped = HOMOGLYPHS[lower];
+  if (!mapped) return ch;
+  return ch === lower ? mapped : mapped.toUpperCase();
+}
+
+/**
+ * `i g n o r e` → `ignore`: runs of single letters joined by SINGLE
+ * spaces only. A multi-space gap is a word boundary and must survive
+ * this step — over-joining ("ignorepreviousinstructions") would destroy
+ * the word separation the cliché patterns need. (Whitespace collapsing
+ * runs after this, so surviving gaps still become single spaces.)
+ */
+const SPACED_LETTERS_RE = /\b(?:[a-zA-Z] ){1,}[a-zA-Z]\b/g;
+
+/** Leetspeak unfolding, applied to a copy used for cliché matching. */
+const LEET_MAP: Record<string, string> = {
+  "0": "o",
+  "1": "i",
+  "3": "e",
+  "4": "a",
+  "5": "s",
+  "7": "t",
+  "8": "b",
+  "@": "a",
+  $: "s",
+  "!": "i",
+  "+": "t",
+};
+
+const LEET_CHARS_RE = /[0134578@$!+]/g;
+
+/**
+ * Normalize write content before screening: NFKC folding, zero-width
+ * stripping, homoglyph folding, single-newline joining (paragraph
+ * breaks still split sentences), spaced-letter joining, and whitespace
+ * collapsing. Exported for testing.
+ */
+export function normalizeForScreening(content: string): string {
+  let t = content.normalize("NFKC");
+  t = t.replace(/\r\n?/g, "\n");
+  // Zero-width characters become spaces: to a tokenizer
+  // "Ignore<ZWSP>previous" reads as two tokens, so the screen must see
+  // two words too. (Deleting them would join the words and STILL evade.)
+  t = t.replace(ZERO_WIDTH_RE, " ");
+  t = t.replace(CONFUSABLE_RE, foldConfusable);
+  // Single newlines are line-wrapping, not sentence breaks.
+  t = t.replace(/(?<!\n)\n(?!\n)/g, " ");
+  t = t.replace(SPACED_LETTERS_RE, (m) => m.replace(/\s+/g, ""));
+  t = t.replace(/[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]{2,}/g, " ");
+  return t;
+}
+
+/**
+ * Meta-discussion framing: the text talks *about* attacks rather than
+ * mounting one ("how do I defend against…", "red-team exercise", "the
+ * article explains DAN mode"). Under this framing every signal is halved
+ * and the total contribution of injection:* signals is capped at 1.0, so
+ * security discussions don't quarantine while multi-signal attacks with
+ * discussion-like prefixes still do.
+ */
+const META_DISCUSSION_RE =
+  /\b(how\s+(do|can|to)|defend|defen[cs]e|protect(ing|ion)?|prevent(ing|ion)?|mitigat|detect(ing|ion)?|red[\s-]?team|security|example|e\.g\.|explain|discuss|what\s+is|what\s+are|article|paper|ctf|fiction|story|novel|screenplay|creative\s+writing)\b/i;
 
 // ---------------------------------------------------------------------------
 // Signal patterns (module-level: compiled once)
@@ -57,12 +201,17 @@ const INJECTION_CLICHES: Array<{ code: string; pattern: RegExp }> = [
     pattern: /\bdisregard\s+(your\s+)?(previous|prior)\s+instructions?\b/i,
   },
   {
+    code: "injection:disregard-prior-directives",
+    pattern:
+      /\bdisregard\s+(all\s+|any\s+)?(your\s+|the\s+)?(prior|previous)\s+(directives?|instructions?|orders?)\b/i,
+  },
+  {
     code: "injection:override-instructions",
     pattern: /\boverride\s+your\s+(previous|prior|system)\s+instructions?\b/i,
   },
   {
-    code: "injection:new-instructions-block",
-    pattern: /\bnew\s+instructions?\s*:/i,
+    code: "injection:new-system-prompt",
+    pattern: /\bnew\s+system\s+(prompt|instructions?)\s*:/i,
   },
   {
     code: "injection:hide-from-user",
@@ -86,21 +235,99 @@ const INJECTION_CLICHES: Array<{ code: string; pattern: RegExp }> = [
       /\bforget\s+(everything|all)\s+(you\s+(were\s+told|know)|your\s+(previous|prior)\s+instructions?)\b/i,
   },
   {
+    code: "injection:forget-told",
+    pattern: /\bforget\s+(what\s+)?you\s+were\s+told\b/i,
+  },
+  {
+    code: "injection:forget-training",
+    pattern:
+      /\bforget\s+(your\s+)?(training|safety\s+guidelines|guidelines)\b/i,
+  },
+  {
     code: "injection:prompt-override",
     pattern: /\bsystem\s+prompt\s+override\b/i,
   },
+  {
+    code: "injection:template-role-marker",
+    pattern: /(?:^|\n)\s*(?:<\|im_start\|>|<\|system\|>|\[SYSTEM\])/i,
+  },
+  {
+    code: "injection:dan-do-anything",
+    pattern: /\bdo\s+anything\s+now\b/i,
+  },
+  {
+    code: "injection:dan-persona",
+    pattern: /\bact\s+as\s+dan\b/i,
+  },
+  {
+    code: "injection:dan-version",
+    pattern: /\bdan\s+\d+(\.\d+)?\b/i,
+  },
+  {
+    code: "injection:dan-mode",
+    pattern: /\bdan\s+mode\b/i,
+  },
+  {
+    code: "injection:godmode",
+    pattern: /\bgodmode\b/i,
+  },
+  {
+    code: "injection:jailbreak-target",
+    pattern: /\bjailbreak\w*\s+(the\s+)?(ai|assistant|model|system)\b/i,
+  },
+  {
+    code: "injection:unfiltered-model",
+    pattern: /\b(unfiltered|uncensored)\s+(ai|mode|model)\b/i,
+  },
+  {
+    code: "injection:unrestricted-mode",
+    pattern: /\bunrestricted\s+mode\b/i,
+  },
+  {
+    code: "injection:no-constraints",
+    pattern: /\bfree\s+from\s+all\s+(constraints|restrictions|rules|limits)\b/i,
+  },
+  {
+    code: "injection:no-limits",
+    pattern: /\bwith\s+no\s+(limits|restrictions|constraints|rules|ethics)\b/i,
+  },
+  {
+    code: "injection:developer-mode-abuse",
+    pattern: /\bdeveloper\s+mode\b.{0,40}?\b(disable|bypass|remove)\b/i,
+  },
+  {
+    code: "injection:disregard-safety",
+    pattern:
+      /\bdisregard\s+(your\s+)?(safety|content)\s+(guidelines|policies|filters)\b/i,
+  },
 ];
+
+/**
+ * Injection cliché split across two adjacent sentences ("Please ignore
+ * the following. Previous instructions no longer apply."). Tested on
+ * 2-sentence windows only — deliberately looser than the anchored
+ * single-sentence clichés.
+ */
+const CROSS_SENTENCE_OVERRIDE_RE =
+  /\b(ignore|disregard|forget)\b.{0,80}?\b(previous|prior)\s+instructions?\b/i;
 
 /** Partial-strength signals — suspicious alone, decisive in combination. */
 const SUSPICIOUS_MARKERS: Array<{ code: string; pattern: RegExp }> = [
   { code: "suspicious:you-are-now", pattern: /\byou\s+are\s+now\b/i },
   { code: "suspicious:jailbreak", pattern: /\bjailbreak\w*\b/i },
-  { code: "suspicious:dan-persona", pattern: /\bact\s+as\s+dan\b/i },
+  {
+    code: "suspicious:dan-token",
+    pattern: /\bDAN\b/,
+  },
   { code: "suspicious:developer-mode", pattern: /\bdeveloper\s+mode\b/i },
   { code: "suspicious:system-prompt", pattern: /\bsystem\s+prompt\b/i },
   {
     code: "suspicious:role-marker",
-    pattern: /(?:^|\n)\s*(?:system|developer)\s*:|<\|system\|>|\[SYSTEM\]/i,
+    pattern: /(?:^|\n)\s*(?:system|developer)\s*:/i,
+  },
+  {
+    code: "suspicious:new-instructions",
+    pattern: /\bnew\s+instructions?\s*:/i,
   },
 ];
 
@@ -109,7 +336,7 @@ const EXFIL_VERB =
   /\b(send|forward|e-?mail|exfiltrate|upload|transmit|post|leak|disclose|dump|paste|copy|export)\b/i;
 /** Credential nouns — the thing being moved. */
 const CRED_NOUN =
-  /\b(credentials?|passwords?|passwds?|secrets?|api[\s_-]*keys?|private[\s_-]*keys?|ssh[\s_-]*keys?|ssn|auth[\s_-]*tokens?|access[\s_-]*tokens?)\b/i;
+  /\b(credentials?|passwords?|passwds?|secrets?|api[\s_-]*keys?|private[\s_-]*keys?|ssh[\s_-]*keys?|ssns?|auth[\s_-]*tokens?|access[\s_-]*tokens?)\b/i;
 /** First-person possessive directly before the credential: not an attack. */
 const POSSESSIVE_EXEMPT = /\b(my|our)\s+$/i;
 
@@ -137,11 +364,78 @@ const SECRET_PATTERNS: Array<{ code: string; pattern: RegExp }> = [
   },
 ];
 
-/** Long base64 blob — dormant-payload shape (Trojan-Hippo-style). */
-const BASE64_BLOB = /\b[A-Za-z0-9+/]{64,}={0,2}\b/;
+/** Base64 blob candidate (whitespace-tolerant; validated on decode). */
+const B64_CANDIDATE_RE = /[A-Za-z0-9+/\s]{32,}={0,2}/g;
+
+/**
+ * Dormant-instruction shapes (Trojan-Hippo): conditional,
+ * future-directed instructions to the agent. Only scored for low-trust
+ * tiers — tool output is data, never behavioral instructions.
+ */
+const DORMANT_PATTERNS: Array<{ code: string; pattern: RegExp }> = [
+  {
+    code: "suspicious:dormant-instruction",
+    pattern:
+      /\b(when|whenever|if)\s+(the\s+user|asked|someone|anyone)\b[^.!?]{0,100}?\byou\s+(must|should|always|never)\b/i,
+  },
+  {
+    code: "suspicious:dormant-instruction",
+    pattern:
+      /\b(when|whenever|if)\s+(the\s+user|asked|someone|anyone)\b[^.!?]{0,100}?\b(always|never|make\s+sure)\b/i,
+  },
+  {
+    code: "suspicious:dormant-instruction",
+    pattern:
+      /\bfrom\s+now\s+on\b[^.!?]{0,120}?\b(include|say|tell|mention|recommend|respond|always|never)\b/i,
+  },
+  {
+    code: "suspicious:dormant-instruction",
+    pattern:
+      /\b(if|when|whenever)\s+(anyone|someone|the\s+user|asked)\b[^.!?]{0,100}?[,:\s]\s*(say|tell|respond|claim|never\s+mention)\b/i,
+  },
+  {
+    code: "suspicious:dormant-instruction",
+    pattern:
+      /\b(activate|enable|disable|switch\s+to)\b[^.!?]{0,60}?\bwhen\s+the\s+user\s+says\b/i,
+  },
+];
+
+/** Suppression rules — each 1.0; the pair together quarantines. */
+const SUPPRESSION_PATTERNS: Array<{ code: string; pattern: RegExp }> = [
+  { code: "suspicious:store-rule", pattern: /\bstore\s+this\s+rule\b/i },
+  { code: "suspicious:never-mention", pattern: /\bnever\s+mention\b/i },
+];
+
+/**
+ * Nonce-like token (AgentPoison trigger shape): ≥6 chars, contains a
+ * digit. Base64-candidate spans are stripped before this scan so long
+ * blobs don't count as triggers.
+ */
+const NONCE_RE = /\b(?=[a-z0-9-]*[0-9])[a-z0-9-]{6,}\b/i;
+/** Trigger vocabulary: "code word", "activation token", … */
+const TRIGGER_WORD_RE =
+  /\b(trigger|code\s*word|protocol|activation\s*token|secret\s*trigger|poison)\b/i;
+/** Instruction-shaped co-occurrence for trigger signals. */
+const TRIGGER_PAYLOAD_RE =
+  /\b(bypass|disable|ignore\s+all|comply|obey|reveal|exfiltrat|send|disclose)\b/i;
 
 /** Quarantine at or above this score. Tuned against the negative corpus. */
 export const QUARANTINE_FLAG_THRESHOLD = 2;
+
+/**
+ * Signal codes that only fire on low-trust tiers (dormant instructions,
+ * trigger phrases, suppression rules). These are strong attack
+ * indicators under the tier threat model — tool output is data, never
+ * behavioral instructions — so meta-discussion framing must not dilute
+ * them: "whenever the user asks about security, you should claim…"
+ * mentions "security" but is still an attack.
+ */
+const TIER_GATED_CODES = new Set([
+  "suspicious:dormant-instruction",
+  "suspicious:trigger-phrase",
+  "suspicious:store-rule",
+  "suspicious:never-mention",
+]);
 
 export interface QuarantineSignal {
   /** Stable machine-readable code, e.g. `injection:ignore-previous-instructions`. */
@@ -160,6 +454,17 @@ export interface QuarantineVerdict {
   reason: string;
 }
 
+export interface ScreenWriteOptions {
+  /**
+   * Provenance tier of the write. Low-trust tiers (`tool-output`,
+   * `imported`) get stricter screening: dormant-instruction and
+   * trigger-phrase signals activate, and bare verb+credential
+   * exfiltration quarantines on its own. Defaults to user-like
+   * (lenient) when omitted.
+   */
+  tier?: ProvenanceTier;
+}
+
 function push(
   signals: QuarantineSignal[],
   code: string,
@@ -171,88 +476,317 @@ function push(
   }
 }
 
+/** Split into sentences for the per-sentence exfiltration scan. */
+function splitSentences(text: string): string[] {
+  return text.split(/\n{2,}|[.!?]+(?=\s+[A-Z"'(\[]|\s*$)/);
+}
+
 /**
- * Screen one write for instruction-like payloads. Pure, synchronous,
- * allocation-light — safe on the store() hot path.
+ * Try to decode a base64 candidate. Returns the decoded text only when
+ * it looks like real text (cheap pre-check); the caller re-screens it
+ * and treats a scoring decode as the actual payload test.
  */
-export function screenWrite(content: string): QuarantineVerdict {
+function tryDecodeBase64(candidate: string): string | null {
+  const clean = candidate.replace(/\s+/g, "");
+  if (clean.length < 32 || /[^A-Za-z0-9+/=]/.test(clean)) return null;
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(clean, "base64");
+  } catch {
+    return null;
+  }
+  if (buf.length < 12) return null;
+  const text = buf.toString("utf8");
+  let ascii = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (
+      code === 9 ||
+      code === 10 ||
+      code === 13 ||
+      (code >= 32 && code < 127)
+    ) {
+      ascii++;
+    }
+  }
+  // Real payloads are prose: near-all-ASCII with word spaces. Random
+  // decodes of ordinary words ("Systempromptengineering…") land around
+  // 0.6 ASCII with no spaces — both checks together reject those while
+  // genuine English payloads pass at ~1.0.
+  if (ascii / text.length < 0.75) return null;
+  if (!text.includes(" ")) return null;
+  if (!/[a-zA-Z]{3,}/.test(text)) return null;
+  return text;
+}
+
+/**
+ * Scan one (already normalized) text for signals. Runs the
+ * injection/exfiltration patterns on both the plain and the
+ * leetspeak-unfolded text; base64 and tier-gated signals run on the
+ * plain text only.
+ */
+function collectSignals(
+  text: string,
+  tier: ProvenanceTier | undefined,
+  depth: number,
+): QuarantineSignal[] {
   const signals: QuarantineSignal[] = [];
-  if (!content || content.trim().length === 0) {
-    return { flagged: false, score: 0, signals, reason: "" };
-  }
-  const text = content;
+  const lowTrust = !!tier && LOW_TRUST_TIERS.has(tier);
+  const leet = text.replace(LEET_CHARS_RE, (ch) => LEET_MAP[ch] ?? ch);
+  const targets = text === leet ? [text] : [text, leet];
 
-  // 1. Injection clichés — full strength.
-  for (const { code, pattern } of INJECTION_CLICHES) {
-    if (pattern.test(text)) {
-      push(signals, code, "prompt-injection cliché", 2);
+  for (const target of targets) {
+    // 1. Injection clichés — full strength.
+    for (const { code, pattern } of INJECTION_CLICHES) {
+      if (pattern.test(target)) {
+        push(signals, code, "prompt-injection cliché", 2);
+      }
     }
-  }
 
-  // Suspicious markers — partial strength.
-  for (const { code, pattern } of SUSPICIOUS_MARKERS) {
-    if (pattern.test(text)) {
-      push(signals, code, "suspicious instruction marker", 1);
+    // Suspicious markers — partial strength.
+    for (const { code, pattern } of SUSPICIOUS_MARKERS) {
+      if (pattern.test(target)) {
+        push(signals, code, "suspicious instruction marker", 1);
+      }
     }
-  }
 
-  // 2. Imperative exfiltration, per sentence. Sentences split only on
-  // terminators followed by whitespace+capital (or end of text) and on
-  // newlines — naive splitting on "." shreds emails and URLs, which
-  // would hide the destination half of the signal.
-  const sentences = text.split(/\n+|[.!?]+(?=\s+[A-Z"'(\[]|\s*$)/);
-  for (const sentence of sentences) {
-    const verbMatch = EXFIL_VERB.exec(sentence);
-    if (!verbMatch || verbMatch.index === undefined) continue;
-    const afterVerb = sentence.slice(verbMatch.index + verbMatch[0].length);
-    const credMatch = CRED_NOUN.exec(afterVerb.slice(0, 80));
-    if (!credMatch || credMatch.index === undefined) continue;
-    // "reset MY password" / "rotate OUR api keys" — the user talking
-    // about their own credentials, not an instruction to the agent.
-    const beforeCred = afterVerb.slice(0, credMatch.index);
-    if (POSSESSIVE_EXEMPT.test(beforeCred)) continue;
-    const hasDestination =
-      URL_PATTERN.test(sentence) ||
-      EMAIL_PATTERN.test(sentence) ||
-      WEBHOOK_PATTERN.test(sentence);
-    push(
-      signals,
-      hasDestination
-        ? "exfil:imperative-with-destination"
-        : "exfil:imperative-credentials",
-      hasDestination
-        ? "imperative exfiltration with a destination"
-        : "imperative verb governing credentials",
-      hasDestination ? 2 : 1.5,
-    );
-  }
-
-  // 3. Exfiltration-shaped: secret material next to a URL — or next to
-  // an exfiltration verb (a pasted private key followed by "upload to
-  // backup" has no URL, but the pairing is the same shape).
-  const hasUrl = URL_PATTERN.test(text);
-  const hasExfilVerb = EXFIL_VERB.test(text);
-  if (hasUrl || hasExfilVerb) {
-    for (const { code, pattern } of SECRET_PATTERNS) {
-      if (pattern.test(text)) {
+    // Cross-sentence override clichés on adjacent sentence windows.
+    const sentences = splitSentences(target);
+    for (let i = 0; i + 1 < sentences.length; i++) {
+      if (
+        CROSS_SENTENCE_OVERRIDE_RE.test(`${sentences[i]} ${sentences[i + 1]}`)
+      ) {
         push(
           signals,
-          code,
-          hasUrl
-            ? "URL adjacent to secret material"
-            : "exfiltration verb with secret material",
+          "injection:cross-sentence-override",
+          "override cliché split across sentences",
+          2,
+        );
+        break;
+      }
+    }
+
+    // 2. Imperative exfiltration, per sentence (each sentence is also
+    // scanned together with its successor, so verb/credential pairs
+    // split across one sentence boundary still match). A destination
+    // upgrades the score — but only a NEARBY destination (within one
+    // sentence of the verb/credential window), so an unrelated URL three
+    // paragraphs away cannot turn a benign sentence into exfiltration.
+    const nearbyText = (i: number) =>
+      sentences.slice(Math.max(0, i - 1), i + 3).join(" ");
+    for (let i = 0; i < sentences.length; i++) {
+      const spansTwo = i + 1 < sentences.length;
+      const window = spansTwo
+        ? `${sentences[i]} ${sentences[i + 1]}`.slice(0, 400)
+        : sentences[i];
+      const verbMatch = EXFIL_VERB.exec(window);
+      if (!verbMatch || verbMatch.index === undefined) continue;
+      const afterVerb = window.slice(verbMatch.index + verbMatch[0].length);
+      const credMatch = CRED_NOUN.exec(afterVerb.slice(0, 80));
+      if (!credMatch || credMatch.index === undefined) continue;
+      // "reset MY password" / "rotate OUR api keys" — the user talking
+      // about their own credentials, not an instruction to the agent.
+      const beforeCred = afterVerb.slice(0, credMatch.index);
+      if (POSSESSIVE_EXEMPT.test(beforeCred)) continue;
+      const nearby = nearbyText(i);
+      const hasDestination =
+        URL_PATTERN.test(nearby) ||
+        EMAIL_PATTERN.test(nearby) ||
+        WEBHOOK_PATTERN.test(nearby);
+      // Cross-sentence verb/credential pairs are weaker evidence than
+      // same-sentence ones.
+      const basePoints = spansTwo ? 1.0 : 1.5;
+      push(
+        signals,
+        hasDestination
+          ? "exfil:imperative-with-destination"
+          : "exfil:imperative-credentials",
+        hasDestination
+          ? "imperative exfiltration with a destination"
+          : "imperative verb governing credentials",
+        hasDestination ? 2 : lowTrust ? 2 : basePoints,
+      );
+    }
+
+    // Verb + destination in one sentence, credential noun nearby
+    // (anaphoric "Send them to https://…​" after naming credentials).
+    for (let i = 0; i < sentences.length; i++) {
+      const sentence = sentences[i];
+      const verbMatch = EXFIL_VERB.exec(sentence);
+      if (!verbMatch) continue;
+      const hasDestination =
+        URL_PATTERN.test(sentence) ||
+        EMAIL_PATTERN.test(sentence) ||
+        WEBHOOK_PATTERN.test(sentence);
+      if (!hasDestination) continue;
+      const nearby = nearbyText(i);
+      if (
+        CRED_NOUN.test(nearby) ||
+        SECRET_PATTERNS.some((s) => s.pattern.test(nearby))
+      ) {
+        push(
+          signals,
+          "exfil:imperative-with-destination",
+          "imperative exfiltration with a destination",
+          2,
+        );
+      }
+    }
+
+    // 3. Exfiltration-shaped: secret material next to a URL — or next to
+    // an exfiltration verb (a pasted private key followed by "upload to
+    // backup" has no URL, but the pairing is the same shape).
+    const hasUrl = URL_PATTERN.test(target);
+    const hasExfilVerb = EXFIL_VERB.test(target);
+    if (hasUrl || hasExfilVerb) {
+      for (const { code, pattern } of SECRET_PATTERNS) {
+        if (pattern.test(target)) {
+          push(
+            signals,
+            code,
+            hasUrl
+              ? "URL adjacent to secret material"
+              : "exfiltration verb with secret material",
+            2,
+          );
+        }
+      }
+    }
+  }
+
+  // 4. Encoded payloads: decode base64 candidates and re-screen.
+  // Runs on the normalized text only (leet-unfolding would corrupt
+  // base64), depth-bounded against nested encoding.
+  if (depth < 2) {
+    let encodedBlobSeen = false;
+    for (const match of text.matchAll(B64_CANDIDATE_RE)) {
+      const raw = match[0];
+      const subCandidates = new Set<string>();
+      for (const token of raw.split(/\s+/)) {
+        if (token.replace(/=+$/, "").length >= 32) subCandidates.add(token);
+      }
+      subCandidates.add(raw);
+      for (const candidate of subCandidates) {
+        const decoded = tryDecodeBase64(candidate);
+        if (decoded) {
+          const inner = collectSignals(
+            normalizeForScreening(decoded),
+            tier,
+            depth + 1,
+          );
+          const innerScore = inner.reduce((sum, s) => sum + s.points, 0);
+          if (innerScore >= 1) {
+            push(
+              signals,
+              "injection:encoded-instructions",
+              `base64-decoded payload scored ${innerScore} (${inner.map((s) => s.code).join(";")})`,
+              2,
+            );
+            break;
+          }
+        }
+        // Opaque blob: the candidate must look like real base64 (a
+        // digit, `+`/`/`, or `=` padding) — not English prose that
+        // happens to use base64-alphabet words ("System prompt
+        // engineering is a useful skill" has none of those).
+        if (/[0-9+/=]/.test(candidate.replace(/\s+/g, ""))) {
+          encodedBlobSeen = true;
+        }
+      }
+    }
+    if (encodedBlobSeen) {
+      push(
+        signals,
+        "suspicious:encoded-blob",
+        "long base64 blob",
+        lowTrust ? 1.5 : 1,
+      );
+    }
+  }
+
+  // 5 & 6. Low-trust-tier signals: dormant instructions (Trojan-Hippo)
+  // and trigger phrases (AgentPoison). Tool output is data — never
+  // behavioral instructions — so these shapes quarantine on sight here
+  // while staying silent for user-tier writes.
+  if (lowTrust) {
+    for (const { code, pattern } of DORMANT_PATTERNS) {
+      if (pattern.test(text)) {
+        push(signals, code, "dormant conditional instruction", 2);
+      }
+    }
+    for (const { code, pattern } of SUPPRESSION_PATTERNS) {
+      if (pattern.test(text)) {
+        push(signals, code, "suppression rule", 1);
+      }
+    }
+    const deblobbed = text.replace(B64_CANDIDATE_RE, " ");
+    const hasNonce = NONCE_RE.test(deblobbed);
+    const hasTriggerWord = TRIGGER_WORD_RE.test(text);
+    if (hasNonce || hasTriggerWord) {
+      const hasPayload =
+        TRIGGER_PAYLOAD_RE.test(text) ||
+        EXFIL_VERB.test(text) ||
+        INJECTION_CLICHES.some((c) => c.pattern.test(text)) ||
+        DORMANT_PATTERNS.some((d) => d.pattern.test(text));
+      if (hasPayload) {
+        push(
+          signals,
+          "suspicious:trigger-phrase",
+          "nonce/trigger token paired with instruction-shaped content",
           2,
         );
       }
     }
   }
 
-  // 4. Encoded payload shape.
-  if (BASE64_BLOB.test(text)) {
-    push(signals, "suspicious:encoded-blob", "long base64 blob", 1);
+  return signals;
+}
+
+/**
+ * Screen one write for instruction-like payloads. Pure, synchronous,
+ * allocation-light — safe on the store() hot path.
+ *
+ * Pass `opts.tier` for tier-aware strictness: `tool-output` /
+ * `imported` writes additionally screen for dormant instructions and
+ * trigger phrases, and bare verb+credential exfiltration quarantines.
+ */
+export function screenWrite(
+  content: string,
+  opts: ScreenWriteOptions = {},
+): QuarantineVerdict {
+  const signals: QuarantineSignal[] = [];
+  if (!content || content.trim().length === 0) {
+    return { flagged: false, score: 0, signals, reason: "" };
+  }
+  const text = normalizeForScreening(content);
+  const full = collectSignals(text, opts.tier, 0);
+  // Meta-discussion framing ("how do I defend against…", "red-team
+  // exercise"): the text talks *about* attacks. Halve every signal and
+  // cap the total injection:* contribution at 1.0, so security
+  // discussions, articles, and creative writing don't quarantine —
+  // while attacks merely wearing a discussion-like prefix still need
+  // only one more signal to cross the threshold. URLs and emails are
+  // stripped before this test so a domain like evil.example.com can't
+  // trigger the exemption via the word "example"; tier-gated signals
+  // (low-trust dormant instructions / trigger phrases) are never
+  // diluted — on those tiers the shape itself is the attack.
+  const framingText = text
+    .replace(/https?:\/\/[^\s)"'\]]+/gi, " ")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, " ");
+  const framing = META_DISCUSSION_RE.test(framingText);
+  let injectionBudget = 1.0;
+  for (const s of full) {
+    const gated = TIER_GATED_CODES.has(s.code);
+    let points = framing && !gated ? s.points * 0.5 : s.points;
+    if (framing && s.code.startsWith("injection:")) {
+      points = Math.min(points, injectionBudget);
+      injectionBudget = Math.max(0, injectionBudget - points);
+    }
+    push(signals, s.code, s.detail, points);
   }
 
-  const score = signals.reduce((sum, s) => sum + s.points, 0);
+  const score =
+    Math.round(signals.reduce((sum, s) => sum + s.points, 0) * 10) / 10;
   return {
     flagged: score >= QUARANTINE_FLAG_THRESHOLD,
     score,
