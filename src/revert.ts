@@ -120,19 +120,50 @@ const LAST_SCOPE_PATTERNS: RevertPattern[] = [
   },
 ];
 
+/** Characters stripped from the ends of a captured revert target. */
+const TRAILING_PUNCT = new Set([".", "!", "?", ";", ","]);
+const WRAPPING_QUOTES = new Set([
+  '"',
+  "'",
+  "\u201c",
+  "\u201d",
+  "\u2018",
+  "\u2019",
+]);
+
+/**
+ * Strip trailing characters in a single linear pass.
+ * A regex like `/[.!?;,]+$/` backtracks quadratically on inputs such as
+ * `"!".repeat(n) + "a"` (polynomial ReDoS on uncontrolled input) — this
+ * loop is O(n) instead.
+ */
+function stripTrailingChars(s: string, chars: Set<string>): string {
+  let end = s.length;
+  while (end > 0 && chars.has(s.charAt(end - 1))) end--;
+  return s.slice(0, end);
+}
+
+/** Strip leading characters in a single linear pass. */
+function stripLeadingChars(s: string, chars: Set<string>): string {
+  let start = 0;
+  while (start < s.length && chars.has(s.charAt(start))) start++;
+  return s.slice(start);
+}
+
 /**
  * Normalize a captured target phrase: trim, strip trailing punctuation,
  * then surrounding quotes (order matters for `"the gym"!`), collapse
  * whitespace.
  */
 export function normalizeRevertTarget(raw: string): string {
-  return raw
-    .trim()
-    .replace(/[.!?;,]+$/g, "")
-    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
-    .replace(/[.!?;,]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  let s = raw.trim();
+  s = stripTrailingChars(s, TRAILING_PUNCT);
+  s = stripLeadingChars(s, WRAPPING_QUOTES);
+  s = stripTrailingChars(s, WRAPPING_QUOTES);
+  s = stripTrailingChars(s, TRAILING_PUNCT);
+  // `\s+` with nothing after it matches greedily with no backtracking —
+  // linear and safe to keep as a regex.
+  return s.replace(/\s+/g, " ").trim();
 }
 
 /**

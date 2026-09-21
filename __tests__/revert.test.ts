@@ -137,6 +137,19 @@ describe("normalizeRevertTarget", () => {
     expect(normalizeRevertTarget('  "the dentist"! ')).toBe("the dentist");
     expect(normalizeRevertTarget("my   vacation.")).toBe("my vacation");
   });
+
+  it("handles punctuation-then-quotes ordering", () => {
+    expect(normalizeRevertTarget('  "the gym!",  ')).toBe("the gym");
+    expect(normalizeRevertTarget("''quoted''...")).toBe("quoted");
+  });
+
+  it("strips long adversarial runs in linear time (no ReDoS)", () => {
+    // Old impl: /[.!?;,]+$/ backtracked quadratically on "!".repeat(n) + "a".
+    const adversarial = "!".repeat(100_000) + "a";
+    const start = Date.now();
+    expect(normalizeRevertTarget(adversarial)).toBe(adversarial);
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
 });
 
 // ---------------------------------------------------------------------------

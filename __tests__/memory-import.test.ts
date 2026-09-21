@@ -19,6 +19,8 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { MemOS } from "../src/memory";
 import { SQLiteStorage } from "../src/storage/sqlite";
 import {
@@ -180,6 +182,33 @@ describe("Slack importer", () => {
     expect(third!.content).toBe("I prefer dark mode for the dashboard");
     expect(third!.author).toBe("Bob");
     expect(third!.channel).toBe("random");
+  });
+
+  test("slack entity decoding is single-pass (&amp; decoded last)", async () => {
+    // Regression: decoding &amp; first turned "&amp;lt;" into "&lt;",
+    // which the next pass decoded AGAIN into "<" (double-unescape).
+    const dir = mkdtempSync(join(tmpdir(), "slack-entities-"));
+    writeFileSync(
+      join(dir, "channels.json"),
+      JSON.stringify([{ id: "C01", name: "general" }]),
+    );
+    writeFileSync(join(dir, "users.json"), JSON.stringify([]));
+    mkdirSync(join(dir, "general"), { recursive: true });
+    writeFileSync(
+      join(dir, "general", "2024-06-15.json"),
+      JSON.stringify([
+        {
+          text: "use &amp;lt;tag&amp;gt; and &amp;amp; stays",
+          ts: "1718452800.000200",
+          type: "message",
+          user: "U01",
+        },
+      ]),
+    );
+    const parsed = await parseSlackExportDirectory(dir);
+    expect(parsed.detected).toBe("slack");
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0]!.content).toBe("use &lt;tag&gt; and &amp; stays");
   });
 
   test("importExternal stores slack messages with attribution", async () => {

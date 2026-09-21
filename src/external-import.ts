@@ -610,14 +610,19 @@ export async function parseSlackExportDirectory(
   return { items, detected: "slack", skipped };
 }
 
-/** Slack message text carries HTML entities (`&amp;` etc.). */
+/**
+ * Slack message text carries HTML entities (`&amp;` etc.).
+ * `&amp;` MUST be decoded last: decoding it first turns an escaped
+ * `&amp;lt;` (i.e. literal "&lt;" text) into `&lt;`, which the next pass
+ * would decode a second time into `<` — a double-unescape.
+ */
 function unescapeSlackText(text: string): string {
   return text
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
 }
 
 /** Slack `ts` is `"1718452800.000200"` (seconds.fraction) → Unix ms. */
