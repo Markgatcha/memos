@@ -1990,6 +1990,10 @@ async function main(): Promise<void> {
         const report: Record<string, unknown> = {};
         const problems: string[] = [];
         const suggestions: string[] = [];
+        // Playbook anchors appended to suggestions below; the full
+        // Symptom → Diagnose → Fix entries live in docs/troubleshooting.md.
+        const PLAYBOOK =
+          "https://github.com/Markgatcha/memos/blob/main/docs/troubleshooting.md";
 
         // 1. Store health.
         const diag = await memos.diagnostics();
@@ -2015,7 +2019,8 @@ async function main(): Promise<void> {
             `Only ${diag.nodesWithEmbeddings}/${diag.totalNodes} memories have embeddings.`,
           );
           suggestions.push(
-            "Run `memos reindex-embeddings` to backfill missing vectors.",
+            `Run \`memos reindex-embeddings\` to backfill missing vectors. ` +
+              `Playbook: ${PLAYBOOK}#search-returns-nothing-or-weak-results`,
           );
         }
 
@@ -2039,7 +2044,8 @@ async function main(): Promise<void> {
                 " — vectors from different models are never compared.",
             );
             suggestions.push(
-              "Run `memos reindex-embeddings --purge-stale` after switching models.",
+              "Run `memos reindex-embeddings --purge-stale` after switching models. " +
+                `Playbook: ${PLAYBOOK}#search-returns-nothing-or-weak-results`,
             );
           }
           if (!jsonOut) {
@@ -2082,7 +2088,8 @@ async function main(): Promise<void> {
                 `${err instanceof Error ? err.message : String(err)}`,
             );
             suggestions.push(
-              "Start llama-server (--embedding) or unset MEMOS_EMBEDDING_* to fall back to the hash embedder.",
+              "Start llama-server (--embedding) or unset MEMOS_EMBEDDING_* to fall back to the hash embedder. " +
+                `Playbook: ${PLAYBOOK}#search-returns-nothing-or-weak-results`,
             );
           }
         } else {
@@ -2123,7 +2130,8 @@ async function main(): Promise<void> {
                 `Embedding fallback active: ${info.fallbackReason}.`,
               );
               suggestions.push(
-                "Install @huggingface/transformers for real local embeddings: npm install @huggingface/transformers",
+                "Install @huggingface/transformers for real local embeddings: npm install @huggingface/transformers. " +
+                  `Playbook: ${PLAYBOOK}#embeddings-silently-fell-back-to-local-hash`,
               );
               console.log(
                 `Embedding provider: ${info.resolvedProvider} (fallback — ${info.fallbackReason}).`,
@@ -2155,6 +2163,10 @@ async function main(): Promise<void> {
           } catch {
             problems.push(
               `Rerank endpoint ${rerankUrl} unreachable — reranking will silently fall back.`,
+            );
+            suggestions.push(
+              `Rerank is optional — an unreachable endpoint means reranking silently falls back to the base ranking. ` +
+                `Playbook: ${PLAYBOOK}#search-returns-nothing-or-weak-results`,
             );
           }
         }
