@@ -8,6 +8,14 @@ Let's get MemOS running on your machine. Pick your path below — every one of t
     - **Docker path:** Docker and Docker Compose
     - About 5 minutes and zero API keys
 
+!!! tip "First run: `memos init`"
+    After installing the SDK (option 1), run `memos init` — an interactive
+    wizard that picks your database path and embedding provider, runs a
+    store→search→forget smoke test, and saves your choices to
+    `~/.memos/config.json` (`memos init --yes` accepts all defaults for
+    scripts). Environment variables (`MEMOS_DB_PATH`, `MEMOS_EMBEDDING_*`)
+    always override the saved config.
+
 ## Option 1 — npm (TypeScript / Node.js)
 
 The fastest way in if you live in JavaScript.

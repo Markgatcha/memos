@@ -625,7 +625,7 @@ Commands:
                           --scope user:alice[,agent:coder][,run:r1])
   retrieve <id>           Retrieve a memory by ID
   search <query>          Search memories by text (--pool event|note|procedure,
-                          --scope user:alice[,...]) (--pool event|note|procedure)
+                          --scope user:alice[,...])
   forget <id>             Delete a memory by ID
   summarize               Summarize all memories
   graph                   Print the full memory graph (--mermaid for a
@@ -690,12 +690,6 @@ Commands:
                           for stored memories (--stats shows avg tokens per
                           level, --namespace <ns>, --limit <n>, --dry-run)
   doctor                  Health-check the store, embedding config and endpoints
-  consolidate             Offline maintenance pass: merge duplicates, archive
-                          stale memories, supersede decayed ones (kept as
-                          history), distill cluster summary notes
-                          (--dry-run, --no-summarize, --no-decay,
-                          --decay-half-life <days>, --min-retention <score>,
-                          --older-than <days>, --namespace <ns>)
   connect <target>        Register the MemOS MCP server with a coding harness
                           (claude-code, cursor, windsurf, cline, opencode,
                           codex, gemini, generic) — --write saves the config

@@ -25,9 +25,9 @@ Public milestone plan. Each phase has a clear scope, success criteria, and a tar
 
 ### Success criteria
 
-- `npm install @memos/sdk` + 3 lines of code = working memory
-- `pip install memos` + `memos-server` = HTTP server running
-- All tests passing across Node 18/20/22 and Python 3.10-3.13
+- `npm install @mem-os/sdk` + 3 lines of code = working memory
+- `pip install mem-os-sdk` + `memos-server` = HTTP server running
+- All tests passing across Node 22/24/26 and Python 3.11-3.14
 - Zero external dependencies for core functionality
 
 ---

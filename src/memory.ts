@@ -376,7 +376,7 @@ function stringArray(value: unknown): string[] | undefined {
  *
  * @example
  * ```ts
- * import { MemOS } from "@memos/sdk";
+ * import { MemOS } from "@mem-os/sdk";
  *
  * const memos = new MemOS({ dbPath: "./my-app.db" });
  * await memos.init();

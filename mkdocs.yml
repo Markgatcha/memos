@@ -52,5 +52,7 @@ nav:
   - Fidelity Levels: fidelity-levels.md
   - Temporal Events & Reminders: temporal-events.md
   - Cross-Harness Memory Sync: cross-harness.md
+  - Integrations: integrations.md
+  - Memory Explorer (MCP App): mcp-apps-explorer.md
   - Contributing: https://github.com/Markgatcha/memos/blob/main/CONTRIBUTING.md
   - Roadmap: https://github.com/Markgatcha/memos/blob/main/ROADMAP.md

@@ -1,9 +1,9 @@
 # MemOS plugin for Claude Code
 
 Local-first persistent memory for your agent. Installing this plugin registers
-the MemOS MCP server (18 tools: store, search, retrieve, forget, revert,
-graph, context packs, temporal search, trust, fact extraction,
-diagnostics, …),
+the MemOS MCP server (21 tools: store, search, retrieve, forget, revert,
+graph, context packs, temporal search, trust, link, quarantine release,
+fact extraction, diagnostics, reminders, …),
 plus the `/memos`, `/recall`, `/forget`, `/revert`, and `/timeline` slash commands and
 the `memos-memory` skill.
 

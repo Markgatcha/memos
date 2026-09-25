@@ -4,7 +4,7 @@
  * This is the package entry point. Import `MemOS` to get started:
  *
  * ```ts
- * import { MemOS } from "@memos/sdk";
+ * import { MemOS } from "@mem-os/sdk";
  *
  * const memos = new MemOS();
  * await memos.init();
@@ -14,7 +14,7 @@
  * ```
  *
  * @packageDocumentation
- * @module @memos/sdk
+ * @module @mem-os/sdk
  */
 
 export { MemOS, MemorySkippedError } from "./memory.js";

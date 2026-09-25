@@ -121,7 +121,7 @@ first (deterministic order: reminder_at, createdAt, id).
   `memos remind "<text>" at <temporal-expression>`
 - MCP: `memos_reminders` with `{ due?: boolean, namespace?: string }`
 - SDK: `listReminders(memos, { now, dueOnly })` (exported from
-  `@memos/sdk`)
+  `@mem-os/sdk`)
 
 ## Harness polling pattern (read this)
 

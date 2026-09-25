@@ -2,7 +2,7 @@
 
 MemOS ships as a **plain stdio MCP server** — the one integration surface
 that Claude Code, Cursor, Windsurf, Cline, OpenCode, Codex CLI, Gemini CLI,
-and every other MCP-capable harness already speak. One command, all 14
+and every other MCP-capable harness already speak. One command, all 21
 tools, all data in local SQLite.
 
 ```
@@ -89,22 +89,29 @@ The plugin bundles:
 Prefer no plugin? `claude mcp add` gives you the same server without the
 commands and skill.
 
-## Full capability surface (14 MCP tools)
+## Full capability surface (21 MCP tools)
 
 | Tool | What it does |
 |---|---|
 | `memos_store` | Persist a durable memory (type, tags, TTL, namespace) |
 | `memos_search` | Hybrid FTS + semantic search with RRF fusion |
 | `memos_retrieve` / `memos_forget` | Fetch or delete one memory by ID |
+| `memos_link` | Link two memories (typed edges) |
 | `memos_graph` | Full node + edge graph |
 | `memos_context` | Graph-neighbour context around one memory |
 | `memos_context_pack` | **Token-budgeted, relevance-ranked slice for prompt injection** (TOON / TOON-compact output, semantic dedup) |
 | `memos_search_temporal` | Query memories valid at a past point in time |
 | `memos_set_validity` / `memos_supersede` | Time-window a fact, mark it historical, link its replacement |
 | `memos_set_trust` | Weight a memory's trust (affects hybrid ranking) |
+| `memos_quarantine_release` | Review and release a write-gate-quarantined memory back into recall |
 | `memos_extract_facts` | Local rule-based fact extraction from conversation messages |
 | `memos_diagnostics` | Coverage / counts / embedding health report |
 | `memos_reindex` | Re-embed the whole store after a model switch |
+| `memos_consolidate` | Offline maintenance pass: merge duplicates, archive stale, decay old |
+| `memos_usage` | Token-savings telemetry (packs built, injected vs naive baseline) |
+| `memos_history` | Version timeline for one memory: supersedes, superseded-by, derived notes |
+| `memos_revert` | Revert a memory to its previous version (natural-language supported) |
+| `memos_reminders` | List scheduled event reminders (poll for due ones) |
 
 ## Optional: real embeddings
 

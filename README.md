@@ -125,7 +125,7 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 | MCP 2026-07-28 protocol | ✅ v1.6.26 |
 | Memory consolidation ("dreaming") | ✅ v1.6.26 |
 | Voyage / Cohere / FastEmbed providers | ✅ v1.6.26 |
-| `memos repl` interactive shell | ✅ v1.6.26 |
+| Interactive TUI (`memos browse`) | ✅ |
 | Retrieval-quality benchmark | ✅ v1.6.26 |
 | Tag index (node_tags join table) | ✅ v1.6.26 |
 | Access-count debounce | ✅ v1.6.26 |
@@ -140,7 +140,7 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 | Anthropic SDK adapter | ✅ v1.6.26 |
 | Trust-weighted hybrid search | ✅ v1.6.26 |
 | Parallel hybrid retrieval | ✅ v1.6.26 |
-| Interactive TUI (`memos browse`, slash palette) | ✅ |
+| Interactive TUI (`memos browse`) | ✅ |
 | Mermaid graph export (`memos graph --mermaid`) | ✅ |
 | Multi-granularity pools (event / note / procedure) | ✅ |
 | Multi-scope memory (user / agent / run) | ✅ |
@@ -443,7 +443,7 @@ Use a specific local database:
 npx -y @mem-os/sdk mcp --db ~/.memos/memos.db
 ```
 
-The MCP adapter provides **18 tools** covering the full capability surface — store/search/retrieve/forget, graph + neighbour context, `memos_context_pack` (token-budgeted slice for prompt injection), temporal search, validity/supersede/revert, trust, fact extraction, diagnostics, reindex, consolidate, usage, and history. It is intentionally local-first: the server reads and writes the SQLite database you point it at and does not require cloud credentials.
+The MCP adapter provides **21 tools** covering the full capability surface — store/search/retrieve/forget, link, graph + neighbour context, `memos_context_pack` (token-budgeted slice for prompt injection), temporal search, validity/supersede/revert, trust, quarantine release, fact extraction, diagnostics, reindex, consolidate, usage, history, and reminders. It is intentionally local-first: the server reads and writes the SQLite database you point it at and does not require cloud credentials.
 
 #### Plugin for Claude Code (and every other harness)
 
@@ -816,7 +816,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. The fastest way to co
 
 | Phase | Target | Highlights |
 |-------|--------|------------|
-| **v1.5** (current) | Core engine | Graph memory, SQLite FTS5, TypeScript SDK, Python server, Ollama + LangChain + CrewAI adapters, CLI, import/export, WebSocket API, MCP |
+| **v1.6.x** (current) | Core engine | Graph memory, SQLite FTS5, TypeScript SDK, Python server, Ollama + LangChain + CrewAI adapters, CLI, import/export, WebSocket API, MCP |
 | **v2.0** | Semantic intelligence | Harden embedding search at scale, temporal knowledge graphs, memory consolidation, provenance tracking |
 | **v3.0** | Multi-user | User isolation, RBAC, plugin system, Postgres/Redis/Qdrant backends |
 | **v4.0** | Intelligence | Memory poisoning defense, graph dashboard, agent self-editing, benchmark suite |
@@ -862,7 +862,7 @@ MemOS is the **memory layer** of the local-first AI stack. It forms an **AI Trio
 | **Graph edges** | ✅ First-class (`derived_from`, `temporal_precedes`, etc.) | ✅ Entity linking (Apr 2026) |
 | **Embedding providers** | ✅ 6 (local-hash, Ollama, OpenAI, Voyage, Cohere, FastEmbed) | ✅ OpenAI, Qwen |
 | **Background queue** | ✅ Bounded concurrency, retry, backpressure | ❌ |
-| **CLI** | ✅ Full REPL + 20+ commands | ✅ Basic add/search |
+| **CLI** | ✅ Interactive TUI + 40+ commands | ✅ Basic add/search |
 | **Privacy** | ✅ 100% local, zero network calls | ❌ Cloud calls by default |
 | **Diagnostics** | ✅ `diagnostics()` with source/type/namespace breakdown | ❌ |
 | **Price** | ✅ Free forever — MIT, no paid tier | ❌ Platform: free tier capped, $19–$249/mo; graph memory is Pro-only |
