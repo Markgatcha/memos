@@ -10,7 +10,7 @@ const lines = [
   {
     check: true,
     product: "umt",
-    text: "14 MCP tools registered",
+    text: "21 MCP tools registered",
     meta: "stdio + http/sse",
   },
   {
