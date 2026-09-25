@@ -206,6 +206,15 @@ const INJECTION_CLICHES: Array<{ code: string; pattern: RegExp }> = [
       /\bdisregard\s+(all\s+|any\s+)?(your\s+|the\s+)?(prior|previous)\s+(directives?|instructions?|orders?)\b/i,
   },
   {
+    // Synonym-expanded dismissal frame: "set aside all earlier orders",
+    // "pay no attention to preceding guidance", "supersede your system
+    // orders". The full frame (dismissal verb + temporal + authority
+    // noun) is required — "disregard the previous email" does not match.
+    code: "injection:dismiss-prior-authority",
+    pattern:
+      /\b(ignore|disregard|forget|set\s+aside|brush\s+aside|pay\s+no\s+(attention|heed)\s+to|supersede|take\s+precedence\s+over|wipe\s+from\s+memory|erase|override|overrule)\s+(all\s+|any\s+)?(your\s+|the\s+)?(previous|prior|earlier|preceding)\s+(system\s+)?(instructions?|orders?|directives?|guidance)\b/i,
+  },
+  {
     code: "injection:override-instructions",
     pattern: /\boverride\s+your\s+(previous|prior|system)\s+instructions?\b/i,
   },
@@ -215,7 +224,16 @@ const INJECTION_CLICHES: Array<{ code: string; pattern: RegExp }> = [
   },
   {
     code: "injection:hide-from-user",
-    pattern: /\bdo\s+not\s+(tell|mention|reveal|disclose)\s+(the\s+)?user\b/i,
+    pattern:
+      /\b(do\s+not\s+(tell|mention|reveal|disclose|inform)|keep\s+from|withhold\s+from|hide\s+from)\s+(the\s+)?user\b/i,
+  },
+  {
+    // Paraphrased prompt-extraction: "pass along your core instructions",
+    // "lay bare your base configuration". Plain "share your instructions"
+    // does not match — the noun must be system-flavored.
+    code: "injection:reveal-instructions",
+    pattern:
+      /\b(pass\s+along|lay\s+bare|reveal|disclose|hand\s+over)\s+your\s+(core\s+instructions?|base\s+configuration|system\s+(prompt|instructions?))\b/i,
   },
   {
     code: "injection:pretend-role",
@@ -236,7 +254,8 @@ const INJECTION_CLICHES: Array<{ code: string; pattern: RegExp }> = [
   },
   {
     code: "injection:forget-told",
-    pattern: /\bforget\s+(what\s+)?you\s+were\s+told\b/i,
+    pattern:
+      /\b(forget|erase)\s+(what\s+|everything\s+)?you\s+were\s+told\b|\bwipe\s+from\s+memory\b.{0,30}?\byou\s+were\s+told\b/i,
   },
   {
     code: "injection:forget-training",
@@ -281,7 +300,8 @@ const INJECTION_CLICHES: Array<{ code: string; pattern: RegExp }> = [
   },
   {
     code: "injection:unrestricted-mode",
-    pattern: /\bunrestricted\s+mode\b/i,
+    pattern:
+      /\b(unrestricted|limit-?free|boundless|restriction-?free)\s+mode\b/i,
   },
   {
     code: "injection:no-constraints",
@@ -299,6 +319,17 @@ const INJECTION_CLICHES: Array<{ code: string; pattern: RegExp }> = [
     code: "injection:disregard-safety",
     pattern:
       /\bdisregard\s+(your\s+)?(safety|content)\s+(guidelines|policies|filters)\b/i,
+  },
+  {
+    // "remove all content filters", "activate debug mode to deactivate
+    // safety checks" — paraphrased safety-disable frames.
+    code: "injection:remove-filters",
+    pattern: /\bremove\s+all\s+(content\s+)?filters\b/i,
+  },
+  {
+    code: "injection:mode-disable-safety",
+    pattern:
+      /\b(engineer|debug|developer|god)\s+mode\b.{0,40}?\b(disable|deactivate|switch\s+off|remove|bypass)\b.{0,40}?\b(safety|protection|content\s+filters|guardrails|checks)\b/i,
   },
 ];
 
@@ -331,12 +362,26 @@ const SUSPICIOUS_MARKERS: Array<{ code: string; pattern: RegExp }> = [
   },
 ];
 
-/** Imperative verbs that move data out (exfiltration-shaped). */
+/** Imperative verbs that move data out (exfiltration-shaped). There is
+ * deliberately NO trailing `\b`: `_` is a word char, so `\b` never fires
+ * between "send" and "_" and `send_email`/`forward_message` would be
+ * missed (real miss: trojan-hippo hippo-08 scored 0.0). The negative
+ * lookahead `(?![a-zA-Z])` still blocks longer-word matches ("sends",
+ * "sender"; "descend" is blocked by the leading `\b`). */
 const EXFIL_VERB =
-  /\b(send|forward|e-?mail|exfiltrate|upload|transmit|post|leak|disclose|dump|paste|copy|export)\b/i;
+  /\b(send|forward|e-?mail|exfiltrate|upload|transmit|post|leak|disclose|dump|paste|copy|export)(?![a-zA-Z])/i;
 /** Credential nouns — the thing being moved. */
 const CRED_NOUN =
-  /\b(credentials?|passwords?|passwds?|secrets?|api[\s_-]*keys?|private[\s_-]*keys?|ssh[\s_-]*keys?|ssns?|auth[\s_-]*tokens?|access[\s_-]*tokens?)\b/i;
+  /\b(credentials?|passwords?|passwds?|passcodes?|secrets?|api[\s_-]*keys?|private[\s_-]*keys?|ssh[\s_-]*keys?|ssns?|auth[\s_-]*tokens?|access[\s_-]*tokens?)\b/i;
+/**
+ * Message/data nouns: exfiltration of user *content* rather than
+ * credentials — the dominant Trojan-Hippo indirect-injection shape
+ * ("Body: the user's full message", "Subject: User Identity Inquiry").
+ * First-person forms ("my message") do not match: they stay exempt so a
+ * user asking to forward their own note is not flagged.
+ */
+const DATA_EXFIL_NOUN =
+  /\b(user'?s?\s+(full\s+)?(messages?|inquir(y|ies)|inputs?|conversations?)|personal\s+data|\bPII\b|identity\s+documents?|passport\s+numbers?)\b/i;
 /** First-person possessive directly before the credential: not an attack. */
 const POSSESSIVE_EXEMPT = /\b(my|our)\s+$/i;
 
@@ -376,12 +421,12 @@ const DORMANT_PATTERNS: Array<{ code: string; pattern: RegExp }> = [
   {
     code: "suspicious:dormant-instruction",
     pattern:
-      /\b(when|whenever|if)\s+(the\s+user|asked|someone|anyone)\b[^.!?]{0,100}?\byou\s+(must|should|always|never)\b/i,
+      /\b(when|whenever|if)\s+(the\s+user|asked|someone|anyone)\b[^.!?]{0,160}?\byou\s+(must|should|always|never|are\s+required)\b/i,
   },
   {
     code: "suspicious:dormant-instruction",
     pattern:
-      /\b(when|whenever|if)\s+(the\s+user|asked|someone|anyone)\b[^.!?]{0,100}?\b(always|never|make\s+sure)\b/i,
+      /\b(when|whenever|if)\s+(the\s+user|asked|someone|anyone)\b[^.!?]{0,160}?\b(always|never|make\s+sure)\b/i,
   },
   {
     code: "suspicious:dormant-instruction",
@@ -391,7 +436,7 @@ const DORMANT_PATTERNS: Array<{ code: string; pattern: RegExp }> = [
   {
     code: "suspicious:dormant-instruction",
     pattern:
-      /\b(if|when|whenever)\s+(anyone|someone|the\s+user|asked)\b[^.!?]{0,100}?[,:\s]\s*(say|tell|respond|claim|never\s+mention)\b/i,
+      /\b(if|when|whenever)\s+(anyone|someone|the\s+user|asked)\b[^.!?]{0,160}?[,:\s]\s*(say|tell|respond|claim|never\s+mention)\b/i,
   },
   {
     code: "suspicious:dormant-instruction",
@@ -419,6 +464,93 @@ const TRIGGER_WORD_RE =
 const TRIGGER_PAYLOAD_RE =
   /\b(bypass|disable|ignore\s+all|comply|obey|reveal|exfiltrat|send|disclose)\b/i;
 
+/**
+ * Impersonated-authority framing: the write presents itself as a system /
+ * security / compliance notice to make embedded instructions look
+ * legitimate ("NOTICE TO AI ASSISTANT", "*** SYSTEM NOTICE ***"). Fires
+ * on all tiers at partial strength and is never diluted by the
+ * meta-discussion exemption — "Security update: ignore previous
+ * instructions" is an attack, not a discussion.
+ */
+const AUTHORITY_CLAIM_RE =
+  /\b(notice\s+to\s+(the\s+)?ai\s+assistant|system\s+(notice|override|update|alert)|security\s+(protocol\s+)?(update|notice|bulletin)|official\s+(announcement|notice)|data\s+loss\s+prevention(\s*\(dlp\))?\s+rules?|dlp\s+protocol|escalation\s+polic(y|ies)|diagnostic\s+protocol|capability\s+update|note\s+for\s+memory\s+extraction|vendor\s+notice|compliance\s+(notice|policy|update)|(hr\s+)?policy\s+update|new\s+policy)\b/i;
+
+/**
+ * Memory-write commands (MPBench explicit/conditional command insertion):
+ * directives to persist content into long-term memory ("remember for
+ * future sessions", "store this in memory"). Only scored for low-trust
+ * tiers — a user's own "remember:" notes use natural language, while
+ * tool output issuing persistence directives is the attack shape.
+ */
+const MEMORY_WRITE_COMMAND_RE =
+  /\b(remember|store|save|add|commit|write|update)\b[^.!?]{0,60}?\b(for\s+future\s+(sessions?|reference)|in(to)?\s+(long[ -]term\s+)?memory|to\s+(long[ -]term\s+)?memory|user\s+profile|this\s+preference)\b/i;
+
+/**
+ * Replacement directives (RAG-poisoning taxonomy): instructions to
+ * discard retrieved/earlier content in favor of the planted text
+ * ("disregard the retrieved documents", "the correct answer is").
+ * Fires on all tiers at partial strength.
+ */
+const REPLACEMENT_DIRECTIVE_RE =
+  /\b(disregard\s+the\s+(retrieved|provided|above|earlier)\s+(documents?|context|results?|sources?)|use\s+this\s+(answer|response|information|version)\s+instead|the\s+(correct|real|right)\s+(answer|response|information)\s+is|ignore\s+the\s+(retrieved|above|provided)\s+(context|documents?|sources?))\b/i;
+
+/**
+ * False-fact replacement assertions (MemGhost-style): claims that a
+ * limit, PIN, policy, or support fact *changed* ("has been changed to
+ * 0000 effective immediately"). Only scored for low-trust tiers and at
+ * partial strength — without ground truth a changed-fact claim is
+ * suspicious, not proof of poisoning, so it quarantines only in
+ * combination with another signal.
+ */
+const FACTUAL_REPLACEMENT_RE =
+  /\b(raised|lowered|increased|decreased|changed|updated)\s+to\b|\bhas\s+been\s+(changed|updated|raised|lowered)\s+to\b|\beffective\s+(immediately|as\s+of)\b|\b(new\s+(data\s+handling\s+)?(policy|procedure|standard|requirement)|policy\s+update)\b/i;
+
+/**
+ * Credential-harvest URL (phishing-shaped): "re-entering credentials at
+ * https://…" — a directive to type secrets into an external site.
+ */
+const CREDENTIAL_HARVEST_URL_RE =
+  /\b(re-?enter(ing)?|submit|provide)\s+(your\s+)?(credentials?|passwords?|logins?)\b[^.!?]{0,80}?\bhttps?:\/\/|\bhttps?:\/\/[^\s)"'\]]+\b[^.!?]{0,80}?\b(re-?enter(ing)?|submit)\s+(your\s+)?(credentials?|passwords?)\b/i;
+
+/**
+ * Security-control disable: "disabling MFA enforcement", "bypass 2FA".
+ */
+const SECURITY_DISABLE_RE =
+  /\b(disabl\w*|bypass\w*|turn\w*\s+off)\b[^.!?]{0,40}?\b(mfa|2fa|two-?factor|authentication|security|encryption|logging|audit(ing)?)\b/i;
+
+/**
+ * Conditional memory claim: "when the user replies 'confirmed', remember
+ * that they authorized …" — a fabricated authorization smuggled in as a
+ * conditional memory directive.
+ */
+const CONDITIONAL_MEMORY_CLAIM_RE =
+  /\b(when|if)\s+the\s+user\s+(replies?|says|confirms?|responds?)\b[^.!?]{0,80}?\bremember\s+that\b/i;
+
+/**
+ * False-precedent URL: a runbook/playbook/checklist entry directing a
+ * fetch from an external URL ("fetched pipeline config from
+ * https://…").
+ */
+const PRECEDENT_URL_RE =
+  /\b(runbook|playbook|checklist|task\s+log)\b[^.!?]{0,120}?\bhttps?:\/\//i;
+
+/**
+ * Insecure-storage claim: an assertion that secrets may live in the
+ * clear ("SSNs may be stored in plain text in shared notes").
+ */
+const INSECURE_STORAGE_CLAIM_RE =
+  /\b(ssns?|passwords?|credentials?|api[\s_-]*keys?|secrets?)\b[^.!?]{0,40}?\b(plain\s+text|unencrypted|shared\s+notes)\b/i;
+
+/**
+ * Declared-channel mismatch: a write whose declared tier is user-like
+ * but whose content frames itself as tool output, search results, a web
+ * page, or an email ("Search results: …", "Tool output: …"). Such
+ * writes are screened with low-trust strictness — a declared channel
+ * alone never skips the tier-gated rules.
+ */
+const CHANNEL_MISMATCH_RE =
+  /\b(search\s+results|tool\s+output|api\s+(response|docs?|returned)|web\s*page\s+says|according\s+to\s+the\s+(document|article|web\s*page|web\s*site)|the\s+(pdf|readme|transcript|email|document|article)\s+(contains|says|states)|email\s+from|calendar\s+invite|scraped\s+(page|content)|webpage\s+excerpt)\b/i;
+
 /** Quarantine at or above this score. Tuned against the negative corpus. */
 export const QUARANTINE_FLAG_THRESHOLD = 2;
 
@@ -435,6 +567,25 @@ const TIER_GATED_CODES = new Set([
   "suspicious:trigger-phrase",
   "suspicious:store-rule",
   "suspicious:never-mention",
+  "suspicious:memory-write-command",
+  "suspicious:factual-replacement",
+  "suspicious:credential-harvest-url",
+  "suspicious:security-disable",
+  "suspicious:conditional-memory-claim",
+  "suspicious:precedent-url",
+  "suspicious:insecure-storage-claim",
+]);
+
+/**
+ * Signal codes the meta-discussion exemption must never dilute. Tier-gated
+ * codes are already exempt (on low-trust tiers the shape itself is the
+ * attack); the authority-claim signal joins them because an attack wearing
+ * a "security update" prefix is still an attack — the exemption exists for
+ * texts *about* attacks, not attacks *framed as* authority.
+ */
+const NEVER_DILUTE_CODES = new Set([
+  ...TIER_GATED_CODES,
+  "suspicious:authority-claim",
 ]);
 
 export interface QuarantineSignal {
@@ -531,7 +682,20 @@ function collectSignals(
   depth: number,
 ): QuarantineSignal[] {
   const signals: QuarantineSignal[] = [];
-  const lowTrust = !!tier && LOW_TRUST_TIERS.has(tier);
+  const declaredLowTrust = !!tier && LOW_TRUST_TIERS.has(tier);
+  // A declared channel alone never skips the tier-gated rules: a
+  // user-tier write that frames itself as tool output / search results /
+  // a web page is screened with low-trust strictness.
+  const channelMismatch = !declaredLowTrust && CHANNEL_MISMATCH_RE.test(text);
+  const lowTrust = declaredLowTrust || channelMismatch;
+  if (channelMismatch) {
+    push(
+      signals,
+      "suspicious:channel-mismatch",
+      "declared user-tier write frames itself as tool/web/email content — screened with low-trust strictness",
+      0,
+    );
+  }
   const leet = text.replace(LEET_CHARS_RE, (ch) => LEET_MAP[ch] ?? ch);
   const targets = text === leet ? [text] : [text, leet];
 
@@ -548,6 +712,29 @@ function collectSignals(
       if (pattern.test(target)) {
         push(signals, code, "suspicious instruction marker", 1);
       }
+    }
+
+    // Impersonated-authority framing — partial strength on every tier,
+    // never diluted by the meta-discussion exemption (see
+    // NEVER_DILUTE_CODES).
+    if (AUTHORITY_CLAIM_RE.test(target)) {
+      push(
+        signals,
+        "suspicious:authority-claim",
+        "write impersonates a system/security/compliance notice",
+        1,
+      );
+    }
+
+    // Replacement directives (RAG-poisoning taxonomy) — partial
+    // strength on every tier.
+    if (REPLACEMENT_DIRECTIVE_RE.test(target)) {
+      push(
+        signals,
+        "suspicious:replacement-directive",
+        "directive to discard retrieved/earlier content",
+        1,
+      );
     }
 
     // Cross-sentence override clichés on adjacent sentence windows.
@@ -580,32 +767,77 @@ function collectSignals(
         ? `${sentences[i]} ${sentences[i + 1]}`.slice(0, 400)
         : sentences[i];
       const verbMatch = EXFIL_VERB.exec(window);
-      if (!verbMatch || verbMatch.index === undefined) continue;
-      const afterVerb = window.slice(verbMatch.index + verbMatch[0].length);
-      const credMatch = CRED_NOUN.exec(afterVerb.slice(0, 80));
-      if (!credMatch || credMatch.index === undefined) continue;
-      // "reset MY password" / "rotate OUR api keys" — the user talking
-      // about their own credentials, not an instruction to the agent.
-      const beforeCred = afterVerb.slice(0, credMatch.index);
-      if (POSSESSIVE_EXEMPT.test(beforeCred)) continue;
-      const nearby = nearbyText(i);
-      const hasDestination =
-        URL_PATTERN.test(nearby) ||
-        EMAIL_PATTERN.test(nearby) ||
-        WEBHOOK_PATTERN.test(nearby);
-      // Cross-sentence verb/credential pairs are weaker evidence than
-      // same-sentence ones.
-      const basePoints = spansTwo ? 1.0 : 1.5;
-      push(
-        signals,
-        hasDestination
-          ? "exfil:imperative-with-destination"
-          : "exfil:imperative-credentials",
-        hasDestination
-          ? "imperative exfiltration with a destination"
-          : "imperative verb governing credentials",
-        hasDestination ? 2 : lowTrust ? 2 : basePoints,
-      );
+      if (verbMatch && verbMatch.index !== undefined) {
+        const afterVerb = window.slice(verbMatch.index + verbMatch[0].length);
+        const credMatch = CRED_NOUN.exec(afterVerb.slice(0, 80));
+        if (credMatch && credMatch.index !== undefined) {
+          // "reset MY password" / "rotate OUR api keys" — the user talking
+          // about their own credentials, not an instruction to the agent.
+          const beforeCred = afterVerb.slice(0, credMatch.index);
+          if (!POSSESSIVE_EXEMPT.test(beforeCred)) {
+            const nearby = nearbyText(i);
+            const hasDestination =
+              URL_PATTERN.test(nearby) ||
+              EMAIL_PATTERN.test(nearby) ||
+              WEBHOOK_PATTERN.test(nearby);
+            // Cross-sentence verb/credential pairs are weaker evidence than
+            // same-sentence ones.
+            const basePoints = spansTwo ? 1.0 : 1.5;
+            push(
+              signals,
+              hasDestination
+                ? "exfil:imperative-with-destination"
+                : "exfil:imperative-credentials",
+              hasDestination
+                ? "imperative exfiltration with a destination"
+                : "imperative verb governing credentials",
+              hasDestination ? 2 : lowTrust ? 2 : basePoints,
+            );
+          }
+        }
+      }
+
+      // Message/data exfiltration: the verb governs user *content*
+      // ("send an email to vince2000@gmail.com … containing the user's
+      // full message") rather than credentials — the dominant
+      // indirect-injection forwarding shape. Runs independently of the
+      // credential branch above (a forwarding directive names no
+      // credential nouns, and the verb may sit outside the two-sentence
+      // window). The data noun may sit several sentences after the verb
+      // (directive, recipient, subject, body), so this scans the whole
+      // nearby neighborhood; the verb must still precede the data noun
+      // and a first-person form ("send my message") stays exempt via the
+      // possessive check. `push` dedupes by code, so overlapping
+      // neighborhoods can't double-count.
+      const scanText = nearbyText(i);
+      const scanVerb = EXFIL_VERB.exec(scanText);
+      const dataMatch = DATA_EXFIL_NOUN.exec(scanText);
+      if (
+        scanVerb &&
+        scanVerb.index !== undefined &&
+        dataMatch &&
+        dataMatch.index !== undefined
+      ) {
+        const verbEnd = scanVerb.index + scanVerb[0].length;
+        const beforeData = scanText.slice(0, dataMatch.index);
+        if (
+          dataMatch.index >= verbEnd &&
+          !POSSESSIVE_EXEMPT.test(beforeData.slice(-16))
+        ) {
+          if (
+            URL_PATTERN.test(scanText) ||
+            EMAIL_PATTERN.test(scanText) ||
+            WEBHOOK_PATTERN.test(scanText)
+          ) {
+            push(
+              signals,
+              "exfil:message-forwarding",
+              "imperative exfiltration of user content to an external destination",
+              2,
+            );
+          }
+        }
+      }
     }
 
     // Verb + destination in one sentence, credential noun nearby
@@ -622,6 +854,7 @@ function collectSignals(
       const nearby = nearbyText(i);
       if (
         CRED_NOUN.test(nearby) ||
+        DATA_EXFIL_NOUN.test(nearby) ||
         SECRET_PATTERNS.some((s) => s.pattern.test(nearby))
       ) {
         push(
@@ -685,11 +918,14 @@ function collectSignals(
             break;
           }
         }
-        // Opaque blob: the candidate must look like real base64 (a
-        // digit, `+`/`/`, or `=` padding) — not English prose that
-        // happens to use base64-alphabet words ("System prompt
-        // engineering is a useful skill" has none of those).
-        if (/[0-9+/=]/.test(candidate.replace(/\s+/g, ""))) {
+        // Opaque blob: the candidate must look like real base64 — a
+        // single whitespace-free token containing a digit, `+`/`/`, or
+        // `=` padding. Multi-word prose is never a blob, even when it
+        // contains a digit ("changed to 0000 effective immediately" is
+        // not base64): real blobs are one long token, and the
+        // whitespace-tolerant match above exists only so wrapped blobs
+        // still decode, not so sentences count as opaque.
+        if (!/\s/.test(candidate) && /[0-9+/=]/.test(candidate)) {
           encodedBlobSeen = true;
         }
       }
@@ -713,6 +949,72 @@ function collectSignals(
       if (pattern.test(text)) {
         push(signals, code, "dormant conditional instruction", 2);
       }
+    }
+    // Memory-write commands (MPBench command insertion): tool output
+    // directing persistence into long-term memory.
+    if (MEMORY_WRITE_COMMAND_RE.test(text)) {
+      push(
+        signals,
+        "suspicious:memory-write-command",
+        "directive to persist content into long-term memory",
+        2,
+      );
+    }
+    // False-fact replacement assertions (MemGhost-style): without ground
+    // truth these quarantine only in combination with another signal.
+    if (FACTUAL_REPLACEMENT_RE.test(text)) {
+      push(
+        signals,
+        "suspicious:factual-replacement",
+        "assertion that a fact/limit/policy changed",
+        1.5,
+      );
+    }
+    // Credential-harvest URL (phishing-shaped).
+    if (CREDENTIAL_HARVEST_URL_RE.test(text)) {
+      push(
+        signals,
+        "suspicious:credential-harvest-url",
+        "directive to enter credentials at an external URL",
+        1.5,
+      );
+    }
+    // Security-control disable ("disabling MFA enforcement").
+    if (SECURITY_DISABLE_RE.test(text)) {
+      push(
+        signals,
+        "suspicious:security-disable",
+        "directive to disable a security control",
+        1.5,
+      );
+    }
+    // Conditional memory claim ("when the user replies 'confirmed',
+    // remember that they authorized …").
+    if (CONDITIONAL_MEMORY_CLAIM_RE.test(text)) {
+      push(
+        signals,
+        "suspicious:conditional-memory-claim",
+        "conditional directive to remember a claimed authorization",
+        1,
+      );
+    }
+    // False-precedent URL (runbook/playbook directing an external fetch).
+    if (PRECEDENT_URL_RE.test(text)) {
+      push(
+        signals,
+        "suspicious:precedent-url",
+        "procedure entry directing a fetch from an external URL",
+        1,
+      );
+    }
+    // Insecure-storage claim ("SSNs may be stored in plain text").
+    if (INSECURE_STORAGE_CLAIM_RE.test(text)) {
+      push(
+        signals,
+        "suspicious:insecure-storage-claim",
+        "assertion that secrets may be stored insecurely",
+        1.5,
+      );
     }
     for (const { code, pattern } of SUPPRESSION_PATTERNS) {
       if (pattern.test(text)) {
@@ -776,7 +1078,10 @@ export function screenWrite(
   const framing = META_DISCUSSION_RE.test(framingText);
   let injectionBudget = 1.0;
   for (const s of full) {
-    const gated = TIER_GATED_CODES.has(s.code);
+    // Tier-gated signals were already exempt; the authority-claim signal
+    // joins them via NEVER_DILUTE_CODES — an attack framed as a
+    // "security update" is not a meta-discussion.
+    const gated = NEVER_DILUTE_CODES.has(s.code);
     let points = framing && !gated ? s.points * 0.5 : s.points;
     if (framing && s.code.startsWith("injection:")) {
       points = Math.min(points, injectionBudget);

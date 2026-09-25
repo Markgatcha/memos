@@ -160,12 +160,22 @@ import {
 import { addDuration } from "./temporal.js";
 import {
   QUARANTINE_RELEASED_METADATA_KEY,
+  LOW_TRUST_TIERS,
   isProvenanceTier,
   quarantineVisible,
   resolveProvenance,
 } from "./provenance.js";
-import { screenWrite } from "./quarantine.js";
+import { screenWrite, QUARANTINE_FLAG_THRESHOLD } from "./quarantine.js";
 import type { QuarantineVerdict } from "./quarantine.js";
+import {
+  QUERY_ATTACK_SIM_CAP,
+  RETRIEVAL_ANOMALY_PENALTY,
+  RETRIEVAL_ANOMALY_THRESHOLD,
+  SEMANTIC_ATTACK_SIM_METADATA_KEY,
+  SEMANTIC_HIGH_SIM_BAR,
+  SemanticScreen,
+  semanticEscalationPoints,
+} from "./semantic-screen.js";
 
 /**
  * Minimum cosine similarity for a memory to enter the semantic leg of
@@ -396,6 +406,13 @@ export class MemOS {
   };
   private experimental: ExperimentalConfig;
   private embeddingProvider: EmbeddingProvider | null = null;
+  /**
+   * Tier-2 semantic screen for the provenance-trust write gate (intent
+   * level, fastembed embeddings — no LLM). Lazily constructed: the
+   * anchor embeddings are computed on first use and cached for the
+   * process lifetime.
+   */
+  private semanticScreen: SemanticScreen | null = null;
   private listeners: Map<MemOSEvent, MemOSEventListener[]> = new Map();
   private initialised = false;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
@@ -672,12 +689,34 @@ export class MemOS {
     let quarantined = false;
     let quarantinedAt: number | null = null;
     let quarantineReason: string | null = null;
+    // Write-time attack-shape similarity, stamped into metadata when the
+    // tier-2 semantic screen runs (feeds retrieval-time anomaly scoring).
+    let semanticAttackSim: number | null = null;
     if (opts.quarantineScreen !== false) {
       const verdict = screenWrite(content, { tier: provenance });
       if (verdict.flagged) {
         quarantined = true;
         quarantinedAt = now;
         quarantineReason = verdict.reason;
+      } else {
+        // Tier-2 semantic screen (async, embedding-based): runs only for
+        // gray-zone writes (tier-1 score in [1.0, 2.0)) and low-trust
+        // tiers — ordinary writes never pay the embedding cost. Like
+        // tier 1 it quarantines, never hard-blocks: flagged content is
+        // still stored, just excluded from recall pending review.
+        const sem = await this.maybeSemanticScreen(
+          content,
+          verdict,
+          provenance,
+        );
+        if (sem) {
+          semanticAttackSim = Math.round(sem.sim * 1000) / 1000;
+          if (sem.escalate) {
+            quarantined = true;
+            quarantinedAt = now;
+            quarantineReason = `semantic:intent-match (sim=${semanticAttackSim})`;
+          }
+        }
       }
     }
 
@@ -686,6 +725,16 @@ export class MemOS {
     // check (see `fuseResults`) is a set intersection instead of a rescan.
     // Caller-supplied `metadata.entities` always wins.
     const metadata: Record<string, unknown> = { ...(opts.metadata ?? {}) };
+    // Stamp the write-time attack-shape similarity when the semantic tier
+    // ran: retrieval-time anomaly scoring reads it back, so retrieval
+    // pays no embedding cost for stored memories. Caller-supplied values
+    // win, matching the `entities` convention below.
+    if (
+      semanticAttackSim !== null &&
+      typeof metadata[SEMANTIC_ATTACK_SIM_METADATA_KEY] !== "number"
+    ) {
+      metadata[SEMANTIC_ATTACK_SIM_METADATA_KEY] = semanticAttackSim;
+    }
     if (!Array.isArray(metadata.entities)) {
       const entities = extractQueryEntities(content);
       if (entities.length > 0) {
@@ -1848,10 +1897,116 @@ export class MemOS {
   /**
    * Screen text with the write-gate classifier without storing
    * anything. Useful for pre-flight checks and for testing the
-   * classifier's verdict on a given input.
+   * classifier's verdict on a given input. Tier 1 only (synchronous
+   * regex screen) — the async semantic tier needs an initialized
+   * instance and runs on the real write path.
    */
   screenContent(content: string): QuarantineVerdict {
     return screenWrite(content);
+  }
+
+  /**
+   * Lazily-constructed tier-2 semantic screen, or null when embeddings
+   * are disabled (no provider to embed with).
+   */
+  private getSemanticScreen(): SemanticScreen | null {
+    if (!this.embeddingProvider) return null;
+    if (!this.semanticScreen) {
+      this.semanticScreen = new SemanticScreen(this.embeddingProvider);
+    }
+    return this.semanticScreen;
+  }
+
+  /**
+   * Tier-2 semantic screen for the provenance-trust write gate:
+   * intent-level detection via cosine similarity to canonical
+   * attack-shape anchors (fastembed, no LLM — see
+   * `src/semantic-screen.ts`).
+   *
+   * Runs only when tier 1 left the write in the gray zone (score in
+   * [1.0, 2.0)) or the write is low-trust tiered — ordinary writes
+   * never pay the embedding cost, and the zero-LLM cheap screen stays
+   * the first and only mandatory tier.
+   *
+   * Escalation rules (both quarantine, never hard-block — flagged
+   * content is still stored, just excluded from recall pending review):
+   * - gray-zone: tier-1 score + `semanticEscalationPoints(sim)` >= 2.0 —
+   *   the semantic tier escalates partial regex evidence, it cannot
+   *   quarantine a clean-looking write on its own;
+   * - low-trust tiers: sim >= SEMANTIC_HIGH_SIM_BAR quarantines on
+   *   intent alone (tool output is data, never instructions).
+   *
+   * Returns null when the tier doesn't run (out of scope, embeddings
+   * off) or is unavailable (hash fallback, transient embed error) —
+   * callers keep the tier-1 verdict. Fail-open for writes: a semantic
+   * outage never blocks or silently quarantines a write.
+   */
+  private async maybeSemanticScreen(
+    content: string,
+    tier1: QuarantineVerdict,
+    provenance: ProvenanceTier,
+  ): Promise<{ sim: number; escalate: boolean } | null> {
+    const lowTrust = LOW_TRUST_TIERS.has(provenance);
+    const grayZone =
+      tier1.score >= 1.0 && tier1.score < QUARANTINE_FLAG_THRESHOLD;
+    if (!grayZone && !lowTrust) return null;
+    const screen = this.getSemanticScreen();
+    if (!screen) return null;
+    const sim = await screen.scoreText(content);
+    if (sim < 0) return null;
+    const escalate =
+      (grayZone &&
+        tier1.score + semanticEscalationPoints(sim) >=
+          QUARANTINE_FLAG_THRESHOLD) ||
+      (lowTrust && sim >= SEMANTIC_HIGH_SIM_BAR);
+    return { sim, escalate };
+  }
+
+  /**
+   * Retrieval-time anomaly scoring (topic-conditioned): memories whose
+   * write-time attack-shape similarity (`metadata.semanticAttackSim`,
+   * stamped by {@link maybeSemanticScreen}) is at/above
+   * RETRIEVAL_ANOMALY_THRESHOLD are down-weighted — unless the query
+   * itself is attack-shaped (similarity at/above QUERY_ATTACK_SIM_CAP),
+   * in which case attack-shaped memories are expected (security
+   * discussion, red-team review) and the flag stays off.
+   *
+   * Cheap by construction: the query is embedded only when at least one
+   * stamped suspect is in the result set; stored memories reuse their
+   * write-time measurement.
+   */
+  private async applyRetrievalAnomalyScoring(
+    results: ScoredMemory[],
+    query: string,
+  ): Promise<ScoredMemory[]> {
+    if (!query || !this.embeddingProvider) return results;
+    const suspects = new Set(
+      results
+        .filter((r) => {
+          const sim = r.node.metadata?.[SEMANTIC_ATTACK_SIM_METADATA_KEY];
+          return typeof sim === "number" && sim >= RETRIEVAL_ANOMALY_THRESHOLD;
+        })
+        .map((r) => r.node.id),
+    );
+    if (suspects.size === 0) return results;
+    const screen = this.getSemanticScreen();
+    if (!screen) return results;
+    const querySim = await screen.scoreText(query);
+    // Tier unavailable, or the query is itself attack-shaped: expected
+    // recall, no anomaly.
+    if (querySim < 0 || querySim >= QUERY_ATTACK_SIM_CAP) return results;
+    return results.map((r) =>
+      suspects.has(r.node.id)
+        ? {
+            ...r,
+            score: r.score * RETRIEVAL_ANOMALY_PENALTY,
+            scores: {
+              ...r.scores,
+              retrievalAnomaly: RETRIEVAL_ANOMALY_PENALTY,
+            },
+          }
+        : r,
+    );
   }
 
   /**
@@ -4898,11 +5053,20 @@ export class MemOS {
       entityResults,
     );
 
+    // Retrieval-time trust anomaly (topic-conditioned): memories whose
+    // write-time attack-shape similarity is high are down-weighted when
+    // the query is not itself attack-shaped. Cheap: the query is only
+    // embedded when a stamped suspect is in the result set.
+    const anomalyScored = await this.applyRetrievalAnomalyScoring(
+      fused,
+      filter.query ?? "",
+    );
+
     // Contradiction resolution (accuracy item 4): when both members of
     // a recorded contradiction pair appear in the fused set, demote the
     // older one so the newer version wins. Pure scoring nudge — nothing
     // is removed, and the lookup is bounded by the fused set size.
-    const resolved = await this.applyContradictionResolution(fused);
+    const resolved = await this.applyContradictionResolution(anomalyScored);
 
     const expanded = await this.applyGraphExpansion(
       resolved,

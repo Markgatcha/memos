@@ -205,7 +205,13 @@ describe("parseExternalMemoryExport", () => {
 
 describe("MemOS.importExternal", () => {
   test("imports a ChatGPT export with external_data provenance", async () => {
-    const memos = await makeMemos();
+    // Empty seed: the shared ORTHO mock maps any text containing "a" onto the
+    // same vector, which the tier-2 semantic screen would read as a perfect
+    // attack-shape match and quarantine this benign import. An unseeded
+    // provider keeps the test focused on the import path, not mock geometry.
+    const memos = await makeMemos({
+      embeddings: { enabled: true, provider: new VectorProvider() },
+    });
     const result = await memos.importExternal({
       data: [
         {

@@ -674,6 +674,13 @@ export interface ScoredMemory {
      * `provenanceMultiplier` in src/provenance.ts).
      */
     provenance?: number;
+    /**
+     * Present when retrieval-time anomaly scoring ran: the demotion
+     * factor applied because the memory's write-time attack-shape
+     * similarity was high while the query was not attack-shaped (see
+     * `applyRetrievalAnomalyScoring` in src/memory.ts).
+     */
+    retrievalAnomaly?: number;
   };
 }
 
