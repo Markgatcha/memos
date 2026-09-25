@@ -121,6 +121,111 @@ const scopeInputSchema = z
   .optional();
 
 // ---------------------------------------------------------------------------
+// MCP tool annotations (readOnlyHint / destructiveHint / idempotentHint /
+// openWorldHint), introduced 2025-03-26 and kept in the 2026-07-28 spec.
+//
+// Annotations are hints, not permissions: annotation-aware clients (Claude
+// Desktop, VS Code) use them to decide whether a tool call needs an "Allow"
+// prompt. The MCP defaults when annotations are absent are
+// readOnlyHint=false, destructiveHint=true, openWorldHint=true, so every
+// tool here gets all four hints set explicitly — otherwise pure reads like
+// memos_search would still trigger an approval prompt.
+//
+// All 21 tools operate on the local MemOS database only; nothing reaches
+// outside it, so openWorldHint is false everywhere.
+// ---------------------------------------------------------------------------
+
+export interface McpToolAnnotations {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+}
+
+/** Annotation profile for a pure read: no side effects, repeatable. */
+const ANNOTATE_READ: McpToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
+
+/** Annotation profile for a non-destructive write. */
+const ANNOTATE_WRITE: McpToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false,
+};
+
+/**
+ * Per-tool annotations, keyed by tool name. Shared by the live server
+ * registration (the wire path) and the static TOOL_METADATA below so the
+ * two can never disagree.
+ */
+export const TOOL_ANNOTATIONS: Record<string, McpToolAnnotations> = {
+  // Creates a new memory row: write, non-destructive, not idempotent.
+  memos_store: ANNOTATE_WRITE,
+  memos_search: ANNOTATE_READ,
+  memos_retrieve: ANNOTATE_READ,
+  // Deletes a memory by ID. Re-running with the same ID reaches the same
+  // end state, so it is also idempotent.
+  memos_forget: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  // Creates a typed edge between two memories.
+  memos_link: ANNOTATE_WRITE,
+  // Releases a memory from quarantine (reversible state change).
+  memos_quarantine_release: ANNOTATE_WRITE,
+  memos_graph: ANNOTATE_READ,
+  memos_context: ANNOTATE_READ,
+  memos_context_pack: ANNOTATE_READ,
+  memos_search_temporal: ANNOTATE_READ,
+  // Setting the same validity window twice reaches the same end state.
+  memos_set_validity: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  // Marks a memory historical (add-only; never deletes).
+  memos_supersede: ANNOTATE_WRITE,
+  memos_set_trust: ANNOTATE_WRITE,
+  // Pure read by default, but autoStore=true writes — so not read-only.
+  memos_extract_facts: ANNOTATE_WRITE,
+  memos_diagnostics: ANNOTATE_READ,
+  // Re-embed pass: safe to re-run; purgeStale only drops vectors of other
+  // models, not memories.
+  memos_reindex: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  // Merges near-duplicates, archives stale memories, supersedes decayed
+  // ones. State-changing and not repeatable (dryRun=true skips the writes).
+  memos_consolidate: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  memos_usage: ANNOTATE_READ,
+  memos_history: ANNOTATE_READ,
+  // Closes a validity interval and reactivates a predecessor: state-changing.
+  memos_revert: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  memos_reminders: ANNOTATE_READ,
+};
+
+// ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
 
@@ -129,6 +234,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_store",
     {
       title: "Store Memory",
+      annotations: TOOL_ANNOTATIONS.memos_store,
       description: "Store a durable local memory in MemOS.",
       inputSchema: z.object({
         content: z.string().describe("Memory text to store."),
@@ -217,6 +323,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_search",
     {
       title: "Search Memories",
+      annotations: TOOL_ANNOTATIONS.memos_search,
       description:
         "Search local memories by full-text query. Pass compact: true for token-lean output. " +
         "Results carry provenance trust flags: `provenance` (tier), `citation` ([mem:hex] token " +
@@ -349,6 +456,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_retrieve",
     {
       title: "Retrieve Memory",
+      annotations: TOOL_ANNOTATIONS.memos_retrieve,
       description: "Retrieve one memory by ID.",
       inputSchema: z.object({
         id: z.string().describe("Memory ID."),
@@ -375,6 +483,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_forget",
     {
       title: "Forget Memory",
+      annotations: TOOL_ANNOTATIONS.memos_forget,
       description: "Delete one memory by ID.",
       inputSchema: z.object({
         id: z.string().describe("Memory ID."),
@@ -402,6 +511,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_link",
     {
       title: "Link Two Memories",
+      annotations: TOOL_ANNOTATIONS.memos_link,
       description:
         "Create a typed edge between two memories (e.g. relates_to, " +
         "supports, contradicts). Used by the MCP Apps explorer's " +
@@ -453,6 +563,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_quarantine_release",
     {
       title: "Release Memory From Quarantine",
+      annotations: TOOL_ANNOTATIONS.memos_quarantine_release,
       description:
         "Release a quarantined memory back into recall. Idempotent; the " +
         "quarantine audit trail (quarantinedAt/reason) is preserved. Used " +
@@ -480,6 +591,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_graph",
     {
       title: "Memory Graph",
+      annotations: TOOL_ANNOTATIONS.memos_graph,
       description: "Return the current memory graph.",
       inputSchema: z.object({}),
       outputSchema: z.object({
@@ -505,6 +617,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_context",
     {
       title: "Memory Context",
+      annotations: TOOL_ANNOTATIONS.memos_context,
       description: "Build graph-neighbour context around a memory.",
       inputSchema: z.object({
         id: z.string().describe("Memory ID."),
@@ -536,6 +649,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_context_pack",
     {
       title: "Build Context Pack",
+      annotations: TOOL_ANNOTATIONS.memos_context_pack,
       description:
         "Build a token-budgeted, relevance-ranked slice of memories for " +
         "injection into a prompt. This is the tool to use when you want " +
@@ -610,6 +724,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_search_temporal",
     {
       title: "Search Memories Valid At a Time",
+      annotations: TOOL_ANNOTATIONS.memos_search_temporal,
       description:
         "Search memories that were valid at a specific point in time " +
         "(unix ms). Superseded/historical memories stay queryable here.",
@@ -642,6 +757,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_set_validity",
     {
       title: "Set Memory Validity Window",
+      annotations: TOOL_ANNOTATIONS.memos_set_validity,
       description:
         "Mark a memory's temporal validity window (unix ms). A validTo in " +
         "the past makes the memory historical: excluded from default " +
@@ -677,6 +793,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_supersede",
     {
       title: "Supersede Memory",
+      annotations: TOOL_ANNOTATIONS.memos_supersede,
       description:
         "Mark a memory as superseded (historical) and optionally link its " +
         "replacement with a temporal_precedes edge.",
@@ -707,6 +824,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_set_trust",
     {
       title: "Set Memory Trust",
+      annotations: TOOL_ANNOTATIONS.memos_set_trust,
       description:
         "Set the trust score [0,1] of a memory. High-trust memories rank " +
         "higher in hybrid search.",
@@ -736,6 +854,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_extract_facts",
     {
       title: "Extract Facts From Conversation",
+      annotations: TOOL_ANNOTATIONS.memos_extract_facts,
       description:
         "Rule-based local extraction of preferences, entities and facts " +
         "from conversation messages, optionally storing them as memories.",
@@ -788,6 +907,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_diagnostics",
     {
       title: "Memory Diagnostics",
+      annotations: TOOL_ANNOTATIONS.memos_diagnostics,
       description:
         "Health report: counts, embedding coverage, temporal stats, " +
         "storage capabilities and database size.",
@@ -809,6 +929,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_reindex",
     {
       title: "Re-embed All Memories",
+      annotations: TOOL_ANNOTATIONS.memos_reindex,
       description:
         "Re-embed every memory with the currently configured embedding " +
         "model. Required after switching models. Can be slow on large " +
@@ -841,6 +962,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_consolidate",
     {
       title: "Consolidate Memories",
+      annotations: TOOL_ANNOTATIONS.memos_consolidate,
       description:
         "Offline maintenance pass ('dreaming'): merge near-duplicates, " +
         "archive stale low-importance memories, supersede decayed ones " +
@@ -903,6 +1025,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_usage",
     {
       title: "Token Savings Telemetry",
+      annotations: TOOL_ANNOTATIONS.memos_usage,
       description:
         "Lifetime context-pack token telemetry for this server process: " +
         "packs built, tokens actually injected, the naive raw-JSON " +
@@ -928,6 +1051,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_history",
     {
       title: "Memory Version Timeline",
+      annotations: TOOL_ANNOTATIONS.memos_history,
       description:
         "Audit timeline for one memory: the versions it superseded, the " +
         "versions that superseded it, and consolidated notes derived from " +
@@ -963,6 +1087,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_revert",
     {
       title: "Revert Memory to Previous Version",
+      annotations: TOOL_ANNOTATIONS.memos_revert,
       description:
         "Command-driven belief revision: revert a memory to the version " +
         'it superseded ("revert that", "undo what I just told you", ' +
@@ -1078,6 +1203,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
     "memos_reminders",
     {
       title: "List Event Reminders",
+      annotations: TOOL_ANNOTATIONS.memos_reminders,
       description:
         "List scheduled event reminders from memory (deterministic " +
         "temporal event memory — no LLM involved). Events are extracted " +
@@ -1397,6 +1523,7 @@ export async function runMcpServer(config: MemOSConfig = {}): Promise<void> {
 export interface McpToolInfo {
   name: string;
   description: string;
+  annotations: McpToolAnnotations;
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
 }
@@ -1404,6 +1531,7 @@ export interface McpToolInfo {
 const TOOL_METADATA: McpToolInfo[] = [
   {
     name: "memos_store",
+    annotations: TOOL_ANNOTATIONS.memos_store,
     description: "Store a durable local memory in MemOS.",
     inputSchema: z.toJSONSchema(
       z.object({
@@ -1420,6 +1548,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_search",
+    annotations: TOOL_ANNOTATIONS.memos_search,
     description:
       "Search local memories by full-text query. Pass compact: true for token-lean output.",
     inputSchema: z.toJSONSchema(
@@ -1436,6 +1565,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_retrieve",
+    annotations: TOOL_ANNOTATIONS.memos_retrieve,
     description: "Retrieve one memory by ID.",
     inputSchema: z.toJSONSchema(z.object({ id: z.string() })) as Record<
       string,
@@ -1447,6 +1577,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_forget",
+    annotations: TOOL_ANNOTATIONS.memos_forget,
     description: "Delete one memory by ID.",
     inputSchema: z.toJSONSchema(z.object({ id: z.string() })) as Record<
       string,
@@ -1458,6 +1589,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_link",
+    annotations: TOOL_ANNOTATIONS.memos_link,
     description: "Create a typed edge between two memories.",
     inputSchema: z.toJSONSchema(
       z.object({
@@ -1483,6 +1615,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_quarantine_release",
+    annotations: TOOL_ANNOTATIONS.memos_quarantine_release,
     description: "Release a quarantined memory back into recall.",
     inputSchema: z.toJSONSchema(z.object({ id: z.string() })) as Record<
       string,
@@ -1494,6 +1627,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_graph",
+    annotations: TOOL_ANNOTATIONS.memos_graph,
     description: "Return the current memory graph.",
     inputSchema: z.toJSONSchema(z.object({})) as Record<string, unknown>,
     outputSchema: z.toJSONSchema(
@@ -1505,6 +1639,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_context",
+    annotations: TOOL_ANNOTATIONS.memos_context,
     description: "Build graph-neighbour context around a memory.",
     inputSchema: z.toJSONSchema(
       z.object({
@@ -1519,6 +1654,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_context_pack",
+    annotations: TOOL_ANNOTATIONS.memos_context_pack,
     description:
       "Build a token-budgeted, relevance-ranked slice of memories for " +
       "injection into a prompt. This is the tool to use when you want " +
@@ -1539,6 +1675,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_search_temporal",
+    annotations: TOOL_ANNOTATIONS.memos_search_temporal,
     description:
       "Search memories that were valid at a specific point in time " +
       "(unix ms). Superseded/historical memories stay queryable here.",
@@ -1556,6 +1693,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_set_validity",
+    annotations: TOOL_ANNOTATIONS.memos_set_validity,
     description:
       "Mark a memory's temporal validity window (unix ms). A validTo in " +
       "the past makes the memory historical: excluded from default " +
@@ -1573,6 +1711,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_supersede",
+    annotations: TOOL_ANNOTATIONS.memos_supersede,
     description:
       "Mark a memory as superseded (historical) and optionally link its " +
       "replacement with a temporal_precedes edge.",
@@ -1588,6 +1727,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_set_trust",
+    annotations: TOOL_ANNOTATIONS.memos_set_trust,
     description:
       "Set the trust score [0,1] of a memory. High-trust memories rank " +
       "higher in hybrid search.",
@@ -1600,6 +1740,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_extract_facts",
+    annotations: TOOL_ANNOTATIONS.memos_extract_facts,
     description:
       "Rule-based local extraction of preferences, entities and facts " +
       "from conversation messages, optionally storing them as memories.",
@@ -1617,6 +1758,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_diagnostics",
+    annotations: TOOL_ANNOTATIONS.memos_diagnostics,
     description:
       "Health report: counts, embedding coverage, temporal stats, " +
       "storage capabilities and database size.",
@@ -1627,6 +1769,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_reindex",
+    annotations: TOOL_ANNOTATIONS.memos_reindex,
     description:
       "Re-embed every memory with the currently configured embedding " +
       "model. Required after switching models. Can be slow on large " +
@@ -1645,6 +1788,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_consolidate",
+    annotations: TOOL_ANNOTATIONS.memos_consolidate,
     description:
       "Offline maintenance pass ('dreaming'): merge near-duplicates, " +
       "archive stale low-importance memories, supersede decayed ones " +
@@ -1668,6 +1812,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_usage",
+    annotations: TOOL_ANNOTATIONS.memos_usage,
     description:
       "Lifetime context-pack token telemetry for this server process: " +
       "packs built, tokens injected, naive raw-JSON baseline, savings %.",
@@ -1679,6 +1824,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_history",
+    annotations: TOOL_ANNOTATIONS.memos_history,
     description:
       "Audit timeline for one memory: supersedes, superseded by, derived notes.",
     inputSchema: z.toJSONSchema(
@@ -1695,6 +1841,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_revert",
+    annotations: TOOL_ANNOTATIONS.memos_revert,
     description:
       "Revert a memory to the version it superseded (command-driven belief " +
       "revision). Closes the target's validity interval and reactivates the " +
@@ -1721,6 +1868,7 @@ const TOOL_METADATA: McpToolInfo[] = [
   },
   {
     name: "memos_reminders",
+    annotations: TOOL_ANNOTATIONS.memos_reminders,
     description:
       "List scheduled event reminders (deterministic temporal event memory). " +
       "Pass due=true for reminders due as of now; otherwise all scheduled " +
