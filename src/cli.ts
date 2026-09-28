@@ -30,6 +30,8 @@
 import { MemOS } from "./memory.js";
 import { graphToMermaid } from "./graph-mermaid.js";
 import { parseScopeArg } from "./scope.js";
+import { MemorySkippedError } from "./memory.js";
+import { isProvenanceTier } from "./provenance.js";
 import { parseRevertCliArgs } from "./revert.js";
 import { listReminders, splitRemindText } from "./event-memory.js";
 import { parseTemporal } from "./temporal.js";
@@ -661,6 +663,11 @@ Commands:
   harness <list|merge>    Cross-harness memory: per-harness memory counts
                           (list), or merge another harness's DB file into
                           this one (merge --from <db-path> [--dry-run])
+  scope list              List scoped memory spaces (namespaces) with counts
+                          (--json). Scoped reads union the shared default
+                          scope with the requested scope(s); free-form
+                          scopes use the project:<name> / harness:<name>
+                          convention
   history <id>            Version timeline for one memory: supersedes,
                           superseded by, derived notes
   revert                  Revert a memory to its previous version
@@ -707,6 +714,18 @@ Options:
   --limit <n>             Result limit (search command)
   --harness <name|all>    Scope search to one harness's memories
                           (search command; default: all harnesses)
+  --namespaces <a,b>      Search across comma-separated namespaces
+                          (search command; unions the shared default
+                          namespace like --scope does)
+  --namespace <ns>        Write into a free-form scope/namespace
+                          (store command; convention project:<name> /
+                          harness:<name>; wins over --scope)
+  --force                 Bypass the write-side salience triage
+                          (store command; triage is on by default)
+  --provenance <tier>     Provenance tier for the write: user-verified,
+                          user, tool-output, chat, imported
+                          (store command; tool-derived evidence should use
+                          tool-output — it retrieves at a lower trust tier)
   --format <fmt>          Export format: json, markdown, obsidian
   --output <path>         Output path (export/backup)
   --tag <tag>             Tag filter (export/list)
@@ -857,10 +876,52 @@ async function main(): Promise<void> {
         if (scopeIdx !== -1 && args[scopeIdx + 1]) {
           opts.scope = parseScopeArg(args[scopeIdx + 1]);
         }
-        const result = await memos.store(
-          content,
-          opts as unknown as Omit<CreateMemoryInput, "content">,
-        );
+        // Free-form scope/namespace (convention: project:<name>,
+        // harness:<name>). Explicit --namespace wins over --scope.
+        const namespaceIdx = args.indexOf("--namespace");
+        if (namespaceIdx !== -1 && args[namespaceIdx + 1]) {
+          opts.namespace = args[namespaceIdx + 1];
+          delete opts.scope;
+        }
+        const provenanceIdx = args.indexOf("--provenance");
+        const provenanceArg =
+          provenanceIdx !== -1 ? args[provenanceIdx + 1] : undefined;
+        if (provenanceArg !== undefined) {
+          if (!isProvenanceTier(provenanceArg)) {
+            console.error(
+              `Error: invalid --provenance "${provenanceArg}". ` +
+                `Valid tiers: user-verified, user, tool-output, chat, imported.`,
+            );
+            process.exit(1);
+          }
+          opts.provenance = provenanceArg;
+        }
+        // Write-side salience triage: the no-LLM retain filter drops
+        // trivial/noise writes (acknowledgements, near-duplicates) before
+        // they reach the store. `--force` bypasses it.
+        const force = args.includes("--force");
+        if (!force) opts.filterRetain = true;
+        let result: Awaited<ReturnType<typeof memos.store>>;
+        try {
+          result = await memos.store(
+            content,
+            opts as unknown as Omit<CreateMemoryInput, "content">,
+          );
+        } catch (err) {
+          if (err instanceof MemorySkippedError) {
+            // Not a failure: the triage judged this write not worth
+            // keeping. Debug detail behind MEMOS_DEBUG; one line on
+            // stderr so the skip is never silent.
+            if (process.env.MEMOS_DEBUG) {
+              console.debug(`[retain-filter] skipped: ${err.message}`);
+            }
+            console.error(
+              `Skipped: ${err.message} (use --force to store anyway)`,
+            );
+            process.exit(0);
+          }
+          throw err;
+        }
         if (jsonFlag) {
           console.log(JSON.stringify(result, null, 2));
         } else {
@@ -933,6 +994,18 @@ async function main(): Promise<void> {
         const scopeIdx = args.indexOf("--scope");
         const scopeArg = scopeIdx !== -1 ? args[scopeIdx + 1] : undefined;
         const scope = scopeArg ? parseScopeArg(scopeArg) : undefined;
+        // Multi-scope read: comma-separated raw namespaces, e.g.
+        // --namespaces project:alpha,project:beta (always unions the
+        // shared `default` namespace, like --scope does).
+        const namespacesIdx = args.indexOf("--namespaces");
+        const namespacesArg =
+          namespacesIdx !== -1 ? args[namespacesIdx + 1] : undefined;
+        const namespaces = namespacesArg
+          ? namespacesArg
+              .split(",")
+              .map((n) => n.trim())
+              .filter((n) => n.length > 0)
+          : undefined;
         const harnessIdx = args.indexOf("--harness");
         const harnessArg = harnessIdx !== -1 ? args[harnessIdx + 1] : undefined;
         const tagIdx = args.indexOf("--tag");
@@ -951,6 +1024,7 @@ async function main(): Promise<void> {
           tags: searchTags,
           ...(pool ? { pool } : {}),
           ...(scope && Object.keys(scope).length > 0 ? { scope } : {}),
+          ...(namespaces && namespaces.length > 0 ? { namespaces } : {}),
           ...(harnessArg ? { harness: harnessArg } : {}),
         });
         if (jsonFlag) {
@@ -1334,6 +1408,33 @@ async function main(): Promise<void> {
         }
         console.error(
           "Error: subcommand is required.\n  Usage: memos harness <list|merge>  (list [--json], merge --from <db-path> [--dry-run] [--json])",
+        );
+        process.exit(1);
+      }
+
+      case "scope": {
+        const sub = args[1];
+        if (sub === "list") {
+          const spaces = await memos.listNamespaceCounts();
+          if (jsonFlag) {
+            console.log(JSON.stringify(spaces, null, 2));
+          } else if (spaces.length === 0) {
+            console.log("No memories stored.");
+          } else {
+            const total = spaces.reduce((n, s) => n + s.count, 0);
+            console.log(`Memory scopes (${total} total):\n`);
+            for (const s of spaces) {
+              console.log(`  ${s.namespace.padEnd(28)} ${s.count}`);
+            }
+            console.log(
+              "\nScoped reads union the shared `default` scope with the requested scope(s).",
+            );
+          }
+          break;
+        }
+        console.error(
+          "Error: subcommand is required.\n  Usage: memos scope list [--json]\n" +
+            "  Free-form scope names follow the convention project:<name> / harness:<name>.",
         );
         process.exit(1);
       }

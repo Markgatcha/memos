@@ -276,6 +276,15 @@ function registerTools(server: McpServer, memos: MemOS): void {
               'results returned by tools, "imported" for bulk imports. ' +
               "Defaults from the content's origin when omitted.",
           ),
+        filter_retain: z
+          .boolean()
+          .optional()
+          .describe(
+            "Run the write-side salience triage before storing: trivial " +
+              "acknowledgements and near-duplicates are skipped (the tool " +
+              "returns a skip notice instead of a node). Default false — " +
+              "agent writes are never silently dropped unless opted in.",
+          ),
       }),
       outputSchema: z.object({
         node: memoryNodeSchema,
@@ -292,24 +301,50 @@ function registerTools(server: McpServer, memos: MemOS): void {
       context,
       scope,
       provenance,
+      filter_retain,
     }) => {
-      const stored = await memos.store(content, {
-        type:
-          (type as
-            | "fact"
-            | "preference"
-            | "context"
-            | "relationship"
-            | "entity"
-            | "custom") ?? "fact",
-        ...(tags ? { tags } : {}),
-        ...(ttl !== undefined ? { ttl } : {}),
-        ...(namespace ? { namespace } : {}),
-        ...(pool ? { pool } : {}),
-        ...(context ? { context } : {}),
-        ...(scope ? { scope } : {}),
-        ...(provenance ? { provenance } : {}),
-      });
+      let stored;
+      try {
+        stored = await memos.store(content, {
+          type:
+            (type as
+              | "fact"
+              | "preference"
+              | "context"
+              | "relationship"
+              | "entity"
+              | "custom") ?? "fact",
+          ...(tags ? { tags } : {}),
+          ...(ttl !== undefined ? { ttl } : {}),
+          ...(namespace ? { namespace } : {}),
+          ...(pool ? { pool } : {}),
+          ...(context ? { context } : {}),
+          ...(scope ? { scope } : {}),
+          ...(provenance ? { provenance } : {}),
+          ...(filter_retain ? { filterRetain: true } : {}),
+        });
+      } catch (err) {
+        // Salience triage skip: surface as a plain-text notice, not a
+        // protocol error — the write was judged not worth keeping.
+        if (
+          filter_retain &&
+          err instanceof Error &&
+          err.name === "MemorySkippedError"
+        ) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text:
+                  `Skipped by the salience triage (${err.message}). ` +
+                  `Re-send with filter_retain=false to store it anyway.`,
+              },
+            ],
+            structuredContent: { skipped: true, reason: err.message },
+          };
+        }
+        throw err;
+      }
       return {
         content: [
           { type: "text" as const, text: `Stored memory ${stored.node.id}.` },
@@ -354,6 +389,14 @@ function registerTools(server: McpServer, memos: MemOS): void {
           .optional()
           .describe("Filter by retrieval pool (event, note, or procedure)."),
         scope: scopeInputSchema,
+        namespaces: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Read across several raw namespaces at once (e.g. " +
+              '["project:alpha", "project:beta"]). The shared `default` ' +
+              "namespace is always unioned in, like `scope`.",
+          ),
         harness: z
           .string()
           .optional()
@@ -398,6 +441,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
       includeQuarantined,
       pool,
       scope,
+      namespaces,
       harness,
       compact,
     }) => {
@@ -410,6 +454,7 @@ function registerTools(server: McpServer, memos: MemOS): void {
         ...(includeQuarantined !== undefined ? { includeQuarantined } : {}),
         ...(pool !== undefined ? { pool } : {}),
         ...(scope ? { scope } : {}),
+        ...(namespaces && namespaces.length > 0 ? { namespaces } : {}),
         ...(harness ? { harness } : {}),
       });
       // Read-time trust policy: flag low-trust channels so the host

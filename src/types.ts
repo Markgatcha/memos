@@ -472,6 +472,21 @@ export interface SearchFilter {
   /** Filter by namespace. */
   namespace?: string;
   /**
+   * Filter by an explicit list of namespaces (OR logic). Composes with
+   * `namespace` / `namespacePrefix` (OR'd together) when several are set.
+   * Useful for multi-scope reads, e.g. `["project:alpha", "project:beta"]`.
+   */
+  namespaces?: string[];
+  /**
+   * Scoped-space union (company-brain container semantics): when any
+   * namespace constraint is present (`namespace`, `namespaces`, or
+   * `namespacePrefix`), also include the shared `default` namespace in
+   * the result set. `MemOS.search` enables this by default for
+   * scope-filtered searches; pass `false` explicitly for the legacy
+   * exclusive behavior. Unscoped searches are unaffected.
+   */
+  includeSharedScope?: boolean;
+  /**
    * Typed multi-scope filter. Composed into a namespace prefix; with the
    * default `"hierarchical"` match, `{ user: "alice" }` surfaces every
    * memory stored under Alice's agents and runs. Set
@@ -1085,6 +1100,12 @@ export interface StorageAdapter {
 
   /** Delete an edge by ID. */
   deleteEdge(id: string): Promise<boolean>;
+
+  /**
+   * Scoped-space inventory: every namespace with its live memory count.
+   * Optional — adapters that cannot provide it fall back to a full scan.
+   */
+  listNamespaces?(): Promise<Array<{ namespace: string; count: number }>>;
 
   /**
    * Close (invalidate) the currently-valid edges incident to a node by

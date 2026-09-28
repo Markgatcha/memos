@@ -621,17 +621,6 @@ export class MemOS {
   ): Promise<{ node: MemoryNode; links: MemoryEdge[] }> {
     this.assertInit();
 
-    // Hermes-style retain pre-filter (v1.6.26). When `filterRetain` is set,
-    // low-signal content is skipped before the write so long-term memory isn't
-    // flooded with noise that would later bloat context-packs. Callers can
-    // detect a skipped write by catching `MemorySkippedError`.
-    if (opts.filterRetain) {
-      const decision = decideRetain({ content });
-      if (!decision.retain) {
-        throw new MemorySkippedError(decision.reason, decision.score);
-      }
-    }
-
     // Strictly monotonic per instance: two stores in the same millisecond
     // would otherwise be indistinguishable in every time-ordered view.
     // `opts.now` (test hook) overrides the wall clock — it is also the
@@ -645,6 +634,34 @@ export class MemOS {
     const namespace = opts.scope
       ? composeScope(opts.scope)
       : (opts.namespace ?? "default");
+
+    // Write-side salience triage (no LLM, no embeddings): when
+    // `filterRetain` is set, low-signal content is skipped before the
+    // write so long-term memory isn't flooded with noise that would
+    // later bloat context-packs. Runs after namespace resolution so the
+    // near-duplicate check compares against recent same-scope memories.
+    // Callers can detect a skipped write by catching
+    // `MemorySkippedError`. Fail-open: when the novelty lookup itself
+    // fails, the triage still runs without duplicate detection — when
+    // in doubt, keep the memory.
+    if (opts.filterRetain) {
+      let existingContent: string[] | undefined;
+      try {
+        const recent = await this.storage.queryNodes({
+          namespace,
+          limit: 20,
+          sortBy: "createdAt",
+          sortOrder: "desc",
+        });
+        existingContent = recent.map((r) => r.node.content);
+      } catch {
+        existingContent = undefined;
+      }
+      const decision = decideRetain({ content, existingContent });
+      if (!decision.retain) {
+        throw new MemorySkippedError(decision.reason, decision.score);
+      }
+    }
 
     // Deterministic temporal event updates ("never mind that meeting got
     // moved 3 days later", "the meeting is cancelled"): resolve BEFORE
@@ -1073,13 +1090,21 @@ export class MemOS {
         : { limit: 20, ...queryOrFilter };
 
     // Scope → namespace matching (hierarchical prefix by default). No
-    // scope/namespace means the query spans ALL namespaces.
+    // scope/namespace means the query spans ALL namespaces. A
+    // scope/namespace-filtered read also unions the shared `default`
+    // namespace unless `includeSharedScope: false` is passed.
     const scopeFilter = this.resolveScopeFilter(filter);
     if (scopeFilter.namespace !== undefined) {
       filter.namespace = scopeFilter.namespace;
     }
+    if (scopeFilter.namespaces !== undefined) {
+      filter.namespaces = scopeFilter.namespaces;
+    }
     if (scopeFilter.namespacePrefix !== undefined) {
       filter.namespacePrefix = scopeFilter.namespacePrefix;
+    }
+    if (scopeFilter.includeSharedScope !== undefined) {
+      filter.includeSharedScope = scopeFilter.includeSharedScope;
     }
 
     // Check the search cache. Only cache text queries (not structured-only
@@ -1330,16 +1355,48 @@ export class MemOS {
    */
   private resolveScopeFilter(opts: {
     namespace?: string;
+    namespaces?: string[];
+    includeSharedScope?: boolean;
     scope?: MemoryScope;
     scopeMatch?: "exact" | "hierarchical";
-  }): { namespace?: string; namespacePrefix?: string } {
-    if (!opts.scope) return { namespace: opts.namespace };
-    const composed = composeScope(opts.scope);
-    return opts.namespace
-      ? { namespace: composed }
-      : opts.scopeMatch === "exact"
-        ? { namespace: composed }
-        : { namespacePrefix: composed };
+  }): {
+    namespace?: string;
+    namespaces?: string[];
+    namespacePrefix?: string;
+    includeSharedScope?: boolean;
+  } {
+    const out: {
+      namespace?: string;
+      namespaces?: string[];
+      namespacePrefix?: string;
+      includeSharedScope?: boolean;
+    } = {};
+    if (opts.namespace) out.namespace = opts.namespace;
+    if (opts.namespaces) out.namespaces = opts.namespaces;
+    if (opts.scope) {
+      const composed = composeScope(opts.scope);
+      if (opts.namespace || opts.scopeMatch === "exact") {
+        out.namespace = composed;
+      } else {
+        out.namespacePrefix = composed;
+      }
+    }
+    // Scoped-space union (company-brain container semantics): a
+    // scope/namespace-filtered read always sees the shared `default`
+    // namespace alongside the requested scope(s). Pass
+    // `includeSharedScope: false` explicitly for the legacy exclusive
+    // behavior. Unscoped searches are unaffected.
+    if (
+      (out.namespace !== undefined ||
+        out.namespaces !== undefined ||
+        out.namespacePrefix !== undefined) &&
+      opts.includeSharedScope === undefined
+    ) {
+      out.includeSharedScope = true;
+    } else if (opts.includeSharedScope !== undefined) {
+      out.includeSharedScope = opts.includeSharedScope;
+    }
+    return out;
   }
 
   /**
@@ -2605,6 +2662,33 @@ export class MemOS {
     this.assertInit();
 
     return this.graph.getAllNodes().filter((n) => n.namespace === ns).length;
+  }
+
+  /**
+   * Scoped-space inventory: every namespace with its live memory count,
+   * ordered by count descending. Free-form scopes (convention:
+   * `project:<name>`, `harness:<name>`) appear here alongside typed
+   * `user:/agent:/run:` scopes and the shared `default` namespace.
+   * Powers `memos scope list`.
+   */
+  async listNamespaceCounts(): Promise<
+    Array<{ namespace: string; count: number }>
+  > {
+    this.assertInit();
+    if (typeof this.storage.listNamespaces === "function") {
+      return this.storage.listNamespaces();
+    }
+    // Adapter fallback: tally the in-memory graph.
+    const tally = new Map<string, number>();
+    for (const n of this.graph.getAllNodes()) {
+      const ns = n.namespace ?? "default";
+      tally.set(ns, (tally.get(ns) ?? 0) + 1);
+    }
+    return [...tally.entries()]
+      .map(([namespace, count]) => ({ namespace, count }))
+      .sort(
+        (a, b) => b.count - a.count || a.namespace.localeCompare(b.namespace),
+      );
   }
 
   // -----------------------------------------------------------------------

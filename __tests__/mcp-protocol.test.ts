@@ -540,3 +540,65 @@ describe("getMcpTools static metadata", () => {
     ]);
   });
 });
+
+describe("round-3 params on the wire", () => {
+  test("memos_search exposes namespaces; memos_store exposes filter_retain", async () => {
+    const memos = new MemOS({ dbPath: ":memory:" });
+    await memos.init();
+    const [client, server] = InMemoryTransport.createLinkedPair();
+    const handle = serveStdio(() => createMcpServer(memos), {
+      transport: server,
+    });
+    try {
+      const tools = await new Promise<
+        Array<{
+          name: string;
+          inputSchema?: { properties?: Record<string, unknown> };
+        }>
+      >((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Timeout waiting for tools/list")),
+          10_000,
+        );
+        client.onmessage = (message: unknown) => {
+          const msg = message as {
+            id?: number;
+            result?: {
+              tools: Array<{
+                name: string;
+                inputSchema?: { properties?: Record<string, unknown> };
+              }>;
+            };
+          };
+          if (msg.id === 1) {
+            clearTimeout(timeout);
+            client.onmessage = undefined;
+            resolve(msg.result?.tools ?? []);
+          }
+        };
+        void client.send({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: {},
+        });
+      });
+      const byName = new Map(tools.map((t) => [t.name, t]));
+      // Multi-scope reads: raw namespace list (shared `default` unioned in).
+      expect(
+        byName.get("memos_search")?.inputSchema?.properties?.namespaces,
+      ).toBeDefined();
+      // Write-side salience triage opt-in (skips are notices, not errors).
+      expect(
+        byName.get("memos_store")?.inputSchema?.properties?.filter_retain,
+      ).toBeDefined();
+      // Provenance tier override for tool-derived evidence (pre-existing).
+      expect(
+        byName.get("memos_store")?.inputSchema?.properties?.provenance,
+      ).toBeDefined();
+    } finally {
+      await handle.close();
+      await memos.close();
+    }
+  });
+});
