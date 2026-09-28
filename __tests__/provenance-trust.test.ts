@@ -248,6 +248,9 @@ describe("trust-weighted recall", () => {
     const fused = fuseResults([imported], [], {
       nowMs: 1_000_000,
       provenanceWeightStrength: 0,
+      // Exact-score assertion is RRF math; the provenance feature it
+      // guards is fusion-mode independent.
+      fusionMode: "rrf",
     });
     expect(fused[0].scores.provenance).toBeUndefined();
     // Plain keyword RRF, no tier multiplier.

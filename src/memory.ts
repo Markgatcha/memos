@@ -41,7 +41,7 @@ import {
   serializeContextPack,
 } from "./context-pack.js";
 import type { ContextPack } from "./context-pack.js";
-import { compareScoredMemories, fuseResults } from "./retrieval.js";
+import { compareScoredMemories, fuseResults, harvestPrfTerms, mergeKeywordLegs, prfTokenize } from "./retrieval.js";
 import {
   DEFAULT_GRAPH_EXPANSION_ALPHA,
   DEFAULT_GRAPH_EXPANSION_HOPS,
@@ -406,6 +406,20 @@ export class MemOS {
   };
   private experimental: ExperimentalConfig;
   private embeddingProvider: EmbeddingProvider | null = null;
+  /**
+   * In-process LRU cache of query embedding vectors, keyed by
+   * `${provider.id}:${provider.model}:${query}`.
+   *
+   * Round 4 (perf): the semantic leg embeds the query on every search,
+   * and `multiStreamSearch` fans out to three pool streams — previously
+   * three identical ONNX inferences per search. Embedding is a pure
+   * function of (provider, model, query), so caching the vector is
+   * provably recall-neutral: a cache hit returns the byte-identical
+   * vector the provider would have produced. Bounded (LRU eviction) so
+   * long-lived processes cannot grow it without limit.
+   */
+  private queryEmbeddingCache = new Map<string, number[]>();
+  private static readonly QUERY_EMBEDDING_CACHE_MAX = 256;
   /**
    * Tier-2 semantic screen for the provenance-trust write gate (intent
    * level, fastembed embeddings — no LLM). Lazily constructed: the
@@ -2510,12 +2524,16 @@ export class MemOS {
    *   `threshold`, and any `SearchFilter` field.
    * @param threshold — Minimum similarity score in [0, 1] (positional style).
    * @param filter — Extra search filters (positional style).
+   * @param internal — Internal plumbing (not part of the public contract):
+   *   `queryVector` skips the query embedding when the caller already
+   *   computed it (see `multiStreamSearch` embed-once threading).
    */
   async semanticSearch(
     query: string,
     limitOrOpts: number | SemanticSearchOptions = 20,
     threshold = 0.1,
     filter: SearchFilter = {},
+    internal: { queryVector?: number[] } = {},
   ): Promise<ScoredMemory[]> {
     this.assertInit();
 
@@ -2541,10 +2559,12 @@ export class MemOS {
       // Route queries through `embedQuery` when the provider supports it:
       // asymmetric retrieval models (Liquid LFM2.5-Embedding / e5) expect
       // a query-side instruction and silently degrade without it.
+      // The vector comes from the LRU cache (or a caller-threaded
+      // precomputed vector) — identical to a fresh inference, so this
+      // is recall-neutral while skipping repeated ONNX calls.
       const provider = this.embeddingProvider;
-      const queryVector = provider.embedQuery
-        ? await provider.embedQuery(query)
-        : await provider.embed(query);
+      const queryVector =
+        internal.queryVector ?? (await this.embedQueryCached(query))!;
       // Only compare against vectors produced by the SAME model —
       // dimension equality alone does not make vectors comparable.
       return this.storage.querySimilarEmbeddings(
@@ -3132,8 +3152,15 @@ export class MemOS {
     filter: SearchFilter,
   ): Promise<ScoredMemory[]> {
     const pools: MemoryPool[] = ["event", "note", "procedure"];
+    // Embed-once: the three pool streams share one query, so compute its
+    // vector a single time (through the LRU cache) and thread it into
+    // each hybridSearch instead of running three identical inferences.
+    const queryVector =
+      (await this.embedQueryCached(filter.query ?? "")) ?? undefined;
     const streams = await Promise.all(
-      pools.map((pool) => this.hybridSearch({ ...filter, pool, offset: 0 })),
+      pools.map((pool) =>
+        this.hybridSearch({ ...filter, pool, offset: 0 }, { queryVector }),
+      ),
     );
 
     const byId = new Map<string, ScoredMemory>();
@@ -3661,6 +3688,41 @@ export class MemOS {
   async flushEmbeddings(): Promise<void> {
     if (!this.embeddingQueue) return;
     await this.embeddingQueue.flush();
+  }
+
+  /**
+   * Embed a query through the configured provider with an in-process LRU
+   * cache. Returns `null` when no embedding provider is configured.
+   *
+   * The cache is recall-neutral by construction: the provider's embed
+   * is deterministic in (provider id, model, query), so a hit returns
+   * the exact vector a fresh inference would produce. This collapses the
+   * repeated identical inferences an agent loop performs — most
+   * importantly the 3× fan-out inside `multiStreamSearch`, which now
+   * embeds once and threads the vector through all three pool streams.
+   */
+  private async embedQueryCached(query: string): Promise<number[] | null> {
+    const provider = this.embeddingProvider;
+    if (!provider) return null;
+    const key = `${provider.id}:${provider.model}:${query}`;
+    const hit = this.queryEmbeddingCache.get(key);
+    if (hit) {
+      // LRU touch: re-insert to mark most-recently-used.
+      this.queryEmbeddingCache.delete(key);
+      this.queryEmbeddingCache.set(key, hit);
+      return hit;
+    }
+    const vector = provider.embedQuery
+      ? await provider.embedQuery(query)
+      : await provider.embed(query);
+    this.queryEmbeddingCache.set(key, vector);
+    if (
+      this.queryEmbeddingCache.size > MemOS.QUERY_EMBEDDING_CACHE_MAX
+    ) {
+      const oldest = this.queryEmbeddingCache.keys().next();
+      if (!oldest.done) this.queryEmbeddingCache.delete(oldest.value);
+    }
+    return vector;
   }
 
   /**
@@ -5068,7 +5130,7 @@ export class MemOS {
 
   private async hybridSearch(
     filter: SearchFilter,
-    opts: { internal?: boolean } = {},
+    opts: { internal?: boolean; queryVector?: number[] } = {},
   ): Promise<ScoredMemory[]> {
     const limit = filter.limit ?? 20;
     const offset = filter.offset ?? 0;
@@ -5110,6 +5172,7 @@ export class MemOS {
           limit: candidateLimit,
           offset: 0,
         },
+        { queryVector: opts.queryVector },
       ),
       this.storage.queryNodes({
         ...filter,
@@ -5119,20 +5182,59 @@ export class MemOS {
       this.fetchEntityLeg(queryEntities, filter, candidateLimit),
     ]);
 
-    // Fuse the three legs via weighted Reciprocal Rank Fusion + trust
-    // weighting. The fusion logic lives in `src/retrieval.ts` so it can
-    // be unit-tested without storage or embeddings. Weights come from
-    // `config.fusion` so deployments with a stronger embedding model can
-    // rebalance the legs (defaults: keyword 0.8 / semantic 0.2, entity
-    // leg 0.5 — tuned for the hash baseline). Query entities are extracted
-    // here (not stored) so the entity-fusion signal always reflects the
-    // live query.
+    // Round 4: RM3-lite pseudo-relevance feedback (gated, opt-in).
+    // For short/vague queries (<=3 terms) the vocabulary-mismatch risk is
+    // highest, so harvest expansion terms from the top semantic hits and
+    // re-probe FTS5 as a second keyword pass — but ONLY when the primary
+    // keyword leg is thin (<5 hits), i.e. there is an actual recall gap to
+    // fill. Firing on an already-rich keyword leg just adds query drift.
+    // Union semantics via mergeKeywordLegs: expansion can only ADD
+    // candidates, never demote or remove primary-leg results.
+    // Off by default (`experimental.prfExpansion` or MEMOS_PRF=1): the
+    // deterministic eval was neutral with/without, so this stays a
+    // measured opt-in, not a default.
+    let fusedKeywordResults = keywordResults;
+    const prfEnabled =
+      this.config?.experimental?.prfExpansion === true ||
+      process.env.MEMOS_PRF === "1";
+    const queryTerms = filter.query ? prfTokenize(filter.query) : [];
+    if (
+      prfEnabled &&
+      queryTerms.length > 0 &&
+      queryTerms.length <= 3 &&
+      keywordResults.length < 5 &&
+      semanticResults.length > 0
+    ) {
+      const prfTerms = harvestPrfTerms(semanticResults.slice(0, 5), queryTerms);
+      if (prfTerms.length > 0) {
+        const prfResults = await this.storage.queryNodes({
+          ...filter,
+          query: prfTerms.join(" "),
+          limit: candidateLimit,
+          offset: 0,
+        });
+        fusedKeywordResults = mergeKeywordLegs(keywordResults, prfResults);
+      }
+    }
+
+    // Fuse the three legs (convex combination by default — min-max
+    // normalized native scores, weighted sum — or weighted RRF via
+    // `fusionMode: "rrf"`) + trust weighting. The fusion logic lives in
+    // `src/retrieval.ts` so it can be unit-tested without storage or
+    // embeddings. Weights come from `config.fusion` so deployments with
+    // a stronger embedding model can rebalance the legs (defaults:
+    // keyword 0.8 / semantic 0.2, entity leg 0.5 — tuned for the hash
+    // baseline). Query entities are extracted here (not stored) so the
+    // entity-fusion signal always reflects the live query.
     const fused = fuseResults(
-      keywordResults,
+      fusedKeywordResults,
       semanticResults,
       {
         ...this.config.fusion,
         queryEntities,
+        // Round 4: feeds the deterministic adaptive leg weighting
+        // (short-query / entity-dense / temporal routing) in convex mode.
+        query: filter.query,
       },
       entityResults,
     );
