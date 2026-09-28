@@ -62,7 +62,7 @@ whether the fallback is active and why.
 
 **Fix**
 
-1. `npm install @huggingface/transformers`
+1. `pnpm add @huggingface/transformers`
 2. Re-embed the store so hash vectors are replaced with real ones:
    `memos reindex-embeddings`
 3. Re-run `memos doctor` — the provider line should show no fallback.

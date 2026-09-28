@@ -75,7 +75,7 @@ Prefer living on the bleeding edge? Install from source instead:
 ```bash
 git clone https://github.com/Markgatcha/memos.git
 cd memos
-npm install && npm run build   # compile the TypeScript SDK
+pnpm install && pnpm build   # compile the TypeScript SDK
 pip install -e ".[all]"
 ```
 

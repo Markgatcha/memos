@@ -28,8 +28,8 @@ git clone https://github.com/Markgatcha/memos.git
 cd memos
 
 # TypeScript
-npm install
-npm run build
+pnpm install
+pnpm build
 
 # Python
 python -m venv .venv

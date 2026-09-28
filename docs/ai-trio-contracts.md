@@ -38,4 +38,4 @@ MemOS is the local memory layer in the AI Trio. It should retrieve and score con
 - `trust` and `source` must be preserved when Guardian folds context.
 - Mutation APIs remain separate from context pack retrieval.
 
-Benchmark claims must come from `npm run bench` or explicit release evidence.
+Benchmark claims must come from `pnpm bench` or explicit release evidence.

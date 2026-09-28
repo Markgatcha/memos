@@ -41,11 +41,11 @@ Reproduce the MemOS rows with:
 
 ```bash
 # Synthetic smoke harness (no dataset needed, ~50ms).
-npx tsx scripts/bench-quality.ts
+pnpm exec tsx scripts/bench-quality.ts
 
 # LoCoMo retrieval-only (evidence-ID scoring; needs the dataset — see
 # scripts/bench-locomo-noapi.ts header for the one-line download).
-npx tsx scripts/bench-locomo-noapi.ts --topk=10 --convs=2
+pnpm exec tsx scripts/bench-locomo-noapi.ts --topk=10 --convs=2
 ```
 
 Provider selection is shared across all benchmark scripts
@@ -53,16 +53,16 @@ Provider selection is shared across all benchmark scripts
 
 ```bash
 # CLI flags (take precedence):
-npx tsx scripts/bench-quality.ts --provider=voyage --api-key=pa-...
+pnpm exec tsx scripts/bench-quality.ts --provider=voyage --api-key=pa-...
 
 # Or environment variables:
 EMBEDDING_PROVIDER=voyage VOYAGE_API_KEY=pa-... \
-  npx tsx scripts/bench-quality.ts
+  pnpm exec tsx scripts/bench-quality.ts
 
 # FastEmbed with strict fallback enforcement (recommended for any
 # number you intend to publish):
-npm install @huggingface/transformers && \
-  npx tsx scripts/bench-quality.ts --provider=fastembed \
+pnpm add @huggingface/transformers && \
+  pnpm exec tsx scripts/bench-quality.ts --provider=fastembed \
     --fail-on-embedding-fallback
 ```
 
@@ -81,7 +81,7 @@ even if a stronger provider would mask it.
 
 ## Performance — microbenchmarks
 
-These numbers are from `npm run bench` (synthetic 1k / 10k / 100k
+These numbers are from `pnpm bench` (synthetic 1k / 10k / 100k
 node stores) on the author's machine (Windows 11, Node 24, NVMe
 SSD, better-sqlite3 12). Run the same command on your hardware to
 reproduce.
@@ -94,7 +94,7 @@ reproduce.
 | FTS5 search @ 1k | 0.22 | 0.22 | flat |
 | FTS5 search @ 100k | 12.9 | 12.9 | flat |
 | embedding-queue dispatch | 0 (fire-and-forget) | blocks on remote call | 100% off the critical path |
-| tag-filtered query @ 100k | _run `npm run bench` after 1.6.26 to capture_ | scans JSON-LIKE | index-backed EXISTS subquery |
+| tag-filtered query @ 100k | _run `pnpm bench` after 1.6.26 to capture_ | scans JSON-LIKE | index-backed EXISTS subquery |
 
 The big v1.6.26 perf story is **embedding-queue non-blocking
 writes**, **tag-index lookup**, **debounced access tracking**, and
@@ -164,12 +164,12 @@ Run all vendors. Don't trust anyone's aggregate.
 
 ```bash
 # MemOS with a real embedding model.
-npx tsx scripts/bench-quality.ts --provider=voyage --api-key=pa-... \
+pnpm exec tsx scripts/bench-quality.ts --provider=voyage --api-key=pa-... \
   --fail-on-embedding-fallback
 
 # MemOS with FastEmbed (in-process, no API key).
-npm install @huggingface/transformers && \
-  npx tsx scripts/bench-quality.ts --provider=fastembed \
+pnpm add @huggingface/transformers && \
+  pnpm exec tsx scripts/bench-quality.ts --provider=fastembed \
     --fail-on-embedding-fallback
 
 # Repeat for the other vendors' SDKs against the same dataset.
@@ -204,7 +204,7 @@ C:\Users\marki\llama.cpp\llama-server.exe `
   --host 127.0.0.1 --port 8081
 
 # 2. Run any benchmark against it, prefixes included:
-npx tsx scripts/bench-quality.ts \
+pnpm exec tsx scripts/bench-quality.ts \
   --provider=openai-compatible \
   --base-url=http://127.0.0.1:8080/v1 \
   --model=LFM2.5-Embedding-350M-BF16 --dimensions=1024 \
@@ -212,7 +212,7 @@ npx tsx scripts/bench-quality.ts \
   --fail-on-embedding-fallback
 
 # 3. LoCoMo retrieval-only, with fusion ablation:
-npx tsx scripts/bench-locomo-noapi.ts \
+pnpm exec tsx scripts/bench-locomo-noapi.ts \
   --provider=openai-compatible --base-url=http://127.0.0.1:8080/v1 \
   --model=LFM2.5-Embedding-350M-BF16 --dimensions=1024 \
   --query-prefix="query: " --document-prefix="document: " \
