@@ -61,19 +61,11 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}
-          # No restore-keys prefix fallback: a prefix match restores a
-          # node_modules built from a DIFFERENT lockfile. On Windows,
-          # the installer can then hit EPERM while deleting the stale tree
-          # and run a stale package's install script (observed: old
-          # better-sqlite3 v12 install script ran against a v13 lockfile
-          # → node-gyp fallback → "no Visual Studio" failure). Exact-key
-          # only: hit = matching tree, miss = clean install (tarballs are
-          # still warm via the setup-node pnpm cache above).
+      # NOTE: do NOT cache node_modules itself. pnpm's node_modules is a
+      # symlink tree; actions/cache materializes it as real files on
+      # restore (notably on Windows), breaking bins like tsc. The
+      # setup-node pnpm cache above already keeps installs fast via the
+      # content-addressable store.
       - name: Install dependencies
         # --ignore-scripts: better-sqlite3 v13 ships binding.gyp, so the
         # installer auto-detects it as a node-gyp package and runs a pointless
