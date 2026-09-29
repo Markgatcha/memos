@@ -1,6 +1,6 @@
 # MemOS Retrieval Quality Benchmark
 
-> Methodology: evidence-ID matching (deterministic). Re-run with `npx tsx scripts/bench-quality.ts`.
+> Methodology: evidence-ID matching (deterministic). Re-run with `pnpm exec tsx scripts/bench-quality.ts`.
 
 ## What this benchmark is — and is not
 
@@ -16,27 +16,27 @@ evidence-ID matching against the official datasets.)
 
 ```bash
 # Synthetic smoke test (30 nodes / 19 queries, no network, ~50ms).
-npm run bench:quality
+pnpm bench:quality
 
 # Same synthetic dataset, scored with the full shared metric set:
-npx tsx scripts/bench-quality.ts
+pnpm exec tsx scripts/bench-quality.ts
 ```
 
 ### Provider selection (shared across ALL benchmark scripts)
 
 ```bash
 # Out-of-the-box provider (deterministic local hash, synonym lexicon):
-npx tsx scripts/bench-quality.ts --provider=local-hash
+pnpm exec tsx scripts/bench-quality.ts --provider=local-hash
 
 # In-process model (requires installing an optional peer dep):
-npm install @huggingface/transformers
-npx tsx scripts/bench-quality.ts --provider=fastembed \
+pnpm add @huggingface/transformers
+pnpm exec tsx scripts/bench-quality.ts --provider=fastembed \
   --model=Xenova/gemma-300m-e5-it-v1 --dimensions=768 \
   --fail-on-embedding-fallback
 
 # HTTP providers (API key required):
-EMBEDDING_PROVIDER=voyage VOYAGE_API_KEY=pa-... npx tsx scripts/bench-quality.ts
-npx tsx scripts/bench-quality.ts --provider=ollama --base-url=http://127.0.0.1:11434
+EMBEDDING_PROVIDER=voyage VOYAGE_API_KEY=pa-... pnpm exec tsx scripts/bench-quality.ts
+pnpm exec tsx scripts/bench-quality.ts --provider=ollama --base-url=http://127.0.0.1:11434
 ```
 
 Flag precedence: **CLI > environment variables > default (`local-hash` for

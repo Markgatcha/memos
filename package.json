@@ -90,7 +90,7 @@
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "prepublishOnly": "npm run clean && npm run build",
+    "prepublishOnly": "pnpm run clean && pnpm run build",
     "serve": "node dist/cli.js serve",
     "bench": "tsx scripts/bench.ts",
     "bench:quality": "tsx scripts/bench-quality.ts",
@@ -165,5 +165,6 @@
   },
   "optionalDependencies": {
     "better-sqlite3-multiple-ciphers": "^13.0.3"
-  }
+  },
+  "packageManager": "pnpm@12.6.0"
 }

@@ -31,16 +31,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: "24"
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies (downloads the better-sqlite3 prebuild)
-        # --ignore-scripts: see ci.yml — npm auto-runs `node-gyp rebuild` for
-        # better-sqlite3's shipped binding.gyp; the prebuild needs no build.
-        run: npm ci --ignore-scripts
+        # --ignore-scripts: see ci.yml — the installer auto-runs
+        # `node-gyp rebuild` for better-sqlite3's shipped binding.gyp;
+        # the prebuild needs no build.
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Verify the native binding loads and runs
         run: >-

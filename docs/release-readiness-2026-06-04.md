@@ -21,5 +21,5 @@ Status: local release gates passed.
 ## Deferred
 
 - Package dry-run/wheel-install smoke in a fresh virtual environment.
-- Published benchmark result snapshots beyond the existing `npm run bench` harness.
+- Published benchmark result snapshots beyond the existing `pnpm bench` harness.
 - Desktop service supervision contract implementation.

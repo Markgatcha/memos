@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   # ──────────────────────────────────────────────
-  # Lockfile drift: fail fast if package-lock.json
+  # Lockfile drift: fail fast if pnpm-lock.yaml
   # is out of sync with package.json (catches the
   # class of break that previously wasted full runs).
   # ──────────────────────────────────────────────
@@ -24,19 +24,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node.js 26
         uses: actions/setup-node@v7
         with:
           node-version: "26"
-          cache: npm
-      - name: Verify package-lock.json is in sync
+          cache: pnpm
+      - name: Verify pnpm-lock.yaml is in sync
         run: |
-          # Use `npm ci --dry-run` rather than regenerating + diffing the
-          # lockfile. It validates that package.json and package-lock.json are
-          # in sync (the real failure mode) without byte-comparing the file,
-          # so it does not false-positive on npm-version formatting differences
-          # between the local machine and the CI runner.
-          npm ci --dry-run
+          # --frozen-lockfile makes pnpm fail (instead of updating) when
+          # package.json and pnpm-lock.yaml disagree — the real failure
+          # mode. --lockfile-only avoids a full install for this check.
+          pnpm install --frozen-lockfile --lockfile-only
 
   # ──────────────────────────────────────────────
   # TypeScript: Lint + Format + Build + Test
@@ -54,50 +54,52 @@ jobs:
         os: [ubuntu-latest, macos-14, windows-latest]
     steps:
       - uses: actions/checkout@v7
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
+          cache: pnpm
       - name: Cache node_modules
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}
           # No restore-keys prefix fallback: a prefix match restores a
           # node_modules built from a DIFFERENT lockfile. On Windows,
-          # `npm ci` can then hit EPERM while deleting the stale tree and
-          # run a stale package's install script (observed: old
+          # the installer can then hit EPERM while deleting the stale tree
+          # and run a stale package's install script (observed: old
           # better-sqlite3 v12 install script ran against a v13 lockfile
           # → node-gyp fallback → "no Visual Studio" failure). Exact-key
           # only: hit = matching tree, miss = clean install (tarballs are
-          # still warm via the setup-node npm cache above).
+          # still warm via the setup-node pnpm cache above).
       - name: Install dependencies
-        # --ignore-scripts: better-sqlite3 v13 ships binding.gyp, so npm's
-        # arborist auto-detects it as a node-gyp package and runs a pointless
+        # --ignore-scripts: better-sqlite3 v13 ships binding.gyp, so the
+        # installer auto-detects it as a node-gyp package and runs a pointless
         # `node-gyp rebuild` (its prebuild loads via lib/binding.js, no build
-        # needed). The dep sets gypfile:false but npm reads that field from
-        # the lockfile, which drops it. On Windows runners with VS 2026 the
-        # bundled node-gyp can't detect the toolchain and the install fails.
-        # Repo + deps have no install hooks, so ignoring scripts is safe.
-        run: npm ci --ignore-scripts
+        # needed). The dep sets gypfile:false but the npm lockfile dropped it.
+        # On Windows runners with VS 2026 the bundled node-gyp can't detect the
+        # toolchain and the install fails. Repo + deps have no install hooks,
+        # so ignoring scripts is safe.
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Cache Hugging Face models
         uses: actions/cache@v6
         with:
           path: node_modules/@huggingface/transformers/.cache
-          key: ${{ runner.os }}-huggingface-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-huggingface-${{ hashFiles('pnpm-lock.yaml') }}
       - name: Verify plugin manifest versions match the SDK
         run: node scripts/check-plugin-version.mjs
       - name: TypeScript version
-        run: npx tsc --version
+        run: pnpm exec tsc --version
       - name: Lint
-        run: npm run lint
+        run: pnpm lint
       - name: Format check
-        run: npm run format:check
+        run: pnpm format:check
       - name: Build
-        run: npm run build
+        run: pnpm build
       - name: Test
-        run: npm test -- --ci --coverage
+        run: pnpm test -- --ci --coverage
 
   # ──────────────────────────────────────────────
   # Native deps smoke across major Linux distro
@@ -117,15 +119,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node 26
         uses: actions/setup-node@v7
         with:
           node-version: "26"
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Run retrieval eval against committed baseline
-        run: npx tsx scripts/eval-retrieval.ts --check
+        run: pnpm exec tsx scripts/eval-retrieval.ts --check
       - name: Upload eval results
         if: always()
         uses: actions/upload-artifact@v7
@@ -146,27 +150,27 @@ jobs:
         include:
           - name: Fedora
             image: fedora:latest
-            bootstrap: dnf install -y nodejs npm python3 make gcc-c++
+            bootstrap: dnf install -y nodejs npm python3 make gcc-c++ && npm install -g pnpm
           - name: Debian
             image: debian:trixie
             # Debian trixie ships Node 20, but better-sqlite3 v13 requires
             # Node >= 22 — install the NodeSource Node 24 LTS instead.
-            bootstrap: apt-get update && apt-get install -y curl ca-certificates gnupg && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs python3 make g++
+            bootstrap: apt-get update && apt-get install -y curl ca-certificates gnupg && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs python3 make g++ && npm install -g pnpm
           - name: Arch
             image: archlinux:latest
-            bootstrap: pacman -Sy --noconfirm nodejs npm python base-devel
+            bootstrap: pacman -Sy --noconfirm nodejs npm python base-devel && npm install -g pnpm
     steps:
       - uses: actions/checkout@v7
-      - name: Cache npm tarballs for in-docker install
+      - name: Cache pnpm store for in-docker install
         uses: actions/cache@v6
         with:
-          path: ~/.npm
-          key: npm-cache-${{ hashFiles('package-lock.json') }}
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
       - name: better-sqlite3 install/build/test smoke
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
-            -v "${{ runner.temp }}/npm:/root/.npm" \
+            -v "${{ runner.temp }}/pnpm-store:/root/.local/share/pnpm/store" \
             -w /repo ${{ matrix.image }} bash -lc '${{ matrix.bootstrap }} && bash /repo/scripts/smoke-native.sh'
 
   # ──────────────────────────────────────────────

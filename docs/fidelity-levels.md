@@ -91,7 +91,7 @@ memos compact --namespace work --limit 100 --dry-run
 ## Measuring savings
 
 ```bash
-npx tsx scripts/measure-fidelity-tokens.ts
+pnpm exec tsx scripts/measure-fidelity-tokens.ts
 ```
 
 Builds a 50-memory fixture, packs it at each level, and prints

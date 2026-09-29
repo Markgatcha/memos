@@ -752,7 +752,7 @@ Or install straight from the repo (you get exactly what's on `main`):
 ```bash
 git clone https://github.com/Markgatcha/memos.git
 cd memos
-npm install && npm run build   # compile the TypeScript SDK
+pnpm install && pnpm build   # compile the TypeScript SDK
 pip install -e ".[all]"
 ```
 
@@ -763,8 +763,8 @@ git clone https://github.com/Markgatcha/memos.git
 cd memos
 
 # TypeScript
-npm install
-npm run build
+pnpm install
+pnpm build
 
 # Python
 pip install -e ".[dev]"
