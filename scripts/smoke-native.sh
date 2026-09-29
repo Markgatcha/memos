@@ -19,6 +19,15 @@
 #     TypeScript 7 native bin, which is irrelevant to runtime distro support.
 set -euxo pipefail
 
+# pnpm was installed with --ignore-scripts (its install.js native-binary
+# placement is fragile in minimal images), so ensure a working `pnpm`
+# command by wiring it to the Node entrypoint directly.
+if ! pnpm --version >/dev/null 2>&1; then
+  PNPM_MJS="$(npm root -g)/pnpm/bin/pnpm.mjs"
+  printf '#!/bin/sh\nexec node "%s" "$@"\n' "$PNPM_MJS" > /usr/local/bin/pnpm
+  chmod +x /usr/local/bin/pnpm
+fi
+
 pnpm install --frozen-lockfile --prefer-offline
 
 # better-sqlite3 v13 loads its prebuilt binary from prebuilds/ with no
