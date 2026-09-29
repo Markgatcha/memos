@@ -5,11 +5,14 @@
 FROM node:22-slim AS ts-build
 WORKDIR /app
 COPY package.json pnpm-lock.yaml* ./
-RUN npm install -g pnpm@12.6.0 \
-    && pnpm install --frozen-lockfile --ignore-scripts
+# Install pnpm without lifecycle scripts: pnpm 12's install.js places a
+# native binary via optional deps, which is fragile in minimal images.
+# bin/pnpm.mjs runs through Node directly and needs no postinstall.
+RUN npm install -g pnpm@12.6.0 --ignore-scripts \
+    && node "$(npm root -g)/pnpm/bin/pnpm.mjs" install --frozen-lockfile --ignore-scripts
 COPY tsconfig.json ./
 COPY src/ ./src/
-RUN pnpm run build
+RUN node "$(npm root -g)/pnpm/bin/pnpm.mjs" run build
 
 # --- Stage 2: Python runtime ---
 FROM python:3.12-slim AS runtime
@@ -21,8 +24,7 @@ WORKDIR /app
 COPY --from=ts-build /usr/local/bin/node /usr/local/bin/node
 COPY --from=ts-build /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
-    && ln -sf ../lib/node_modules/pnpm/pnpm /usr/local/bin/pnpm
+    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Build tools so better-sqlite3 can compile from source as a fallback if
 # no prebuilt binary matches this Node version
@@ -44,7 +46,8 @@ RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic langchain lang
 COPY --from=ts-build /app/dist ./memos/_js
 COPY --from=ts-build /app/package.json ./
 # Native Node deps for the bundled SDK (better-sqlite3 cannot live in a wheel)
-RUN pnpm add better-sqlite3@^12.11.1
+# pnpm was installed with --ignore-scripts, so run it via node directly.
+RUN node /usr/local/lib/node_modules/pnpm/bin/pnpm.mjs add better-sqlite3@^12.11.1
 
 # Data volume
 VOLUME /root/.memos
