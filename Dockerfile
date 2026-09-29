@@ -22,7 +22,7 @@ COPY --from=ts-build /usr/local/bin/node /usr/local/bin/node
 COPY --from=ts-build /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
-    && ln -sf ../lib/node_modules/pnpm/dist/pnpm.cjs /usr/local/bin/pnpm
+    && ln -sf ../lib/node_modules/pnpm/pnpm /usr/local/bin/pnpm
 
 # Build tools so better-sqlite3 can compile from source as a fallback if
 # no prebuilt binary matches this Node version

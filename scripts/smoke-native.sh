@@ -5,10 +5,11 @@
 #
 # Strategy:
 #   - `pnpm install` installs deps. pnpm blocks install scripts by default
-#     (onlyBuiltDependencies), so better-sqlite3's native binary may be
-#     missing. We then compile it directly with node-gyp. Only do this when
-#     the binary is absent, so we never rebuild a working binary with an
-#     unrelated node-gyp version.
+#     (onlyBuiltDependencies), so better-sqlite3 is never compiled from
+#     source here -- but v13 ships prebuilt binaries in prebuilds/, which
+#     load with no build step. Verify the module actually loads; only fall
+#     back to compiling with node-gyp when the require fails (exotic
+#     platform with no matching prebuild).
 #   - Pin node-gyp to an exact version: node-gyp@13's undici crashes on Node 20
 #     (Debian/Ubuntu/Rocky), so @10 is the safe cross-version choice; pinning
 #     exact avoids floating @10 patch drift.
@@ -20,8 +21,9 @@ set -euxo pipefail
 
 pnpm install --frozen-lockfile --prefer-offline
 
-BINARY=node_modules/better-sqlite3/build/Release/better_sqlite3.node
-if [ ! -f "$BINARY" ]; then
+# better-sqlite3 v13 loads its prebuilt binary from prebuilds/ with no
+# compile step; only build from source when the module fails to load.
+if ! node -e "require('better-sqlite3')"; then
   ( cd node_modules/better-sqlite3 && pnpm dlx node-gyp@10.2.0 rebuild --release )
 fi
 
