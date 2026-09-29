@@ -47,7 +47,7 @@ COPY --from=ts-build /app/dist ./memos/_js
 COPY --from=ts-build /app/package.json ./
 # Native Node deps for the bundled SDK (better-sqlite3 cannot live in a wheel)
 # pnpm was installed with --ignore-scripts, so run it via node directly.
-RUN node /usr/local/lib/node_modules/pnpm/bin/pnpm.mjs add better-sqlite3@^12.11.1
+RUN node /usr/local/lib/node_modules/pnpm/bin/pnpm.mjs add better-sqlite3@^12.11.1 --ignore-scripts
 
 # Data volume
 VOLUME /root/.memos
