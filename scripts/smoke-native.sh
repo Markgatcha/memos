@@ -25,4 +25,4 @@ if [ ! -f "$BINARY" ]; then
   ( cd node_modules/better-sqlite3 && pnpm dlx node-gyp@10.2.0 rebuild --release )
 fi
 
-pnpm test -- --runInBand --testPathPatterns=memos.test.ts
+pnpm test --runInBand --testPathPatterns=memos.test.ts

@@ -99,7 +99,7 @@ jobs:
       - name: Build
         run: pnpm build
       - name: Test
-        run: pnpm test -- --ci --coverage
+        run: pnpm test --ci --coverage
 
   # ──────────────────────────────────────────────
   # Native deps smoke across major Linux distro
