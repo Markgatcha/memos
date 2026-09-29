@@ -28,7 +28,7 @@ if ! pnpm --version >/dev/null 2>&1; then
   chmod +x /usr/local/bin/pnpm
 fi
 
-pnpm install --frozen-lockfile --prefer-offline
+pnpm install --frozen-lockfile --prefer-offline --ignore-scripts
 
 # better-sqlite3 v13 loads its prebuilt binary from prebuilds/ with no
 # compile step; only build from source when the module fails to load.
