@@ -58,8 +58,12 @@ jobs:
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
           sh scripts/install.sh
-          test -x "$MEMOS_HOME/bin/memos"
-          "$MEMOS_HOME/bin/memos" --help >/dev/null
+      - name: Check memos binary exists
+        run: |
+          test -x "$RUNNER_TEMP/memos-home/bin/memos"
+      - name: Check memos --help
+        run: |
+          "$RUNNER_TEMP/memos-home/bin/memos" --help >/dev/null
       - name: Re-run is idempotent
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
