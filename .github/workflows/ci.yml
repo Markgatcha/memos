@@ -70,14 +70,19 @@ jobs:
           mkdir -p "$RUNNER_TEMP/debug-home/pkg"
           npm install --prefix "$RUNNER_TEMP/debug-home/pkg" --no-audit --no-fund "@mem-os/sdk@latest"
       - name: Debug check node_modules
+        if: always()
         run: test -d "$RUNNER_TEMP/debug-home/pkg/node_modules"
       - name: Debug check sdk dir
+        if: always()
         run: test -d "$RUNNER_TEMP/debug-home/pkg/node_modules/@mem-os/sdk"
       - name: Debug check cli.js
+        if: always()
         run: test -f "$RUNNER_TEMP/debug-home/pkg/node_modules/@mem-os/sdk/dist/cli.js"
       - name: Debug check .bin dir
+        if: always()
         run: test -d "$RUNNER_TEMP/debug-home/pkg/node_modules/.bin"
       - name: Debug check .bin/memos
+        if: always()
         run: test -e "$RUNNER_TEMP/debug-home/pkg/node_modules/.bin/memos"
       - name: Re-run is idempotent
         run: |
