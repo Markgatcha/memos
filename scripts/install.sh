@@ -151,6 +151,10 @@ fi
 "$MEMOS_BIN" --help >/dev/null 2>&1 || die "install finished but 'memos --help' failed"
 log "memos is installed and runnable"
 
+# Marker for `memos update --check` / the beta channel: records what this
+# install came from. Beta updates overwrite it with the installed commit SHA.
+printf 'npm:%s\n' "$MEMOS_NPM_TAG" > "$MEMOS_HOME/.install-ref"
+
 # --- PATH hint ---------------------------------------------------------------
 case ":$PATH:" in
   *":$BIN_DIR:"*) log "$BIN_DIR is already on your PATH — you're done." ;;

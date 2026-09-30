@@ -50,6 +50,8 @@ export const CLI_COMMANDS: readonly string[] = [
   "session-hook",
   "dashboard",
   "sync",
+  "beta",
+  "update",
   "mcp",
   "trio",
   "completion",
@@ -271,6 +273,22 @@ move it to another machine, and import it there.
 The bundle is encrypted with AES-256-GCM. The key can be a passphrase
 (PBKDF2-derived) or a 32-byte key file. MEMOS_SYNC_KEY env var also works.
 Local-first: import never deletes, only adds or updates.`,
+  beta: `memos beta [enable|disable|status]
+
+Opt in or out of the beta channel. With beta enabled, memos checks (at most
+every 6 hours, cached) whether a newer fully-successful main commit exists —
+CI, Prebuilds, and CodeQL all green — and prompts you to update. Default: off.`,
+  update: `memos update [--check] [--yes]
+
+Check for the newest fully-successful main commit (CI, Prebuilds, and CodeQL
+all green) and install it from source. Beta users are prompted automatically;
+this command works for anyone.
+
+  memos update --check   just report what's available, don't install
+  memos update --yes     install without asking (for scripts)
+
+Installing builds from source with pnpm (PATH or corepack) into
+$MEMOS_HOME/beta/<sha> and repoints $MEMOS_HOME/bin/memos at it.`,
   mcp: `memos mcp [--db <path>]
 
 Start the MemOS MCP stdio server (for MCP clients to connect to).`,

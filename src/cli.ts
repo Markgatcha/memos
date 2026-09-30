@@ -50,6 +50,7 @@ import {
   writeFileSync,
   readFileSync,
 } from "fs";
+import * as readline from "node:readline";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -151,6 +152,58 @@ function loadFileConfig(): MemosFileConfig | null {
 function saveFileConfig(config: MemosFileConfig): void {
   mkdirSync(dirname(configFilePath()), { recursive: true });
   writeFileSync(configFilePath(), JSON.stringify(config, null, 2) + "\n");
+}
+
+/** Prompt the user with a yes/no question. Resolves true only for y/yes. */
+function askYesNo(question: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(/^y(es)?$/i.test(answer.trim()));
+    });
+  });
+}
+
+/**
+ * Beta auto-prompt: if the beta channel is on and we haven't checked in a
+ * while, look for a newer fully-successful main commit and print a notice
+ * to stderr. Fail-open and cached — a network failure never breaks the
+ * command being run, and stdout stays clean for scripts/JSON.
+ */
+async function maybeBetaUpdateNotice(): Promise<void> {
+  const {
+    readBetaState,
+    writeBetaState,
+    findLatestGreenCommit,
+    resolveInstalledRef,
+    UPDATE_CHECK_INTERVAL_MS,
+  } = await import("./updater.js");
+  const cfgPath = configFilePath();
+  const state = readBetaState(cfgPath);
+  if (!state.beta) return;
+  const now = Date.now();
+  if (
+    state.lastUpdateCheck &&
+    now - state.lastUpdateCheck < UPDATE_CHECK_INTERVAL_MS
+  ) {
+    return;
+  }
+  // Only the newest commit here — this is a cheap background nudge, not the
+  // full walk-back that `memos update` does.
+  const green = await findLatestGreenCommit({ maxCommits: 1 });
+  writeBetaState(cfgPath, { lastUpdateCheck: now });
+  if (!green) return;
+  const installed = resolveInstalledRef();
+  if (installed === green.sha) return;
+  const firstLine = green.message.split("\n")[0];
+  console.error(
+    `\n[memos] Beta update available: ${green.sha.slice(0, 7)} — ${firstLine}\n` +
+      `[memos] Run \`memos update\` to install it.\n`,
+  );
 }
 
 /**
@@ -806,6 +859,146 @@ async function main(): Promise<void> {
       ...(embeddings ? { embeddings: { ...embeddings, enabled: true } } : {}),
     });
     return;
+  }
+
+  // Beta channel opt-in and beta updates. Neither needs the database open.
+  if (command === "beta") {
+    const { readBetaState, writeBetaState } = await import("./updater.js");
+    const sub = args[1];
+    const cfgPath = configFilePath();
+    if (!sub || sub === "status") {
+      const state = readBetaState(cfgPath);
+      console.log(`Beta channel: ${state.beta ? "enabled" : "disabled"}`);
+      if (!state.beta) {
+        console.log(
+          "Run `memos beta enable` to be prompted on every fully-successful main commit.",
+        );
+      }
+      return;
+    }
+    if (sub === "enable" || sub === "on") {
+      writeBetaState(cfgPath, { beta: true });
+      console.log("Beta channel enabled.");
+      console.log(
+        "You'll be prompted to update whenever a new fully-successful main commit lands (CI, Prebuilds, and CodeQL all green).",
+      );
+      console.log("Run `memos update --check` to check right now.");
+      return;
+    }
+    if (sub === "disable" || sub === "off") {
+      writeBetaState(cfgPath, { beta: false });
+      console.log("Beta channel disabled.");
+      return;
+    }
+    console.error("Usage: memos beta [enable|disable|status]");
+    process.exit(1);
+  }
+
+  if (command === "update") {
+    const {
+      findLatestGreenCommit,
+      resolveInstalledRef,
+      installFromCommit,
+      memosHomeDir,
+    } = await import("./updater.js");
+    const checkOnly = args.includes("--check");
+    const yes = args.includes("--yes");
+
+    let green: { sha: string; message: string; date: string } | null;
+    try {
+      green = await findLatestGreenCommit({ maxCommits: 10 });
+    } catch (err) {
+      console.error(
+        `Could not reach GitHub: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+    if (!green) {
+      console.log(
+        "No fully-successful main commit found in the last 10 commits (CI may still be running). Try again later.",
+      );
+      return;
+    }
+
+    const short = green.sha.slice(0, 7);
+    const installed = resolveInstalledRef();
+    const firstLine = green.message.split("\n")[0];
+
+    if (jsonFlag) {
+      console.log(
+        JSON.stringify(
+          {
+            latestGreen: green.sha,
+            installed,
+            upToDate: installed === green.sha,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    console.log(`Newest fully-successful main commit: ${short} — ${firstLine}`);
+    console.log(`Installed: ${installed ?? "unknown"}`);
+    if (installed === green.sha) {
+      console.log("Already up to date.");
+      return;
+    }
+    if (checkOnly) return;
+
+    let proceed = yes;
+    if (!proceed) {
+      if (!process.stdin.isTTY) {
+        console.log(
+          "Run `memos update --yes` to install it non-interactively.",
+        );
+        return;
+      }
+      proceed = await askYesNo(
+        "Install this beta build from source now? [y/N] ",
+      );
+    }
+    if (!proceed) {
+      console.log("Not installing.");
+      return;
+    }
+
+    console.log(
+      `Installing ${short} from source (download + pnpm install + build)...`,
+    );
+    const { execSync } = await import("node:child_process");
+    const { installDir } = await installFromCommit(green.sha, {
+      memosHome: memosHomeDir(),
+      nodeBin: process.execPath,
+      runCmd: (cmd, a, cwd) => {
+        execSync(
+          [cmd, ...a]
+            .map((x) => (/\s/.test(x) ? JSON.stringify(x) : x))
+            .join(" "),
+          { cwd, stdio: "inherit" },
+        );
+      },
+      download: async (url, dest) => {
+        const { pipeline } = await import("node:stream/promises");
+        const { createWriteStream } = await import("node:fs");
+        const res = await fetch(url);
+        if (!res.ok || !res.body)
+          throw new Error(`download failed: ${res.status}`);
+        await pipeline(res.body as never, createWriteStream(dest));
+      },
+    });
+    console.log(`Updated to ${short}. Installed at ${installDir}`);
+    console.log(
+      "Restart your shell (or rehash) so the new memos is picked up.",
+    );
+    return;
+  }
+
+  // Beta auto-prompt: at most every 6h, cached, stderr only, never fatal.
+  // Skipped for the commands that manage updates themselves.
+  if (!["beta", "update", "completion", "mcp"].includes(command)) {
+    await maybeBetaUpdateNotice().catch(() => {});
   }
 
   // Encrypt/decrypt operate on the raw database file and must run BEFORE
