@@ -83,6 +83,15 @@ jobs:
           export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
           sed -n '1,141p' scripts/install.sh | sh
+      - name: probe-10 install.sh through mkdir
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
+          export MEMOS_HOME="$HOME/.memos"
+          sed -n '1,152p' scripts/install.sh | sh
+      - name: probe-11 raw npm install
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
+          npm install --prefix "$HOME/.memos-probe/pkg" --no-audit --no-fund "@mem-os/sdk@latest"
       - name: Run installer into a temp HOME
         run: |
           export HOME="$RUNNER_TEMP/fakehome"
