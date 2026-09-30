@@ -38,6 +38,36 @@ jobs:
           pnpm install --frozen-lockfile --lockfile-only
 
   # ──────────────────────────────────────────────
+  # One-line installer: exercise scripts/install.sh
+  # end to end. Deliberately does NOT set up Node:
+  # on ubuntu the runner has no node on PATH, so the
+  # script's download-a-Node path is tested; macOS
+  # runners ship node, testing the system-node path.
+  # ──────────────────────────────────────────────
+  install-script:
+    name: Install script (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run installer into a temp HOME
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome"
+          mkdir -p "$HOME"
+          export MEMOS_HOME="$HOME/.memos"
+          sh scripts/install.sh
+          test -x "$MEMOS_HOME/bin/memos"
+          "$MEMOS_HOME/bin/memos" --help >/dev/null
+      - name: Re-run is idempotent
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome"
+          export MEMOS_HOME="$HOME/.memos"
+          sh scripts/install.sh
+          "$MEMOS_HOME/bin/memos" --help >/dev/null
+
+  # ──────────────────────────────────────────────
   # TypeScript: Lint + Format + Build + Test
   # Matrix: Node 26 (recommended) plus Node 22 and 24 (LTS) across
   # ubuntu/macOS/windows. Node 20 dropped (EOL Apr 2025).

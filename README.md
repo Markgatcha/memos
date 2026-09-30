@@ -747,6 +747,16 @@ Environment variables (Python server):
 
 MemOS works on **Windows**, **macOS**, and **Linux**. Choose your preferred method:
 
+### One-line install (no Node.js required)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Markgatcha/memos/main/scripts/install.sh | sh
+```
+
+Installs everything under `~/.memos` (downloads Node.js for you if needed),
+then follow the PATH hint it prints and run `memos init`. See
+[docs/installation.md](docs/installation.md) for details.
+
 ### npm (TypeScript/Node.js)
 
 ```bash

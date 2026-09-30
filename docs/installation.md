@@ -18,6 +18,18 @@ Let's get MemOS running on your machine. Pick your path below — every one of t
     scripts; non-TTY stdin is auto-detected too). Environment variables
     (`MEMOS_DB_PATH`, `MEMOS_EMBEDDING_*`) always override the saved config.
 
+## Option 0 — one-line install (no Node.js required)
+
+The easiest way to get the `memos` CLI. Downloads Node.js for you if you
+don't have it — no sudo, no compiler, everything lives under `~/.memos`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Markgatcha/memos/main/scripts/install.sh | sh
+```
+
+Then add `~/.memos/bin` to your PATH (the installer prints the exact lines)
+and run `memos init`.
+
 ## Option 1 — npm (TypeScript / Node.js)
 
 The fastest way in if you live in JavaScript.
