@@ -54,9 +54,11 @@ jobs:
       - uses: actions/checkout@v7
       - name: Run installer into a temp HOME
         run: |
+          echo "::notice::STEP-START RUNNER_TEMP=${RUNNER_TEMP:-UNSET} HOME=$HOME"
           # TEMP DEBUG: surface the installer log via annotations (PAT can't
           # read step logs). Remove once the macOS failure is understood.
           export HOME="$RUNNER_TEMP/fakehome"
+          echo "::notice::HOME-EXPORTED"
           mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
           LOG="$RUNNER_TEMP/install.log"
