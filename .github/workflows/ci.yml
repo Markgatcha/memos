@@ -147,11 +147,29 @@ jobs:
           ln -sf "$RUNNER_TEMP/lntest/nonexistent-source" "$RUNNER_TEMP/lntest/destdir/link"
           test -L "$RUNNER_TEMP/lntest/destdir/link"
       - name: probe-23 check .bin/memos after npm install
+        continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/fakehome23" && mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
           sed -n '1,153p' scripts/install.sh | sh
           test -e "$MEMOS_HOME/pkg/node_modules/.bin/memos"
+      - name: probe-24 npm bin-links config
+        run: npm config get bin-links
+      - name: probe-25a sdk dir exists after install
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome23"
+          test -d "$HOME/.memos/pkg/node_modules/@mem-os/sdk"
+      - name: probe-25b cli.js exists after install
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome23"
+          test -f "$HOME/.memos/pkg/node_modules/@mem-os/sdk/dist/cli.js"
+      - name: probe-25c .bin dir exists after install
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome23"
+          test -d "$HOME/.memos/pkg/node_modules/.bin"
       - name: Run installer into a temp HOME
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
