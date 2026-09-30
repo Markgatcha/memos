@@ -64,32 +64,9 @@ node_ok() {
 }
 
 NODE_BIN=""
-# resolve an npm we can actually run: prefer npm on PATH, else the npm
-# bundled next to the node binary, invoked explicitly through that node.
-# Portable: macOS readlink has no -f, so resolve symlinks by hand.
-resolve_npm() {
-  _nb="$1"
-  if command -v npm >/dev/null 2>&1; then
-    printf 'npm'; return 0
-  fi
-  _real="$_nb"
-  _n=0
-  while [ -L "$_real" ] && [ "$_n" -lt 20 ]; do
-    _link="$(readlink "$_real")"
-    case "$_link" in
-      /*) _real="$_link" ;;
-      *) _real="$(dirname "$_real")/$_link" ;;
-    esac
-    _n=$((_n + 1))
-  done
-  _prefix="$(dirname "$(dirname "$_real")")"
-  if [ -f "$_prefix/lib/node_modules/npm/bin/npm-cli.js" ]; then
-    printf '%s %s' "$_nb" "$_prefix/lib/node_modules/npm/bin/npm-cli.js"
-    return 0
-  fi
-  return 1
-}
-
+# Find an npm we can run: prefer npm on PATH, else the npm bundled with
+# a downloaded node, invoked explicitly through that node binary.
+# (No function — inline to avoid sh function quirks on macOS.)
 if [ "${MEMOS_NODE:-}" = "system" ]; then
   node_ok node >/dev/null || die "MEMOS_NODE=system but no usable node >= $NODE_MIN_MAJOR found"
   NODE_BIN="$(command -v node)"
@@ -136,21 +113,24 @@ if [ -z "$NODE_BIN" ]; then
   fi
 fi
 
-NPM="$(resolve_npm "$NODE_BIN")" || die "found node but no usable npm next to it"
+# Find npm: prefer PATH, else the npm bundled next to the node binary.
+if command -v npm >/dev/null 2>&1; then
+  NPM_CMD="npm"
+elif [ -n "$NODE_BIN" ] && [ -f "$NODE_DIR/lib/node_modules/npm/bin/npm-cli.js" ]; then
+  NPM_CMD="$NODE_BIN $NODE_DIR/lib/node_modules/npm/bin/npm-cli.js"
+else
+  die "found node but no usable npm (not on PATH, not bundled with downloaded node)"
+fi
 log "node: $NODE_BIN"
-log "npm: $NPM"
-# invoke npm, splitting the "node /path/to/npm-cli.js" form when needed
-run_npm() {
-  # shellcheck disable=SC2086
-  $NPM "$@"
-}
+log "npm: $NPM_CMD"
 
 # --- install @mem-os/sdk -----------------------------------------------------
 PKG_DIR="$MEMOS_HOME/pkg"
 BIN_DIR="$MEMOS_HOME/bin"
 log "installing @mem-os/sdk@$MEMOS_NPM_TAG into $PKG_DIR…"
 mkdir -p "$PKG_DIR" "$BIN_DIR"
-run_npm install --prefix "$PKG_DIR" --no-audit --no-fund "@mem-os/sdk@$MEMOS_NPM_TAG"
+# shellcheck disable=SC2086 — $NPM_CMD may be "node /path/to/npm-cli.js"
+$NPM_CMD install --prefix "$PKG_DIR" --no-audit --no-fund "@mem-os/sdk@$MEMOS_NPM_TAG"
 
 MEMOS_BIN="$BIN_DIR/memos"
 # npm normally links package binaries into node_modules/.bin, but don't
