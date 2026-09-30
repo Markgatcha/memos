@@ -57,7 +57,17 @@ jobs:
           export HOME="$RUNNER_TEMP/fakehome"
           mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
-          sh scripts/install.sh
+          # TEMP DEBUG: surface the installer log via annotations (PAT can't
+          # read step logs). Remove once the macOS failure is understood.
+          set +e
+          sh scripts/install.sh >"$RUNNER_TEMP/install.log" 2>&1
+          code=$?
+          set -e
+          if [ $code -ne 0 ]; then
+            echo "::error::install.sh exited $code; last 25 lines follow"
+            tail -25 "$RUNNER_TEMP/install.log" | sed 's/^/::error:: /'
+            exit $code
+          fi
           test -x "$MEMOS_HOME/bin/memos"
           "$MEMOS_HOME/bin/memos" --help >/dev/null
       - name: Re-run is idempotent
