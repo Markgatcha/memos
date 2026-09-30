@@ -92,6 +92,23 @@ jobs:
         run: |
           export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
           npm install --prefix "$HOME/.memos-probe/pkg" --no-audit --no-fund "@mem-os/sdk@latest"
+      # TEMP DEBUG: probe-10 isolated the failure to mkdir -p "$PKG_DIR" "$BIN_DIR"
+      - name: probe-12 mkdir single arg
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
+          export MEMOS_HOME="$HOME/.memos"
+          mkdir -p "$MEMOS_HOME/pkg"
+      - name: probe-13 mkdir two args
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome2" && mkdir -p "$HOME"
+          export MEMOS_HOME="$HOME/.memos"
+          mkdir -p "$MEMOS_HOME/pkg" "$MEMOS_HOME/bin"
+      - name: probe-14 log line with ellipsis char
+        run: |
+          log() { printf '%s\n' "memos-install: $*"; }
+          PKG_DIR="/tmp/x/pkg"
+          MEMOS_NPM_TAG="latest"
+          log "installing @mem-os/sdk@$MEMOS_NPM_TAG into $PKG_DIR…"
       - name: Run installer into a temp HOME
         run: |
           export HOME="$RUNNER_TEMP/fakehome"
