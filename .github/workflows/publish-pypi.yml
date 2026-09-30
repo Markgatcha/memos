@@ -22,7 +22,7 @@ permissions:
 jobs:
   build:
     name: Build sdist + wheel
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -72,7 +72,7 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: pypi
     permissions:
       id-token: write # required for Trusted Publishing (OIDC)

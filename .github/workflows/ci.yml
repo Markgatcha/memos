@@ -21,7 +21,7 @@ jobs:
   # ──────────────────────────────────────────────
   verify-lockfile:
     name: Verify lockfile
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - name: Setup pnpm
@@ -51,7 +51,7 @@ jobs:
       # show results for both OSes even if one fails
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-26.04, macos-latest]
     steps:
       - uses: actions/checkout@v7
       - name: Run installer into a temp HOME
@@ -79,7 +79,7 @@ jobs:
       fail-fast: false
       matrix:
         node-version: [22, 24, 26]
-        os: [ubuntu-latest, macos-14, windows-latest]
+        os: [ubuntu-26.04, macos-14, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - name: Setup pnpm
@@ -133,7 +133,7 @@ jobs:
   # they ship.
   retrieval-eval:
     name: Retrieval regression eval
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [verify-lockfile]
     steps:
       - uses: actions/checkout@v7
@@ -162,7 +162,7 @@ jobs:
   # ──────────────────────────────────────────────
   linux-distro-native-smoke:
     name: Native deps (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [verify-lockfile]
     strategy:
       fail-fast: false
@@ -201,7 +201,7 @@ jobs:
   # ──────────────────────────────────────────────
   python:
     name: Python (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [verify-lockfile]
     strategy:
       matrix:
@@ -229,7 +229,7 @@ jobs:
   # ──────────────────────────────────────────────
   docker:
     name: Docker Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [typescript, python]
     steps:
       - uses: actions/checkout@v7
