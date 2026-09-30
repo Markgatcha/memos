@@ -65,13 +65,23 @@ node_ok() {
 
 NODE_BIN=""
 # resolve an npm we can actually run: prefer npm on PATH, else the npm
-# bundled next to the node binary, invoked explicitly through that node
+# bundled next to the node binary, invoked explicitly through that node.
+# Portable: macOS readlink has no -f, so resolve symlinks by hand.
 resolve_npm() {
   _nb="$1"
   if command -v npm >/dev/null 2>&1; then
     printf 'npm'; return 0
   fi
-  _real="$(readlink -f "$_nb" 2>/dev/null || printf '%s' "$_nb")"
+  _real="$_nb"
+  _n=0
+  while [ -L "$_real" ] && [ "$_n" -lt 20 ]; do
+    _link="$(readlink "$_real")"
+    case "$_link" in
+      /*) _real="$_link" ;;
+      *) _real="$(dirname "$_real")/$_link" ;;
+    esac
+    _n=$((_n + 1))
+  done
   _prefix="$(dirname "$(dirname "$_real")")"
   if [ -f "$_prefix/lib/node_modules/npm/bin/npm-cli.js" ]; then
     printf '%s %s' "$_nb" "$_prefix/lib/node_modules/npm/bin/npm-cli.js"
@@ -110,8 +120,16 @@ if [ -z "$NODE_BIN" ]; then
     rm -rf "$NODE_DIR"
     mkdir -p "$NODE_DIR"
     curl -fsSL --retry 3 "https://nodejs.org/dist/$NODE_VER/$TARBALL" -o /tmp/memos-node.tgz
+    # macOS quarantines curl downloads; a quarantined node binary refuses to
+    # run. Strip the flag from the tarball and everything extracted from it.
+    if [ "$NODE_OS" = "darwin" ]; then
+      xattr -d com.apple.quarantine /tmp/memos-node.tgz 2>/dev/null || true
+    fi
     tar -xzf /tmp/memos-node.tgz -C "$NODE_DIR" --strip-components=1
     rm -f /tmp/memos-node.tgz
+    if [ "$NODE_OS" = "darwin" ]; then
+      xattr -dr com.apple.quarantine "$NODE_DIR" 2>/dev/null || true
+    fi
     NODE_BIN="$NODE_DIR/bin/node"
     _v="$(node_ok "$NODE_BIN")" || die "downloaded node is not usable"
     log "installed node v$_v under $NODE_DIR"
@@ -119,6 +137,8 @@ if [ -z "$NODE_BIN" ]; then
 fi
 
 NPM="$(resolve_npm "$NODE_BIN")" || die "found node but no usable npm next to it"
+log "node: $NODE_BIN"
+log "npm: $NPM"
 # invoke npm, splitting the "node /path/to/npm-cli.js" form when needed
 run_npm() {
   # shellcheck disable=SC2086
