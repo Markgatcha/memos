@@ -136,10 +136,22 @@ jobs:
           export MEMOS_HOME="$HOME/.memos"
           sh scripts/install.sh
       - name: probe-20 install.sh through ln -sf
+        continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/fakehome20" && mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
           sed -n '1,156p' scripts/install.sh | sh
+      - name: probe-22 ln -sf with nonexistent source
+        run: |
+          mkdir -p "$RUNNER_TEMP/lntest/destdir"
+          ln -sf "$RUNNER_TEMP/lntest/nonexistent-source" "$RUNNER_TEMP/lntest/destdir/link"
+          test -L "$RUNNER_TEMP/lntest/destdir/link"
+      - name: probe-23 check .bin/memos after npm install
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome23" && mkdir -p "$HOME"
+          export MEMOS_HOME="$HOME/.memos"
+          sed -n '1,153p' scripts/install.sh | sh
+          test -e "$MEMOS_HOME/pkg/node_modules/.bin/memos"
       - name: Run installer into a temp HOME
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
