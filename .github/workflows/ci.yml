@@ -48,30 +48,39 @@ jobs:
     name: Install script (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      # TEMP DEBUG: don't let the macOS failure cancel the ubuntu probes
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
+      # TEMP DEBUG probes (PAT can't read step logs; step pass/fail is the
+      # only observable signal). Remove once the macOS failure is understood.
+      - name: probe-1 runner temp writable
+        run: test -n "$RUNNER_TEMP" && test -d "$RUNNER_TEMP"
+      - name: probe-2 home override works
+        run: export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME" && test -d "$HOME"
+      - name: probe-3 node usable
+        run: command -v node && node -v
+      - name: probe-4 node major >= 20
+        run: test "$(node -v | sed 's/^v//;s/\..*//')" -ge 20
+      - name: probe-5 npm usable
+        run: command -v npm && npm -v
+      - name: probe-6 install.sh parses under sh
+        run: sh -n scripts/install.sh
+      - name: probe-7 install.sh platform stage
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
+          # run only the platform-detection head of install.sh
+          sed -n '1,/^log "platform/p' scripts/install.sh | sh
       - name: Run installer into a temp HOME
         run: |
-          echo "::notice::STEP-START RUNNER_TEMP=${RUNNER_TEMP:-UNSET} HOME=$HOME"
-          # TEMP DEBUG: surface the installer log via annotations (PAT can't
-          # read step logs). Remove once the macOS failure is understood.
           export HOME="$RUNNER_TEMP/fakehome"
-          echo "::notice::HOME-EXPORTED"
           mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
-          LOG="$RUNNER_TEMP/install.log"
-          fail() {
-            echo "::error::FAILED at stage: $1 (exit $2)"
-            tail -30 "$LOG" 2>/dev/null | sed 's/^/::error:: /'
-            exit "$2"
-          }
-          echo "installer-step starting; RUNNER_TEMP=$RUNNER_TEMP" >"$LOG" || fail "write-log" $?
-          sh scripts/install.sh >>"$LOG" 2>&1 || fail "install.sh" $?
-          test -x "$MEMOS_HOME/bin/memos" || fail "test -x memos" $?
-          "$MEMOS_HOME/bin/memos" --help >>"$LOG" 2>&1 || fail "memos --help" $?
-          echo "installer-step OK" >>"$LOG"
+          sh scripts/install.sh
+          test -x "$MEMOS_HOME/bin/memos"
+          "$MEMOS_HOME/bin/memos" --help >/dev/null
       - name: Re-run is idempotent
         run: |
           export HOME="$RUNNER_TEMP/fakehome"
