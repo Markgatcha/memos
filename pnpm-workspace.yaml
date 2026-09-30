@@ -1,0 +1,10 @@
+allowBuilds:
+  '@parcel/watcher': false
+  '@swc/core': true
+  better-sqlite3: false
+  better-sqlite3-multiple-ciphers: false
+  esbuild: false
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false
+  unrs-resolver: false
