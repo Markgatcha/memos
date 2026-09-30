@@ -151,6 +151,13 @@ jobs:
         if: always()
         continue-on-error: true
         run: test -e "$RUNNER_TEMP/fakehome/.memos/bin/memos"
+      - name: probe-18 memos --help in fakehome
+        if: always()
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome"
+          export MEMOS_HOME="$HOME/.memos"
+          "$MEMOS_HOME/bin/memos" --help >/dev/null
       - name: probe-17c bin memos executable after Run installer
         if: always()
         continue-on-error: true
