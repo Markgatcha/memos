@@ -476,6 +476,14 @@ function connectTarget(
           `  server + /memos, /recall commands + a memory skill).`,
           "",
           `  Manual one-liner equivalent: claude mcp add memos -s user -- ${args}`,
+          "",
+          "  # Session hook (auto-extract facts at session end):",
+          "  # Add to .claude/settings.json:",
+          "  {",
+          '    "hooks": {',
+          '      "SessionEnd": [{ "hooks": [{ "type": "command", "command": "memos session-hook" }] }]',
+          "    }",
+          "  }",
         ].join("\n"),
         configPath: ".mcp.json",
         fileContents: jsonEntry + "\n",
@@ -2293,6 +2301,134 @@ async function main(): Promise<void> {
             `Error writing ${result.configPath}: ${err instanceof Error ? err.message : String(err)}`,
           );
           process.exit(1);
+        }
+        break;
+      }
+
+      case "extract-facts": {
+        // `memos extract-facts --transcript <path>` — extract durable facts
+        // from a session transcript and store them.
+        const transcriptIdx = args.indexOf("--transcript");
+        const transcriptPath = transcriptIdx !== -1 ? args[transcriptIdx + 1] : undefined;
+        const nsIdx = args.indexOf("--namespace");
+        const namespace = nsIdx !== -1 ? args[nsIdx + 1] : "default";
+        const confIdx = args.indexOf("--min-confidence");
+        const minConfidence = confIdx !== -1 ? parseFloat(args[confIdx + 1]) : 0.6;
+        const dryRun = args.includes("--dry-run");
+
+        if (!transcriptPath) {
+          console.error(
+            "Error: --transcript <path> is required.\n" +
+              "  Usage: memos extract-facts --transcript <path> [--namespace <ns>] [--min-confidence <n>] [--dry-run]",
+          );
+          process.exit(1);
+        }
+
+        const { parseClaudeTranscript, parsePlainTranscript } = await import("./session-hooks.js");
+        const { readFileSync } = await import("node:fs");
+        let messages;
+        try {
+          // Try Claude Code JSONL format first, fall back to plain text.
+          try {
+            messages = parseClaudeTranscript(transcriptPath);
+          } catch {
+            const text = readFileSync(transcriptPath, "utf-8");
+            messages = parsePlainTranscript(text);
+          }
+        } catch (err) {
+          console.error(`Error reading transcript: ${err instanceof Error ? err.message : String(err)}`);
+          process.exit(1);
+        }
+
+        if (messages.length === 0) {
+          console.log("No messages found in transcript.");
+          break;
+        }
+
+        const result = await memos.extractFacts(messages, {
+          autoStore: !dryRun,
+          minConfidence,
+          namespace,
+        });
+
+        if (jsonFlag) {
+          console.log(JSON.stringify({
+            facts: result.facts.length,
+            stored: result.storedIds.length,
+            duplicates: result.duplicates,
+            dryRun,
+          }));
+        } else {
+          console.log(
+            `Extracted ${result.facts.length} fact(s)` +
+              (dryRun ? " (dry run, not stored)." : `, stored ${result.storedIds.length} (${result.duplicates} duplicates skipped).`)
+          );
+        }
+        break;
+      }
+
+      case "session-hook": {
+        // `memos session-hook` — Claude Code SessionEnd hook entrypoint.
+        // Reads hook JSON from stdin, extracts the transcript path, and
+        // stores durable facts. Fail-open: never break session teardown.
+        if (process.env.MEMOS_SKIP_SESSION_HOOK === "1") {
+          if (!jsonFlag) console.log("Session hook skipped (MEMOS_SKIP_SESSION_HOOK=1).");
+          break;
+        }
+
+        const { parseClaudeTranscript } = await import("./session-hooks.js");
+        const { readFileSync } = await import("node:fs");
+
+        // Read hook input from stdin (Claude Code passes JSON).
+        let input: any = {};
+        try {
+          const stdin = readFileSync(0, "utf-8").trim();
+          if (stdin) input = JSON.parse(stdin);
+        } catch {
+          // No stdin or invalid JSON — try --transcript flag instead.
+        }
+
+        const transcriptIdx = args.indexOf("--transcript");
+        const transcriptPath =
+          (transcriptIdx !== -1 ? args[transcriptIdx + 1] : undefined) ??
+          input.transcript_path;
+
+        if (!transcriptPath) {
+          // Fail-open: no transcript available, nothing to do.
+          if (!jsonFlag) console.log("Session hook: no transcript path, nothing to extract.");
+          break;
+        }
+
+        const nsIdx = args.indexOf("--namespace");
+        const namespace = nsIdx !== -1 ? args[nsIdx + 1] : "default";
+
+        try {
+          const messages = parseClaudeTranscript(transcriptPath);
+          if (messages.length === 0) break;
+
+          const result = await memos.extractFacts(messages, {
+            autoStore: true,
+            minConfidence: 0.6,
+            namespace,
+          });
+
+          if (jsonFlag) {
+            console.log(JSON.stringify({
+              ok: true,
+              facts: result.facts.length,
+              stored: result.storedIds.length,
+              duplicates: result.duplicates,
+            }));
+          } else {
+            console.log(
+              `Session hook: extracted ${result.facts.length} fact(s), stored ${result.storedIds.length}.`
+            );
+          }
+        } catch (err) {
+          // Fail-open: log but don't break session teardown.
+          console.error(
+            `Session hook failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
+          );
         }
         break;
       }
