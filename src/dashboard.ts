@@ -21,6 +21,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { MemOS } from "./memory.js";
+import { redactSecrets } from "./redact.js";
 
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -297,11 +298,15 @@ export async function startDashboard(
 
         sendJson(res, { error: "not found" }, 404);
       } catch (err) {
-        sendJson(
-          res,
-          { error: err instanceof Error ? err.message : String(err) },
-          500,
+        // Never echo raw error text to the HTTP client: it can carry stack
+        // traces or SQL fragments (CodeQL js/stack-trace-exposure). Log it
+        // server-side (localhost operator's own terminal, redacted) and
+        // return a generic 500.
+        console.error(
+          "[dashboard] request failed:",
+          redactSecrets(err instanceof Error ? err.message : String(err)),
         );
+        sendJson(res, { error: "internal error" }, 500);
       }
     },
   );

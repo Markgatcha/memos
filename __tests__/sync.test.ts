@@ -83,8 +83,18 @@ describe("encryptRecord/decryptRecord", () => {
 
 describe("createBundle/decryptBundle", () => {
   const records = [
-    { id: "id1", content: "Memory one", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
-    { id: "id2", content: "Memory two", createdAt: "2026-01-02T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z" },
+    {
+      id: "id1",
+      content: "Memory one",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    },
+    {
+      id: "id2",
+      content: "Memory two",
+      createdAt: "2026-01-02T00:00:00Z",
+      updatedAt: "2026-01-02T00:00:00Z",
+    },
   ];
 
   it("round-trips with passphrase", () => {
@@ -119,6 +129,18 @@ describe("createBundle/decryptBundle", () => {
     // IDs are visible (needed for dedup)
     expect(json).toContain("id1");
   });
+
+  it("rejects a short raw key with a constant error (no key material in the message)", () => {
+    const shortKey = randomBytes(16);
+    let message = "";
+    try {
+      createBundle(records, shortKey);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toBe("raw key must be 32 bytes");
+    expect(message).not.toContain(shortKey.toString("hex"));
+  });
 });
 
 describe("writeBundle/readBundle", () => {
@@ -127,7 +149,14 @@ describe("writeBundle/readBundle", () => {
     const path = join(dir, "bundle.json");
     try {
       const bundle = createBundle(
-        [{ id: "x", content: "y", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+        [
+          {
+            id: "x",
+            content: "y",
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
         "pass",
       );
       writeBundle(path, bundle);

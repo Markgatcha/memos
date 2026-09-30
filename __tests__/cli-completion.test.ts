@@ -11,7 +11,11 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getCompletionScript, COMPLETION_SHELLS } from "../src/cli-completion";
+import {
+  getCompletionScript,
+  COMPLETION_SHELLS,
+  shSingleQuoteEscape,
+} from "../src/cli-completion";
 import { CLI_COMMANDS } from "../src/cli-help";
 
 const COMMANDS = CLI_COMMANDS.filter((c) => c !== "help");
@@ -117,5 +121,18 @@ describe("fish completion", () => {
   test("passes fish syntax check", () => {
     if (!shellExists("fish")) return;
     expect(() => syntaxCheck("fish", ["--no-execute"], script)).not.toThrow();
+  });
+
+  test("escapes single quotes the fish way (CodeQL js/incomplete-sanitization)", () => {
+    // fish treats backslash as literal inside single quotes, so `\'` does
+    // NOT escape — the portable idiom is '\'' (close, escaped, reopen).
+    expect(shSingleQuoteEscape("don't")).toBe(`don'\\''t`);
+    expect(shSingleQuoteEscape("plain")).toBe("plain");
+    // No description line in the generated script may use the broken form.
+    for (const line of script.split("\n")) {
+      if (line.includes("-d '")) {
+        expect(line).not.toMatch(/[^']\\'[^']/);
+      }
+    }
   });
 });

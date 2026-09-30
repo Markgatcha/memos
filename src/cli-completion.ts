@@ -253,8 +253,19 @@ function bashScript(): string {
 // zsh
 // ---------------------------------------------------------------------------
 
-function zshEscape(s: string): string {
+/**
+ * Escape a string for embedding in a single-quoted shell string.
+ * Both zsh and fish treat backslash as literal inside single quotes, so
+ * `\'` does NOT escape — the portable idiom is '\'' (end quote, escaped
+ * quote, reopen quote). CodeQL js/incomplete-sanitization flags the
+ * backslash form.
+ */
+export function shSingleQuoteEscape(s: string): string {
   return s.replace(/'/g, `'\\''`);
+}
+
+function zshEscape(s: string): string {
+  return shSingleQuoteEscape(s);
 }
 
 function zshScript(): string {
@@ -338,7 +349,7 @@ function fishScript(): string {
   ];
   // subcommands
   for (const cmd of commandsExcludingHelp()) {
-    const desc = (COMMAND_DESCS[cmd] ?? "").replace(/'/g, "\\'");
+    const desc = shSingleQuoteEscape(COMMAND_DESCS[cmd] ?? "");
     lines.push(
       `complete -c memos -f -n '__fish_use_subcommand' -a '${cmd}' -d '${desc}'`,
     );

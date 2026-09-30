@@ -37,6 +37,7 @@ import type { CreateMemoryInput, ExportFormat } from "./types.js";
 import type { ChildProcess } from "node:child_process";
 import type { SQLiteStorage } from "./storage/sqlite.js";
 import { getSdkVersion } from "./version.js";
+import { redactSecrets } from "./redact.js";
 import { CLI_COMMANDS, suggestCommand, getCommandHelp } from "./cli-help.js";
 import { getCompletionScript, COMPLETION_SHELLS } from "./cli-completion.js";
 import type { EmbeddingConfig, EmbeddingProviderKind } from "./types.js";
@@ -2978,6 +2979,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("Fatal:", err.message);
+  // err.message can echo key material from a failing operation — redact
+  // before it hits stderr (CodeQL js/clear-text-logging).
+  console.error(
+    "Fatal:",
+    redactSecrets(err instanceof Error ? err.message : String(err)),
+  );
   process.exit(1);
 });

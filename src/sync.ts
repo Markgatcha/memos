@@ -153,13 +153,19 @@ export function createBundle(
   keyOrPassphrase: Buffer | string,
 ): SyncBundle {
   const salt = randomBytes(SALT_LENGTH);
-  const key =
-    typeof keyOrPassphrase === "string"
-      ? deriveKey(keyOrPassphrase, salt)
-      : keyOrPassphrase;
-
-  if (key.length !== KEY_LENGTH) {
-    throw new Error(`key must be ${KEY_LENGTH} bytes, got ${key.length}`);
+  // Validate a raw key BEFORE it can reach any error message: the
+  // length-check error below must be a constant string, never derived from
+  // key material (CodeQL js/clear-text-logging flags key material that can
+  // reach logs via thrown errors). A PBKDF2-derived key is always
+  // KEY_LENGTH bytes, so only raw Buffers need the check.
+  let key: Buffer;
+  if (typeof keyOrPassphrase === "string") {
+    key = deriveKey(keyOrPassphrase, salt);
+  } else {
+    if (keyOrPassphrase.length !== KEY_LENGTH) {
+      throw new Error(`raw key must be ${KEY_LENGTH} bytes`);
+    }
+    key = keyOrPassphrase;
   }
 
   const encryptedRecords: EncryptedRecord[] = records.map((r) => {

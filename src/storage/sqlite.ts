@@ -1263,7 +1263,10 @@ export class SQLiteStorage implements StorageAdapter {
         : "";
 
       const sortField = this.mapSortField(filter.sortBy);
-      const order = filter.sortOrder ?? "desc";
+      // Runtime allowlist: filter.sortOrder is typed "asc" | "desc" but
+      // arrives as unchecked runtime data (e.g. MCP JSON input), and it is
+      // interpolated into the SQL below — so it must be validated here.
+      const order = filter.sortOrder === "asc" ? "asc" : "desc";
 
       // Cache the prepared statement by its built SQL — the shape varies
       // with the filter combination, so the key must include the text.

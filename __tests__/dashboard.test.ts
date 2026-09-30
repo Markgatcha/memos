@@ -88,3 +88,27 @@ describe("dashboard", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("dashboard error handling (CodeQL js/stack-trace-exposure)", () => {
+  it("returns a generic 500 without echoing error text", async () => {
+    // A memos backend that throws: the raw error (and any stack/SQL it
+    // carries) must never reach the HTTP client.
+    const boom = new Error("boom: secret internals SELECT * FROM nodes");
+    const throwingMemos = {
+      retrieve: async () => {
+        throw boom;
+      },
+    } as unknown as MemOS;
+    const srv = await startDashboard(throwingMemos, { port: 0 });
+    try {
+      const res = await fetch(`${srv.url}/api/memory/anything`);
+      expect(res.status).toBe(500);
+      const body = await res.text();
+      expect(body).toBe(JSON.stringify({ error: "internal error" }));
+      expect(body).not.toContain("boom");
+      expect(body).not.toContain("SELECT");
+    } finally {
+      await srv.close();
+    }
+  });
+});
