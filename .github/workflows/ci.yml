@@ -90,6 +90,17 @@ jobs:
       - name: Debug node path
         if: always()
         run: command -v node
+      - name: Debug wrapper creation
+        if: always()
+        run: |
+          PKG_DIR="$RUNNER_TEMP/debug-home/pkg"
+          BIN_DIR="$RUNNER_TEMP/debug-home/bin"
+          MEMOS_BIN="$BIN_DIR/memos"
+          NODE_BIN="$(command -v node)"
+          mkdir -p "$BIN_DIR"
+          printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$NODE_BIN" "$PKG_DIR/node_modules/@mem-os/sdk/dist/cli.js" > "$MEMOS_BIN"
+          chmod +x "$MEMOS_BIN"
+          test -x "$MEMOS_BIN"
       - name: Re-run is idempotent
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
