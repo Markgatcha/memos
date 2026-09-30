@@ -73,6 +73,16 @@ jobs:
           export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
           # run only the platform-detection head of install.sh
           sed -n '1,/^log "platform/p' scripts/install.sh | sh
+      - name: probe-8 install.sh node detection
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
+          export MEMOS_HOME="$HOME/.memos"
+          sed -n '1,102p' scripts/install.sh | sh
+      - name: probe-9 install.sh npm resolution
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
+          export MEMOS_HOME="$HOME/.memos"
+          sed -n '1,141p' scripts/install.sh | sh
       - name: Run installer into a temp HOME
         run: |
           export HOME="$RUNNER_TEMP/fakehome"
