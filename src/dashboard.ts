@@ -245,7 +245,7 @@ export async function startDashboard(
         if (url.pathname === "/api/search") {
           const q = url.searchParams.get("q") ?? "";
           const limit = parseInt(url.searchParams.get("limit") ?? "20", 10);
-          const results = q ? await memos.search(q, { limit }) : [];
+          const results = q ? (await memos.search(q)).slice(0, limit) : [];
           sendJson(res, { results, query: q });
           return;
         }
