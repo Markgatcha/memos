@@ -84,7 +84,7 @@ if [ -z "$NODE_BIN" ]; then
     log "using previously downloaded node (v$_v)"
     NODE_BIN="$NODE_DIR/bin/node"
   else
-    log "no usable system node found; downloading official Node.js LTS…"
+    log "no usable system node found; downloading official Node.js LTS..."
     INDEX_JSON="$(curl -fsSL --retry 3 https://nodejs.org/dist/index.json)"
     # one JSON object per line; pick the newest with a string "lts" field
     NODE_VER="$(printf '%s\n' "$INDEX_JSON" | grep '"lts":"[A-Za-z]' | head -1 | sed 's/.*"version":"\(v[^"]*\)".*/\1/')"
@@ -92,7 +92,7 @@ if [ -z "$NODE_BIN" ]; then
       NODE_VER="$(printf '%s' "$INDEX_JSON" | python3 -c "import json,sys; ds=json.load(sys.stdin); print(next(x['version'] for x in ds if isinstance(x.get('lts'), str)))" 2>/dev/null || true)"
     fi
     [ -n "$NODE_VER" ] || die "could not determine latest Node.js LTS version"
-    log "downloading node $NODE_VER…"
+    log "downloading node $NODE_VER..."
     TARBALL="node-$NODE_VER-$NODE_OS-$NODE_ARCH.tar.gz"
     rm -rf "$NODE_DIR"
     mkdir -p "$NODE_DIR"
@@ -127,7 +127,7 @@ log "npm: $NPM_CMD"
 # --- install @mem-os/sdk -----------------------------------------------------
 PKG_DIR="$MEMOS_HOME/pkg"
 BIN_DIR="$MEMOS_HOME/bin"
-log "installing @mem-os/sdk@$MEMOS_NPM_TAG into $PKG_DIR…"
+log "installing @mem-os/sdk@$MEMOS_NPM_TAG into $PKG_DIR..."
 mkdir -p "$PKG_DIR"
 mkdir -p "$BIN_DIR"
 # shellcheck disable=SC2086 — $NPM_CMD may be "node /path/to/npm-cli.js"
