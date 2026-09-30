@@ -8,7 +8,7 @@ COPY package.json pnpm-lock.yaml* ./
 # Install pnpm without lifecycle scripts: pnpm 12's install.js places a
 # native binary via optional deps, which is fragile in minimal images.
 # bin/pnpm.mjs runs through Node directly and needs no postinstall.
-RUN npm install -g pnpm@12.6.0 --ignore-scripts \
+RUN npm install -g pnpm@12.8.1 --ignore-scripts \
     && node "$(npm root -g)/pnpm/bin/pnpm.mjs" install --frozen-lockfile --ignore-scripts
 COPY tsconfig.json ./
 COPY src/ ./src/
