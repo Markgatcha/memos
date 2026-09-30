@@ -54,22 +54,22 @@ jobs:
       - uses: actions/checkout@v7
       - name: Run installer into a temp HOME
         run: |
+          # TEMP DEBUG: surface the installer log via annotations (PAT can't
+          # read step logs). Remove once the macOS failure is understood.
           export HOME="$RUNNER_TEMP/fakehome"
           mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
-          # TEMP DEBUG: surface the installer log via annotations (PAT can't
-          # read step logs). Remove once the macOS failure is understood.
-          set +e
-          sh scripts/install.sh >"$RUNNER_TEMP/install.log" 2>&1
-          code=$?
-          set -e
-          if [ $code -ne 0 ]; then
-            echo "::error::install.sh exited $code; last 25 lines follow"
-            tail -25 "$RUNNER_TEMP/install.log" | sed 's/^/::error:: /'
-            exit $code
-          fi
-          test -x "$MEMOS_HOME/bin/memos"
-          "$MEMOS_HOME/bin/memos" --help >/dev/null
+          LOG="$RUNNER_TEMP/install.log"
+          fail() {
+            echo "::error::FAILED at stage: $1 (exit $2)"
+            tail -30 "$LOG" 2>/dev/null | sed 's/^/::error:: /'
+            exit "$2"
+          }
+          echo "installer-step starting; RUNNER_TEMP=$RUNNER_TEMP" >"$LOG" || fail "write-log" $?
+          sh scripts/install.sh >>"$LOG" 2>&1 || fail "install.sh" $?
+          test -x "$MEMOS_HOME/bin/memos" || fail "test -x memos" $?
+          "$MEMOS_HOME/bin/memos" --help >>"$LOG" 2>&1 || fail "memos --help" $?
+          echo "installer-step OK" >>"$LOG"
       - name: Re-run is idempotent
         run: |
           export HOME="$RUNNER_TEMP/fakehome"
