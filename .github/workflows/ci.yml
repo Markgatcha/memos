@@ -129,6 +129,12 @@ jobs:
           export HOME="$RUNNER_TEMP/fakehome3" && mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
           sed -n '1,153p' scripts/install.sh | sh
+      - name: probe-16 full install into fresh home
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome16" && mkdir -p "$HOME"
+          export MEMOS_HOME="$HOME/.memos"
+          sh scripts/install.sh
       - name: Run installer into a temp HOME
         run: |
           export HOME="$RUNNER_TEMP/fakehome"
