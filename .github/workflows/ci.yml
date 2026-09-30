@@ -123,6 +123,12 @@ jobs:
           PKG_DIR="/tmp/x/pkg"
           MEMOS_NPM_TAG="latest"
           log "installing @mem-os/sdk@$MEMOS_NPM_TAG into $PKG_DIR…"
+      - name: probe-15 install.sh through npm install line
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/fakehome3" && mkdir -p "$HOME"
+          export MEMOS_HOME="$HOME/.memos"
+          sed -n '1,153p' scripts/install.sh | sh
       - name: Run installer into a temp HOME
         run: |
           export HOME="$RUNNER_TEMP/fakehome"
