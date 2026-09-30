@@ -58,53 +58,8 @@ jobs:
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
           sh scripts/install.sh
-      - name: Check memos binary exists
-        run: |
-          test -x "$RUNNER_TEMP/memos-home/bin/memos"
-      - name: Check memos --help
-        run: |
-          "$RUNNER_TEMP/memos-home/bin/memos" --help >/dev/null
-      - name: Debug manual npm install
-        if: always()
-        run: |
-          mkdir -p "$RUNNER_TEMP/debug-home/pkg"
-          npm install --prefix "$RUNNER_TEMP/debug-home/pkg" --no-audit --no-fund "@mem-os/sdk@latest"
-      - name: Debug check node_modules
-        if: always()
-        run: test -d "$RUNNER_TEMP/debug-home/pkg/node_modules"
-      - name: Debug check sdk dir
-        if: always()
-        run: test -d "$RUNNER_TEMP/debug-home/pkg/node_modules/@mem-os/sdk"
-      - name: Debug check cli.js
-        if: always()
-        run: test -f "$RUNNER_TEMP/debug-home/pkg/node_modules/@mem-os/sdk/dist/cli.js"
-      - name: Debug check .bin dir
-        if: always()
-        run: test -d "$RUNNER_TEMP/debug-home/pkg/node_modules/.bin"
-      - name: Debug check .bin/memos
-        if: always()
-        run: test -e "$RUNNER_TEMP/debug-home/pkg/node_modules/.bin/memos"
-      - name: Debug npm on PATH
-        if: always()
-        run: command -v npm
-      - name: Debug node path
-        if: always()
-        run: command -v node
-      - name: Debug wrapper creation
-        if: always()
-        run: |
-          PKG_DIR="$RUNNER_TEMP/debug-home/pkg"
-          BIN_DIR="$RUNNER_TEMP/debug-home/bin"
-          MEMOS_BIN="$BIN_DIR/memos"
-          NODE_BIN="$(command -v node)"
-          mkdir -p "$BIN_DIR"
-          printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$NODE_BIN" "$PKG_DIR/node_modules/@mem-os/sdk/dist/cli.js" > "$MEMOS_BIN"
-          chmod +x "$MEMOS_BIN"
-          test -x "$MEMOS_BIN"
-      - name: Debug wrapper runs
-        if: always()
-        run: |
-          "$RUNNER_TEMP/debug-home/bin/memos" --help >/dev/null
+          test -x "$MEMOS_HOME/bin/memos"
+          "$MEMOS_HOME/bin/memos" --help >/dev/null
       - name: Re-run is idempotent
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
