@@ -48,6 +48,7 @@ export const CLI_COMMANDS: readonly string[] = [
   "reindex-embeddings",
   "extract-facts",
   "session-hook",
+  "dashboard",
   "mcp",
   "trio",
   "completion",
@@ -252,6 +253,11 @@ SessionEnd hook entrypoint for Claude Code / OpenCode. Reads hook JSON
 from stdin (Claude Code passes transcript_path), extracts durable facts
 from the transcript, and stores them. Fail-open: never breaks session
 teardown. Set MEMOS_SKIP_SESSION_HOOK=1 to opt out.`,
+  dashboard: `memos dashboard [--port <n>] [--no-open]
+
+Start a local web dashboard for browsing, searching, and visualizing
+the memory graph. Opens the browser automatically unless --no-open.
+The server binds to 127.0.0.1 only.`,
   mcp: `memos mcp [--db <path>]
 
 Start the MemOS MCP stdio server (for MCP clients to connect to).`,
