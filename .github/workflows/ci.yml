@@ -84,6 +84,12 @@ jobs:
       - name: Debug check .bin/memos
         if: always()
         run: test -e "$RUNNER_TEMP/debug-home/pkg/node_modules/.bin/memos"
+      - name: Debug npm on PATH
+        if: always()
+        run: command -v npm
+      - name: Debug node path
+        if: always()
+        run: command -v node
       - name: Re-run is idempotent
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
