@@ -51,7 +51,9 @@ export interface SessionHookResult {
  * content blocks). Only text content is extracted; tool calls/results
  * are skipped.
  */
-export function parseClaudeTranscript(transcriptPath: string): ConversationMessage[] {
+export function parseClaudeTranscript(
+  transcriptPath: string,
+): ConversationMessage[] {
   if (!existsSync(transcriptPath)) {
     throw new Error(`transcript not found: ${transcriptPath}`);
   }
@@ -84,7 +86,12 @@ function extractTextContent(content: unknown): string {
   if (!Array.isArray(content)) return "";
   const parts: string[] = [];
   for (const block of content) {
-    if (block && typeof block === "object" && block.type === "text" && typeof block.text === "string") {
+    if (
+      block &&
+      typeof block === "object" &&
+      block.type === "text" &&
+      typeof block.text === "string"
+    ) {
       parts.push(block.text);
     }
   }
@@ -181,7 +188,10 @@ export const MemosSessionHook = async ({ $ }) => {
 /**
  * Format hook setup instructions for a target harness.
  */
-export function sessionHookInstructions(target: string, memosBin = "memos"): string {
+export function sessionHookInstructions(
+  target: string,
+  memosBin = "memos",
+): string {
   const config = JSON.stringify(claudeCodeHookConfig(memosBin), null, 2);
   switch (target) {
     case "claude-code":
