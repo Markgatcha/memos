@@ -49,6 +49,7 @@ export const CLI_COMMANDS: readonly string[] = [
   "extract-facts",
   "session-hook",
   "dashboard",
+  "sync",
   "mcp",
   "trio",
   "completion",
@@ -258,6 +259,18 @@ teardown. Set MEMOS_SKIP_SESSION_HOOK=1 to opt out.`,
 Start a local web dashboard for browsing, searching, and visualizing
 the memory graph. Opens the browser automatically unless --no-open.
 The server binds to 127.0.0.1 only.`,
+  sync: `memos sync <export|import|status> [options]
+
+Encrypted cross-machine sync. Export memories to an encrypted bundle,
+move it to another machine, and import it there.
+
+  memos sync export --output <file> [--key <passphrase> | --key-file <path>]
+  memos sync import --input <file> [--strategy skip-existing|last-write-wins]
+  memos sync status --input <file>
+
+The bundle is encrypted with AES-256-GCM. The key can be a passphrase
+(PBKDF2-derived) or a 32-byte key file. MEMOS_SYNC_KEY env var also works.
+Local-first: import never deletes, only adds or updates.`,
   mcp: `memos mcp [--db <path>]
 
 Start the MemOS MCP stdio server (for MCP clients to connect to).`,
