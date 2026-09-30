@@ -292,6 +292,14 @@ Kill the terminal, come back tomorrow — the memory is still there.
 Every command has focused help: `memos <command> --help`
 (e.g. `memos search --help`). Full tour: `memos --help`.
 
+Tab-completion for bash/zsh/fish:
+
+```bash
+memos completion bash >> ~/.bashrc        # bash
+memos completion zsh > ~/.zfunc/_memos   # zsh (with ~/.zfunc on $fpath)
+memos completion fish > ~/.config/fish/completions/memos.fish  # fish
+```
+
 ### TypeScript
 
 ```typescript

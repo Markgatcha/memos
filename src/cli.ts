@@ -38,6 +38,7 @@ import type { ChildProcess } from "node:child_process";
 import type { SQLiteStorage } from "./storage/sqlite.js";
 import { getSdkVersion } from "./version.js";
 import { CLI_COMMANDS, suggestCommand, getCommandHelp } from "./cli-help.js";
+import { getCompletionScript, COMPLETION_SHELLS } from "./cli-completion.js";
 import type { EmbeddingConfig, EmbeddingProviderKind } from "./types.js";
 import { resolve, dirname, join } from "path";
 import * as os from "os";
@@ -703,6 +704,7 @@ Commands:
                           (--purge-stale deletes vectors from other models first)
   mcp                     Start the MemOS MCP stdio server
   trio [--up]             Show (or launch) the full AI Trio: MemOS + LLM-Guardian + Universal-MCP-Toolkit
+  completion <shell>      Print shell completion script (bash|zsh|fish)
   help                    Show this help message
 
 Options:
@@ -773,6 +775,20 @@ async function main(): Promise<void> {
       : keyFlagIdx !== -1
         ? args[keyFlagIdx + 1]
         : process.env.MEMOS_KEY;
+
+  if (command === "completion") {
+    const shell = args[1];
+    const script = shell ? getCompletionScript(shell) : null;
+    if (!script) {
+      console.error(
+        `Usage: memos completion <${COMPLETION_SHELLS.join("|")}>\n` +
+          `Unknown shell: ${shell ?? "(none given)"}`,
+      );
+      process.exit(1);
+    }
+    console.log(script);
+    return;
+  }
 
   if (command === "mcp") {
     const { runMcpServer } = await import("./mcp.js");

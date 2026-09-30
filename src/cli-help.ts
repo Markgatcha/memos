@@ -48,6 +48,7 @@ export const CLI_COMMANDS: readonly string[] = [
   "reindex-embeddings",
   "mcp",
   "trio",
+  "completion",
   "help",
 ];
 
@@ -244,6 +245,12 @@ Start the MemOS MCP stdio server (for MCP clients to connect to).`,
 
 Show (or with --up, launch) the full AI Trio: MemOS + LLM-Guardian +
 Universal-MCP-Toolkit.`,
+  completion: `memos completion <bash|zsh|fish>
+
+Print a shell completion script to stdout. Install it, e.g.:
+  memos completion bash >> ~/.bashrc
+  memos completion zsh > ~/.zfunc/_memos      # with ~/.zfunc on $fpath
+  memos completion fish > ~/.config/fish/completions/memos.fish`,
   help: `memos help
 
 Show the full command list. For one command: memos <command> --help`,
