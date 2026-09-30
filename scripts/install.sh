@@ -153,7 +153,18 @@ mkdir -p "$PKG_DIR" "$BIN_DIR"
 run_npm install --prefix "$PKG_DIR" --no-audit --no-fund "@mem-os/sdk@$MEMOS_NPM_TAG"
 
 MEMOS_BIN="$BIN_DIR/memos"
-ln -sf "$PKG_DIR/node_modules/.bin/memos" "$MEMOS_BIN"
+# npm normally links package binaries into node_modules/.bin, but don't
+# depend on it — fall back to a direct wrapper if the link is missing
+# (seen on macOS runners where npm skips .bin linking).
+if [ -e "$PKG_DIR/node_modules/.bin/memos" ]; then
+  ln -sf "$PKG_DIR/node_modules/.bin/memos" "$MEMOS_BIN"
+elif [ -f "$PKG_DIR/node_modules/@mem-os/sdk/dist/cli.js" ]; then
+  log "npm did not link .bin/memos; creating wrapper script instead"
+  printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$NODE_BIN" "$PKG_DIR/node_modules/@mem-os/sdk/dist/cli.js" > "$MEMOS_BIN"
+  chmod +x "$MEMOS_BIN"
+else
+  die "npm install did not provide a memos binary (checked .bin/memos and @mem-os/sdk/dist/cli.js)"
+fi
 
 # --- verify ------------------------------------------------------------------
 "$MEMOS_BIN" --help >/dev/null 2>&1 || die "install finished but 'memos --help' failed"
