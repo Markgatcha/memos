@@ -64,6 +64,20 @@ jobs:
       - name: Check memos --help
         run: |
           "$RUNNER_TEMP/memos-home/bin/memos" --help >/dev/null
+      - name: Debug manual npm install
+        run: |
+          mkdir -p "$RUNNER_TEMP/debug-home/pkg"
+          npm install --prefix "$RUNNER_TEMP/debug-home/pkg" --no-audit --no-fund "@mem-os/sdk@latest"
+      - name: Debug check node_modules
+        run: test -d "$RUNNER_TEMP/debug-home/pkg/node_modules"
+      - name: Debug check sdk dir
+        run: test -d "$RUNNER_TEMP/debug-home/pkg/node_modules/@mem-os/sdk"
+      - name: Debug check cli.js
+        run: test -f "$RUNNER_TEMP/debug-home/pkg/node_modules/@mem-os/sdk/dist/cli.js"
+      - name: Debug check .bin dir
+        run: test -d "$RUNNER_TEMP/debug-home/pkg/node_modules/.bin"
+      - name: Debug check .bin/memos
+        run: test -e "$RUNNER_TEMP/debug-home/pkg/node_modules/.bin/memos"
       - name: Re-run is idempotent
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
