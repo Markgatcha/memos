@@ -143,6 +143,18 @@ jobs:
           sh scripts/install.sh
           test -x "$MEMOS_HOME/bin/memos"
           "$MEMOS_HOME/bin/memos" --help >/dev/null
+      - name: probe-17a pkg node_modules exists after Run installer
+        if: always()
+        continue-on-error: true
+        run: test -d "$RUNNER_TEMP/fakehome/.memos/pkg/node_modules"
+      - name: probe-17b bin memos exists after Run installer
+        if: always()
+        continue-on-error: true
+        run: test -e "$RUNNER_TEMP/fakehome/.memos/bin/memos"
+      - name: probe-17c bin memos executable after Run installer
+        if: always()
+        continue-on-error: true
+        run: test -x "$RUNNER_TEMP/fakehome/.memos/bin/memos"
       - name: Re-run is idempotent
         run: |
           export HOME="$RUNNER_TEMP/fakehome"
