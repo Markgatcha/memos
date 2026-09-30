@@ -46,6 +46,8 @@ export const CLI_COMMANDS: readonly string[] = [
   "doctor",
   "connect",
   "reindex-embeddings",
+  "extract-facts",
+  "session-hook",
   "mcp",
   "trio",
   "completion",
@@ -238,6 +240,18 @@ config to the harness.`,
 
 Re-embed all memories with the configured provider. --purge-stale deletes
 vectors produced by other models first.`,
+  "extract-facts": `memos extract-facts --transcript <path> [--namespace <ns>]
+  [--min-confidence <n>] [--dry-run] [--json]
+
+Extract durable facts from a session transcript (Claude Code JSONL or
+plain text) and store them. Uses the same extractFacts() path as the
+session hook. --dry-run shows what would be stored without writing.`,
+  "session-hook": `memos session-hook [--transcript <path>] [--namespace <ns>] [--json]
+
+SessionEnd hook entrypoint for Claude Code / OpenCode. Reads hook JSON
+from stdin (Claude Code passes transcript_path), extracts durable facts
+from the transcript, and stores them. Fail-open: never breaks session
+teardown. Set MEMOS_SKIP_SESSION_HOOK=1 to opt out.`,
   mcp: `memos mcp [--db <path>]
 
 Start the MemOS MCP stdio server (for MCP clients to connect to).`,
