@@ -22,7 +22,6 @@
  *   memos backup [--output <path>]
  *   memos restore <path>
  *   memos mcp
- *   memos serve
  *
  * @module @memos/cli
  */
@@ -38,6 +37,7 @@ import type { CreateMemoryInput, ExportFormat } from "./types.js";
 import type { ChildProcess } from "node:child_process";
 import type { SQLiteStorage } from "./storage/sqlite.js";
 import { getSdkVersion } from "./version.js";
+import { CLI_COMMANDS, suggestCommand, getCommandHelp } from "./cli-help.js";
 import type { EmbeddingConfig, EmbeddingProviderKind } from "./types.js";
 import { resolve, dirname, join } from "path";
 import * as os from "os";
@@ -230,10 +230,16 @@ async function promptChoice<T extends string>(
  * `memos init` — walk the user through database path + embedding provider,
  * smoke-test the setup (store → semantic search → forget a probe memory),
  * and save ~/.memos/config.json. `memos init --yes` accepts all defaults
- * without prompting (for scripts).
+ * without prompting (for scripts); a non-TTY stdin (piped/CI) is also
+ * treated as non-interactive automatically.
  */
 async function runInitWizard(cliArgs: string[]): Promise<void> {
-  const nonInteractive = cliArgs.includes("--yes") || cliArgs.includes("-y");
+  // --yes/-y forces non-interactive; so does a non-TTY stdin (piped/CI),
+  // so scripts never hang on a readline prompt they can't answer.
+  const nonInteractive =
+    cliArgs.includes("--yes") ||
+    cliArgs.includes("-y") ||
+    process.stdin.isTTY === false;
   const { createInterface } = await import("node:readline/promises");
   const rl = nonInteractive
     ? null
@@ -340,7 +346,7 @@ async function runInitWizard(cliArgs: string[]): Promise<void> {
             );
       } else {
         console.log(
-          "Note: real local vectors need `npm install @huggingface/transformers`; " +
+          "Note: real local vectors need `pnpm add @huggingface/transformers`; " +
             "without it MemOS falls back to a deterministic local hash and warns loudly.",
         );
       }
@@ -696,7 +702,6 @@ Commands:
   reindex-embeddings      Re-embed all memories with the configured provider
                           (--purge-stale deletes vectors from other models first)
   mcp                     Start the MemOS MCP stdio server
-  serve                   Start the HTTP server
   trio [--up]             Show (or launch) the full AI Trio: MemOS + LLM-Guardian + Universal-MCP-Toolkit
   help                    Show this help message
 
@@ -736,6 +741,20 @@ async function main(): Promise<void> {
   ) {
     printHelp();
     process.exit(0);
+  }
+
+  // Per-command help: `memos <command> --help` prints focused usage instead of
+  // being misinterpreted as an argument (e.g. `memos search --help` used to
+  // literally search for the string "--help").
+  if (
+    (CLI_COMMANDS as readonly string[]).includes(command) &&
+    args.slice(1).some((a) => a === "--help" || a === "-h")
+  ) {
+    const detail = getCommandHelp(command);
+    if (detail) {
+      console.log(detail);
+      process.exit(0);
+    }
   }
 
   const dbFlagIdx = args.indexOf("--db");
@@ -1876,6 +1895,9 @@ async function main(): Promise<void> {
 
         if (!existsSync(resolvedDb)) {
           console.error(`Error: Database not found at ${resolvedDb}`);
+          console.error(
+            `Run 'memos init' to create a database, or pass --db <path> to use a different one.`,
+          );
           process.exit(1);
         }
 
@@ -2130,7 +2152,7 @@ async function main(): Promise<void> {
                 `Embedding fallback active: ${info.fallbackReason}.`,
               );
               suggestions.push(
-                "Install @huggingface/transformers for real local embeddings: npm install @huggingface/transformers. " +
+                "Install @huggingface/transformers for real local embeddings: pnpm add @huggingface/transformers. " +
                   `Playbook: ${PLAYBOOK}#embeddings-silently-fell-back-to-local-hash`,
               );
               console.log(
@@ -2386,6 +2408,10 @@ async function main(): Promise<void> {
 
       default:
         console.error(`Unknown command: ${command}`);
+        const suggestion = suggestCommand(command);
+        if (suggestion) {
+          console.error(`Did you mean "memos ${suggestion}"?`);
+        }
         printHelp();
         process.exit(1);
     }

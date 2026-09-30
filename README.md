@@ -277,6 +277,21 @@ The `model` you configure in MemOS must match the model the server loads — Mem
 
 ## Quick start
 
+### CLI — 60 seconds to first memory
+
+```bash
+npm install -g @mem-os/sdk   # or: pnpm add -g @mem-os/sdk
+
+memos init                   # interactive setup (database path, embeddings)
+memos store "User prefers dark mode"
+memos search "dark mode"
+# → User prefers dark mode
+```
+
+Kill the terminal, come back tomorrow — the memory is still there.
+Every command has focused help: `memos <command> --help`
+(e.g. `memos search --help`). Full tour: `memos --help`.
+
 ### TypeScript
 
 ```typescript
@@ -417,12 +432,12 @@ memos summarize
 # Export memories
 memos export --format markdown --output ./my-export
 
-# Import memories
-memos import ./my-export
-memos import ./memories.json
+# Import a chat export (ChatGPT/Claude/Slack)
+memos import --from chatgpt --file ./chatgpt-export.json --dry-run
 
-# Start the HTTP server
-memos serve
+# Start the HTTP server (Python package)
+memos-server
+# → Listening on http://localhost:7400
 
 # Boot the full AI Trio (MemOS + LLM-Guardian + Universal-MCP-Toolkit)
 memos trio            # print the compose plan

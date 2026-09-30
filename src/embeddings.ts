@@ -716,7 +716,7 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
     console.warn(
       `[memos] embedding fallback: ${this.fallbackReason}. ` +
         "Semantic search is degraded to a deterministic local hash. " +
-        "For real embeddings: npm install @huggingface/transformers",
+        "For real embeddings: pnpm add @huggingface/transformers",
     );
   }
 

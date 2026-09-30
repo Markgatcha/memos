@@ -3,18 +3,20 @@
 Let's get MemOS running on your machine. Pick your path below — every one of them ends with the same thing: a memory layer that works entirely offline.
 
 !!! info "What you'll need"
-    - **TypeScript path:** Node.js 18+ and npm
+    - **TypeScript path:** Node.js 18+ and your package manager of choice
+      (the published `@mem-os/sdk` works with npm, pnpm, or yarn;
+      building MemOS itself from source uses pnpm)
     - **Python path:** Python 3.11+ and pip (plus Node.js 18+ — the Python server drives the TypeScript SDK)
     - **Docker path:** Docker and Docker Compose
     - About 5 minutes and zero API keys
 
 !!! tip "First run: `memos init`"
-    After installing the SDK (option 1), run `memos init` — an interactive
+    After installing the CLI (option 1), run `memos init` — an interactive
     wizard that picks your database path and embedding provider, runs a
     store→search→forget smoke test, and saves your choices to
     `~/.memos/config.json` (`memos init --yes` accepts all defaults for
-    scripts). Environment variables (`MEMOS_DB_PATH`, `MEMOS_EMBEDDING_*`)
-    always override the saved config.
+    scripts; non-TTY stdin is auto-detected too). Environment variables
+    (`MEMOS_DB_PATH`, `MEMOS_EMBEDDING_*`) always override the saved config.
 
 ## Option 1 — npm (TypeScript / Node.js)
 
@@ -25,6 +27,24 @@ The fastest way in if you live in JavaScript.
 ```bash
 npm install @mem-os/sdk
 ```
+
+**Step 1b. Get the `memos` CLI**
+
+The SDK ships a `memos` command-line tool. Either install it globally:
+
+```bash
+npm install -g @mem-os/sdk
+memos --help
+```
+
+…or run it without installing via `npx` (prefix every command with `npx -y @mem-os/sdk`):
+
+```bash
+npx -y @mem-os/sdk --help
+npx -y @mem-os/sdk store "User prefers dark mode"
+```
+
+The examples below assume a global install — swap in the `npx` form if you prefer.
 
 **Step 2. Create your first memory**
 
