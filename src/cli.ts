@@ -2487,6 +2487,161 @@ async function main(): Promise<void> {
         break;
       }
 
+      case "sync": {
+        // `memos sync export|import|status` — encrypted cross-machine sync.
+        const subcommand = args[1];
+        const {
+          createBundle,
+          decryptBundle,
+          writeBundle,
+          readBundle,
+          resolveSyncKey,
+        } = await import("./sync.js");
+
+        const getFlag = (name: string): string | undefined => {
+          const idx = args.indexOf(name);
+          return idx !== -1 ? args[idx + 1] : undefined;
+        };
+
+        if (subcommand === "export") {
+          const output = getFlag("--output");
+          if (!output) {
+            console.error(
+              "Error: --output <file> is required.\n  Usage: memos sync export --output <file> [--key <passphrase>|--key-file <path>]",
+            );
+            process.exit(1);
+          }
+          const key = resolveSyncKey({
+            key: getFlag("--key"),
+            keyFile: getFlag("--key-file"),
+          });
+
+          const graph = await memos.getGraph();
+          const records = (graph.nodes ?? []).map((n: any) => ({
+            id: n.id,
+            content: n.content,
+            createdAt: n.createdAt ?? new Date().toISOString(),
+            updatedAt: n.updatedAt ?? n.createdAt ?? new Date().toISOString(),
+          }));
+
+          const bundle = createBundle(records, key);
+          writeBundle(output, bundle);
+          console.log(
+            `Exported ${records.length} memories to ${output} (encrypted).`,
+          );
+          break;
+        }
+
+        if (subcommand === "import") {
+          const input = getFlag("--input");
+          if (!input) {
+            console.error(
+              "Error: --input <file> is required.\n  Usage: memos sync import --input <file> [--strategy skip-existing|last-write-wins]",
+            );
+            process.exit(1);
+          }
+          const strategy = (getFlag("--strategy") ?? "skip-existing") as
+            "skip-existing" | "last-write-wins";
+          if (strategy !== "skip-existing" && strategy !== "last-write-wins") {
+            console.error(
+              "Error: --strategy must be skip-existing or last-write-wins",
+            );
+            process.exit(1);
+          }
+          const key = resolveSyncKey({
+            key: getFlag("--key"),
+            keyFile: getFlag("--key-file"),
+          });
+
+          const bundle = readBundle(input);
+          let records;
+          try {
+            records = decryptBundle(bundle, key);
+          } catch (err) {
+            console.error(
+              `Error: failed to decrypt bundle (wrong key?): ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(1);
+          }
+
+          let imported = 0,
+            skipped = 0,
+            updated = 0;
+          const errors: string[] = [];
+
+          for (const r of records) {
+            try {
+              const existing = await memos.retrieve(r.id);
+              if (existing) {
+                if (strategy === "last-write-wins") {
+                  const existingUpdated = new Date(
+                    (existing as any).updatedAt ?? 0,
+                  ).getTime();
+                  const incomingUpdated = new Date(r.updatedAt).getTime();
+                  if (incomingUpdated > existingUpdated) {
+                    // Update by forgetting old and storing new (preserves ID via internal API)
+                    await memos.forget(r.id);
+                    await memos.store(r.content, {
+                      type: ((existing as any).type ?? "fact") as "fact",
+                    });
+                    updated++;
+                  } else {
+                    skipped++;
+                  }
+                } else {
+                  skipped++;
+                }
+              } else {
+                await memos.store(r.content, { type: "fact" as const });
+                imported++;
+              }
+            } catch (err) {
+              errors.push(
+                `${r.id}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+
+          if (jsonFlag) {
+            console.log(JSON.stringify({ imported, skipped, updated, errors }));
+          } else {
+            console.log(
+              `Import complete: ${imported} imported, ${skipped} skipped, ${updated} updated.`,
+            );
+            if (errors.length > 0) {
+              console.log(`Errors: ${errors.length}`);
+              errors.slice(0, 5).forEach((e) => console.log(`  ${e}`));
+            }
+          }
+          break;
+        }
+
+        if (subcommand === "status") {
+          const input = getFlag("--input");
+          if (!input) {
+            console.error(
+              "Error: --input <file> is required.\n  Usage: memos sync status --input <file>",
+            );
+            process.exit(1);
+          }
+          const bundle = readBundle(input);
+          console.log(
+            `Bundle: ${bundle.records.length} records, exported ${bundle.exportedAt}`,
+          );
+          console.log(`Version: ${bundle.version}`);
+          // Don't decrypt — just show metadata (key not required for status)
+          break;
+        }
+
+        console.error(
+          "Error: subcommand required.\n" +
+            "  Usage: memos sync <export|import|status> [options]\n" +
+            "  See: memos sync --help",
+        );
+        process.exit(1);
+        break;
+      }
+
       case "trio": {
         // Boot the full AI Trio: MemOS (this process, memory) + LLM-Guardian
         // (optimization) + Universal-MCP-Toolkit (tools). With `--up` the
