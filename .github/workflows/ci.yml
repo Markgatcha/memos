@@ -57,53 +57,67 @@ jobs:
       # TEMP DEBUG probes (PAT can't read step logs; step pass/fail is the
       # only observable signal). Remove once the macOS failure is understood.
       - name: probe-1 runner temp writable
+        continue-on-error: true
         run: test -n "$RUNNER_TEMP" && test -d "$RUNNER_TEMP"
       - name: probe-2 home override works
+        continue-on-error: true
         run: export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME" && test -d "$HOME"
       - name: probe-3 node usable
+        continue-on-error: true
         run: command -v node && node -v
       - name: probe-4 node major >= 20
+        continue-on-error: true
         run: test "$(node -v | sed 's/^v//;s/\..*//')" -ge 20
       - name: probe-5 npm usable
+        continue-on-error: true
         run: command -v npm && npm -v
       - name: probe-6 install.sh parses under sh
+        continue-on-error: true
         run: sh -n scripts/install.sh
       - name: probe-7 install.sh platform stage
+        continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
           # run only the platform-detection head of install.sh
           sed -n '1,/^log "platform/p' scripts/install.sh | sh
       - name: probe-8 install.sh node detection
+        continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
           sed -n '1,102p' scripts/install.sh | sh
       - name: probe-9 install.sh npm resolution
+        continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
           sed -n '1,141p' scripts/install.sh | sh
       - name: probe-10 install.sh through mkdir
+        continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
           sed -n '1,152p' scripts/install.sh | sh
       - name: probe-11 raw npm install
+        continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
           npm install --prefix "$HOME/.memos-probe/pkg" --no-audit --no-fund "@mem-os/sdk@latest"
       # TEMP DEBUG: probe-10 isolated the failure to mkdir -p "$PKG_DIR" "$BIN_DIR"
       - name: probe-12 mkdir single arg
+        continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/fakehome" && mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
           mkdir -p "$MEMOS_HOME/pkg"
       - name: probe-13 mkdir two args
+        continue-on-error: true
         run: |
           export HOME="$RUNNER_TEMP/fakehome2" && mkdir -p "$HOME"
           export MEMOS_HOME="$HOME/.memos"
           mkdir -p "$MEMOS_HOME/pkg" "$MEMOS_HOME/bin"
       - name: probe-14 log line with ellipsis char
+        continue-on-error: true
         run: |
           log() { printf '%s\n' "memos-install: $*"; }
           PKG_DIR="/tmp/x/pkg"
