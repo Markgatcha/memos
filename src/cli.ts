@@ -2309,11 +2309,13 @@ async function main(): Promise<void> {
         // `memos extract-facts --transcript <path>` — extract durable facts
         // from a session transcript and store them.
         const transcriptIdx = args.indexOf("--transcript");
-        const transcriptPath = transcriptIdx !== -1 ? args[transcriptIdx + 1] : undefined;
+        const transcriptPath =
+          transcriptIdx !== -1 ? args[transcriptIdx + 1] : undefined;
         const nsIdx = args.indexOf("--namespace");
         const namespace = nsIdx !== -1 ? args[nsIdx + 1] : "default";
         const confIdx = args.indexOf("--min-confidence");
-        const minConfidence = confIdx !== -1 ? parseFloat(args[confIdx + 1]) : 0.6;
+        const minConfidence =
+          confIdx !== -1 ? parseFloat(args[confIdx + 1]) : 0.6;
         const dryRun = args.includes("--dry-run");
 
         if (!transcriptPath) {
@@ -2324,7 +2326,8 @@ async function main(): Promise<void> {
           process.exit(1);
         }
 
-        const { parseClaudeTranscript, parsePlainTranscript } = await import("./session-hooks.js");
+        const { parseClaudeTranscript, parsePlainTranscript } =
+          await import("./session-hooks.js");
         const { readFileSync } = await import("node:fs");
         let messages;
         try {
@@ -2336,7 +2339,9 @@ async function main(): Promise<void> {
             messages = parsePlainTranscript(text);
           }
         } catch (err) {
-          console.error(`Error reading transcript: ${err instanceof Error ? err.message : String(err)}`);
+          console.error(
+            `Error reading transcript: ${err instanceof Error ? err.message : String(err)}`,
+          );
           process.exit(1);
         }
 
@@ -2352,16 +2357,20 @@ async function main(): Promise<void> {
         });
 
         if (jsonFlag) {
-          console.log(JSON.stringify({
-            facts: result.facts.length,
-            stored: result.storedIds.length,
-            duplicates: result.duplicates,
-            dryRun,
-          }));
+          console.log(
+            JSON.stringify({
+              facts: result.facts.length,
+              stored: result.storedIds.length,
+              duplicates: result.duplicates,
+              dryRun,
+            }),
+          );
         } else {
           console.log(
             `Extracted ${result.facts.length} fact(s)` +
-              (dryRun ? " (dry run, not stored)." : `, stored ${result.storedIds.length} (${result.duplicates} duplicates skipped).`)
+              (dryRun
+                ? " (dry run, not stored)."
+                : `, stored ${result.storedIds.length} (${result.duplicates} duplicates skipped).`),
           );
         }
         break;
@@ -2372,7 +2381,8 @@ async function main(): Promise<void> {
         // Reads hook JSON from stdin, extracts the transcript path, and
         // stores durable facts. Fail-open: never break session teardown.
         if (process.env.MEMOS_SKIP_SESSION_HOOK === "1") {
-          if (!jsonFlag) console.log("Session hook skipped (MEMOS_SKIP_SESSION_HOOK=1).");
+          if (!jsonFlag)
+            console.log("Session hook skipped (MEMOS_SKIP_SESSION_HOOK=1).");
           break;
         }
 
@@ -2395,7 +2405,10 @@ async function main(): Promise<void> {
 
         if (!transcriptPath) {
           // Fail-open: no transcript available, nothing to do.
-          if (!jsonFlag) console.log("Session hook: no transcript path, nothing to extract.");
+          if (!jsonFlag)
+            console.log(
+              "Session hook: no transcript path, nothing to extract.",
+            );
           break;
         }
 
@@ -2413,21 +2426,23 @@ async function main(): Promise<void> {
           });
 
           if (jsonFlag) {
-            console.log(JSON.stringify({
-              ok: true,
-              facts: result.facts.length,
-              stored: result.storedIds.length,
-              duplicates: result.duplicates,
-            }));
+            console.log(
+              JSON.stringify({
+                ok: true,
+                facts: result.facts.length,
+                stored: result.storedIds.length,
+                duplicates: result.duplicates,
+              }),
+            );
           } else {
             console.log(
-              `Session hook: extracted ${result.facts.length} fact(s), stored ${result.storedIds.length}.`
+              `Session hook: extracted ${result.facts.length} fact(s), stored ${result.storedIds.length}.`,
             );
           }
         } catch (err) {
           // Fail-open: log but don't break session teardown.
           console.error(
-            `Session hook failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
+            `Session hook failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
           );
         }
         break;
