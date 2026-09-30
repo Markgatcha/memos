@@ -137,12 +137,39 @@ jobs:
           sh scripts/install.sh
       - name: Run installer into a temp HOME
         run: |
+          echo "m1" > "$RUNNER_TEMP/markers.txt"
           export HOME="$RUNNER_TEMP/fakehome"
+          echo "m2" >> "$RUNNER_TEMP/markers.txt"
           mkdir -p "$HOME"
+          echo "m3" >> "$RUNNER_TEMP/markers.txt"
           export MEMOS_HOME="$HOME/.memos"
+          echo "m4" >> "$RUNNER_TEMP/markers.txt"
           sh scripts/install.sh
+          echo "m5" >> "$RUNNER_TEMP/markers.txt"
           test -x "$MEMOS_HOME/bin/memos"
+          echo "m6" >> "$RUNNER_TEMP/markers.txt"
           "$MEMOS_HOME/bin/memos" --help >/dev/null
+          echo "m7" >> "$RUNNER_TEMP/markers.txt"
+      - name: probe-19a marker m1 reached
+        if: always()
+        continue-on-error: true
+        run: grep -q "^m1$" "$RUNNER_TEMP/markers.txt"
+      - name: probe-19b marker m2 reached
+        if: always()
+        continue-on-error: true
+        run: grep -q "^m2$" "$RUNNER_TEMP/markers.txt"
+      - name: probe-19c marker m3 reached
+        if: always()
+        continue-on-error: true
+        run: grep -q "^m3$" "$RUNNER_TEMP/markers.txt"
+      - name: probe-19d marker m4 reached
+        if: always()
+        continue-on-error: true
+        run: grep -q "^m4$" "$RUNNER_TEMP/markers.txt"
+      - name: probe-19e marker m5 reached
+        if: always()
+        continue-on-error: true
+        run: grep -q "^m5$" "$RUNNER_TEMP/markers.txt"
       - name: probe-17a pkg node_modules exists after Run installer
         if: always()
         continue-on-error: true
