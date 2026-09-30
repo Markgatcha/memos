@@ -65,6 +65,7 @@ jobs:
         run: |
           "$RUNNER_TEMP/memos-home/bin/memos" --help >/dev/null
       - name: Debug manual npm install
+        if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/debug-home/pkg"
           npm install --prefix "$RUNNER_TEMP/debug-home/pkg" --no-audit --no-fund "@mem-os/sdk@latest"
