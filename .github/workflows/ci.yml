@@ -166,6 +166,14 @@ jobs:
         if: always()
         continue-on-error: true
         run: grep -q "^m4$" "$RUNNER_TEMP/markers.txt"
+      - name: probe-19f marker m6 reached
+        if: always()
+        continue-on-error: true
+        run: grep -q "^m6$" "$RUNNER_TEMP/markers.txt"
+      - name: probe-19g marker m7 reached
+        if: always()
+        continue-on-error: true
+        run: grep -q "^m7$" "$RUNNER_TEMP/markers.txt"
       - name: probe-19e marker m5 reached
         if: always()
         continue-on-error: true
