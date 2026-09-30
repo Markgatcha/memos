@@ -2448,6 +2448,45 @@ async function main(): Promise<void> {
         break;
       }
 
+      case "dashboard": {
+        // `memos dashboard` — start a local web dashboard.
+        const portIdx = args.indexOf("--port");
+        const port =
+          portIdx !== -1 ? parseInt(args[portIdx + 1], 10) : undefined;
+        const noOpen = args.includes("--no-open");
+
+        const { startDashboard } = await import("./dashboard.js");
+        const { url, close } = await startDashboard(memos, {
+          ...(port !== undefined && !Number.isNaN(port) ? { port } : {}),
+        });
+
+        console.log(`\nMemOS dashboard running at ${url}`);
+        console.log("Press Ctrl+C to stop.\n");
+
+        if (!noOpen) {
+          // Try to open the browser (fail silently if unavailable).
+          const { exec } = await import("node:child_process");
+          const openCmd =
+            process.platform === "darwin"
+              ? "open"
+              : process.platform === "win32"
+                ? "start"
+                : "xdg-open";
+          exec(`${openCmd} "${url}"`, () => {});
+        }
+
+        // Keep running until interrupted.
+        await new Promise<void>((resolve) => {
+          const shutdown = async () => {
+            await close();
+            resolve();
+          };
+          process.once("SIGINT", shutdown);
+          process.once("SIGTERM", shutdown);
+        });
+        break;
+      }
+
       case "trio": {
         // Boot the full AI Trio: MemOS (this process, memory) + LLM-Guardian
         // (optimization) + Universal-MCP-Toolkit (tools). With `--up` the
