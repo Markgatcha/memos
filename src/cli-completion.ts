@@ -128,6 +128,13 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   compact: ["--stats", "--namespace", "--limit", "--dry-run"],
   doctor: [],
   connect: ["--write"],
+  "extract-facts": [
+    "--transcript",
+    "--namespace",
+    "--min-confidence",
+    "--dry-run",
+  ],
+  "session-hook": ["--transcript", "--opencode-session", "--namespace"],
   "reindex-embeddings": ["--purge-stale"],
   mcp: [],
   trio: ["--up"],

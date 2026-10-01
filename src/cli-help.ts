@@ -250,12 +250,14 @@ vectors produced by other models first.`,
 Extract durable facts from a session transcript (Claude Code JSONL or
 plain text) and store them. Uses the same extractFacts() path as the
 session hook. --dry-run shows what would be stored without writing.`,
-  "session-hook": `memos session-hook [--transcript <path>] [--namespace <ns>] [--json]
+  "session-hook": `memos session-hook [--transcript <path>] [--opencode-session <id>] [--namespace <ns>] [--json]
 
-SessionEnd hook entrypoint for Claude Code / OpenCode. Reads hook JSON
-from stdin (Claude Code passes transcript_path), extracts durable facts
-from the transcript, and stores them. Fail-open: never breaks session
-teardown. Set MEMOS_SKIP_SESSION_HOOK=1 to opt out.`,
+Session-end hook entrypoint for Claude Code / OpenCode. Claude Code
+passes hook JSON (with transcript_path) on stdin; the OpenCode plugin
+passes --opencode-session <id> and memos loads the session from
+OpenCode's data dir. Extracts durable facts from the transcript and
+stores them. Fail-open: never breaks session teardown. Set
+MEMOS_SKIP_SESSION_HOOK=1 to opt out.`,
   dashboard: `memos dashboard [--port <n>] [--no-open]
 
 Start a local web dashboard for browsing, searching, and visualizing

@@ -8,9 +8,11 @@ parse the session transcript, and store facts via the existing
 ## How it works
 
 1. When your session ends, the harness invokes `memos session-hook`.
-2. The hook reads the session transcript (Claude Code passes `transcript_path`
-   via stdin JSON).
-3. It parses the transcript into conversation messages.
+2. The hook reads the session transcript: Claude Code passes `transcript_path`
+   via stdin JSON; the OpenCode plugin passes `--opencode-session <id>`
+   and memos loads the session from OpenCode's data dir.
+3. It parses the transcript into conversation messages (Claude Code JSONL
+   first, plain-text fallback when that yields nothing).
 4. It calls `extractFacts()` with `autoStore: true`, which extracts candidate
    facts, filters by confidence (>= 0.6 by default), dedupes against existing
    memories, and stores the rest.
@@ -49,7 +51,9 @@ memos connect claude-code
 
 ## OpenCode setup
 
-1. Save the plugin as `.opencode/plugins/memos-session-hook.ts`:
+1. Save the plugin as `.opencode/plugins/memos-session-hook.ts` (generate it
+   with `memos connect opencode`, or copy the source from
+   `openCodePluginSource()`):
 
 ```typescript
 export const MemosSessionHook = async ({ $ }) => {
@@ -72,6 +76,25 @@ export const MemosSessionHook = async ({ $ }) => {
   "plugin": ["./plugins/memos-session-hook.ts"]
 }
 ```
+
+How the OpenCode path works: on `session.deleted`, the plugin passes the
+ended session's ID to `memos session-hook --opencode-session <id>`. Memos
+then loads that session's messages from OpenCode's data directory —
+`$OPENCODE_DATA_DIR` when set, otherwise the platform default
+(`~/.local/share/opencode` on Linux,
+`~/Library/Application Support/opencode` on macOS,
+`%LOCALAPPDATA%/opencode` on Windows) — reading message headers from
+`project/*/storage/message/info/*.json` and text parts from
+`project/*/storage/part/info/*.json`.
+
+Limitations, stated plainly:
+
+- Only `user`/`assistant` text parts are extracted; tool calls, file
+  edits, and reasoning blocks are skipped.
+- If the session can't be found (custom data dir, session storage
+  already cleaned up), the hook logs and exits — it never fails the
+  session teardown.
+- Set `OPENCODE_DATA_DIR` if you moved OpenCode's data directory.
 
 ## Manual extraction
 

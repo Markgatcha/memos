@@ -4,11 +4,20 @@
  * Claude Code and OpenCode can run a hook when a session ends. This module
  * provides:
  *
- * - `parseClaudeTranscript()`: convert a Claude Code JSONL transcript into
- *   `ConversationMessage[]` for `MemOS.extractFacts()`.
- * - `runSessionHook()`: the hook entrypoint — reads hook JSON from stdin
- *   (Claude Code SessionEnd format), extracts the transcript path, and
- *   stores durable facts via `extractFacts({ autoStore: true })`.
+ * - `parseClaudeTranscript()` / `parseClaudeTranscriptText()`: convert a
+ *   Claude Code JSONL transcript into `ConversationMessage[]` for
+ *   `MemOS.extractFacts()`.
+ * - `parsePlainTranscript()`: convert `User:`/`Assistant:` plain-text
+ *   transcripts.
+ * - `parseTranscriptFile()`: try Claude JSONL first, fall back to
+ *   plain text when it yields nothing (used by both `extract-facts`
+ *   and `session-hook`).
+ * - `findOpenCodeSessionMessages()`: load an ended OpenCode session's
+ *   messages from OpenCode's data dir (backs `--opencode-session`).
+ * - `session-hook` (in the CLI): the hook entrypoint — reads hook JSON
+ *   from stdin (Claude Code SessionEnd format) or `--opencode-session`,
+ *   extracts the transcript, and stores durable facts via
+ *   `extractFacts({ autoStore: true })`.
  * - `claudeCodeHookConfig()` / `openCodePluginSource()`: setup artifacts.
  *
  * The hook feeds the existing extraction/storage path — it never drops or
@@ -17,7 +26,8 @@
  * @module @memos/session-hooks
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { ConversationMessage } from "./types.js";
 
 /** Hook input JSON (Claude Code SessionEnd format). */
@@ -57,8 +67,18 @@ export function parseClaudeTranscript(
   if (!existsSync(transcriptPath)) {
     throw new Error(`transcript not found: ${transcriptPath}`);
   }
+  return parseClaudeTranscriptText(readFileSync(transcriptPath, "utf-8"));
+}
+
+/**
+ * Parse Claude Code JSONL transcript text into conversation messages.
+ * Malformed lines are skipped. Returns an empty array when no line
+ * yields a message — callers that want a plain-text fallback should use
+ * `parseTranscriptFile()` instead of treating this as an error.
+ */
+export function parseClaudeTranscriptText(text: string): ConversationMessage[] {
   const messages: ConversationMessage[] = [];
-  const lines = readFileSync(transcriptPath, "utf-8").split("\n");
+  const lines = text.split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -78,6 +98,28 @@ export function parseClaudeTranscript(
     messages.push({ role, content: text });
   }
   return messages;
+}
+
+/**
+ * Parse a transcript file of unknown format.
+ *
+ * Tries Claude Code JSONL first; when that yields no messages but the
+ * file is non-empty, falls back to plain-text parsing (`User:` /
+ * `Assistant:` prefixes). This is the entrypoint both `extract-facts`
+ * and `session-hook` use — previously the fallback was dead code
+ * because the JSONL parser returned `[]` instead of throwing.
+ */
+export function parseTranscriptFile(
+  transcriptPath: string,
+): ConversationMessage[] {
+  if (!existsSync(transcriptPath)) {
+    throw new Error(`transcript not found: ${transcriptPath}`);
+  }
+  const raw = readFileSync(transcriptPath, "utf-8");
+  if (!raw.trim()) return [];
+  const claude = parseClaudeTranscriptText(raw);
+  if (claude.length > 0) return claude;
+  return parsePlainTranscript(raw);
 }
 
 /** Extract plain text from Claude Code content (string or block array). */
@@ -134,6 +176,149 @@ export function parsePlainTranscript(text: string): ConversationMessage[] {
   }
   flush();
   return messages;
+}
+
+/**
+ * Candidate OpenCode data directories, in priority order.
+ * `OPENCODE_DATA_DIR` wins when set; otherwise the platform default.
+ */
+export function openCodeDataDirs(): string[] {
+  const dirs: string[] = [];
+  const envDir = process.env.OPENCODE_DATA_DIR;
+  if (envDir) dirs.push(envDir);
+  const home = process.env.HOME ?? "";
+  if (process.platform === "darwin") {
+    dirs.push(join(home, "Library", "Application Support", "opencode"));
+  } else if (process.platform === "win32" && process.env.LOCALAPPDATA) {
+    dirs.push(join(process.env.LOCALAPPDATA, "opencode"));
+  } else {
+    dirs.push(join(home, ".local", "share", "opencode"));
+  }
+  return dirs;
+}
+
+/**
+ * Load the user/assistant messages of an OpenCode session.
+ *
+ * OpenCode persists sessions under `<dataDir>/project/<id>/storage/`:
+ * message headers in `storage/message/info/*.json` (each carries
+ * `sessionID`, `role`, and `time.created`) and content parts in
+ * `storage/part/info/*.json` (each carries `messageID`; `type: "text"`
+ * parts carry the visible text).
+ *
+ * Returns an empty array when the session cannot be found — the caller
+ * (session-hook) treats that as fail-open, not an error.
+ *
+ * @param sessionId The OpenCode session ID (from the `session.deleted` event).
+ * @param dataDir   Override the data directory (e.g. in tests). When
+ *                  omitted, `openCodeDataDirs()` is searched in order.
+ */
+export function findOpenCodeSessionMessages(
+  sessionId: string,
+  dataDir?: string,
+): ConversationMessage[] {
+  const dirs = dataDir ? [dataDir] : openCodeDataDirs();
+  for (const dir of dirs) {
+    const messages = readOpenCodeSession(dir, sessionId);
+    if (messages.length > 0) return messages;
+  }
+  return [];
+}
+
+interface OpenCodeMessageHeader {
+  role: string;
+  created: number;
+  messageId: string;
+  projectDir: string;
+}
+
+function readOpenCodeSession(
+  dataDir: string,
+  sessionId: string,
+): ConversationMessage[] {
+  const projectRoot = join(dataDir, "project");
+  if (!existsSync(projectRoot)) return [];
+  let projectDirs: string[];
+  try {
+    projectDirs = readdirSync(projectRoot);
+  } catch {
+    return [];
+  }
+  const headers: OpenCodeMessageHeader[] = [];
+  for (const proj of projectDirs) {
+    const projectDir = join(projectRoot, proj);
+    const messageDir = join(projectDir, "storage", "message", "info");
+    if (!existsSync(messageDir)) continue;
+    let files: string[];
+    try {
+      files = readdirSync(messageDir);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const raw = JSON.parse(readFileSync(join(messageDir, file), "utf-8"));
+        if (
+          raw.sessionID !== sessionId ||
+          (raw.role !== "user" && raw.role !== "assistant")
+        ) {
+          continue;
+        }
+        headers.push({
+          role: raw.role,
+          created: typeof raw.time?.created === "number" ? raw.time.created : 0,
+          messageId:
+            typeof raw.id === "string" ? raw.id : file.replace(/\.json$/, ""),
+          projectDir,
+        });
+      } catch {
+        continue; // skip unreadable message headers
+      }
+    }
+  }
+  headers.sort((a, b) => a.created - b.created);
+  const messages: ConversationMessage[] = [];
+  for (const header of headers) {
+    const text = readOpenCodeParts(header.projectDir, header.messageId);
+    if (text) {
+      messages.push({
+        role: header.role as "user" | "assistant",
+        content: text,
+      });
+    }
+  }
+  return messages;
+}
+
+/** Concatenate the text parts of an OpenCode message. */
+function readOpenCodeParts(projectDir: string, messageId: string): string {
+  const partDir = join(projectDir, "storage", "part", "info");
+  if (!existsSync(partDir)) return "";
+  let files: string[];
+  try {
+    files = readdirSync(partDir);
+  } catch {
+    return "";
+  }
+  const texts: string[] = [];
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    try {
+      const part = JSON.parse(readFileSync(join(partDir, file), "utf-8"));
+      if (
+        part.messageID === messageId &&
+        part.type === "text" &&
+        typeof part.text === "string" &&
+        part.text.trim()
+      ) {
+        texts.push(part.text.trim());
+      }
+    } catch {
+      continue; // skip unreadable parts
+    }
+  }
+  return texts.join("\n").trim();
 }
 
 /**

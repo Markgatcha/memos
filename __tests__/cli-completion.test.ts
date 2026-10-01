@@ -79,6 +79,10 @@ describe("bash completion", () => {
     expect(script).toContain("complete -F _memos memos");
   });
 
+  test("completes session-hook flags including --opencode-session", () => {
+    expect(script).toContain("--opencode-session");
+  });
+
   test("passes bash syntax check", () => {
     if (!shellExists("bash")) return;
     expect(() => syntaxCheck("bash", ["-n"], script)).not.toThrow();

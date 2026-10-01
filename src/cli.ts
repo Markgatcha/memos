@@ -2520,18 +2520,12 @@ async function main(): Promise<void> {
           process.exit(1);
         }
 
-        const { parseClaudeTranscript, parsePlainTranscript } =
-          await import("./session-hooks.js");
-        const { readFileSync } = await import("node:fs");
+        const { parseTranscriptFile } = await import("./session-hooks.js");
         let messages;
         try {
-          // Try Claude Code JSONL format first, fall back to plain text.
-          try {
-            messages = parseClaudeTranscript(transcriptPath);
-          } catch {
-            const text = readFileSync(transcriptPath, "utf-8");
-            messages = parsePlainTranscript(text);
-          }
+          // Claude Code JSONL first; falls back to plain text when the
+          // JSONL parse yields no messages (parseTranscriptFile).
+          messages = parseTranscriptFile(transcriptPath);
         } catch (err) {
           console.error(
             `Error reading transcript: ${err instanceof Error ? err.message : String(err)}`,
@@ -2571,46 +2565,68 @@ async function main(): Promise<void> {
       }
 
       case "session-hook": {
-        // `memos session-hook` — Claude Code SessionEnd hook entrypoint.
-        // Reads hook JSON from stdin, extracts the transcript path, and
-        // stores durable facts. Fail-open: never break session teardown.
+        // `memos session-hook` — session-end hook entrypoint.
+        // Claude Code: reads hook JSON from stdin, extracts the transcript
+        // path. OpenCode: the generated plugin passes --opencode-session
+        // <id>. Stores durable facts. Fail-open: never break teardown.
         if (process.env.MEMOS_SKIP_SESSION_HOOK === "1") {
           if (!jsonFlag)
             console.log("Session hook skipped (MEMOS_SKIP_SESSION_HOOK=1).");
           break;
         }
 
-        const { parseClaudeTranscript } = await import("./session-hooks.js");
+        const { parseTranscriptFile, findOpenCodeSessionMessages } =
+          await import("./session-hooks.js");
         const { readFileSync } = await import("node:fs");
 
-        // Read hook input from stdin (Claude Code passes JSON).
-        let input: any = {};
-        try {
-          const stdin = readFileSync(0, "utf-8").trim();
-          if (stdin) input = JSON.parse(stdin);
-        } catch {
-          // No stdin or invalid JSON — try --transcript flag instead.
-        }
-
-        const transcriptIdx = args.indexOf("--transcript");
-        const transcriptPath =
-          (transcriptIdx !== -1 ? args[transcriptIdx + 1] : undefined) ??
-          input.transcript_path;
-
-        if (!transcriptPath) {
-          // Fail-open: no transcript available, nothing to do.
-          if (!jsonFlag)
-            console.log(
-              "Session hook: no transcript path, nothing to extract.",
-            );
-          break;
-        }
+        const ocIdx = args.indexOf("--opencode-session");
+        const openCodeSessionId = ocIdx !== -1 ? args[ocIdx + 1] : undefined;
 
         const nsIdx = args.indexOf("--namespace");
         const namespace = nsIdx !== -1 ? args[nsIdx + 1] : "default";
 
         try {
-          const messages = parseClaudeTranscript(transcriptPath);
+          let messages;
+          if (openCodeSessionId) {
+            // OpenCode path: look the ended session up in OpenCode's
+            // data dir (OPENCODE_DATA_DIR or the platform default).
+            messages = findOpenCodeSessionMessages(openCodeSessionId);
+            if (messages.length === 0) {
+              // Fail-open: session data not found (custom location,
+              // already cleaned up, …) — nothing to extract.
+              if (!jsonFlag)
+                console.log(
+                  "Session hook: OpenCode session not found, nothing to extract.",
+                );
+              break;
+            }
+          } else {
+            // Read hook input from stdin (Claude Code passes JSON).
+            let input: any = {};
+            try {
+              const stdin = readFileSync(0, "utf-8").trim();
+              if (stdin) input = JSON.parse(stdin);
+            } catch {
+              // No stdin or invalid JSON — try --transcript flag instead.
+            }
+
+            const transcriptIdx = args.indexOf("--transcript");
+            const transcriptPath =
+              (transcriptIdx !== -1 ? args[transcriptIdx + 1] : undefined) ??
+              input.transcript_path;
+
+            if (!transcriptPath) {
+              // Fail-open: no transcript available, nothing to do.
+              if (!jsonFlag)
+                console.log(
+                  "Session hook: no transcript path, nothing to extract.",
+                );
+              break;
+            }
+
+            // Claude JSONL first, plain-text fallback when it yields nothing.
+            messages = parseTranscriptFile(transcriptPath);
+          }
           if (messages.length === 0) break;
 
           const result = await memos.extractFacts(messages, {
