@@ -472,6 +472,21 @@ export interface SearchFilter {
   /** Filter by namespace. */
   namespace?: string;
   /**
+   * Filter by an explicit list of namespaces (OR logic). Composes with
+   * `namespace` / `namespacePrefix` (OR'd together) when several are set.
+   * Useful for multi-scope reads, e.g. `["project:alpha", "project:beta"]`.
+   */
+  namespaces?: string[];
+  /**
+   * Scoped-space union (company-brain container semantics): when any
+   * namespace constraint is present (`namespace`, `namespaces`, or
+   * `namespacePrefix`), also include the shared `default` namespace in
+   * the result set. `MemOS.search` enables this by default for
+   * scope-filtered searches; pass `false` explicitly for the legacy
+   * exclusive behavior. Unscoped searches are unaffected.
+   */
+  includeSharedScope?: boolean;
+  /**
    * Typed multi-scope filter. Composed into a namespace prefix; with the
    * default `"hierarchical"` match, `{ user: "alice" }` surfaces every
    * memory stored under Alice's agents and runs. Set
@@ -1087,6 +1102,12 @@ export interface StorageAdapter {
   deleteEdge(id: string): Promise<boolean>;
 
   /**
+   * Scoped-space inventory: every namespace with its live memory count.
+   * Optional — adapters that cannot provide it fall back to a full scan.
+   */
+  listNamespaces?(): Promise<Array<{ namespace: string; count: number }>>;
+
+  /**
    * Close (invalidate) the currently-valid edges incident to a node by
    * stamping `valid_to = validTo`. Rows are updated, never deleted, so
    * as-of reads at earlier timestamps still return them.
@@ -1344,6 +1365,23 @@ export interface ExperimentalConfig {
    * search. Default 0.95 — near-verbatim duplicates only.
    */
   searchDedupThreshold?: number;
+  /**
+   * Round 4: RM3-lite pseudo-relevance feedback for hybrid search.
+   * For short queries (≤3 content terms) whose primary keyword leg is
+   * thin (<5 hits), harvest up to 3 expansion terms from the top-5
+   * semantic hits and re-probe FTS5 as a second keyword pass. Union
+   * semantics: expansion can only ADD candidates, never demote or
+   * remove primary-leg results (expansion-only hits are demoted below
+   * every primary hit, since expansion bm25 scores are not comparable
+   * to primary-query bm25 scores).
+   *
+   * Off by default: PRF is a recall booster with query-drift risk —
+   * enable it only after measuring a win on your eval (deterministic
+   * eval was neutral: 0.9792/0.9688 with and without). `MEMOS_PRF=1`
+   * forces it on for experiments without a config change.
+   * Default: false.
+   */
+  prfExpansion?: boolean;
   rerank?: {
     /** Base URL of the rerank server, e.g. "http://127.0.0.1:8081".
      *  Receives `POST {endpoint}/rerank` with
@@ -1465,6 +1503,41 @@ export interface FusionOptions {
   graphExpansionHops?: number;
   /** How many top fused results seed the PPR walk. Default 10. */
   graphExpansionSeeds?: number;
+  /**
+   * Fusion algorithm for combining the retrieval legs.
+   *
+   * - `"rrf"` — weighted Reciprocal Rank Fusion (rank-based voting,
+   *   robust to score outliers; the pre-round-4 default).
+   * - `"convex"` — min-max normalize each leg's native scores to [0,1],
+   *   then take the weighted sum with renormalized leg weights. Lets
+   *   strong absolute scores (a near-exact embedding match, a dominant
+   *   bm25 hit) dominate instead of being flattened to rank votes.
+   *   Default `"convex"` (round 4; Sept 2026 TOIS analysis found convex
+   *   combination beats RRF in- and out-of-domain, and Weaviate made the
+   *   same switch). Set to `"rrf"` to restore the legacy behavior.
+   */
+  fusionMode?: "rrf" | "convex";
+  /**
+   * Raw query text, used only for the deterministic adaptive leg
+   * weighting (short-query keyword emphasis, entity-dense entity-leg
+   * emphasis, temporal-query recency). Populated automatically by
+   * `hybridSearch`; no effect when `adaptiveWeighting` is false.
+   */
+  query?: string;
+  /**
+   * Master switch for the deterministic query-type adaptive weighting
+   * (round 4). Default true. Set to false for fixed leg weights.
+   */
+  adaptiveWeighting?: boolean;
+  /**
+   * Strength of the temporal-query recency multiplier:
+   * `score *= 1 + temporalRecencyStrength * 0.5^(age/halfLife)`,
+   * applied only when the query carries temporal markers (today,
+   * yesterday, last week, …) and `adaptiveWeighting` is on. Default
+   * 0.05 (at most a 5% nudge toward fresh memories). Set to 0 to
+   * disable.
+   */
+  temporalRecencyStrength?: number;
 }
 
 /**

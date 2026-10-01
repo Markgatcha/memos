@@ -1037,11 +1037,14 @@ export class SQLiteStorage implements StorageAdapter {
       extraConds.push("n.source = ?");
       extraParams.push(filter.source);
     }
-    if (filter.namespacePrefix) {
-      // Hierarchical scope match: escaped LIKE prefix so user values
-      // cannot inject % or _ wildcards.
-      extraConds.push("n.namespace LIKE ? ESCAPE '\\'");
-      extraParams.push(escapeLikePrefix(filter.namespacePrefix) + "%");
+    // Scoped-space namespace constraint: exact (`namespace`), multi
+    // (`namespaces`), or hierarchical (`namespacePrefix`). When
+    // `includeSharedScope` is set, the shared `default` namespace is
+    // OR'd in — a scoped read always sees shared memories.
+    const nsCond = this.buildNamespaceCondition(filter, "n");
+    if (nsCond) {
+      extraConds.push(nsCond.sql);
+      extraParams.push(...nsCond.params);
     }
     if (filter.minTrustScore !== undefined) {
       extraConds.push("n.trust_score >= ?");
@@ -1124,7 +1127,6 @@ export class SQLiteStorage implements StorageAdapter {
       const ftsTerms = buildFtsTerms(filter.query);
       const tagFilter = this.buildTagFilter(filter.tags, "n");
       const metadata = this.buildMetadataFilter(filter.metadata, "n");
-      const namespaceFilter = filter.namespace ? " AND n.namespace = ?" : "";
       const whereParts = [
         tagFilter,
         ...metadata.conditions,
@@ -1137,7 +1139,7 @@ export class SQLiteStorage implements StorageAdapter {
       const ftsSql = `SELECT n.*, rank
            FROM nodes n
            INNER JOIN nodes_fts fts ON fts.rowid = n.rowid
-           WHERE nodes_fts MATCH ?${whereExtra}${namespaceFilter}
+           WHERE nodes_fts MATCH ?${whereExtra}
            ORDER BY rank
            LIMIT ? OFFSET ?`;
 
@@ -1156,9 +1158,6 @@ export class SQLiteStorage implements StorageAdapter {
         }
         params.push(...metadata.params);
         params.push(...extraParams);
-        if (filter.namespace) {
-          params.push(filter.namespace);
-        }
         params.push(filter.limit ?? 50, filter.offset ?? 0);
         return this.getPreparedStatement(`fts::${ftsSql}`, ftsSql).all(
           ...params,
@@ -1200,13 +1199,12 @@ export class SQLiteStorage implements StorageAdapter {
         conditions.push("importance <= ?");
         params.push(filter.maxImportance);
       }
-      if (filter.namespace) {
-        conditions.push("namespace = ?");
-        params.push(filter.namespace);
-      }
-      if (filter.namespacePrefix) {
-        conditions.push("namespace LIKE ? ESCAPE '\\'");
-        params.push(escapeLikePrefix(filter.namespacePrefix) + "%");
+      // Scoped-space namespace constraint (same semantics as the FTS
+      // path: exact / multi / hierarchical, optional shared-union).
+      const nsCond = this.buildNamespaceCondition(filter, "");
+      if (nsCond) {
+        conditions.push(nsCond.sql);
+        params.push(...nsCond.params);
       }
       if (filter.source) {
         conditions.push("source = ?");
@@ -2215,6 +2213,57 @@ export class SQLiteStorage implements StorageAdapter {
       );
     }
     return { conditions, params };
+  }
+
+  /**
+   * Namespace/scope predicate shared by the FTS and structured query
+   * paths. Covers exact (`namespace`), multi (`namespaces`), and
+   * hierarchical (`namespacePrefix`) constraints. When
+   * `includeSharedScope` is set, the shared `default` namespace is OR'd
+   * in — a scoped read always sees shared memories (company-brain
+   * container semantics). Returns null when no namespace constraint is
+   * present (unscoped searches are untouched).
+   */
+  private buildNamespaceCondition(
+    filter: SearchFilter,
+    tableAlias?: string,
+  ): { sql: string; params: unknown[] } | null {
+    const col = tableAlias ? `${tableAlias}.namespace` : "namespace";
+    const parts: string[] = [];
+    const params: unknown[] = [];
+    if (filter.namespace) {
+      parts.push(`${col} = ?`);
+      params.push(filter.namespace);
+    }
+    if (filter.namespaces && filter.namespaces.length > 0) {
+      parts.push(`${col} IN (${filter.namespaces.map(() => "?").join(", ")})`);
+      params.push(...filter.namespaces);
+    }
+    if (filter.namespacePrefix) {
+      // Hierarchical scope match: escaped LIKE prefix so user values
+      // cannot inject % or _ wildcards.
+      parts.push(`${col} LIKE ? ESCAPE '\\'`);
+      params.push(escapeLikePrefix(filter.namespacePrefix) + "%");
+    }
+    if (parts.length === 0) return null;
+    const base = parts.length === 1 ? parts[0] : `(${parts.join(" OR ")})`;
+    if (filter.includeSharedScope) {
+      return { sql: `(${base} OR ${col} = 'default')`, params };
+    }
+    return { sql: base, params };
+  }
+
+  /**
+   * Scoped-space inventory: every namespace with its live memory count.
+   * Powers `memos scope list`.
+   */
+  async listNamespaces(): Promise<Array<{ namespace: string; count: number }>> {
+    const rows = this.db
+      .prepare(
+        "SELECT namespace, COUNT(*) AS count FROM nodes GROUP BY namespace ORDER BY count DESC, namespace ASC",
+      )
+      .all() as Array<{ namespace: string; count: number }>;
+    return rows.map((r) => ({ namespace: r.namespace, count: r.count }));
   }
 }
 

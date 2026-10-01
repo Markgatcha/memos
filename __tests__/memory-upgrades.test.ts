@@ -116,20 +116,14 @@ describe("entityOverlap()", () => {
 
 describe("entity-fused scoring", () => {
   test("boosts the memory whose tags match the query entities", async () => {
-    const memos = await makeMemos(
-      new VectorProvider({
-        "Deploy the acme service": ORTHO.a,
-        "Water the office plants": ORTHO.b,
-      }),
-    );
-    await memos.store("Deploy the acme service", { tags: ["acme", "deploy"] });
-    await memos.store("Water the office plants", { tags: ["office"] });
+    const memos = await makeMemos(new VectorProvider());
+    // Both memories match the query keyword ("deployment") equally; only
+    // the first carries the query entity ("acme") in its tags. The
+    // entity leg + overlap boost must put it first.
+    await memos.store("The deployment is ready", { tags: ["acme"] });
+    await memos.store("The deployment is ready for launch", { tags: [] });
 
-    // Both memories match the query through the FTS OR-fallback; the
-    // entity boost must put the acme-tagged one first.
-    const results = await memos.search(
-      "Redeploy Acme and water the office plants?",
-    );
+    const results = await memos.search("Redeploy Acme deployment?");
     expect(results.length).toBe(2);
     expect(results[0]!.node.tags).toContain("acme");
     expect(results[0]!.scores?.entity).toBeGreaterThan(0);

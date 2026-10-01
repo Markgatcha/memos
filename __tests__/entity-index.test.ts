@@ -301,7 +301,13 @@ describe("entity index write path (SQLiteStorage)", () => {
 });
 
 describe("fuseResults — entity leg", () => {
-  const noPostFusion = { confidenceWeightStrength: 0, recencyHalfLifeMs: 0 };
+  const noPostFusion = {
+    confidenceWeightStrength: 0,
+    recencyHalfLifeMs: 0,
+    // The exact-score assertions below are RRF math; they pin the legacy
+    // mode so the entity-leg mechanics they guard stay covered.
+    fusionMode: "rrf" as const,
+  };
 
   test("an entity-only match (absent from keyword/semantic legs) appears in fused output", () => {
     const keyword = [scored("k1")];

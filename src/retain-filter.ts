@@ -9,9 +9,14 @@
  * relevance ranking.
  *
  * Default mode is a ZERO-LLM-CALL local classifier (keeps MemOS fast and
- * local): it scores content on signal density — length floor, entity/code
- * presence, action verbs, and a low-signal acknowledgement penalty. An
- * optional custom classifier can be injected via `setRetainClassifier()`.
+ * local). The *decision* is conservative-first: a write is skipped only
+ * on positive evidence of noise (empty content, pure acknowledgements,
+ * fragments, near-duplicates of existing same-scope memories) — when in
+ * doubt the memory is kept, because a false skip silently loses user
+ * data. The *score* (0–1) separately estimates signal density from
+ * length, entity/code presence, action verbs, and novelty, and is
+ * reported for debugging/telemetry. An optional custom classifier can
+ * be injected via `setRetainClassifier()`.
  *
  * @module @mem-os/sdk/retain-filter
  */
@@ -54,9 +59,51 @@ const ENTITY_SIGNALS = [
   /\b\d+(?:\.\d+)?(?:%|ms|s|usd|\$|x)\b/gi, // numbers with units
 ];
 
-// Low-signal acknowledgement patterns — pure noise, not worth storing.
+// Low-signal acknowledgement phrases — pure noise, not worth storing.
+// Anchored: the whole content must be an acknowledgement.
 const LOW_SIGNAL_PATTERNS =
   /^(?:ok|okay|sure|got it|understood|done|will do|sure thing|sounds good|great|perfect|thanks|thank you|yep|yup|no problem|of course|absolutely|right|correct|exactly|yes|no|maybe|sure|hi|hello|hey|lol|haha|k|kk|cool|nice|wow)[.!?]?$/i;
+
+// Individual acknowledgement words — used to catch repeated acks
+// ("ok ok ok", "thanks thanks") that the anchored phrase pattern misses.
+const ACK_WORDS =
+  /^(?:ok|okay|sure|got|it|understood|done|will|do|thing|sounds|good|great|perfect|thanks|thank|you|yep|yup|no|problem|of|course|absolutely|right|correct|exactly|yes|maybe|hi|hello|hey|lol|haha|k|kk|cool|nice|wow)$/i;
+
+/** Near-duplicate threshold: token overlap at/above this is a duplicate. */
+const DUPLICATE_OVERLAP = 0.85;
+
+/** Minimum alphanumeric characters for content to be storable at all. */
+const MIN_SIGNAL_CHARS = 4;
+
+/**
+ * Max token overlap of `content` against any entry of `existingContent`
+ * (0–1). Tokens are lowercase alphanumeric words longer than 2 chars.
+ */
+export function maxTokenOverlap(
+  content: string,
+  existingContent: string[],
+): number {
+  const tokens = new Set(
+    content
+      .toLowerCase()
+      .split(/[^a-z0-9]+/i)
+      .filter((w) => w.length > 2),
+  );
+  if (tokens.size === 0) return 0;
+  let maxOverlap = 0;
+  for (const existing of existingContent.slice(0, 20)) {
+    const exTokens = new Set(
+      existing
+        .toLowerCase()
+        .split(/[^a-z0-9]+/i)
+        .filter((w) => w.length > 2),
+    );
+    let overlap = 0;
+    for (const t of tokens) if (exTokens.has(t)) overlap++;
+    maxOverlap = Math.max(maxOverlap, overlap / tokens.size);
+  }
+  return maxOverlap;
+}
 
 /**
  * Count distinct signal indicators in the content.
@@ -112,25 +159,7 @@ export function scoreRetain(input: RetainInput): number {
 
   // Novelty: down-weight near-duplicates of existing memory.
   if (existingContent.length > 0) {
-    const tokens = new Set(
-      content
-        .toLowerCase()
-        .split(/[^a-z0-9]+/i)
-        .filter((w) => w.length > 2),
-    );
-    let maxOverlap = 0;
-    for (const existing of existingContent.slice(0, 20)) {
-      const exTokens = new Set(
-        existing
-          .toLowerCase()
-          .split(/[^a-z0-9]+/i)
-          .filter((w) => w.length > 2),
-      );
-      let overlap = 0;
-      for (const t of tokens) if (exTokens.has(t)) overlap++;
-      maxOverlap = Math.max(maxOverlap, overlap / Math.max(tokens.size, 1));
-    }
-    score += (1 - maxOverlap) * 0.1;
+    score += (1 - maxTokenOverlap(content, existingContent)) * 0.1;
   } else {
     score += 0.1;
   }
@@ -139,18 +168,59 @@ export function scoreRetain(input: RetainInput): number {
 }
 
 /**
- * Decide whether to retain (store) content. Default uses the local classifier;
- * callers can inject a custom classifier via `setRetainClassifier()`.
+ * Decide whether to retain (store) content. Default uses the local
+ * classifier; callers can inject a custom classifier via
+ * `setRetainClassifier()`.
+ *
+ * Conservative-first contract (the accuracy gate): a write is skipped
+ * ONLY on positive evidence of noise —
+ *   1. empty content,
+ *   2. a pure acknowledgement ("ok", "thanks", "ok ok ok", …),
+ *   3. a fragment with almost no alphanumeric content ("...", "k"),
+ *   4. a near-duplicate of an existing same-scope memory.
+ * Everything else is retained. When in doubt, keep the memory — a
+ * false skip silently loses user data, while a false keep only costs a
+ * little storage. `score` still reports the signal-density estimate
+ * from `scoreRetain` for debugging/telemetry.
  */
 export function shouldRetain(input: RetainInput): RetainDecision {
   const score = scoreRetain(input);
-  const retain = score >= RETAIN_THRESHOLD;
-  let reason: string;
-  if (input.content.trim().length < MIN_LENGTH) reason = "too short";
-  else if (score < 0.1) reason = "low-signal acknowledgement";
-  else if (retain) reason = "signal density above threshold";
-  else reason = "below retain threshold";
-  return { retain, score, reason };
+  const content = input.content ?? "";
+  const trimmed = content.trim();
+
+  if (trimmed.length === 0) {
+    return { retain: false, score, reason: "empty content" };
+  }
+  if (LOW_SIGNAL_PATTERNS.test(trimmed)) {
+    return { retain: false, score, reason: "low-signal acknowledgement" };
+  }
+  // Repeated acks the anchored phrase pattern misses ("ok ok ok").
+  const words = trimmed
+    .replace(/[.!?]+$/g, "")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (
+    words.length > 0 &&
+    words.every((w) => ACK_WORDS.test(w.replace(/[.,!?]+$/g, "")))
+  ) {
+    return { retain: false, score, reason: "low-signal acknowledgement" };
+  }
+  const signalChars = trimmed.replace(/[^a-z0-9]/gi, "").length;
+  if (signalChars < MIN_SIGNAL_CHARS) {
+    return { retain: false, score, reason: "too short" };
+  }
+  const existing = input.existingContent ?? [];
+  if (
+    existing.length > 0 &&
+    maxTokenOverlap(content, existing) >= DUPLICATE_OVERLAP
+  ) {
+    return {
+      retain: false,
+      score,
+      reason: "near-duplicate of existing memory",
+    };
+  }
+  return { retain: true, score, reason: "no noise evidence — retained" };
 }
 
 /**

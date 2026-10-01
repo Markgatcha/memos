@@ -40,6 +40,33 @@ Plain writes (no scope, no namespace) land in the `default` namespace, so
 existing stores are unaffected. Raw namespaces still work for custom
 grouping; scopes are the typed interface on top.
 
+### Scoped spaces and the shared-default union
+
+A scoped read **always unions the shared `default` namespace** with the
+requested scope(s) — shared knowledge is visible inside every scope,
+while other scopes stay isolated (company-brain container semantics):
+
+```bash
+memos store "Q4 hiring freeze" --namespace project:alpha
+memos search "hiring" --namespaces project:alpha,project:beta  # + default
+memos scope list   # every scope with its live memory count
+```
+
+Free-form scope names follow the `project:<name>` / `harness:<name>`
+convention. Pass `includeSharedScope: false` in the SDK for the legacy
+exclusive behavior. Unscoped searches are unchanged.
+
+### Write-side salience triage
+
+`memos store` runs a cheap no-LLM retain filter that skips trivial
+acknowledgements ("ok", "thanks") and near-duplicates of recent
+same-scope memories before anything is persisted. The rule is
+conservative-first: a write is skipped only on positive noise evidence —
+when in doubt the memory is kept. Bypass with `--force`; the MCP
+`memos_remember` tool opts in via `filter_retain` (a skip returns a
+plain-text notice, not an error). Skipped writes log at debug level
+(`MEMOS_DEBUG=1`).
+
 ---
 
 ## Multi-granularity pools
