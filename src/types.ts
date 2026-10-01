@@ -1415,11 +1415,18 @@ export interface ExperimentalConfig {
   };
   /**
    * Two-stage reranking: after fusion, the top `candidates` results are
-   * re-scored by a cross-encoder served over an HTTP `/rerank` endpoint
-   * (e.g. llama-server with bge-reranker-v2-m3) and the final ranking is
-   * reordered by relevance score. The first stage (hybrid search) exists
-   * to recall; the reranker decides what the caller actually sees. On
-   * endpoint failure the fused order is kept unchanged (graceful
+   * re-scored by a cross-encoder and the final ranking is reordered by
+   * relevance score. The first stage (hybrid search) exists to recall;
+   * the reranker decides what the caller actually sees. Two providers:
+   *
+   * - `"endpoint"` (default when `endpoint` is set): re-scores via an HTTP
+   *   `/rerank` server (e.g. llama-server with bge-reranker-v2-m3).
+   * - `"local"`: in-process cross-encoder through `@huggingface/transformers`
+   *   (default model `Xenova/ms-marco-MiniLM-L-6-v2`, ~90 MB, downloaded on
+   *   first use). No server needed; needs one of the transformers packages
+   *   installed.
+   *
+   * On reranker failure the fused order is kept unchanged (graceful
    * degradation). Off by default.
    */
   /**
@@ -1445,15 +1452,36 @@ export interface ExperimentalConfig {
    */
   prfExpansion?: boolean;
   rerank?: {
+    /**
+     * Rerank provider: `"endpoint"` (HTTP `/rerank` server) or `"local"`
+     * (in-process cross-encoder). Default: `"endpoint"` when `endpoint` is
+     * set, `"local"` when `localModel` is set. `MEMOS_RERANK_LOCAL=1`
+     * forces the local provider for experiments without a config change.
+     */
+    provider?: "endpoint" | "local";
     /** Base URL of the rerank server, e.g. "http://127.0.0.1:8081".
      *  Receives `POST {endpoint}/rerank` with
-     *  `{ model, query, documents: string[] }`. */
-    endpoint: string;
+     *  `{ model, query, documents: string[] }`. Required for the
+     *  `"endpoint"` provider; ignored for `"local"`. */
+    endpoint?: string;
     /** Bearer token for the rerank endpoint, when required. */
     apiKey?: string;
     /** Model name sent to the endpoint (many local servers ignore it). */
     model?: string;
-    /** How many fused candidates to submit for reranking. Default 50. */
+    /**
+     * Local cross-encoder model id for `provider: "local"`.
+     * Default `"Xenova/ms-marco-MiniLM-L-6-v2"`. Overridable for
+     * experiments with `MEMOS_RERANK_MODEL`.
+     */
+    localModel?: string;
+    /**
+     * Weight dtype for the local model (`from_pretrained` dtype, e.g.
+     * `"q8"`, `"fp32"`). Default `"q8"` — much faster on CPU with
+     * negligible ranking impact. Overridable with `MEMOS_RERANK_DTYPE`.
+     */
+    localDtype?: string;
+    /** How many fused candidates to submit for reranking. Default 50.
+     *  Overridable for experiments with `MEMOS_RERANK_CANDIDATES`. */
     candidates?: number;
     /**
      * Truncate each reranked document to this many characters before

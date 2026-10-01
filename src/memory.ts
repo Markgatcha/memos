@@ -48,6 +48,7 @@ import {
   mergeKeywordLegs,
   prfTokenize,
 } from "./retrieval.js";
+import { scorePairsLocal } from "./rerank-local.js";
 import {
   DEFAULT_GRAPH_EXPANSION_ALPHA,
   DEFAULT_GRAPH_EXPANSION_HOPS,
@@ -5415,14 +5416,17 @@ export class MemOS {
   /**
    * Two-stage reranking (`experimental.rerank`, off by default). The first
    * stage — hybrid retrieval — exists to RECALL candidates; a cross-encoder
-   * (e.g. bge-reranker-v2-m3 served by llama-server) then re-scores the top
-   * `candidates` fused results against the query and the final ranking is
-   * reordered by that score. Cross-encoders read query and document
-   * together, so they are far more precise than bi-encoder similarity —
-   * at O(candidates) cost per query, which is why it only ever runs on the
-   * narrow head of the pool.
+   * then re-scores the top `candidates` fused results against the query and
+   * the final ranking is reordered by that score. Cross-encoders read query
+   * and document together, so they are far more precise than bi-encoder
+   * similarity — at O(candidates) cost per query, which is why it only
+   * ever runs on the narrow head of the pool.
    *
-   * On endpoint failure the fused order is kept unchanged (graceful
+   * Two providers: `"endpoint"` (an HTTP `/rerank` server, e.g.
+   * bge-reranker-v2-m3 served by llama-server) and `"local"` (in-process
+   * cross-encoder via `src/rerank-local.ts`, no server needed).
+   *
+   * On reranker failure the fused order is kept unchanged (graceful
    * degradation) — a downed reranker degrades quality, not availability.
    */
   private async applyRerank(
@@ -5430,12 +5434,73 @@ export class MemOS {
     filter: SearchFilter,
   ): Promise<ScoredMemory[]> {
     const cfg = this.experimental.rerank;
-    if (!cfg?.endpoint || results.length < 2 || !filter.query) return results;
+    // Local provider: explicit `provider: "local"`, a `localModel` with no
+    // endpoint, or the MEMOS_RERANK_LOCAL=1 experiment override.
+    const wantLocal =
+      process.env.MEMOS_RERANK_LOCAL === "1" ||
+      cfg?.provider === "local" ||
+      (!cfg?.endpoint && !!cfg?.localModel);
+    if ((!cfg?.endpoint && !wantLocal) || results.length < 2 || !filter.query)
+      return results;
 
-    const candidates = Math.min(cfg.candidates ?? 50, results.length);
+    const envCandidates = Number.parseInt(
+      process.env.MEMOS_RERANK_CANDIDATES ?? "",
+      10,
+    );
+    const candidates = Math.min(
+      cfg?.candidates ??
+        (Number.isFinite(envCandidates) && envCandidates > 0
+          ? envCandidates
+          : 50),
+      results.length,
+    );
     const head = results.slice(0, candidates);
     const tail = results.slice(candidates);
+    const query = filter.query;
 
+    // Local cross-encoder path: score every head document in-process, then
+    // reorder the whole head by score. Any failure keeps the fused order.
+    if (wantLocal) {
+      // Local CPU inference cost grows with pair length; the relevance
+      // signal lives in the first few hundred characters, so cap there
+      // unless configured otherwise (0 = full documents).
+      const maxDocChars = cfg?.maxDocChars ?? 512;
+      const docs = head.map((r) =>
+        maxDocChars > 0 && r.node.content.length > maxDocChars
+          ? r.node.content.slice(0, maxDocChars)
+          : r.node.content,
+      );
+      const scores = await scorePairsLocal(query, docs, {
+        model: process.env.MEMOS_RERANK_MODEL ?? cfg?.localModel,
+        dtype: process.env.MEMOS_RERANK_DTYPE ?? cfg?.localDtype,
+      });
+      if (!scores) {
+        // Graceful degradation: keep the fused order — but say so once, so
+        // a missing package or failed download can never silently persist.
+        if (!this.rerankFailureWarned) {
+          this.rerankFailureWarned = true;
+          console.error(
+            "[memos] local reranker unavailable — falling back to fused ranking",
+          );
+        }
+        return results;
+      }
+      const order = scores
+        .map((score, index) => ({ score, index }))
+        .sort((a, b) => b.score - a.score)
+        .map((row) => row.index);
+      return [
+        ...order.map((index) => ({
+          node: head[index]!.node,
+          score: scores[index]!,
+          scores: { ...head[index]!.scores, rerank: scores[index]! },
+        })),
+        ...tail,
+      ];
+    }
+
+    const endpoint = cfg?.endpoint;
+    if (!endpoint) return results; // Unreachable: guarded above; keeps tsc honest.
     let payload: {
       results?: Array<{
         index?: number;
@@ -5446,7 +5511,7 @@ export class MemOS {
     try {
       // Trailing-slash strip without a regex: an unanchored `/\/+$/` scan
       // is quadratic on adversarial endpoints (CodeQL polynomial-regex).
-      let endpointBase = cfg.endpoint;
+      let endpointBase = endpoint;
       while (endpointBase.endsWith("/")) {
         endpointBase = endpointBase.slice(0, -1);
       }
