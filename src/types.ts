@@ -1060,24 +1060,37 @@ export type TamperOp = "store" | "import" | "update" | "forget";
 /**
  * One entry of the tamper-evident mutation log.
  *
- * Entries form a hash chain: `entryHash = sha256(seq|ts|op|nodeId|
- * contentHash|prevHash)` where `prevHash` is the previous entry's
- * `entryHash` (or a fixed genesis constant for seq 1). `contentHash` is
- * `sha256(node.content)` at mutation time — for `forget` it is the hash
- * of the deleted content, so deletions are provable too.
+ * Entries form a hash chain: `entryHash = sha256("memos-tamper-entry-v2"|
+ * seq|ts|op|nodeId|nodeHash|prevHash)` where `prevHash` is the previous
+ * entry's `entryHash` (or a fixed genesis constant for seq 1) and `seq`
+ * is the entry's 1-based chain position, assigned atomically by the
+ * storage adapter. `nodeHash` is `sha256` over a canonical serialization
+ * of the node's full mutable state at mutation time (content, summary,
+ * type, tags, importance, namespace, metadata, provenance, validity,
+ * TTL, timestamps — everything except volatile read stats) — for
+ * `forget` it is the hash of the deleted node's final state, so
+ * deletions are provable too.
  */
 export interface TamperLogEntry {
   seq: number;
   ts: number;
   op: TamperOp;
   nodeId: string;
-  contentHash: string;
+  nodeHash: string;
   prevHash: string;
   entryHash: string;
 }
 
-/** A tamper-log entry before the chain position is assigned. */
-export type NewTamperLogEntry = Omit<TamperLogEntry, "seq">;
+/**
+ * A tamper-log entry as supplied by the caller. The storage adapter
+ * assigns the chain position atomically: it determines `prevHash` from
+ * the current tip, allocates `seq`, and computes `entryHash` — all in
+ * one transaction — then returns the complete stored entry.
+ */
+export type NewTamperLogEntry = Pick<
+  TamperLogEntry,
+  "ts" | "op" | "nodeId" | "nodeHash"
+>;
 
 /**
  * Backend-agnostic storage contract.
@@ -1122,12 +1135,15 @@ export interface StorageAdapter {
   deleteNode(id: string): Promise<boolean>;
 
   /**
-   * Append one entry to the tamper-evident mutation log. Returns the
-   * assigned sequence number. Optional: adapters that don't implement
-   * the log disable mutation logging (fail-open) and `verifyTamperLog`
+   * Append one entry to the tamper-evident mutation log. The adapter
+   * MUST assign the chain position atomically: determine `prevHash`
+   * from the current tip, allocate `seq`, compute `entryHash`, and
+   * insert — all in a single transaction — then return the complete
+   * stored entry. Optional: adapters that don't implement the log
+   * disable mutation logging (fail-open) and `verifyTamperLog`
    * reports the log as unsupported.
    */
-  appendTamperEntry?(entry: NewTamperLogEntry): Promise<number>;
+  appendTamperEntry?(entry: NewTamperLogEntry): Promise<TamperLogEntry>;
 
   /** Read the full tamper-evident log in sequence order. */
   readTamperLog?(): Promise<TamperLogEntry[]>;

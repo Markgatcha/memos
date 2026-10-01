@@ -3,9 +3,14 @@
 Every memory mutation — `store`, `import`, `update`, `forget` — appends
 one entry to an append-only, hash-chained log stored in the `tamper_log`
 table of the same database. Each entry records the operation, node ID,
-timestamp, the SHA-256 of the node's content at mutation time, and a
+timestamp, the SHA-256 of the node's **full state** at mutation time
+(content, tags, importance, metadata, namespace, provenance, validity
+window, TTL, timestamps — everything except volatile read stats), and a
 `prevHash` linking to the previous entry (genesis entry links to a
-fixed domain-separated constant).
+fixed domain-separated constant). The chain position `seq` is bound
+into the entry hash and assigned atomically by the storage adapter
+(tip lookup + hash + insert in one transaction), so concurrent writers
+cannot fork the chain.
 
 ## Commands
 
@@ -19,10 +24,11 @@ memos log checkpoint                 # print the tip hash to anchor externally
 
 1. **Chain integrity** — sequence continuity (no deleted/reordered
    rows), `prevHash` linkage, and recomputed entry hashes (no edited
-   rows).
-2. **DB cross-check** — every node's current content must match the
-   `contentHash` of its latest log entry. A node edited or deleted
-   directly in the DB (bypassing the log) fails here, as does a node
+   rows, no replayed positions).
+2. **DB cross-check** — every node's current full state must match the
+   `nodeHash` of its latest log entry. A node edited or deleted
+   directly in the DB (bypassing the log) fails here — including
+   metadata-only edits to tags, importance, or TTL — as does a node
    resurrected after a `forget` entry.
 3. **Checkpoint anchor** (only with `--expect`) — the current tip hash
    must equal the hash you recorded earlier.
@@ -56,8 +62,22 @@ proves the chain still ends where you left it.
   and every `updateNode` path in `MemOS` routes through
   `updateNodeLogged`, so imports, TTL changes, validity edits, tag
   edits, and revert bookkeeping are all covered — not just `store()`.
+  Reads are deliberately not logged: retrievals bump `accessCount` /
+  `lastAccessed`, and those volatile read stats are excluded from the
+  state hash so reads never false-positive at verify time.
 - **No secrets in the log**: entries contain hashes only, never
   content. Safe to show, export, or compare without leaking memories.
 - Custom `StorageAdapter` implementations can opt out by not
   implementing `appendTamperEntry`/`readTamperLog`; `verify` then
   reports the log as unsupported.
+
+## Schema migration (v1 → v2)
+
+The first-day format hashed only node content (`content_hash`,
+sequence not bound into the entry hash). On open, databases with that
+schema are migrated automatically: old rows are carried into
+`node_hash`, the redundant `content_hash` column is dropped, and new
+entries chain onto the old tip with the v2 format. `verify` checks
+migrated rows with the legacy v1 algorithm (chain linkage +
+content cross-check) and reports their count as `legacyEntries` —
+informational, not a failure.

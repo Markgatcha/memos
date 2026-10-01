@@ -80,7 +80,7 @@ import { composeScope } from "./scope.js";
 import { decideRetain } from "./retain-filter.js";
 import { appendTamperEntry, verifyTamperLog } from "./tamper-log.js";
 import type { TamperVerifyResult } from "./tamper-log.js";
-import type { TamperOp } from "./types.js";
+import type { TamperLogEntry, TamperOp } from "./types.js";
 import type {
   MemoryNode,
   MemoryEdge,
@@ -3563,6 +3563,18 @@ export class MemOS {
   ): Promise<TamperVerifyResult> {
     this.assertInit();
     return verifyTamperLog(this.storage, opts);
+  }
+
+  /**
+   * Read the tamper-evident mutation log in sequence order (newest
+   * last). Returns an empty array when the storage adapter doesn't
+   * implement the log. Entries contain hashes only — no memory
+   * content — so they are safe to display or export.
+   */
+  async readTamperLog(): Promise<TamperLogEntry[]> {
+    this.assertInit();
+    if (!this.storage.readTamperLog) return [];
+    return this.storage.readTamperLog();
   }
 
   /**

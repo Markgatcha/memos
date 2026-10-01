@@ -2872,6 +2872,11 @@ async function main(): Promise<void> {
           console.log(
             `Tamper log: ${result.entriesChecked} entries checked, ${result.unloggedNodes} pre-log node(s).`,
           );
+          if (result.legacyEntries > 0) {
+            console.log(
+              `${result.legacyEntries} ${result.legacyEntries === 1 ? "entry predates" : "entries predate"} the full-state format: chain linkage verified, content cross-checked.`,
+            );
+          }
           if (result.ok) {
             console.log(
               "OK — chain intact, all nodes match their log entries.",
@@ -2887,26 +2892,22 @@ async function main(): Promise<void> {
         }
 
         if (subcommand === "show") {
-          const storage = (memos as unknown as { storage: StorageAdapter })
-            .storage;
-          if (!storage.readTamperLog) {
-            console.log("Tamper log not supported by this storage backend.");
+          const entries = await memos.readTamperLog();
+          if (entries.length === 0) {
+            console.log(
+              "Tamper log is empty or not supported by this storage backend.",
+            );
             break;
           }
           const limit = Math.max(1, parseInt(getFlag("--limit") ?? "20", 10));
-          const entries = await storage.readTamperLog();
           const tail = entries.slice(-limit);
           if (jsonFlag) {
             console.log(JSON.stringify(tail, null, 2));
             break;
           }
-          if (tail.length === 0) {
-            console.log("Tamper log is empty.");
-            break;
-          }
           for (const e of tail) {
             console.log(
-              `#${e.seq} [${new Date(e.ts).toISOString()}] ${e.op} ${e.nodeId.slice(0, 8)} content:${e.contentHash.slice(0, 12)} entry:${e.entryHash.slice(0, 12)}`,
+              `#${e.seq} [${new Date(e.ts).toISOString()}] ${e.op} ${e.nodeId.slice(0, 8)} state:${e.nodeHash.slice(0, 12)} entry:${e.entryHash.slice(0, 12)}`,
             );
           }
           break;

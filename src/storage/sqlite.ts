@@ -23,6 +23,7 @@ import {
   searchByEntities as searchEntityIndex,
   writeEntityIndexRows,
 } from "../entity-index.js";
+import { GENESIS_PREV, entryHash as tamperEntryHash } from "../tamper-log.js";
 import type {
   StorageAdapter,
   ContradictionRecord,
@@ -432,13 +433,33 @@ export class SQLiteStorage implements StorageAdapter {
         ts            INTEGER NOT NULL,
         op            TEXT NOT NULL,
         node_id       TEXT NOT NULL,
-        content_hash  TEXT NOT NULL,
+        node_hash     TEXT NOT NULL,
         prev_hash     TEXT NOT NULL,
         entry_hash    TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_tamper_log_node ON tamper_log(node_id);
     `);
+
+    // Migration from the first-day schema, which stored a content-only
+    // `content_hash`. Carry old rows into `node_hash`; verifyTamperLog
+    // keeps a legacy v1 check for those rows (chain linkage + content
+    // comparison) and reports them as legacyEntries.
+    const tamperCols = this.db
+      .prepare(`PRAGMA table_info(tamper_log)`)
+      .all() as Array<{ name: string }>;
+    const tamperNames = new Set(tamperCols.map((c) => c.name));
+    if (tamperNames.has("content_hash") && !tamperNames.has("node_hash")) {
+      this.db.exec(
+        `ALTER TABLE tamper_log ADD COLUMN node_hash TEXT NOT NULL DEFAULT ''`,
+      );
+      this.db.exec(
+        `UPDATE tamper_log SET node_hash = content_hash WHERE node_hash = ''`,
+      );
+      // The old column is fully redundant after the backfill, and its
+      // NOT NULL constraint would reject new inserts — drop it.
+      this.db.exec(`ALTER TABLE tamper_log DROP COLUMN content_hash`);
+    }
 
     // Migration: add expires_at column if missing
     this.migrateAddColumn("nodes", "expires_at", "INTEGER DEFAULT NULL");
@@ -941,27 +962,60 @@ export class SQLiteStorage implements StorageAdapter {
   // Tamper-evident mutation log
   // -----------------------------------------------------------------------
 
-  async appendTamperEntry(entry: NewTamperLogEntry): Promise<number> {
-    const result = this.db
-      .prepare(
-        `INSERT INTO tamper_log (ts, op, node_id, content_hash, prev_hash, entry_hash)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        entry.ts,
-        entry.op,
-        entry.nodeId,
-        entry.contentHash,
-        entry.prevHash,
-        entry.entryHash,
+  async appendTamperEntry(entry: NewTamperLogEntry): Promise<TamperLogEntry> {
+    // Atomic chain-position assignment: tip lookup, seq allocation,
+    // entry-hash computation, and insert happen in ONE transaction, so
+    // concurrent writers can never fork the chain with the same prevHash.
+    // BEGIN IMMEDIATE takes the write lock up front, which also keeps
+    // two MemOS instances on the same DB file from interleaving.
+    this.db.prepare("BEGIN IMMEDIATE").run();
+    try {
+      const tip = this.db
+        .prepare(`SELECT entry_hash FROM tamper_log ORDER BY seq DESC LIMIT 1`)
+        .get() as { entry_hash: string } | undefined;
+      const prevHash = tip?.entry_hash ?? GENESIS_PREV;
+      // AUTOINCREMENT assigns seq; lastInsertRowid gives it back inside
+      // the same transaction, so the hash commits the true position.
+      const seq = Number(
+        this.db
+          .prepare(
+            `INSERT INTO tamper_log (ts, op, node_id, node_hash, prev_hash, entry_hash)
+             VALUES (?, ?, ?, ?, ?, '')`,
+          )
+          .run(entry.ts, entry.op, entry.nodeId, entry.nodeHash, prevHash)
+          .lastInsertRowid,
       );
-    return Number(result.lastInsertRowid);
+      const entryHash = tamperEntryHash({
+        seq,
+        ts: entry.ts,
+        op: entry.op,
+        nodeId: entry.nodeId,
+        nodeHash: entry.nodeHash,
+        prevHash,
+      });
+      this.db
+        .prepare(`UPDATE tamper_log SET entry_hash = ? WHERE seq = ?`)
+        .run(entryHash, seq);
+      this.db.prepare("COMMIT").run();
+      return {
+        seq,
+        ts: entry.ts,
+        op: entry.op,
+        nodeId: entry.nodeId,
+        nodeHash: entry.nodeHash,
+        prevHash,
+        entryHash,
+      };
+    } catch (err) {
+      this.db.prepare("ROLLBACK").run();
+      throw err;
+    }
   }
 
   async readTamperLog(): Promise<TamperLogEntry[]> {
     const rows = this.db
       .prepare(
-        `SELECT seq, ts, op, node_id, content_hash, prev_hash, entry_hash
+        `SELECT seq, ts, op, node_id, node_hash, prev_hash, entry_hash
          FROM tamper_log ORDER BY seq ASC`,
       )
       .all() as Array<{
@@ -969,7 +1023,7 @@ export class SQLiteStorage implements StorageAdapter {
       ts: number;
       op: string;
       node_id: string;
-      content_hash: string;
+      node_hash: string;
       prev_hash: string;
       entry_hash: string;
     }>;
@@ -978,7 +1032,7 @@ export class SQLiteStorage implements StorageAdapter {
       ts: r.ts,
       op: r.op as TamperLogEntry["op"],
       nodeId: r.node_id,
-      contentHash: r.content_hash,
+      nodeHash: r.node_hash,
       prevHash: r.prev_hash,
       entryHash: r.entry_hash,
     }));
