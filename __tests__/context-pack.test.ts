@@ -430,6 +430,43 @@ describe("Cache-prefix stability (prompt-cache friendly layout)", () => {
       ["z", "a", "b"],
     );
   });
+
+  test("float-noise scores round to byte-identical output", () => {
+    // float64 fusion math can produce 0.9499999999999999 on one run and
+    // 0.95 on the next for the same memories; the pack must not care.
+    const noisy = (score: number): ScoredMemory[] => [
+      memosToScoredMemory(
+        makeNode("n1", 0.7, ["t"], "Some unique standalone content one"),
+        score,
+      ),
+      memosToScoredMemory(
+        makeNode("n2", 0.7, ["t"], "Some unique standalone content two"),
+        0.8111111111111111,
+      ),
+    ];
+    const packA = buildContextPack({ ...baseOpts, items: noisy(0.95) });
+    const packB = buildContextPack({
+      ...baseOpts,
+      items: noisy(0.9499999999999999),
+    });
+    expect(serializeAll(packA)).toEqual(serializeAll(packB));
+    expect(packA.items[0].score).toBe(0.95);
+    // JSON carries the rounded score, not the float64 residue.
+    expect(JSON.stringify(packA)).not.toContain("0.9499999999999999");
+  });
+
+  test("per-leg scores are rounded to 3 decimals", () => {
+    const item: ScoredMemory = {
+      node: makeNode("n1", 0.7, ["t"], "Some unique standalone content one"),
+      score: 0.9,
+      scores: { keyword: 0.123456789, semantic: 0.987654321 },
+    };
+    const pack = buildContextPack({ ...baseOpts, items: [item] });
+    expect(pack.items[0].scores).toEqual({
+      keyword: 0.123,
+      semantic: 0.988,
+    });
+  });
 });
 
 describe("U-shape evidence ordering (lost-in-the-middle mitigation)", () => {

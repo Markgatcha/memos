@@ -13,6 +13,12 @@
  *   - Token-accurate budgeting: uses a GPT-style BPE approximation
  *     (whitespace + punctuation split) instead of the 4-chars-per-token
  *     heuristic. Callers can swap in a real tokenizer via `tokenCounter`.
+ *   - Prompt-cache stability: scores are rounded to 3 decimals, items
+ *     sort deterministically (score desc, id asc), and serialization
+ *     layouts are fixed — so rebuilding a pack from the same memories
+ *     yields byte-identical output. Providers that discount repeated
+ *     prompt prefixes (Anthropic prompt caching, OpenAI) then cache the
+ *     evidence block instead of re-billing it every turn.
  *
  * @module @memos/context-pack
  */
@@ -337,13 +343,26 @@ function normalizeScores(
   const out: Record<string, number> = {};
   if (scores) {
     for (const key of SCORE_KEY_ORDER) {
-      if (scores[key] !== undefined) out[key] = scores[key] as number;
+      if (scores[key] !== undefined) out[key] = roundScore(scores[key]);
     }
     for (const key of Object.keys(scores).sort()) {
-      if (!(key in out)) out[key] = scores[key] as number;
+      if (!(key in out)) out[key] = roundScore(scores[key] as number);
     }
   }
   return out;
+}
+
+/**
+ * Round a score to 3 decimals.
+ *
+ * Cache-prefix stability: fusion scores are float64 math, so two runs
+ * over the same memories can differ in the last bits
+ * (0.9499999999999999 vs 0.95). Rounding at build time keeps JSON and
+ * TOON output byte-identical across rebuilds, which is what lets
+ * provider prompt caches hit on the evidence block.
+ */
+export function roundScore(score: number): number {
+  return Math.round(score * 1000) / 1000;
 }
 
 /**
@@ -466,7 +485,7 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
       // Present only when the pack was built with `fidelity` — keeps the
       // default object shape byte-identical to before.
       ...(resolvedLevel !== undefined && { fidelity: resolvedLevel }),
-      score: scored.score,
+      score: roundScore(scored.score),
       // Fixed key order — fusion builds this object in leg-dependent
       // order, which would otherwise shift JSON bytes between calls.
       scores: normalizeScores(scored.scores),
