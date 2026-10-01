@@ -610,6 +610,76 @@ export class MemOS {
   }
 
   /**
+   * Import a record with its original identity (ID and timestamps).
+   *
+   * Used by encrypted sync restore (`src/sync.ts`). Unlike `store()`,
+   * this bypasses the write pipeline — no retain filter, no quarantine
+   * screen, no event-update resolution, no auto-linking — because the
+   * record already went through all of that on the exporting machine.
+   * The node is still queued for (re-)embedding under the local
+   * provider and registered for the contradiction scan.
+   */
+  async importRecord(record: {
+    id: string;
+    content: string;
+    summary?: string;
+    type: MemoryType;
+    tags?: string[];
+    importance?: number;
+    createdAt: number;
+    updatedAt: number;
+    namespace?: string;
+    metadata?: Record<string, unknown>;
+    source?: MemorySource;
+    provenance?: ProvenanceTier;
+    pool?: MemoryPool;
+    expiresAt?: number | null;
+    validFrom?: number | null;
+    validTo?: number | null;
+    harness?: string;
+  }): Promise<MemoryNode> {
+    this.assertInit();
+    const source: MemorySource = record.source ?? "external_data";
+    const node: MemoryNode = {
+      id: record.id,
+      content: record.content,
+      summary: record.summary ?? extractiveSummary(record.content),
+      type: record.type,
+      metadata: record.metadata ?? {},
+      importance: record.importance ?? 0.5,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      accessCount: 0,
+      lastAccessed: Date.now(),
+      tags: record.tags ?? [],
+      expiresAt: record.expiresAt ?? null,
+      namespace: record.namespace ?? "default",
+      validFrom: record.validFrom ?? null,
+      validTo: record.validTo ?? null,
+      source,
+      pool: record.pool ?? "event",
+      trustScore: DEFAULT_TRUST_SCORES[source],
+      provenance: record.provenance ?? resolveProvenance({ source }),
+      quarantined: false,
+      quarantinedAt: null,
+      quarantineReason: null,
+      harness: record.harness ?? "unknown",
+      confidence: INITIAL_CONFIDENCE,
+      evidenceCount: 0,
+    };
+
+    stampFidelityCache(node);
+
+    await this.storage.saveNode(node);
+    this.graph.addNode(node);
+    this.scheduleEmbedding(node);
+    this.invalidateSearchCache();
+    this.contradictionScanPending.add(node.id);
+    this.emit("node:created", node);
+    return node;
+  }
+
+  /**
    * Inner write path. `skipEventUpdate` is true only for the event-update
    * machinery below (prevents the replacement write from re-triggering
    * update detection on its own text — infinite recursion otherwise).

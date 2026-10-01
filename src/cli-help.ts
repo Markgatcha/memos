@@ -266,15 +266,20 @@ The server binds to 127.0.0.1 only.`,
   sync: `memos sync <export|import|status> [options]
 
 Encrypted cross-machine sync. Export memories to an encrypted bundle,
-move it to another machine, and import it there.
+move it to another machine yourself (cloud drive, USB, scp), and import
+it there.
 
-  memos sync export --output <file> [--key <passphrase> | --key-file <path>]
+  memos sync export --output <file> [--passphrase <passphrase> | --passphrase-file <path>]
   memos sync import --input <file> [--strategy skip-existing|last-write-wins]
   memos sync status --input <file>
 
-The bundle is encrypted with AES-256-GCM. The key can be a passphrase
-(PBKDF2-derived) or a 32-byte key file. MEMOS_SYNC_KEY env var also works.
-Local-first: import never deletes, only adds or updates.`,
+AES-256-GCM: every record field (id, content, type, tags, timestamps…)
+is encrypted; bundle metadata is authenticated. The key can be a
+passphrase (PBKDF2-derived, prompted interactively on a TTY when not
+given), a 32-byte key file, or MEMOS_SYNC_KEY. Import preserves
+original IDs and timestamps; content-identical records are never
+duplicated. Local-first: import only adds, or replaces the conflicting
+record under last-write-wins.`,
   beta: `memos beta [enable|disable|status]
 
 Opt in or out of the beta channel. With beta enabled, memos checks (at most

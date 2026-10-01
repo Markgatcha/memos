@@ -140,6 +140,13 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   trio: ["--up"],
   completion: [],
   help: [],
+  sync: [
+    "--input",
+    "--output",
+    "--passphrase",
+    "--passphrase-file",
+    "--strategy",
+  ],
 };
 
 /** Flags accepted by (almost) every command. */
@@ -152,6 +159,7 @@ const FLAG_VALUES: Record<string, string[]> = {
   "--format": ["json", "markdown", "obsidian"],
   "--pool": ["event", "note", "procedure"],
   "--outcome": ["success", "failure"],
+  "--strategy": ["skip-existing", "last-write-wins"],
 };
 
 /** Positional value sets: `command -> values` for the first positional. */
@@ -159,6 +167,7 @@ const POSITIONAL_VALUES: Record<string, string[]> = {
   completion: [...COMPLETION_SHELLS],
   quarantine: ["list", "release"],
   harness: ["list", "merge"],
+  sync: ["export", "import", "status"],
   connect: [
     "claude-code",
     "cursor",

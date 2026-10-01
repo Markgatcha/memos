@@ -282,6 +282,56 @@ async function promptChoice<T extends string>(
 }
 
 /**
+ * Prompt for a passphrase with hidden (non-echoed) input.
+ * Used for the sync key when no --passphrase/--passphrase-file/MEMOS_SYNC_KEY is set.
+ */
+async function promptHidden(label: string): Promise<string> {
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+  });
+  // Mute echo while the user types the passphrase.
+  const rlAny = rl as unknown as {
+    _writeToOutput: (...args: unknown[]) => void;
+    question: (q: string, cb: (a: string) => void) => void;
+  };
+  const originalWrite = rlAny._writeToOutput.bind(rl);
+  process.stdout.write(label);
+  rlAny._writeToOutput = () => {};
+  return new Promise((resolve) => {
+    rlAny.question("", (answer: string) => {
+      rlAny._writeToOutput = originalWrite;
+      rl.close();
+      process.stdout.write("\n");
+      resolve(answer);
+    });
+  });
+}
+
+/**
+ * Resolve the sync key, prompting interactively (hidden input) when no
+ * key was provided via --passphrase, --passphrase-file, or MEMOS_SYNC_KEY and stdin
+ * is a TTY. Non-TTY (piped/CI) keeps the hard error — scripts must
+ * pass the key explicitly.
+ */
+async function resolveSyncKeyInteractive(opts: {
+  passphrase?: string;
+  passphraseFile?: string;
+}): Promise<Buffer | string> {
+  const { resolveSyncKey } = await import("./sync.js");
+  try {
+    return resolveSyncKey(opts);
+  } catch (err) {
+    if (!process.stdin.isTTY) throw err;
+    const passphrase = await promptHidden("Sync passphrase: ");
+    if (!passphrase) throw err;
+    return passphrase;
+  }
+}
+
+/**
  * `memos init` — walk the user through database path + embedding provider,
  * smoke-test the setup (store → semantic search → forget a probe memory),
  * and save ~/.memos/config.json. `memos init --yes` accepts all defaults
@@ -2705,7 +2755,7 @@ async function main(): Promise<void> {
           decryptBundle,
           writeBundle,
           readBundle,
-          resolveSyncKey,
+          importRecords,
         } = await import("./sync.js");
 
         const getFlag = (name: string): string | undefined => {
@@ -2717,21 +2767,36 @@ async function main(): Promise<void> {
           const output = getFlag("--output");
           if (!output) {
             console.error(
-              "Error: --output <file> is required.\n  Usage: memos sync export --output <file> [--key <passphrase>|--key-file <path>]",
+              "Error: --output <file> is required.\n  Usage: memos sync export --output <file> [--passphrase <passphrase>|--passphrase-file <path>]",
             );
             process.exit(1);
           }
-          const key = resolveSyncKey({
-            key: getFlag("--key"),
-            keyFile: getFlag("--key-file"),
+          const key = await resolveSyncKeyInteractive({
+            passphrase: getFlag("--passphrase"),
+            passphraseFile: getFlag("--passphrase-file"),
           });
 
           const graph = await memos.getGraph();
-          const records = (graph.nodes ?? []).map((n: any) => ({
+          // Export the full record: everything lands inside the
+          // encrypted payload (v2 bundle) — no plaintext IDs/timestamps.
+          const records = (graph.nodes ?? []).map((n) => ({
             id: n.id,
             content: n.content,
-            createdAt: n.createdAt ?? new Date().toISOString(),
-            updatedAt: n.updatedAt ?? n.createdAt ?? new Date().toISOString(),
+            summary: n.summary,
+            type: n.type,
+            tags: n.tags ?? [],
+            importance: n.importance ?? 0.5,
+            createdAt: n.createdAt,
+            updatedAt: n.updatedAt,
+            namespace: n.namespace ?? "default",
+            metadata: n.metadata ?? {},
+            source: n.source,
+            provenance: n.provenance,
+            pool: n.pool,
+            expiresAt: n.expiresAt ?? null,
+            validFrom: n.validFrom ?? null,
+            validTo: n.validTo ?? null,
+            harness: n.harness,
           }));
 
           const bundle = createBundle(records, key);
@@ -2758,9 +2823,9 @@ async function main(): Promise<void> {
             );
             process.exit(1);
           }
-          const key = resolveSyncKey({
-            key: getFlag("--key"),
-            keyFile: getFlag("--key-file"),
+          const key = await resolveSyncKeyInteractive({
+            passphrase: getFlag("--passphrase"),
+            passphraseFile: getFlag("--passphrase-file"),
           });
 
           const bundle = readBundle(input);
@@ -2774,43 +2839,11 @@ async function main(): Promise<void> {
             process.exit(1);
           }
 
-          let imported = 0,
-            skipped = 0,
-            updated = 0;
-          const errors: string[] = [];
-
-          for (const r of records) {
-            try {
-              const existing = await memos.retrieve(r.id);
-              if (existing) {
-                if (strategy === "last-write-wins") {
-                  const existingUpdated = new Date(
-                    (existing as any).updatedAt ?? 0,
-                  ).getTime();
-                  const incomingUpdated = new Date(r.updatedAt).getTime();
-                  if (incomingUpdated > existingUpdated) {
-                    // Update by forgetting old and storing new (preserves ID via internal API)
-                    await memos.forget(r.id);
-                    await memos.store(r.content, {
-                      type: ((existing as any).type ?? "fact") as "fact",
-                    });
-                    updated++;
-                  } else {
-                    skipped++;
-                  }
-                } else {
-                  skipped++;
-                }
-              } else {
-                await memos.store(r.content, { type: "fact" as const });
-                imported++;
-              }
-            } catch (err) {
-              errors.push(
-                `${r.id}: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-          }
+          const { imported, skipped, updated, errors } = await importRecords(
+            memos,
+            records,
+            strategy,
+          );
 
           if (jsonFlag) {
             console.log(JSON.stringify({ imported, skipped, updated, errors }));
