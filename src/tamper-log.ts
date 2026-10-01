@@ -78,7 +78,9 @@ export async function appendTamperEntry(
   try {
     const existing = await storage.readTamperLog();
     const prevHash =
-      existing.length > 0 ? existing[existing.length - 1]!.entryHash : GENESIS_PREV;
+      existing.length > 0
+        ? existing[existing.length - 1]!.entryHash
+        : GENESIS_PREV;
     const draft: Omit<NewTamperLogEntry, "entryHash"> = {
       ts,
       op,

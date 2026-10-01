@@ -2866,16 +2866,16 @@ async function main(): Promise<void> {
             break;
           }
           if (!result.supported) {
-            console.log(
-              "Tamper log not supported by this storage backend.",
-            );
+            console.log("Tamper log not supported by this storage backend.");
             break;
           }
           console.log(
             `Tamper log: ${result.entriesChecked} entries checked, ${result.unloggedNodes} pre-log node(s).`,
           );
           if (result.ok) {
-            console.log("OK — chain intact, all nodes match their log entries.");
+            console.log(
+              "OK — chain intact, all nodes match their log entries.",
+            );
           } else {
             console.log("FAILED — tampering detected:");
             for (const issue of result.issues) {

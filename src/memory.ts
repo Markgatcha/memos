@@ -41,7 +41,13 @@ import {
   serializeContextPack,
 } from "./context-pack.js";
 import type { ContextPack } from "./context-pack.js";
-import { compareScoredMemories, fuseResults, harvestPrfTerms, mergeKeywordLegs, prfTokenize } from "./retrieval.js";
+import {
+  compareScoredMemories,
+  fuseResults,
+  harvestPrfTerms,
+  mergeKeywordLegs,
+  prfTokenize,
+} from "./retrieval.js";
 import {
   DEFAULT_GRAPH_EXPANSION_ALPHA,
   DEFAULT_GRAPH_EXPANSION_HOPS,
@@ -3843,9 +3849,7 @@ export class MemOS {
       ? await provider.embedQuery(query)
       : await provider.embed(query);
     this.queryEmbeddingCache.set(key, vector);
-    if (
-      this.queryEmbeddingCache.size > MemOS.QUERY_EMBEDDING_CACHE_MAX
-    ) {
+    if (this.queryEmbeddingCache.size > MemOS.QUERY_EMBEDDING_CACHE_MAX) {
       const oldest = this.queryEmbeddingCache.keys().next();
       if (!oldest.done) this.queryEmbeddingCache.delete(oldest.value);
     }
