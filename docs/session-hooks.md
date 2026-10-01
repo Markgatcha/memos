@@ -80,12 +80,14 @@ export const MemosSessionHook = async ({ $ }) => {
 How the OpenCode path works: on `session.deleted`, the plugin passes the
 ended session's ID to `memos session-hook --opencode-session <id>`. Memos
 then loads that session's messages from OpenCode's data directory —
-`$OPENCODE_DATA_DIR` when set, otherwise the platform default
+`$XDG_DATA_HOME/opencode` when set, otherwise the platform default
 (`~/.local/share/opencode` on Linux,
 `~/Library/Application Support/opencode` on macOS,
-`%LOCALAPPDATA%/opencode` on Windows) — reading message headers from
-`project/*/storage/message/info/*.json` and text parts from
-`project/*/storage/part/info/*.json`.
+`%LOCALAPPDATA%/opencode` on Windows). Current OpenCode stores sessions
+in SQLite at `<data>/opencode.db` (tables `message`/`part`); older
+installs used `<data>/storage/message/<sessionId>/*.json` and
+`<data>/storage/part/<messageId>/*.json` — memos reads the database
+first and falls back to the legacy JSON layout.
 
 Limitations, stated plainly:
 
@@ -94,7 +96,7 @@ Limitations, stated plainly:
 - If the session can't be found (custom data dir, session storage
   already cleaned up), the hook logs and exits — it never fails the
   session teardown.
-- Set `OPENCODE_DATA_DIR` if you moved OpenCode's data directory.
+- Set `XDG_DATA_HOME` if you moved OpenCode's data directory.
 
 ## Manual extraction
 

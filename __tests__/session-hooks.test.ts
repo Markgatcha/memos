@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import Database from "better-sqlite3";
 
 describe("parseClaudeTranscript", () => {
   it("parses a Claude Code JSONL transcript", () => {
@@ -201,57 +202,111 @@ describe("parseTranscriptFile", () => {
   });
 });
 
-describe("findOpenCodeSessionMessages", () => {
-  function makeDataDir(): string {
-    const dir = mkdtempSync(join(tmpdir(), "opencode-data-"));
-    const msgDir = join(dir, "project", "proj1", "storage", "message", "info");
-    const partDir = join(dir, "project", "proj1", "storage", "part", "info");
-    mkdirSync(msgDir, { recursive: true });
-    mkdirSync(partDir, { recursive: true });
-    const msg = (
-      id: string,
-      sessionID: string,
-      role: string,
-      created: number,
-    ) =>
-      writeFileSync(
-        join(msgDir, `${id}.json`),
-        JSON.stringify({ id, sessionID, role, time: { created } }),
-      );
-    const part = (id: string, messageID: string, type: string, text: string) =>
-      writeFileSync(
-        join(partDir, `${id}.json`),
-        JSON.stringify({ id, messageID, type, text }),
-      );
-    msg("m1", "sess1", "user", 1000);
-    msg("m2", "sess1", "assistant", 2000);
-    msg("m3", "other", "user", 1500);
-    part("p1", "m1", "text", "My name is Alice");
-    part("p2", "m2", "text", "Hello Alice");
-    part("p3", "m2", "tool", "should be skipped");
+describe("findOpenCodeSessionMessages (real OpenCode layouts)", () => {
+  /**
+   * Real current layout: <dir>/opencode.db with `message`/`part`
+   * tables (session_id / message_id columns, JSON `data` column).
+   */
+  function makeSqliteDataDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-sqlite-"));
+    const db = new Database(join(dir, "opencode.db"));
+    db.exec(
+      "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT);" +
+        "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, data TEXT);",
+    );
+    const msg = db.prepare(
+      "INSERT INTO message (id, session_id, data) VALUES (?, ?, ?)",
+    );
+    const part = db.prepare(
+      "INSERT INTO part (id, message_id, data) VALUES (?, ?, ?)",
+    );
+    msg.run(
+      "m1",
+      "sess1",
+      JSON.stringify({ id: "m1", role: "user", time: { created: 1000 } }),
+    );
+    msg.run(
+      "m2",
+      "sess1",
+      JSON.stringify({ id: "m2", role: "assistant", time: { created: 2000 } }),
+    );
+    msg.run(
+      "m3",
+      "other",
+      JSON.stringify({ id: "m3", role: "user", time: { created: 1500 } }),
+    );
+    part.run(
+      "p1",
+      "m1",
+      JSON.stringify({ id: "p1", type: "text", text: "My name is Alice" }),
+    );
+    part.run(
+      "p2",
+      "m2",
+      JSON.stringify({ id: "p2", type: "text", text: "Hello Alice" }),
+    );
+    part.run(
+      "p3",
+      "m2",
+      JSON.stringify({ id: "p3", type: "tool", text: "should be skipped" }),
+    );
+    db.close();
     return dir;
   }
 
-  it("loads user/assistant text parts in time order", () => {
-    const dir = makeDataDir();
+  /**
+   * Legacy layout (pre-SQLite OpenCode):
+   * <dir>/storage/message/<sessionId>/<messageId>.json and
+   * <dir>/storage/part/<messageId>/<partId>.json.
+   */
+  function makeLegacyJsonDataDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-legacy-"));
+    const msgDir = join(dir, "storage", "message", "sess1");
+    mkdirSync(msgDir, { recursive: true });
+    const writePart = (messageId: string, partId: string, body: object) => {
+      const partDir = join(dir, "storage", "part", messageId);
+      mkdirSync(partDir, { recursive: true });
+      writeFileSync(join(partDir, `${partId}.json`), JSON.stringify(body));
+    };
+    writeFileSync(
+      join(msgDir, "m1.json"),
+      JSON.stringify({ id: "m1", role: "user", time: { created: 1000 } }),
+    );
+    writeFileSync(
+      join(msgDir, "m2.json"),
+      JSON.stringify({ id: "m2", role: "assistant", time: { created: 2000 } }),
+    );
+    writePart("m1", "p1", { id: "p1", type: "text", text: "My name is Alice" });
+    writePart("m2", "p2", { id: "p2", type: "text", text: "Hello Alice" });
+    writePart("m2", "p3", { id: "p3", type: "tool", text: "skipped" });
+    return dir;
+  }
+
+  const expected = [
+    { role: "user", content: "My name is Alice" },
+    { role: "assistant", content: "Hello Alice" },
+  ];
+
+  it("loads user/assistant text parts in time order from opencode.db", () => {
+    const dir = makeSqliteDataDir();
     try {
-      const messages = findOpenCodeSessionMessages("sess1", dir);
-      expect(messages).toHaveLength(2);
-      expect(messages[0]).toEqual({
-        role: "user",
-        content: "My name is Alice",
-      });
-      expect(messages[1]).toEqual({
-        role: "assistant",
-        content: "Hello Alice",
-      });
+      expect(findOpenCodeSessionMessages("sess1", dir)).toEqual(expected);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the legacy JSON layout when no database exists", () => {
+    const dir = makeLegacyJsonDataDir();
+    try {
+      expect(findOpenCodeSessionMessages("sess1", dir)).toEqual(expected);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   it("returns [] for an unknown session id", () => {
-    const dir = makeDataDir();
+    const dir = makeSqliteDataDir();
     try {
       expect(findOpenCodeSessionMessages("nope", dir)).toEqual([]);
     } finally {
@@ -263,6 +318,16 @@ describe("findOpenCodeSessionMessages", () => {
     expect(
       findOpenCodeSessionMessages("sess1", "/nonexistent/opencode-data"),
     ).toEqual([]);
+  });
+
+  it("returns [] for a corrupt database instead of throwing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-corrupt-"));
+    try {
+      writeFileSync(join(dir, "opencode.db"), "not a sqlite database");
+      expect(findOpenCodeSessionMessages("sess1", dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

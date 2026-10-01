@@ -28,6 +28,7 @@
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import type { ConversationMessage } from "./types.js";
 
 /** Hook input JSON (Claude Code SessionEnd format). */
@@ -180,12 +181,17 @@ export function parsePlainTranscript(text: string): ConversationMessage[] {
 
 /**
  * Candidate OpenCode data directories, in priority order.
- * `OPENCODE_DATA_DIR` wins when set; otherwise the platform default.
+ *
+ * OpenCode resolves its data dir as `$XDG_DATA_HOME/opencode`, falling
+ * back to the platform default (`~/.local/share/opencode` on Linux,
+ * `~/Library/Application Support/opencode` on macOS). There is no
+ * `OPENCODE_DATA_DIR` env var in OpenCode itself — honor the real
+ * `XDG_DATA_HOME` override here instead.
  */
 export function openCodeDataDirs(): string[] {
   const dirs: string[] = [];
-  const envDir = process.env.OPENCODE_DATA_DIR;
-  if (envDir) dirs.push(envDir);
+  const xdg = process.env.XDG_DATA_HOME;
+  if (xdg) dirs.push(join(xdg, "opencode"));
   const home = process.env.HOME ?? "";
   if (process.platform === "darwin") {
     dirs.push(join(home, "Library", "Application Support", "opencode"));
@@ -200,11 +206,15 @@ export function openCodeDataDirs(): string[] {
 /**
  * Load the user/assistant messages of an OpenCode session.
  *
- * OpenCode persists sessions under `<dataDir>/project/<id>/storage/`:
- * message headers in `storage/message/info/*.json` (each carries
- * `sessionID`, `role`, and `time.created`) and content parts in
- * `storage/part/info/*.json` (each carries `messageID`; `type: "text"`
- * parts carry the visible text).
+ * Current OpenCode persists sessions in SQLite at
+ * `<dataDir>/opencode.db` (tables `session`, `message`, `part`; message
+ * rows carry `session_id` plus a JSON `data` column with `role` and
+ * `time.created`, part rows carry `message_id` plus a JSON `data`
+ * column where `type: "text"` parts hold the visible text in
+ * `data.text`). Older installs used JSON files at
+ * `<dataDir>/storage/message/<sessionId>/<messageId>.json` and
+ * `<dataDir>/storage/part/<messageId>/<partId>.json` — tried as a
+ * fallback when the database is absent or unreadable.
  *
  * Returns an empty array when the session cannot be found — the caller
  * (session-hook) treats that as fail-open, not an error.
@@ -226,74 +236,182 @@ export function findOpenCodeSessionMessages(
 }
 
 interface OpenCodeMessageHeader {
-  role: string;
+  role: "user" | "assistant";
   created: number;
   messageId: string;
-  projectDir: string;
 }
 
+/**
+ * Read one OpenCode data dir: SQLite first, legacy JSON fallback.
+ * Never throws — any unreadable layout yields [].
+ */
 function readOpenCodeSession(
   dataDir: string,
   sessionId: string,
 ): ConversationMessage[] {
-  const projectRoot = join(dataDir, "project");
-  if (!existsSync(projectRoot)) return [];
-  let projectDirs: string[];
+  const fromDb = readOpenCodeSessionSqlite(dataDir, sessionId);
+  if (fromDb.length > 0) return fromDb;
+  return readOpenCodeSessionLegacyJson(dataDir, sessionId);
+}
+
+/** Parse a JSON blob that may be the row itself or nested under `data`. */
+function openCodeJsonField<T>(parsed: unknown, field: string): T | undefined {
+  if (parsed && typeof parsed === "object") {
+    const obj = parsed as Record<string, unknown>;
+    if (field in obj) return obj[field] as T;
+    const data = obj.data;
+    if (data && typeof data === "object" && field in (data as object)) {
+      return (data as Record<string, unknown>)[field] as T;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Read an OpenCode session from `<dataDir>/opencode.db` (SQLite).
+ *
+ * Opened read-only with `fileMustExist` so we never create an empty
+ * database at OpenCode's path, and never disturb a running OpenCode
+ * instance's WAL.
+ */
+function readOpenCodeSessionSqlite(
+  dataDir: string,
+  sessionId: string,
+): ConversationMessage[] {
+  const candidates = [join(dataDir, "opencode.db")];
   try {
-    projectDirs = readdirSync(projectRoot);
+    for (const file of readdirSync(dataDir)) {
+      // Channel-specific databases: opencode-<channel>.db
+      if (/^opencode-.+\.db$/.test(file)) candidates.push(join(dataDir, file));
+    }
+  } catch {
+    return []; // data dir unreadable — fall through to legacy JSON
+  }
+  for (const dbPath of candidates) {
+    if (!existsSync(dbPath)) continue;
+    let db: Database.Database | null = null;
+    try {
+      db = new Database(dbPath, { readonly: true, fileMustExist: true });
+      const tables = new Set(
+        (
+          db
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .all() as Array<{ name: string }>
+        ).map((r) => r.name),
+      );
+      if (!tables.has("message") || !tables.has("part")) continue;
+      const headers: OpenCodeMessageHeader[] = [];
+      const rows = db
+        .prepare("SELECT id, data FROM message WHERE session_id = ?")
+        .all(sessionId) as Array<{ id: string; data: string }>;
+      for (const row of rows) {
+        try {
+          const parsed = JSON.parse(row.data);
+          const role = openCodeJsonField<string>(parsed, "role");
+          if (role !== "user" && role !== "assistant") continue;
+          const time = openCodeJsonField<{ created?: unknown }>(parsed, "time");
+          const created =
+            time && typeof time.created === "number" ? time.created : 0;
+          headers.push({ role, created, messageId: row.id });
+        } catch {
+          continue; // skip unreadable message rows
+        }
+      }
+      headers.sort(
+        (a, b) => a.created - b.created || (a.messageId < b.messageId ? -1 : 1),
+      );
+      const partStmt = db.prepare("SELECT data FROM part WHERE message_id = ?");
+      const messages: ConversationMessage[] = [];
+      for (const header of headers) {
+        const texts: string[] = [];
+        try {
+          const parts = partStmt.all(header.messageId) as Array<{
+            data: string;
+          }>;
+          for (const part of parts) {
+            try {
+              const parsed = JSON.parse(part.data);
+              if (
+                openCodeJsonField<string>(parsed, "type") === "text" &&
+                typeof openCodeJsonField<string>(parsed, "text") === "string"
+              ) {
+                const text = (
+                  openCodeJsonField<string>(parsed, "text") as string
+                ).trim();
+                if (text) texts.push(text);
+              }
+            } catch {
+              continue; // skip unreadable part rows
+            }
+          }
+        } catch {
+          continue; // skip messages whose parts can't be read
+        }
+        const text = texts.join("\n").trim();
+        if (text) messages.push({ role: header.role, content: text });
+      }
+      if (messages.length > 0) return messages;
+    } catch {
+      continue; // locked/corrupt db — try the next candidate
+    } finally {
+      try {
+        db?.close();
+      } catch {
+        // ignore close errors on a read-only handle
+      }
+    }
+  }
+  return [];
+}
+
+/**
+ * Read an OpenCode session from the legacy JSON layout:
+ * `<dataDir>/storage/message/<sessionId>/<messageId>.json` and
+ * `<dataDir>/storage/part/<messageId>/<partId>.json`.
+ */
+function readOpenCodeSessionLegacyJson(
+  dataDir: string,
+  sessionId: string,
+): ConversationMessage[] {
+  const messageDir = join(dataDir, "storage", "message", sessionId);
+  if (!existsSync(messageDir)) return [];
+  let files: string[];
+  try {
+    files = readdirSync(messageDir);
   } catch {
     return [];
   }
   const headers: OpenCodeMessageHeader[] = [];
-  for (const proj of projectDirs) {
-    const projectDir = join(projectRoot, proj);
-    const messageDir = join(projectDir, "storage", "message", "info");
-    if (!existsSync(messageDir)) continue;
-    let files: string[];
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
     try {
-      files = readdirSync(messageDir);
+      const parsed = JSON.parse(readFileSync(join(messageDir, file), "utf-8"));
+      const role = openCodeJsonField<string>(parsed, "role");
+      if (role !== "user" && role !== "assistant") continue;
+      const time = openCodeJsonField<{ created?: unknown }>(parsed, "time");
+      const created =
+        time && typeof time.created === "number" ? time.created : 0;
+      const messageId =
+        openCodeJsonField<string>(parsed, "id") ?? file.replace(/\.json$/, "");
+      headers.push({ role, created, messageId });
     } catch {
-      continue;
-    }
-    for (const file of files) {
-      if (!file.endsWith(".json")) continue;
-      try {
-        const raw = JSON.parse(readFileSync(join(messageDir, file), "utf-8"));
-        if (
-          raw.sessionID !== sessionId ||
-          (raw.role !== "user" && raw.role !== "assistant")
-        ) {
-          continue;
-        }
-        headers.push({
-          role: raw.role,
-          created: typeof raw.time?.created === "number" ? raw.time.created : 0,
-          messageId:
-            typeof raw.id === "string" ? raw.id : file.replace(/\.json$/, ""),
-          projectDir,
-        });
-      } catch {
-        continue; // skip unreadable message headers
-      }
+      continue; // skip unreadable message files
     }
   }
-  headers.sort((a, b) => a.created - b.created);
+  headers.sort(
+    (a, b) => a.created - b.created || (a.messageId < b.messageId ? -1 : 1),
+  );
   const messages: ConversationMessage[] = [];
   for (const header of headers) {
-    const text = readOpenCodeParts(header.projectDir, header.messageId);
-    if (text) {
-      messages.push({
-        role: header.role as "user" | "assistant",
-        content: text,
-      });
-    }
+    const text = readOpenCodePartsLegacy(dataDir, header.messageId);
+    if (text) messages.push({ role: header.role, content: text });
   }
   return messages;
 }
 
-/** Concatenate the text parts of an OpenCode message. */
-function readOpenCodeParts(projectDir: string, messageId: string): string {
-  const partDir = join(projectDir, "storage", "part", "info");
+/** Concatenate the text parts of an OpenCode message (legacy JSON layout). */
+function readOpenCodePartsLegacy(dataDir: string, messageId: string): string {
+  const partDir = join(dataDir, "storage", "part", messageId);
   if (!existsSync(partDir)) return "";
   let files: string[];
   try {
@@ -305,15 +423,10 @@ function readOpenCodeParts(projectDir: string, messageId: string): string {
   for (const file of files) {
     if (!file.endsWith(".json")) continue;
     try {
-      const part = JSON.parse(readFileSync(join(partDir, file), "utf-8"));
-      if (
-        part.messageID === messageId &&
-        part.type === "text" &&
-        typeof part.text === "string" &&
-        part.text.trim()
-      ) {
-        texts.push(part.text.trim());
-      }
+      const parsed = JSON.parse(readFileSync(join(partDir, file), "utf-8"));
+      if (openCodeJsonField<string>(parsed, "type") !== "text") continue;
+      const text = openCodeJsonField<string>(parsed, "text");
+      if (typeof text === "string" && text.trim()) texts.push(text.trim());
     } catch {
       continue; // skip unreadable parts
     }

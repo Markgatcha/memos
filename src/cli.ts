@@ -2639,7 +2639,7 @@ async function main(): Promise<void> {
           let messages;
           if (openCodeSessionId) {
             // OpenCode path: look the ended session up in OpenCode's
-            // data dir (OPENCODE_DATA_DIR or the platform default).
+            // data dir ($XDG_DATA_HOME/opencode or the platform default).
             messages = findOpenCodeSessionMessages(openCodeSessionId);
             if (messages.length === 0) {
               // Fail-open: session data not found (custom location,
