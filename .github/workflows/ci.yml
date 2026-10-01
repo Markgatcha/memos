@@ -54,15 +54,42 @@ jobs:
         os: [ubuntu-26.04, macos-latest]
     steps:
       - uses: actions/checkout@v7
+      - name: Record PATH before toolchain setup
+        # The installer must exercise its OWN node handling (download a
+        # Node on ubuntu, use the system node on macOS), so the PATH it
+        # sees must not include the toolchain we set up just for packing.
+        run: echo "ORIG_PATH=$PATH" >> "$GITHUB_ENV"
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+      - name: Setup Node.js 26
+        uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: pnpm
+      - name: Build and pack the local SDK
+        run: |
+          # Install the SDK packed from THIS commit, not npm @latest:
+          # npm's published version lags the repo, so installing @latest
+          # would test a stale SDK while the repo's own code goes
+          # unexercised.
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm pack --pack-destination "$RUNNER_TEMP"
+          echo "SDK_TARBALL=$RUNNER_TEMP/mem-os-sdk-$(node -p "require('./package.json').version").tgz" >> "$GITHUB_ENV"
       - name: Run installer into a temp HOME
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
+          export MEMOS_NPM_TAG="file://$SDK_TARBALL"
+          export PATH="$ORIG_PATH"
           sh scripts/install.sh
           test -x "$MEMOS_HOME/bin/memos"
           "$MEMOS_HOME/bin/memos" --help >/dev/null
+          "$MEMOS_HOME/bin/memos" init --help >/dev/null
       - name: Re-run is idempotent
         run: |
           export MEMOS_HOME="$RUNNER_TEMP/memos-home"
+          export MEMOS_NPM_TAG="file://$SDK_TARBALL"
+          export PATH="$ORIG_PATH"
           sh scripts/install.sh
           "$MEMOS_HOME/bin/memos" --help >/dev/null
 
