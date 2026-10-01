@@ -50,6 +50,7 @@ export const CLI_COMMANDS: readonly string[] = [
   "session-hook",
   "dashboard",
   "sync",
+  "log",
   "beta",
   "update",
   "mcp",
@@ -309,6 +310,22 @@ Print a shell completion script to stdout. Install it, e.g.:
   memos completion bash >> ~/.bashrc
   memos completion zsh > ~/.zfunc/_memos      # with ~/.zfunc on $fpath
   memos completion fish > ~/.config/fish/completions/memos.fish`,
+  log: `memos log <verify|show|checkpoint> [options]
+
+Tamper-evident mutation log. Every memory mutation (store, import,
+update, forget) appends a hash-chained entry; verify recomputes the
+chain and cross-checks each node's current content against its latest
+log entry.
+
+  memos log verify [--expect <hash>]   Verify the chain; exit 1 on tampering.
+  memos log show [--limit N]           Print the N most recent entries.
+  memos log checkpoint                 Print the tip hash to anchor externally.
+
+The log detects edited/deleted/reordered rows and nodes changed
+directly in the DB — but a full-chain rewrite by someone with raw DB
+write access is only provable against an external checkpoint: write
+the checkpoint hash down somewhere the DB writer can't reach (paper,
+another machine, a signed commit), then verify with --expect later.`,
   help: `memos help
 
 Show the full command list. For one command: memos <command> --help`,

@@ -36,6 +36,7 @@ import { listReminders, splitRemindText } from "./event-memory.js";
 import { parseTemporal } from "./temporal.js";
 import type { MemoryPool } from "./types.js";
 import type { CreateMemoryInput, ExportFormat } from "./types.js";
+import type { StorageAdapter } from "./types.js";
 import type { ChildProcess } from "node:child_process";
 import type { SQLiteStorage } from "./storage/sqlite.js";
 import { getSdkVersion } from "./version.js";
@@ -2846,6 +2847,101 @@ async function main(): Promise<void> {
           process.once("SIGTERM", shutdown);
         });
         break;
+      }
+
+      case "log": {
+        // `memos log verify|show|checkpoint` — tamper-evident mutation log.
+        const subcommand = args[1];
+        const getFlag = (name: string): string | undefined => {
+          const idx = args.indexOf(name);
+          return idx !== -1 ? args[idx + 1] : undefined;
+        };
+
+        if (subcommand === "verify") {
+          const result = await memos.verifyTamperLog({
+            expectTip: getFlag("--expect"),
+          });
+          if (jsonFlag) {
+            console.log(JSON.stringify(result, null, 2));
+            break;
+          }
+          if (!result.supported) {
+            console.log(
+              "Tamper log not supported by this storage backend.",
+            );
+            break;
+          }
+          console.log(
+            `Tamper log: ${result.entriesChecked} entries checked, ${result.unloggedNodes} pre-log node(s).`,
+          );
+          if (result.ok) {
+            console.log("OK — chain intact, all nodes match their log entries.");
+          } else {
+            console.log("FAILED — tampering detected:");
+            for (const issue of result.issues) {
+              console.log(`  [${issue.kind}] ${issue.detail}`);
+            }
+            process.exit(1);
+          }
+          break;
+        }
+
+        if (subcommand === "show") {
+          const storage = (memos as unknown as { storage: StorageAdapter })
+            .storage;
+          if (!storage.readTamperLog) {
+            console.log("Tamper log not supported by this storage backend.");
+            break;
+          }
+          const limit = Math.max(1, parseInt(getFlag("--limit") ?? "20", 10));
+          const entries = await storage.readTamperLog();
+          const tail = entries.slice(-limit);
+          if (jsonFlag) {
+            console.log(JSON.stringify(tail, null, 2));
+            break;
+          }
+          if (tail.length === 0) {
+            console.log("Tamper log is empty.");
+            break;
+          }
+          for (const e of tail) {
+            console.log(
+              `#${e.seq} [${new Date(e.ts).toISOString()}] ${e.op} ${e.nodeId.slice(0, 8)} content:${e.contentHash.slice(0, 12)} entry:${e.entryHash.slice(0, 12)}`,
+            );
+          }
+          break;
+        }
+
+        if (subcommand === "checkpoint") {
+          const result = await memos.verifyTamperLog();
+          if (!result.supported) {
+            console.log("Tamper log not supported by this storage backend.");
+            break;
+          }
+          if (jsonFlag) {
+            console.log(JSON.stringify({ tipHash: result.tipHash }, null, 2));
+            break;
+          }
+          if (!result.ok) {
+            console.error(
+              "Refusing to checkpoint a broken chain — run `memos log verify` first.",
+            );
+            process.exit(1);
+          }
+          console.log(result.tipHash ?? "(empty log — nothing to anchor yet)");
+          console.log(
+            "Write this hash down somewhere the DB writer can't reach (paper, another machine, a signed commit).",
+          );
+          console.log(
+            "Later: `memos log verify --expect <hash>` proves the chain still ends here.",
+          );
+          break;
+        }
+
+        console.error(
+          "Error: unknown log subcommand.\n  Usage: memos log <verify [--expect <hash>]|show [--limit N]|checkpoint>",
+        );
+        process.exit(1);
       }
 
       case "sync": {

@@ -30,6 +30,8 @@ import type {
   NewProceduralLesson,
   ProceduralLesson,
   MemoryNode,
+  NewTamperLogEntry,
+  TamperLogEntry,
   MemoryEdge,
   SearchFilter,
   ScoredMemory,
@@ -420,6 +422,22 @@ export class SQLiteStorage implements StorageAdapter {
 
       CREATE INDEX IF NOT EXISTS idx_procedural_lessons_namespace ON procedural_lessons(namespace);
       CREATE INDEX IF NOT EXISTS idx_procedural_lessons_score ON procedural_lessons(score);
+
+      -- Tamper-evident mutation log: append-only hash chain over every
+      -- node mutation (store / import / update / forget). The chain
+      -- itself is checked by verifyTamperLog(); the tip hash can be
+      -- anchored externally via the memos log checkpoint command.
+      CREATE TABLE IF NOT EXISTS tamper_log (
+        seq           INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts            INTEGER NOT NULL,
+        op            TEXT NOT NULL,
+        node_id       TEXT NOT NULL,
+        content_hash  TEXT NOT NULL,
+        prev_hash     TEXT NOT NULL,
+        entry_hash    TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_tamper_log_node ON tamper_log(node_id);
     `);
 
     // Migration: add expires_at column if missing
@@ -917,6 +935,53 @@ export class SQLiteStorage implements StorageAdapter {
   async deleteNode(id: string): Promise<boolean> {
     const result = this.db.prepare("DELETE FROM nodes WHERE id = ?").run(id);
     return result.changes > 0;
+  }
+
+  // -----------------------------------------------------------------------
+  // Tamper-evident mutation log
+  // -----------------------------------------------------------------------
+
+  async appendTamperEntry(entry: NewTamperLogEntry): Promise<number> {
+    const result = this.db
+      .prepare(
+        `INSERT INTO tamper_log (ts, op, node_id, content_hash, prev_hash, entry_hash)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        entry.ts,
+        entry.op,
+        entry.nodeId,
+        entry.contentHash,
+        entry.prevHash,
+        entry.entryHash,
+      );
+    return Number(result.lastInsertRowid);
+  }
+
+  async readTamperLog(): Promise<TamperLogEntry[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT seq, ts, op, node_id, content_hash, prev_hash, entry_hash
+         FROM tamper_log ORDER BY seq ASC`,
+      )
+      .all() as Array<{
+      seq: number;
+      ts: number;
+      op: string;
+      node_id: string;
+      content_hash: string;
+      prev_hash: string;
+      entry_hash: string;
+    }>;
+    return rows.map((r) => ({
+      seq: r.seq,
+      ts: r.ts,
+      op: r.op as TamperLogEntry["op"],
+      nodeId: r.node_id,
+      contentHash: r.content_hash,
+      prevHash: r.prev_hash,
+      entryHash: r.entry_hash,
+    }));
   }
 
   // -----------------------------------------------------------------------

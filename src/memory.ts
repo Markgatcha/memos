@@ -72,6 +72,9 @@ import type {
 } from "./fidelity.js";
 import { composeScope } from "./scope.js";
 import { decideRetain } from "./retain-filter.js";
+import { appendTamperEntry, verifyTamperLog } from "./tamper-log.js";
+import type { TamperVerifyResult } from "./tamper-log.js";
+import type { TamperOp } from "./types.js";
 import type {
   MemoryNode,
   MemoryEdge,
@@ -468,6 +471,30 @@ export class MemOS {
   private contradictionScanPending = new Set<string>();
 
   /**
+   * Append one entry to the tamper-evident mutation log (see
+   * `src/tamper-log.ts`). Fail-open: logging never blocks the mutation
+   * — a logging failure is swallowed so the write path always wins.
+   */
+  private async logMutation(op: TamperOp, node: MemoryNode): Promise<void> {
+    await appendTamperEntry(this.storage, op, node);
+  }
+
+  /**
+   * `storage.updateNode` plus tamper-log bookkeeping. Use for every
+   * node mutation that goes through `updateNode` so the log stays
+   * complete — a mutation invisible to the log is indistinguishable
+   * from tampering at verify time.
+   */
+  private async updateNodeLogged(
+    id: string,
+    input: UpdateMemoryInput,
+  ): Promise<MemoryNode | null> {
+    const updated = await this.storage.updateNode(id, input);
+    if (updated) await this.logMutation("update", updated);
+    return updated;
+  }
+
+  /**
    * Lifetime token-savings telemetry for context packs (in-process —
    * resets when the MemOS instance is recreated). `packTokens` counts
    * what was actually injected; `naiveBaselineTokens` counts what
@@ -685,6 +712,7 @@ export class MemOS {
     stampFidelityCache(node);
 
     await this.storage.saveNode(node);
+    await this.logMutation("import", node);
     this.graph.addNode(node);
     this.scheduleEmbedding(node);
     this.invalidateSearchCache();
@@ -952,6 +980,7 @@ export class MemOS {
     stampFidelityCache(node);
 
     await this.storage.saveNode(node);
+    await this.logMutation("store", node);
     this.graph.addNode(node);
     this.scheduleEmbedding(node);
     this.invalidateSearchCache();
@@ -1382,7 +1411,7 @@ export class MemOS {
       if (opts.dryRun) continue;
       const metadata = { ...(node.metadata ?? {}) };
       stampFidelityCache({ ...node, metadata });
-      const updated = await this.storage.updateNode(node.id, { metadata });
+      const updated = await this.updateNodeLogged(node.id, { metadata });
       if (updated) {
         this.graph.updateNode(updated);
         backfilled += 1;
@@ -1513,11 +1542,17 @@ export class MemOS {
   async forget(id: string): Promise<boolean> {
     this.assertInit();
 
+    // Capture the content before deletion: the tamper log records the
+    // hash of what was removed, so a deletion is provable later.
+    const doomed = this.storage.peekNode
+      ? await this.storage.peekNode(id)
+      : null;
     const deleted = await this.storage.deleteNode(id);
     if (deleted) {
       this.graph.removeNode(id);
       this.emit("node:deleted", id);
       this.invalidateSearchCache();
+      if (doomed) await this.logMutation("forget", doomed);
     }
     return deleted;
   }
@@ -1591,6 +1626,7 @@ export class MemOS {
     const updated = await this.storage.peekNode!(id);
     if (!updated) throw new Error(`Node not found: ${id}`);
     this.graph.updateNode(updated);
+    await this.logMutation("update", updated);
   }
 
   /**
@@ -1604,6 +1640,7 @@ export class MemOS {
     const updated = await this.storage.peekNode!(id);
     if (!updated) throw new Error(`Node not found: ${id}`);
     this.graph.updateNode(updated);
+    await this.logMutation("update", updated);
   }
 
   // ---------------------------------------------------------------------------
@@ -1623,7 +1660,7 @@ export class MemOS {
     if (!node) throw new Error(`Node not found: ${id}`);
 
     const merged = [...new Set([...node.tags, ...tags])];
-    await this.storage.updateNode(id, { tags: merged });
+    await this.updateNodeLogged(id, { tags: merged });
 
     const updated = await this.storage.peekNode!(id);
     if (updated) this.graph.updateNode(updated);
@@ -1642,7 +1679,7 @@ export class MemOS {
 
     const tagSet = new Set(tags);
     const filtered = node.tags.filter((t) => !tagSet.has(t));
-    await this.storage.updateNode(id, { tags: filtered });
+    await this.updateNodeLogged(id, { tags: filtered });
 
     const updated = await this.storage.peekNode!(id);
     if (updated) this.graph.updateNode(updated);
@@ -2186,7 +2223,7 @@ export class MemOS {
       : await this.storage.getNode(id);
     if (!node) throw new Error(`Node not found: ${id}`);
     if (!node.quarantined) return node;
-    const updated = await this.storage.updateNode(id, {
+    const updated = await this.updateNodeLogged(id, {
       quarantined: false,
       metadata: {
         ...node.metadata,
@@ -2210,7 +2247,7 @@ export class MemOS {
     if (!isProvenanceTier(tier)) {
       throw new Error(`Unknown provenance tier: ${String(tier)}`);
     }
-    const updated = await this.storage.updateNode(id, { provenance: tier });
+    const updated = await this.updateNodeLogged(id, { provenance: tier });
     if (!updated) throw new Error(`Node not found: ${id}`);
     this.graph.updateNode(updated);
     this.invalidateSearchCache();
@@ -2843,7 +2880,7 @@ export class MemOS {
     input: UpdateMemoryInput,
   ): Promise<MemoryNode | null> {
     this.assertInit();
-    let node = await this.storage.updateNode(id, input);
+    let node = await this.updateNodeLogged(id, input);
     if (node) {
       // The cached L1/L2 describe the old text — regenerate when the
       // content changed and persist the refreshed cache. Not hot-path
@@ -2851,7 +2888,7 @@ export class MemOS {
       if (input.content !== undefined) {
         const metadata = { ...(node.metadata ?? {}) };
         stampFidelityCache({ ...node, metadata });
-        node = (await this.storage.updateNode(id, { metadata })) ?? node;
+        node = (await this.updateNodeLogged(id, { metadata })) ?? node;
       }
       this.graph.updateNode(node);
       if (input.content !== undefined || input.summary !== undefined) {
@@ -3350,7 +3387,7 @@ export class MemOS {
       });
 
       if (!dryRun) {
-        await this.storage.updateNode(survivor.id, {
+        await this.updateNodeLogged(survivor.id, {
           tags: unionTags,
           importance: mergedImportance,
         });
@@ -3363,7 +3400,7 @@ export class MemOS {
           // Re-read + set the absolute total. We piggyback on
           // updateNode by abusing the metadata field for a counter
           // patch; the cleaner path would be a dedicated method.
-          await this.storage.updateNode(survivor.id, {
+          await this.updateNodeLogged(survivor.id, {
             metadata: {
               ...current.metadata,
               __consolidatedAccessBoost: delta,
@@ -3500,6 +3537,26 @@ export class MemOS {
     }
 
     return { clusters, dryRun, durationMs: Date.now() - start };
+  }
+
+  /**
+   * Verify the tamper-evident mutation log.
+   *
+   * Checks the hash chain (sequence continuity, prev-hash linkage,
+   * entry-hash recomputation) and cross-checks every node's current
+   * content against its latest log entry. Pass `expectTip` with a
+   * checkpoint hash from `memos log checkpoint` to also prove the
+   * chain wasn't rewritten since the checkpoint.
+   *
+   * See `src/tamper-log.ts` for the honest threat model: without an
+   * externally anchored checkpoint, a full-chain rewrite by someone
+   * with raw DB write access is undetectable.
+   */
+  async verifyTamperLog(
+    opts: { expectTip?: string } = {},
+  ): Promise<TamperVerifyResult> {
+    this.assertInit();
+    return verifyTamperLog(this.storage, opts);
   }
 
   /**
@@ -3934,7 +3991,7 @@ export class MemOS {
     validTo: number | null,
   ): Promise<MemoryNode | null> {
     this.assertInit();
-    const node = await this.storage.updateNode(id, { validFrom, validTo });
+    const node = await this.updateNodeLogged(id, { validFrom, validTo });
     if (node) {
       this.graph.updateNode(node);
       this.emit("validity:changed", { nodeId: id, validFrom, validTo });
@@ -4312,7 +4369,7 @@ export class MemOS {
   async setTrust(id: string, score: number): Promise<MemoryNode | null> {
     this.assertInit();
     const clamped = Math.max(0, Math.min(1, score));
-    const node = await this.storage.updateNode(id, { trustScore: clamped });
+    const node = await this.updateNodeLogged(id, { trustScore: clamped });
     if (node) {
       this.graph.updateNode(node);
       this.emit("trust:changed", { nodeId: id, trustScore: clamped });
@@ -4790,7 +4847,7 @@ export class MemOS {
         );
         // updateNode stamps `updatedAt` itself, which also refreshes the
         // embedding-freshness check (info.updatedAt >= node.updatedAt).
-        const updated = await this.storage.updateNode(bestNode.id, {
+        const updated = await this.updateNodeLogged(bestNode.id, {
           confidence: update.confidence,
           evidenceCount: update.evidenceCount,
         });

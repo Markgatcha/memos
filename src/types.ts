@@ -1045,6 +1045,41 @@ export interface GraphSnapshot {
 // ---------------------------------------------------------------------------
 
 /**
+ * Mutation recorded in the tamper-evident log.
+ *
+ * - `store` — new memory written via `MemOS.store()` (including event-update
+ *   replacements and revert audit entries).
+ * - `import` — record imported with its original identity (`importRecord`,
+ *   e.g. encrypted sync restore).
+ * - `update` — node mutated via `updateNode` (content, tags, metadata,
+ *   validity, provenance…), TTL changes, and `setValidity`.
+ * - `forget` — node deleted via `MemOS.forget()`.
+ */
+export type TamperOp = "store" | "import" | "update" | "forget";
+
+/**
+ * One entry of the tamper-evident mutation log.
+ *
+ * Entries form a hash chain: `entryHash = sha256(seq|ts|op|nodeId|
+ * contentHash|prevHash)` where `prevHash` is the previous entry's
+ * `entryHash` (or a fixed genesis constant for seq 1). `contentHash` is
+ * `sha256(node.content)` at mutation time — for `forget` it is the hash
+ * of the deleted content, so deletions are provable too.
+ */
+export interface TamperLogEntry {
+  seq: number;
+  ts: number;
+  op: TamperOp;
+  nodeId: string;
+  contentHash: string;
+  prevHash: string;
+  entryHash: string;
+}
+
+/** A tamper-log entry before the chain position is assigned. */
+export type NewTamperLogEntry = Omit<TamperLogEntry, "seq">;
+
+/**
  * Backend-agnostic storage contract.
  *
  * Any persistence backend (SQLite, Postgres, Redis, Qdrant …) must
@@ -1085,6 +1120,17 @@ export interface StorageAdapter {
 
   /** Delete a node and all connected edges. */
   deleteNode(id: string): Promise<boolean>;
+
+  /**
+   * Append one entry to the tamper-evident mutation log. Returns the
+   * assigned sequence number. Optional: adapters that don't implement
+   * the log disable mutation logging (fail-open) and `verifyTamperLog`
+   * reports the log as unsupported.
+   */
+  appendTamperEntry?(entry: NewTamperLogEntry): Promise<number>;
+
+  /** Read the full tamper-evident log in sequence order. */
+  readTamperLog?(): Promise<TamperLogEntry[]>;
 
   /** Persist a new edge. Returns the created edge. */
   saveEdge(edge: MemoryEdge): Promise<MemoryEdge>;
