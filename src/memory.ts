@@ -61,6 +61,7 @@ import {
   canonicalizeEntities,
   extractQueryEntities,
 } from "./entity-extraction.js";
+import { extractTriples, triplesMatch } from "./triple-extraction.js";
 import {
   fidelityStats,
   hasFidelityCache,
@@ -880,6 +881,18 @@ export class MemOS {
         );
       }
     }
+    // Experimental: write-time triple extraction (Memori-style structuring).
+    // Opt-in via `experimental.tripleExtraction`. Stores semantic triples
+    // in metadata for triple-aware retrieval boosting.
+    if (
+      this.config.experimental?.tripleExtraction &&
+      !Array.isArray(metadata.triples)
+    ) {
+      const triples = extractTriples(content);
+      if (triples.length > 0) {
+        metadata.triples = triples;
+      }
+    }
 
     // Deterministic temporal event extraction: an event noun co-occurring
     // with a temporal expression becomes structured `metadata.event`
@@ -1528,16 +1541,55 @@ export class MemOS {
     results: ScoredMemory[],
     filter: SearchFilter,
   ): ScoredMemory[] {
+    // Experimental: triple-aware retrieval boosting. If triple extraction
+    // is enabled, boost results whose stored triples match the query's
+    // triples (Memori-style write-time structuring).
+    let boosted = results;
+    if (
+      this.config.experimental?.tripleExtraction &&
+      filter.query &&
+      results.length > 0
+    ) {
+      boosted = this.applyTripleBoost(results, filter.query);
+    }
+
     if (filter.sortBy === "trustScore") {
       const order = filter.sortOrder ?? "desc";
-      const sorted = [...results].sort((a, b) =>
+      const sorted = [...boosted].sort((a, b) =>
         order === "desc"
           ? b.node.trustScore - a.node.trustScore
           : a.node.trustScore - b.node.trustScore,
       );
       return sorted;
     }
-    return results;
+    return boosted;
+  }
+
+  /**
+   * Boost results whose stored triples match the query's triples.
+   * Matching triples get a 15% score boost.
+   */
+  private applyTripleBoost(
+    results: ScoredMemory[],
+    query: string,
+  ): ScoredMemory[] {
+    const queryTriples = extractTriples(query);
+    if (queryTriples.length === 0) return results;
+
+    return results
+      .map((r) => {
+        const storedTriples = (r.node.metadata?.triples ?? []) as Array<{
+          subject: string;
+          predicate: string;
+          object: string;
+        }>;
+        if (storedTriples.length === 0) return r;
+        if (triplesMatch(queryTriples, storedTriples)) {
+          return { ...r, score: r.score * 1.15 };
+        }
+        return r;
+      })
+      .sort((a, b) => b.score - a.score);
   }
 
   /**

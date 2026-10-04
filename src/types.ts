@@ -1375,6 +1375,12 @@ export interface ExperimentalConfig {
   /** Enable context injection from graph neighbours. */
   contextInjection?: boolean;
   /**
+   * Extract semantic (subject, predicate, object) triples at write time
+   * and store them in node metadata. Enables triple-aware retrieval
+   * boosting. Experimental, default off.
+   */
+  tripleExtraction?: boolean;
+  /**
    * Run the evidence state machine on every `store()`: similar existing
    * memories are reinforced, revised, or superseded, and near-duplicates
    * (similarity >= 0.92) are folded into the existing node instead of
