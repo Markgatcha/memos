@@ -113,7 +113,7 @@
     "eval:retrieval:baseline": "tsx scripts/eval-retrieval.ts --write-baseline"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^2.2.0",
+    "@modelcontextprotocol/server": "^2.3.0",
     "better-sqlite3": "^13.0.3",
     "zod": "^4.6.5"
   },
@@ -137,11 +137,11 @@
   },
   "devDependencies": {
     "@huggingface/transformers": "^4.3.0",
-    "@swc/core": "^1.16.2",
+    "@swc/core": "^1.16.13",
     "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^9.6.0",
     "@types/jest": "^30.0.0",
-    "@types/node": "^26.6.3",
+    "@types/node": "^26.6.4",
     "@typescript/native": "npm:typescript@^7.0.2",
     "jest": "^30.5.2",
     "oxlint": "^1.86.0",
