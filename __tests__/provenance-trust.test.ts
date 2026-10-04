@@ -163,8 +163,8 @@ function makeNode(
   content: string,
   provenance: ProvenanceTier,
   trustScore = 1,
+  nowMs = Date.now(),
 ): MemoryNode {
-  const now = Date.now();
   return {
     id,
     content,
@@ -172,10 +172,10 @@ function makeNode(
     type: "fact",
     metadata: {},
     importance: 0.5,
-    createdAt: now,
-    updatedAt: now,
+    createdAt: nowMs,
+    updatedAt: nowMs,
     accessCount: 0,
-    lastAccessed: now,
+    lastAccessed: nowMs,
     tags: [],
     expiresAt: null,
     namespace: "default",
@@ -195,9 +195,10 @@ function makeScored(
   content: string,
   provenance: ProvenanceTier,
   trustScore = 1,
+  nowMs = Date.now(),
 ): ScoredMemory {
   return {
-    node: makeNode(id, content, provenance, trustScore),
+    node: makeNode(id, content, provenance, trustScore, nowMs),
     score: 0.5,
     scores: {},
   };
@@ -222,9 +223,12 @@ describe("trust-weighted recall", () => {
   });
 
   test("same-tier corpus preserves relative ordering (neutral by construction)", () => {
-    const a = makeScored("id-a", "first memory", "user");
-    const b = makeScored("id-b", "second memory", "user");
-    const fused = fuseResults([a, b], [], { nowMs: 1_000_000 });
+    // Keep both timestamps equal to the pinned fusion clock so the unrelated
+    // recency tie-break cannot affect this provenance-neutrality assertion.
+    const nowMs = 1_000_000;
+    const a = makeScored("id-a", "first memory", "user", 1, nowMs);
+    const b = makeScored("id-b", "second memory", "user", 1, nowMs);
+    const fused = fuseResults([a, b], [], { nowMs });
     expect(fused.map((r) => r.node.id)).toEqual(["id-a", "id-b"]);
     const mult = provenanceMultiplier(
       "user",
