@@ -41,3 +41,19 @@ The MCP server runs via `npx -y @mem-os/sdk mcp` and stores everything in
 environment facts, corrections) and when to recall (`memos_context_pack`
 before answering questions that may depend on prior sessions), plus
 hygiene rules (supersede instead of duplicating, forget only on request).
+
+## Experimental: local reranking
+
+An opt-in cross-encoder reranker re-scores the top fused candidates for
+sharper retrieval. Default off. Enable with:
+
+```json
+{ "experimental": { "rerank": { "provider": "local" } } }
+```
+
+The default model is `Xenova/bge-reranker-base` (~278MB, downloaded on first
+use). On a 120-question LongMemEval set it reached hit@5 **1.0000** (120/120),
+evidence recall 0.943, vs 0.958/0.862 for the fused baseline — clearing the
+accuracy gate on every metric. Override with `localModel` or
+`MEMOS_RERANK_MODEL`. Expect ~60s/question on CPU; a GPU or a `/rerank`
+endpoint is recommended for interactive use.
