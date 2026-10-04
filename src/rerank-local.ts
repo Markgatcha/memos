@@ -3,7 +3,7 @@
  *
  * In-process alternative to the HTTP `/rerank` endpoint path in
  * `MemOS.applyRerank`. Loads a sequence-classification cross-encoder
- * (default `Xenova/ms-marco-MiniLM-L-6-v2`, ~90 MB) through
+ * (default `Xenova/bge-reranker-base`, ~280 MB) through
  * `@huggingface/transformers` (falling back to `@xenova/transformers`),
  * scores `[query, document]` pairs, and returns sigmoid-squashed relevance
  * scores in [0,1].
@@ -20,13 +20,13 @@
 
 import { createRequire } from "node:module";
 
-export const DEFAULT_LOCAL_RERANK_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2";
+export const DEFAULT_LOCAL_RERANK_MODEL = "Xenova/bge-reranker-base";
 
 /** Default quantization for local rerank inference. q8 is ~4x faster on CPU. */
 export const DEFAULT_LOCAL_RERANK_DTYPE = "q8";
 
 export interface LocalRerankOptions {
-  /** HuggingFace model id. Default `Xenova/ms-marco-MiniLM-L-6-v2`. */
+  /** HuggingFace model id. Default `Xenova/bge-reranker-base`. */
   model?: string;
   /** Weight dtype passed to `from_pretrained` (e.g. "q8", "fp32"). */
   dtype?: string;
@@ -105,6 +105,70 @@ interface TransformersModuleShape {
 const modelCache = new Map<string, Promise<LocalRerankModel | null>>();
 let warnedMissingPackage = false;
 
+/**
+ * Tokenize (query, doc) pairs for the cross-encoder. Tries the fast batched
+ * path first; some tokenizers (XLM-R family in transformers.js v4) throw on
+ * batched pair input (`text.replace is not a function`), in which case we
+ * fall back to per-pair tokenization with manual padding. Exported for tests.
+ */
+export async function tokenizePairsForRerank(
+  tokenizer: {
+    (
+      input: unknown,
+      options?: Record<string, unknown>,
+    ): Promise<Record<string, TokenTensorLike>>;
+    pad_token_id?: number;
+  },
+  pairs: Array<[string, string]>,
+  maxLength: number,
+): Promise<Record<string, TokenTensorLike>> {
+  try {
+    return await tokenizer(pairs, {
+      padding: true,
+      truncation: true,
+      max_length: maxLength,
+    });
+  } catch {
+    const allIds: number[][] = [];
+    const allMasks: number[][] = [];
+    for (const [q, d] of pairs) {
+      const t = await tokenizer(q, {
+        text_pair: d,
+        truncation: true,
+        max_length: maxLength,
+      });
+      allIds.push(Array.from(t["input_ids"]!.data as ArrayLike<number>));
+      allMasks.push(Array.from(t["attention_mask"]!.data as ArrayLike<number>));
+    }
+    const ml = Math.max(...allIds.map((a) => a.length));
+    const B = pairs.length;
+    const padId = BigInt(tokenizer.pad_token_id ?? 1);
+    const inputIds = new BigInt64Array(B * ml);
+    const attnMask = new BigInt64Array(B * ml);
+    allIds.forEach((arr, i) => {
+      for (let j = 0; j < ml; j++) {
+        inputIds[i * ml + j] = j < arr.length ? BigInt(arr[j]!) : padId;
+        attnMask[i * ml + j] = j < arr.length ? BigInt(allMasks[i]![j]!) : 0n;
+      }
+    });
+    return {
+      input_ids: { type: "int64", data: inputIds, dims: [B, ml] },
+      attention_mask: { type: "int64", data: attnMask, dims: [B, ml] },
+    };
+  }
+}
+
+interface TokenTensorLike {
+  type: string;
+  data:
+    | BigInt64Array
+    | Float32Array
+    | Float64Array
+    | Int32Array
+    | ArrayLike<number>;
+  dims: number[];
+}
+
 async function defaultLoader(
   model: string,
   dtype: string,
@@ -167,13 +231,14 @@ async function defaultLoader(
           Tensor: OrtTensorClass;
         };
         const inputNames = session.inputNames;
+
         return {
           async scorePairs(pairs: Array<[string, string]>): Promise<number[]> {
-            const batch = await tokenizer(pairs, {
-              padding: true,
-              truncation: true,
-              max_length: maxLength,
-            });
+            const batch = await tokenizePairsForRerank(
+              tokenizer as Parameters<typeof tokenizePairsForRerank>[0],
+              pairs,
+              maxLength,
+            );
             const feeds: Record<string, unknown> = {};
             const batchDims = batch["input_ids"]?.dims;
             for (const name of inputNames) {

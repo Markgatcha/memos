@@ -1422,7 +1422,7 @@ export interface ExperimentalConfig {
    * - `"endpoint"` (default when `endpoint` is set): re-scores via an HTTP
    *   `/rerank` server (e.g. llama-server with bge-reranker-v2-m3).
    * - `"local"`: in-process cross-encoder through `@huggingface/transformers`
-   *   (default model `Xenova/ms-marco-MiniLM-L-6-v2`, ~90 MB, downloaded on
+   *   (default model `Xenova/bge-reranker-base`, ~280 MB, downloaded on
    *   first use). No server needed; needs one of the transformers packages
    *   installed.
    *
@@ -1470,7 +1470,7 @@ export interface ExperimentalConfig {
     model?: string;
     /**
      * Local cross-encoder model id for `provider: "local"`.
-     * Default `"Xenova/ms-marco-MiniLM-L-6-v2"`. Overridable for
+     * Default `"Xenova/bge-reranker-base"`. Overridable for
      * experiments with `MEMOS_RERANK_MODEL`.
      */
     localModel?: string;
