@@ -257,7 +257,7 @@ jobs:
   docker:
     name: Docker Build
     runs-on: ubuntu-26.04
-    needs: [typescript, python]
+    needs: [verify-lockfile]
     steps:
       - uses: actions/checkout@v7
       - name: Build Docker image
