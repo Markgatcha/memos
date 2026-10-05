@@ -5539,7 +5539,7 @@ export class MemOS {
       cfg?.candidates ??
         (Number.isFinite(envCandidates) && envCandidates > 0
           ? envCandidates
-          : 50),
+          : 20),
       results.length,
     );
     const head = results.slice(0, candidates);
