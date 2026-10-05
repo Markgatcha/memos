@@ -73,10 +73,7 @@ export function extractTriples(text: string): SemanticTriple[] {
     // Pattern 3: "X prefers Y" (preference)
     for (let i = 1; i < words.length - 1; i++) {
       const verb = words[i]!.toLowerCase().replace(/[^a-z]/g, "");
-      const subject = words
-        .slice(0, i)
-        .join(" ")
-        .trim();
+      const subject = words.slice(0, i).join(" ").trim();
       const object = words
         .slice(i + 1)
         .join(" ")

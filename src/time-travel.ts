@@ -13,7 +13,7 @@
  * answer this. The data is the moat.
  */
 
-import type { MemoryNode, TamperLogEntry } from "./types.js";
+import type { MemoryNode } from "./types.js";
 
 export interface NodeSnapshot {
   /** Tamper-log sequence number this snapshot corresponds to. */

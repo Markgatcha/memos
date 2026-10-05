@@ -63,10 +63,7 @@ import {
 } from "./entity-extraction.js";
 import { extractTriples, triplesMatch } from "./triple-extraction.js";
 import { recallStrength, EBBINGHAUS_WEIGHT } from "./ebbinghaus.js";
-import {
-  createDeletionCertificate,
-  verifyDeletionCertificate,
-} from "./proof-of-forgetting.js";
+import { createDeletionCertificate } from "./proof-of-forgetting.js";
 import type { DeletionCertificate } from "./proof-of-forgetting.js";
 import { replayAt } from "./time-travel.js";
 import type { NodeSnapshot } from "./time-travel.js";
