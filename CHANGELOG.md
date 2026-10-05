@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed — flaky concurrency test (CI red on TypeScript ubuntu-26.04 / Node 24)
+
+- **`EmbeddingQueue concurrency › custom concurrency is honored` no longer
+  asserts on wall-clock elapsed time.** The test bounded total runtime at
+  250 ms; on a loaded CI runner it measured 423 ms and failed the whole
+  `TypeScript (ubuntu-26.04, Node 24)` job (937/940 tests otherwise green).
+  Elapsed time was never the property under test — it also absorbs the
+  queue's `batchLingerMs` coalescing delay, timer granularity, and arbitrary
+  scheduler preemption. The test now asserts the actual observable: the
+  high-water mark of simultaneous `embed()` calls (`peakInFlight === 4` for
+  8 jobs at concurrency 4), plus a `<= 4` ceiling so the cap can never be
+  exceeded even momentarily. This is deterministic — the scripted provider
+  only resolves after its delay, so a wave's calls must overlap.
+  Verified by mutation: forcing `concurrency = 8` makes the test fail with
+  `Expected: 4, Received: 8`, so it still catches a real regression.
+  Stable across 5 consecutive runs.
+
 ### Full-dataset LoCoMo re-run — fast config wins twice
 
 - **83.2% Hit@10 / 77.9% EvRec@10 / 72.5% AllEv@10 / MRR 0.642 / nDCG

@@ -26,28 +26,41 @@ class ScriptedProvider implements EmbeddingProvider {
   public resolveNextWith: EmbeddingVector | null = null;
   /** Fixed delay (ms) before each call resolves. */
   public delayMs = 0;
+  /** Embed calls currently awaiting their delay. */
+  private inFlight = 0;
+  /** High-water mark of simultaneous in-flight calls. */
+  public peakInFlight = 0;
+  /** Alias of {@link peakInFlight}, named for the "never exceeded" assertion. */
+  public maxObservedInFlight = 0;
 
   async embed(text: string): Promise<EmbeddingVector> {
     this.calls.push(text);
-    if (this.delayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    this.inFlight += 1;
+    this.peakInFlight = Math.max(this.peakInFlight, this.inFlight);
+    this.maxObservedInFlight = this.peakInFlight;
+    try {
+      if (this.delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+      }
+      if (this.failNextWith) {
+        const err = this.failNextWith;
+        this.failNextWith = null;
+        throw err;
+      }
+      if (this.failTimes > 0) {
+        this.failTimes -= 1;
+        throw new Error("scripted failure");
+      }
+      if (this.resolveNextWith) {
+        const v = this.resolveNextWith;
+        this.resolveNextWith = null;
+        return v;
+      }
+      // Deterministic vector from the text length
+      return [text.length, 0, 0, 0];
+    } finally {
+      this.inFlight -= 1;
     }
-    if (this.failNextWith) {
-      const err = this.failNextWith;
-      this.failNextWith = null;
-      throw err;
-    }
-    if (this.failTimes > 0) {
-      this.failTimes -= 1;
-      throw new Error("scripted failure");
-    }
-    if (this.resolveNextWith) {
-      const v = this.resolveNextWith;
-      this.resolveNextWith = null;
-      return v;
-    }
-    // Deterministic vector from the text length
-    return [text.length, 0, 0, 0];
   }
 }
 
@@ -106,17 +119,28 @@ describe("EmbeddingQueue concurrency", () => {
   });
 
   test("custom concurrency is honored", async () => {
+    // Assert on the OBSERVABLE (how many embed calls are in flight at once)
+    // rather than on wall-clock elapsed time. A timing bound here was flaky:
+    // it measured 423ms against a 250ms ceiling on a loaded CI runner, because
+    // elapsed time also absorbs the queue's `batchLingerMs` coalescing delay,
+    // timer granularity, and arbitrary scheduler preemption — none of which
+    // have anything to do with whether the concurrency cap works.
     const provider = new ScriptedProvider();
     provider.delayMs = 30;
     const queue = new EmbeddingQueue({ provider, concurrency: 4 });
 
-    const t0 = Date.now();
     for (let i = 0; i < 8; i += 1) queue.enqueue(`n${i}`, `t${i}`);
     await queue.flush();
-    const elapsed = Date.now() - t0;
 
-    // 8 jobs / 4 = 2 batches of ~30ms = ~60ms; allow scheduling slack.
-    expect(elapsed).toBeLessThan(250);
+    // 8 jobs at concurrency 4 must run as exactly 2 waves of 4. `peakInFlight`
+    // is the high-water mark of simultaneous embed() calls, which is precisely
+    // the property "concurrency is honored" asserts. It is deterministic: the
+    // provider only ever resolves after delayMs, so the four calls in a wave
+    // are guaranteed to overlap.
+    expect(provider.peakInFlight).toBe(4);
+    // Concurrency must never be exceeded, even momentarily.
+    expect(provider.maxObservedInFlight).toBeLessThanOrEqual(4);
+    expect(provider.calls).toHaveLength(8);
   });
 });
 
