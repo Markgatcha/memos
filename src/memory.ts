@@ -62,6 +62,7 @@ import {
   extractQueryEntities,
 } from "./entity-extraction.js";
 import { extractTriples, triplesMatch } from "./triple-extraction.js";
+import { recallStrength, EBBINGHAUS_WEIGHT } from "./ebbinghaus.js";
 import {
   fidelityStats,
   hasFidelityCache,
@@ -1553,6 +1554,20 @@ export class MemOS {
       boosted = this.applyTripleBoost(results, filter.query);
     }
 
+    // Experimental: Ebbinghaus reinforcement (MemoryBank). Blend the
+    // forgetting-curve score as a small additive term.
+    if (this.config.experimental?.ebbinghaus && boosted.length > 0) {
+      const now = Date.now();
+      boosted = boosted
+        .map((r) => ({
+          ...r,
+          score: r.score + EBBINGHAUS_WEIGHT * recallStrength(r.node, now),
+        }))
+        .sort((a, b) => b.score - a.score);
+      // Fire-and-forget: bump access counters for reinforcement.
+      this.bumpAccessCounters(boosted).catch(() => {});
+    }
+
     if (filter.sortBy === "trustScore") {
       const order = filter.sortOrder ?? "desc";
       const sorted = [...boosted].sort((a, b) =>
@@ -1563,6 +1578,27 @@ export class MemOS {
       return sorted;
     }
     return boosted;
+  }
+
+  /**
+   * Bump accessCount and lastAccessed for retrieved nodes (Ebbinghaus
+   * reinforcement). Fire-and-forget; failures are ignored.
+   */
+  private async bumpAccessCounters(results: ScoredMemory[]): Promise<void> {
+    const now = Date.now();
+    // Only bump the top 10 (not all candidates) to avoid reinforcing
+    // low-relevance results.
+    for (const r of results.slice(0, 10)) {
+      try {
+        const node = r.node;
+        await this.storage.updateNode(node.id, {
+          accessCount: (node.accessCount || 0) + 1,
+          lastAccessed: now,
+        });
+      } catch {
+        // Ignore individual failures
+      }
+    }
   }
 
   /**

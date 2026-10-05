@@ -329,6 +329,10 @@ export interface UpdateMemoryInput {
   importance?: number;
   tags?: string[];
   namespace?: string;
+  /** Access count for Ebbinghaus reinforcement. */
+  accessCount?: number;
+  /** Last access time (Unix ms) for Ebbinghaus reinforcement. */
+  lastAccessed?: number;
   /** Temporal validity start (Unix ms). */
   validFrom?: number | null;
   /** Temporal validity end (Unix ms). */
@@ -1380,6 +1384,13 @@ export interface ExperimentalConfig {
    * boosting. Experimental, default off.
    */
   tripleExtraction?: boolean;
+  /**
+   * Apply Ebbinghaus forgetting-curve reinforcement to retrieval scoring.
+   * Memories decay exponentially by time-since-access divided by access
+   * count; frequently-recalled memories stay strong. Experimental,
+   * default off.
+   */
+  ebbinghaus?: boolean;
   /**
    * Run the evidence state machine on every `store()`: similar existing
    * memories are reinforced, revised, or superseded, and near-duplicates
