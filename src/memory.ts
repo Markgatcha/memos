@@ -64,6 +64,13 @@ import {
 import { extractTriples, triplesMatch } from "./triple-extraction.js";
 import { recallStrength, EBBINGHAUS_WEIGHT } from "./ebbinghaus.js";
 import {
+  createDeletionCertificate,
+  verifyDeletionCertificate,
+} from "./proof-of-forgetting.js";
+import type { DeletionCertificate } from "./proof-of-forgetting.js";
+import { replayAt } from "./time-travel.js";
+import type { NodeSnapshot } from "./time-travel.js";
+import {
   fidelityStats,
   hasFidelityCache,
   levelText,
@@ -400,6 +407,8 @@ function stringArray(value: unknown): string[] | undefined {
 export class MemOS {
   private graph: GraphEngine;
   private storage: StorageAdapter;
+  /** In-memory snapshots for time-travel (experimental). */
+  private snapshots: NodeSnapshot[] = [];
   private config: Required<
     Omit<
       MemOSConfig,
@@ -486,6 +495,18 @@ export class MemOS {
    */
   private async logMutation(op: TamperOp, node: MemoryNode): Promise<void> {
     await appendTamperEntry(this.storage, op, node);
+    // Time-travel: capture snapshot of full node state.
+    // Note: in-memory only for now; persistence is TODO.
+    const entries = this.storage.readTamperLog
+      ? await this.storage.readTamperLog()
+      : [];
+    const seq = entries.length > 0 ? entries[entries.length - 1].seq : 0;
+    this.snapshots.push({
+      seq,
+      ts: Date.now(),
+      op,
+      node: { ...node },
+    });
   }
 
   /**
@@ -3664,6 +3685,44 @@ export class MemOS {
     this.assertInit();
     if (!this.storage.readTamperLog) return [];
     return this.storage.readTamperLog();
+  }
+
+  /**
+   * Export a cryptographic deletion certificate for a forgotten memory.
+   *
+   * Finds the "forget" entry in the tamper log for the given node ID and
+   * returns a verifiable certificate proving what was deleted and when.
+   * Use `verifyDeletionCertificate()` to check it.
+   *
+   * @param nodeId - The deleted node's ID.
+   * @returns The deletion certificate, or null if no forget entry exists.
+   */
+  async proveForget(nodeId: string): Promise<DeletionCertificate | null> {
+    this.assertInit();
+    const entries = await this.readTamperLog();
+    // Find the most recent forget entry for this node
+    const forgets = entries
+      .filter((e) => e.op === "forget" && e.nodeId === nodeId)
+      .sort((a, b) => b.seq - a.seq);
+    if (forgets.length === 0) return null;
+    return createDeletionCertificate(forgets[0]);
+  }
+
+  /**
+   * Reconstruct the memory state as it existed at a given timestamp.
+   *
+   * Time-travel: answers "what did the agent believe on date X?" by
+   * replaying snapshots. Nodes deleted before the target are excluded.
+   *
+   * Note: snapshots are captured from now onward (in-memory). Historical
+   * state before this feature was enabled is not available.
+   *
+   * @param targetTs - Unix ms timestamp to reconstruct.
+   * @returns Nodes as they existed at targetTs.
+   */
+  async replayAt(targetTs: number): Promise<MemoryNode[]> {
+    this.assertInit();
+    return replayAt(this.snapshots, targetTs);
   }
 
   /**
