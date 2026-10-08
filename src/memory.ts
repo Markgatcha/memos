@@ -1601,18 +1601,33 @@ export class MemOS {
   /**
    * Bump accessCount and lastAccessed for retrieved nodes (Ebbinghaus
    * reinforcement). Fire-and-forget; failures are ignored.
+   *
+   * MUST go through the storage adapter's `recordAccess` — never
+   * `updateNode`. `updateNode` stamps `updatedAt = Date.now()` and
+   * ignores the `accessCount`/`lastAccessed` fields in its UPDATE
+   * statement, so routing read telemetry through it did both of these:
+   *
+   *  1. Every search rewrote `updated_at` on up to 10 nodes without a
+   *     tamper-log entry, so `verifyTamperLog` reported the whole store
+   *     as "edited without logging" (false tamper alarm on a plain read).
+   *     It also made recalled memories look freshly written to recency
+   *     ordering, sync last-write-wins, and the embedding-freshness
+   *     check (`info.updatedAt >= node.updatedAt` → needless re-embed).
+   *  2. The `accessCount`/`lastAccessed` it passed were silently dropped —
+   *     both fields are absent from `updateNode`'s UPDATE statement — so
+   *     every search paid a full row rewrite (plus tag/entity index
+   *     resync) to persist none of its own telemetry.
+   *
+   * Adapters without `recordAccess` skip reinforcement (fail-open).
    */
   private async bumpAccessCounters(results: ScoredMemory[]): Promise<void> {
-    const now = Date.now();
+    const recordAccess = this.storage.recordAccess?.bind(this.storage);
+    if (!recordAccess) return;
     // Only bump the top 10 (not all candidates) to avoid reinforcing
     // low-relevance results.
     for (const r of results.slice(0, 10)) {
       try {
-        const node = r.node;
-        await this.storage.updateNode(node.id, {
-          accessCount: (node.accessCount || 0) + 1,
-          lastAccessed: now,
-        });
+        await recordAccess(r.node.id);
       } catch {
         // Ignore individual failures
       }
