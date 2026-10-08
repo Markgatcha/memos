@@ -796,6 +796,17 @@ export class SQLiteStorage implements StorageAdapter {
     return this.rowToNode(row);
   }
 
+  /**
+   * Record a read access. Routes through the same debounced
+   * `accessBuffer` as `getNode`, so a search that touches the top N
+   * results costs one coalesced UPDATE per id instead of a
+   * read-modify-write per hit — and, critically, does NOT stamp
+   * `updated_at`.
+   */
+  recordAccess(id: string): void {
+    this.bufferAccess(id, Date.now());
+  }
+
   private bufferAccess(id: string, now: number): void {
     const existing = this.accessBuffer.get(id);
     if (existing) {

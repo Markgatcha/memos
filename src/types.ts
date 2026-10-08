@@ -1139,6 +1139,19 @@ export interface StorageAdapter {
   deleteNode(id: string): Promise<boolean>;
 
   /**
+   * Record one read access for a node: bumps `access_count` and
+   * `last_accessed` ONLY. Must not touch `updatedAt` or any content —
+   * a read is not a write, and mutating `updatedAt` on read would
+   * corrupt recency ordering, sync conflict resolution, embedding
+   * freshness, and the tamper-evident log's content cross-check.
+   *
+   * Optional: adapters that don't implement it skip read telemetry
+   * (fail-open). Never route read telemetry through `updateNode` —
+   * see `bumpAccessCounters` in `src/memory.ts`.
+   */
+  recordAccess?(id: string): void | Promise<void>;
+
+  /**
    * Append one entry to the tamper-evident mutation log. The adapter
    * MUST assign the chain position atomically: determine `prevHash`
    * from the current tip, allocate `seq`, compute `entryHash`, and
