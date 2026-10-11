@@ -121,9 +121,28 @@ const AGGRESSIVE_DROPS = new Set([
 const NEGATION_CUES =
   /\b(not|never|no|none|neither|nor|without|except)\b|cannot|n't$/i;
 
-/** Strip leading/trailing punctuation so "failed." matches "failed". */
+/**
+ * Strip leading/trailing punctuation so "failed." matches "failed".
+ *
+ * Hand-rolled rather than `/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g`: with a
+ * leading `^`-anchored and a trailing `$`-anchored alternative in one
+ * alternation, the engine re-anchors at every offset of a long
+ * non-alphanumeric run — quadratic on input like `"////…/x"`
+ * (CodeQL js/polynomial-redos). A single scan each way is linear and
+ * behaves identically.
+ */
 function bareWord(part: string): string {
-  return part.toLowerCase().replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
+  let start = 0;
+  let end = part.length;
+  const isAlnum = (c: number) =>
+    (c >= 48 && c <= 57) || // 0-9
+    (c >= 65 && c <= 90) || // A-Z
+    (c >= 97 && c <= 122); // a-z
+  while (start < end && !isAlnum(part.charCodeAt(start))) start++;
+  while (end > start && !isAlnum(part.charCodeAt(end - 1))) end--;
+  return start === 0 && end === part.length
+    ? part.toLowerCase()
+    : part.slice(start, end).toLowerCase();
 }
 
 /** Whether `part` is a word token (as opposed to whitespace or empty). */

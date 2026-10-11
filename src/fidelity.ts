@@ -751,7 +751,16 @@ export function queryDecisiveTokens(query: string): string[] {
   // Numbers with optional unit: "20", "25 connections", "120ms",
   // "3am", "2.5", "42%", "$30". The unit tail is capped so a number
   // mid-sentence can't swallow the rest of the clause.
-  const numberRe = /\d+(?:[.,]\d+)*\s*[a-z]{0,12}|[$%]\d*(?:[.,]\d+)*/gi;
+  //
+  // Each numeric run is matched through an ATOMIC group — `(?=(…))\1` —
+  // instead of `\d+(?:[.,]\d+)*` directly. In the plain form the engine
+  // can split a long "0,0,0,…" run between the outer `\d+` and the inner
+  // `(?:[.,]\d+)*` in polynomially many ways (CodeQL js/polynomial-redos).
+  // The lookahead captures the maximal run and the backreference consumes
+  // it without giving the unit tail a chance to backtrack into it, so the
+  // scan is linear and the matched tokens are byte-identical.
+  const numberRe =
+    /(?=(\d+(?:[.,]\d+)*))\1(?:\s*[a-z]{0,12})?|[$%](?=(\d*(?:[.,]\d+)*))\2/gi;
   let m: RegExpExecArray | null;
   while ((m = numberRe.exec(query)) !== null) {
     push(m[0]!);
@@ -767,6 +776,18 @@ export function queryDecisiveTokens(query: string): string[] {
   return out;
 }
 
+/** Index of the first ".", "," or whitespace char, or -1. Linear scan. */
+function searchFirstSeparator(s: string): number {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    // "." (46), "," (44)
+    if (c === 46 || c === 44) return i;
+    // whitespace: space, \t, \n, \v, \f, \r
+    if (c === 32 || (c >= 9 && c <= 13)) return i;
+  }
+  return -1;
+}
+
 /** True when `text` contains the decisive token (number or negation). */
 export function textHasDecisiveToken(text: string, token: string): boolean {
   const t = token.trim().toLowerCase();
@@ -774,7 +795,13 @@ export function textHasDecisiveToken(text: string, token: string): boolean {
   if (/^\d/.test(t)) {
     // Number + optional unit: require the number; unit match is a
     // bonus, not a requirement (units are spelled inconsistently).
-    const num = t.replace(/[.,\s].*$/, "");
+    // Cut at the first separator by INDEX rather than by
+    // `/[.,\s].*$/`: `\s` and `.` overlap on tabs/newlines, so the
+    // pattern can split such a run two ways and backtrack
+    // quadratically (CodeQL js/polynomial-redos). `indexOf`-style
+    // scanning is linear and yields the same prefix.
+    const cut = searchFirstSeparator(t);
+    const num = cut === -1 ? t : t.slice(0, cut);
     return text.toLowerCase().includes(num);
   }
   return new RegExp(`\\b${t}\\b`, "i").test(text);

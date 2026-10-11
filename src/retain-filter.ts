@@ -21,6 +21,8 @@
  * @module @mem-os/sdk/retain-filter
  */
 
+import { CONTRADICTION_SIGNALS } from "./confidence-machine.js";
+
 /** Inputs the retain gate uses to make its decision. */
 export interface RetainInput {
   /** The content proposed for storage. */
@@ -69,8 +71,47 @@ const LOW_SIGNAL_PATTERNS =
 const ACK_WORDS =
   /^(?:ok|okay|sure|got|it|understood|done|will|do|thing|sounds|good|great|perfect|thanks|thank|you|yep|yup|no|problem|of|course|absolutely|right|correct|exactly|yes|maybe|hi|hello|hey|lol|haha|k|kk|cool|nice|wow)$/i;
 
+/**
+ * Strip trailing sentence punctuation.
+ *
+ * Hand-rolled rather than `/[.!?]+$/g`: that pattern is UNANCHORED, so the
+ * engine retries it at every offset in a long punctuation run, each retry
+ * backtracking through the rest of the run — quadratic on input like
+ * `"!!!!!…!x"` (CodeQL js/polynomial-redos). A single left-to-right scan
+ * is linear and behaves identically.
+ */
+function stripTrailingPunctuation(s: string, alsoComma = false): string {
+  let end = s.length;
+  while (end > 0) {
+    const c = s.charCodeAt(end - 1);
+    // "." (46), "!" (33), "?" (63), "," (44 when alsoComma)
+    if (c !== 46 && c !== 33 && c !== 63 && !(alsoComma && c === 44)) break;
+    end--;
+  }
+  return end === s.length ? s : s.slice(0, end);
+}
+
 /** Near-duplicate threshold: token overlap at/above this is a duplicate. */
 const DUPLICATE_OVERLAP = 0.85;
+
+/**
+ * Does this content read as a correction of something already stored?
+ *
+ * The gate's near-duplicate rule exists to stop *identical restatements*
+ * from re-entering memory. A negation/retraction ("user no longer lives in
+ * Berlin", "switched from vim to neovim") is deliberately NOT a duplicate —
+ * it is the update the confidence lifecycle exists to process, and it
+ * arrives sharing most of its tokens with the memory it retracts (a
+ * retraction necessarily names the same subject). Dropping it as a
+ * "near-duplicate" is how a retraction silently never reaches the
+ * confidence machine, leaving the old belief in place at full weight.
+ * This check reuses the SAME signal list as `classifyEvidence` so the gate
+ * and the state machine cannot drift apart.
+ */
+export function carriesContradictionSignal(content: string): boolean {
+  const lower = content.toLowerCase();
+  return CONTRADICTION_SIGNALS.some((w) => lower.includes(w));
+}
 
 /** Minimum alphanumeric characters for content to be storable at all. */
 const MIN_SIGNAL_CHARS = 4;
@@ -196,12 +237,12 @@ export function shouldRetain(input: RetainInput): RetainDecision {
   }
   // Repeated acks the anchored phrase pattern misses ("ok ok ok").
   const words = trimmed
-    .replace(/[.!?]+$/g, "")
+    .slice(0, stripTrailingPunctuation(trimmed).length)
     .split(/\s+/)
     .filter(Boolean);
   if (
     words.length > 0 &&
-    words.every((w) => ACK_WORDS.test(w.replace(/[.,!?]+$/g, "")))
+    words.every((w) => ACK_WORDS.test(stripTrailingPunctuation(w, true)))
   ) {
     return { retain: false, score, reason: "low-signal acknowledgement" };
   }
@@ -212,7 +253,11 @@ export function shouldRetain(input: RetainInput): RetainDecision {
   const existing = input.existingContent ?? [];
   if (
     existing.length > 0 &&
-    maxTokenOverlap(content, existing) >= DUPLICATE_OVERLAP
+    maxTokenOverlap(content, existing) >= DUPLICATE_OVERLAP &&
+    // A retraction necessarily overlaps the memory it retracts — it names
+    // the same subject. Never skip one of those as a "duplicate", or the
+    // contradiction never reaches the confidence machine.
+    !carriesContradictionSignal(trimmed)
   ) {
     return {
       retain: false,
