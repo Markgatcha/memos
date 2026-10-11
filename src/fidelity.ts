@@ -315,6 +315,27 @@ const L2_MAX_CHARS = 600;
 const L2_PASSTHROUGH_CHARS = 280;
 
 /**
+ * Information-dense predicates: a sentence carrying one of these
+ * holds a value, a date, or a polarity constraint — the token the
+ * user actually asked about. Centrality (word overlap with *other*
+ * sentences) is structurally blind to them: a sentence that shares
+ * vocabulary with nothing scores LOW on centrality precisely
+ * BECAUSE it is unique, so TextRank-lite deletes the one sentence
+ * that carries the number. `fidelityL2` reserves take-slots for
+ * these sentences before backfilling by centrality.
+ */
+const DENSE_PATTERNS: ReadonlyArray<RegExp> = [
+  /\d/, // any digit: "120 connections", "March 3rd", "v2.1"
+  /\b(not|never|no|none|neither|nor|without|except)\b/i, // negation
+  /\b(only|must|required)\b/i, // necessity constraints
+];
+
+/** True when the sentence carries a number, date, or negation. */
+export function isInformationDense(sentence: string): boolean {
+  return DENSE_PATTERNS.some((re) => re.test(sentence));
+}
+
+/**
  * TextRank-lite sentence centrality: similarity(i, j) =
  * |words_i ∩ words_j| / (log|words_i| + log|words_j|) (Mihalcea & Tarau
  * 2004), then PageRank over the similarity graph. Pure function, zero
@@ -379,16 +400,44 @@ export function fidelityL2(node: MemoryNode): string {
 
   const ranked = rankSentencesByCentrality(sentences);
   const take = content.length > 1500 ? 3 : 2;
-  const picked = new Set(ranked.slice(0, take));
+
+  // Reserve slots for sentences centrality is blind to.
+  //
+  // Centrality ranks a sentence by how much vocabulary it SHARES
+  // with the rest, so the sentence holding the number/date/negation —
+  // unique by construction — is structurally LAST on centrality and
+  // gets dropped by the take. Same for the note's final sentence,
+  // which usually carries the conclusion ("so what") and is the one
+  // the char-cap trim below drops first.
+  //
+  // So: fill reserved slots first (highest-ranked dense sentence,
+  // then the final sentence), then backfill by centrality.
+  const last = sentences[sentences.length - 1]!;
+  const dense = ranked.filter(isInformationDense);
+  const picked = new Set<string>();
+  for (const d of dense) {
+    if (picked.size >= take) break;
+    picked.add(d);
+  }
+  if (!picked.has(last) && picked.size < take) {
+    picked.add(last);
+  }
+  for (const s of ranked) {
+    if (picked.size >= take) break;
+    picked.add(s);
+  }
+
   // Emit in ORIGINAL order (narrative coherence beats rank order).
   const ordered = sentences.filter((s) => picked.has(s));
   let text = ordered.join(" ");
   if (text.length > L2_MAX_CHARS) {
-    // Trim at a sentence boundary: drop the last-picked sentence first.
-    const kept = ordered.slice(0, -1).join(" ");
+    // Trim at a sentence boundary: drop the last-picked sentence
+    // first — but never a dense one, which carries the value the
+    // caller asked about.
+    const kept = ordered.slice(0, -1).filter((s) => !isInformationDense(s));
     text =
       kept.length > 0 && kept.length <= L2_MAX_CHARS
-        ? kept
+        ? kept.join(" ")
         : `${text.slice(0, L2_MAX_CHARS - 1).trimEnd()}…`;
   }
   return text.length >= content.length ? content : text;
@@ -455,8 +504,32 @@ export function hasFidelityCache(node: MemoryNode): boolean {
 /**
  * Text of a memory at a fidelity level. L1/L2 prefer the write-time
  * cache and generate lazily (pure, no writes) when missing.
+ *
+ * Image memories append their `[img:<ref>]` token at EVERY level. The
+ * lower levels exist to save tokens (L0 is a tag/entity soup, L1 is
+ * typed facts), and none of them carries `node.content` — so without
+ * this append a memory findable at L0 would return prose with no way
+ * to reach the image it describes. A memory that can be found but whose
+ * image cannot be shown is a broken memory, so the token rides at every
+ * level. Text nodes are untouched: no token is appended and their
+ * rendered bytes are identical to before.
  */
 export function levelText(node: MemoryNode, level: FidelityLevel): string {
+  const rendered = renderLevel(node, level);
+  const imageRef = imageRefToken(node);
+  return imageRef ? `${rendered} ${imageRef}` : rendered;
+}
+
+/** The `[img:<ref>]` token for an image node, or "" for any other node. */
+function imageRefToken(node: MemoryNode): string {
+  const raw = node.metadata?.image;
+  if (!raw || typeof raw !== "object") return "";
+  const ref = (raw as { ref?: unknown }).ref;
+  return typeof ref === "string" && ref.length > 0 ? `[img:${ref}]` : "";
+}
+
+/** The level renderer itself, before the image token is appended. */
+function renderLevel(node: MemoryNode, level: FidelityLevel): string {
   switch (level) {
     case "L0":
       return fidelityL0(node);
@@ -578,6 +651,14 @@ export interface FidelitySignals {
   summaryWords: string[];
   /** Quoted spans or code identifiers present (high specificity). */
   quoted: boolean;
+  /**
+   * Decisive tokens the query carries — numbers, units, or negation.
+   * When present, the served text must contain them too: a query
+   * asking "why not 20" gets "pool = 40" as an answer otherwise.
+   * `recall()` uses this to force escalation past a level that
+   * merely has high term coverage.
+   */
+  decisiveTokens: string[];
 }
 
 /** Router output: starting level + why. */
@@ -611,22 +692,117 @@ function wordList(query: string): string[] {
   return query.trim().split(/\s+/).filter(Boolean);
 }
 
+/** Negation words that must appear verbatim in the served text. */
+const DECISIVE_NEGATIONS = new Set([
+  "not",
+  "never",
+  "no",
+  "none",
+  "neither",
+  "nor",
+  "without",
+  "except",
+  "only",
+]);
+
+/**
+ * Quantity words. A query asking for one of these is a factoid whose
+ * answer is a VALUE, not a label — the same trap as a bare number.
+ */
+const DECISIVE_QUANTITY_WORDS = new Set([
+  "size",
+  "limit",
+  "count",
+  "number",
+  "amount",
+  "max",
+  "maximum",
+  "min",
+  "minimum",
+  "timeout",
+  "rate",
+  "budget",
+  "threshold",
+  "version",
+  "ttl",
+  "latency",
+  "duration",
+]);
+
+/**
+ * Decisive tokens in a query: numbers (with optional units) and
+ * negations. These are the tokens a bag-of-words coverage score
+ * cannot judge: "pool size = 20" and "pool size reduced from 40"
+ * score identically on term presence, and "not" is invisible to
+ * every set-membership scorer. When the query carries one and the
+ * served text lacks it, `recall()` must escalate regardless of the
+ * coverage score.
+ */
+export function queryDecisiveTokens(query: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (tok: string) => {
+    const t = tok.trim().toLowerCase();
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  };
+  // Numbers with optional unit: "20", "25 connections", "120ms",
+  // "3am", "2.5", "42%", "$30". The unit tail is capped so a number
+  // mid-sentence can't swallow the rest of the clause.
+  const numberRe = /\d+(?:[.,]\d+)*\s*[a-z]{0,12}|[$%]\d*(?:[.,]\d+)*/gi;
+  let m: RegExpExecArray | null;
+  while ((m = numberRe.exec(query)) !== null) {
+    push(m[0]!);
+  }
+  // Negations / exclusive quantifiers, and quantity words ("pool
+  // size" is a factoid whose answer is a value, same trap as a bare
+  // number).
+  for (const raw of query.toLowerCase().split(/[^a-z]+/)) {
+    if (DECISIVE_NEGATIONS.has(raw) || DECISIVE_QUANTITY_WORDS.has(raw)) {
+      push(raw);
+    }
+  }
+  return out;
+}
+
+/** True when `text` contains the decisive token (number or negation). */
+export function textHasDecisiveToken(text: string, token: string): boolean {
+  const t = token.trim().toLowerCase();
+  if (!t) return true;
+  if (/^\d/.test(t)) {
+    // Number + optional unit: require the number; unit match is a
+    // bonus, not a requirement (units are spelled inconsistently).
+    const num = t.replace(/[.,\s].*$/, "");
+    return text.toLowerCase().includes(num);
+  }
+  return new RegExp(`\\b${t}\\b`, "i").test(text);
+}
+
 /**
  * Pick the STARTING fidelity level for a query. Local heuristics, no
  * LLM. Rule: start low, escalate on demand (escalation happens in
  * `MemOS.recall()` when the result set looks insufficient).
  *
  * Rules (first match wins):
- *   1. Entity lookup (≥1 entity, ≤4 words, no question/explain words)
- *      → L0. Tags+entities answer "which memory is about X".
- *   2. Entity-anchored factoid (≥1 entity, not explanatory) → L1.
- *      Typed facts carry the answer for who/what/when/where.
+ *   1. Entity lookup (≥1 entity, ≤4 words, no question/explain
+ *      words, NO decisive token) → L0. Tags+entities answer "which
+ *      memory is about X" — a retrieval affordance, not an answer.
+ *   2. Entity-anchored factoid, OR any query carrying a decisive
+ *      token (number/unit/negation) → L1. Typed facts carry the
+ *      answer; the decisive-token check in `recall()` escalates if
+ *      the token is still absent at L1.
  *   3. Explanatory / conceptual (why/how/explain/…) → L3.
  *      Nuance and reasoning don't survive compression.
  *   4. Summarization request or long narrative query (≥30 words) → L2.
  *   5. Open question (what/which/who/when/where/tell, no entity) → L2.
  *      Summary first; escalate on miss.
  *   6. Fallback → L1 (cheap, structured, usually sufficient).
+ *
+ * L0 is never the terminal level for a content question: `recall()`
+ * treats an L0-only hit as insufficient and escalates even when the
+ * caller passed `fidelity: "adaptive"`.
  */
 export function routeFidelity(query: string): FidelityRoute {
   const words = wordList(query);
@@ -636,6 +812,7 @@ export function routeFidelity(query: string): FidelityRoute {
   const explainWords = lowered.filter((w) => EXPLAIN_WORDS.has(w));
   const summaryWords = lowered.filter((w) => SUMMARY_WORDS.has(w));
   const quoted = /["'`]/.test(query);
+  const decisiveTokens = queryDecisiveTokens(query);
   const signals: FidelitySignals = {
     entities,
     words: words.length,
@@ -643,13 +820,15 @@ export function routeFidelity(query: string): FidelityRoute {
     explainWords,
     summaryWords,
     quoted,
+    decisiveTokens,
   };
 
   if (
     entities.length >= 1 &&
     words.length <= 4 &&
     questionWords.length === 0 &&
-    explainWords.length === 0
+    explainWords.length === 0 &&
+    decisiveTokens.length === 0
   ) {
     return {
       level: "L0",
@@ -660,7 +839,10 @@ export function routeFidelity(query: string): FidelityRoute {
   if (entities.length >= 1 && explainWords.length === 0) {
     return {
       level: "L1",
-      reason: `entity-anchored factoid (${entities.join(", ")}): typed facts first`,
+      reason:
+        decisiveTokens.length > 0
+          ? `decisive-token factoid (${decisiveTokens.join(", ")}): typed facts first, escalate if absent`
+          : `entity-anchored factoid (${entities.join(", ")}): typed facts first`,
       signals,
     };
   }
@@ -724,6 +906,23 @@ export interface FidelityRecallOptions {
    * Default 1.
    */
   minResults?: number;
+  /**
+   * Escalation floor: never serve a level below this, even via
+   * `fidelity: "adaptive"`. Default `"L1"` — L0 (tags+entities) is a
+   * retrieval affordance, not an answer, so an adaptive call never
+   * stops there. Pass `"L0"` to opt back into tag soup (an explicit
+   * contract: the caller wants "which memory is about X").
+   */
+  minLevel?: FidelityLevel;
+  /**
+   * Force escalation when the query carries a decisive token
+   * (number/unit/negation) that the served text lacks. Default true:
+   * IDF coverage scores "pool size = 20" and "pool size was reduced
+   * from 40" identically, so this is the only signal that notices the
+   * decisive token went missing during compaction. Set false to
+   * restore pure coverage-gated escalation.
+   */
+  escalateOnMissingDecisiveToken?: boolean;
   /** Scope the candidate set (namespace/type/tags/pool). */
   filter?: SearchFilter;
   /**
@@ -751,18 +950,98 @@ export interface FidelityRecallResult {
   route?: FidelityRoute;
 }
 
-/** Resolve the effective start level + ceiling for a recall call. */
+/** Default escalation floor: L0 is a retrieval affordance, not an answer. */
+export const DEFAULT_MIN_FIDELITY_LEVEL: FidelityLevel = "L1";
+
+/**
+ * Composition guard for `fidelity` × `compression` (audit finding 7f).
+ *
+ * `compressText` is a stopword-class filter. Applied to an item that
+ * is ALREADY a compressed fidelity level (L1 typed facts, L2
+ * extractive summary), it strips the connective tissue that made the
+ * summary readable — on top of the sentence-selection loss that
+ * already happened. Two lossy passes composed: the result is
+ * terser but materially less answerable than either pass alone.
+ *
+ * So when an item was rendered below L3, budget compression is
+ * skipped (the item is admitted as-is, or dropped if it still
+ * doesn't fit — exactly as it was before compression existed).
+ * L3 verbatim text has its full prose structure to lose and is the
+ * only level where the filter is a net win.
+ */
+export function shouldCompressFidelityItem(
+  fidelity: FidelityLevel | undefined,
+): boolean {
+  return fidelity === undefined || fidelity === "L3";
+}
+
+/**
+ * Resolve the effective start level + ceiling for a recall call.
+ *
+ * The start level is additionally clamped UP to the escalation floor
+ * (`minLevel`, default L1) unless the caller explicitly requested L0:
+ * an adaptive route may pick L0 for "postgres pool size", but serving
+ * tag soup as the answer is a category error, so the floor lifts it
+ * to L1.
+ */
 export function resolveRecallLevels(
   query: string,
   opts: FidelityRecallOptions = {},
-): { start: FidelityLevel; max: FidelityLevel; route?: FidelityRoute } {
+): {
+  start: FidelityLevel;
+  max: FidelityLevel;
+  floor: FidelityLevel;
+  route?: FidelityRoute;
+} {
   const max = opts.maxFidelity ?? "L3";
   const requested = opts.fidelity ?? "L3";
-  if (requested === "adaptive") {
-    const route = routeFidelity(query);
-    return { start: clampFidelityLevel(route.level, max), max, route };
-  }
-  return { start: clampFidelityLevel(requested, max), max };
+  // The floor lifts the start level UP (never serves below it); the
+  // ceiling clamps it DOWN. Two independent clamps — applying the
+  // floor as a downward clamp would silently downgrade every
+  // explicit L2/L3 request and break the behavior-preserving default.
+  const floor = opts.minLevel ?? DEFAULT_MIN_FIDELITY_LEVEL;
+  const route = requested === "adaptive" ? routeFidelity(query) : undefined;
+  const raw: FidelityLevel =
+    requested === "adaptive" ? route!.level : requested;
+  // An explicit `fidelity: "L0"` is a contract: the caller wants
+  // "which memory is about X", so it may sit below the floor.
+  const floored =
+    requested === "L0"
+      ? raw
+      : LEVEL_RANK[raw] < LEVEL_RANK[floor]
+        ? floor
+        : raw;
+  return {
+    start: clampFidelityLevel(floored, max),
+    max,
+    floor,
+    ...(route ? { route } : {}),
+  };
+}
+
+/**
+ * Whether the hits at the current level are sufficient, or the call
+ * must escalate. Two conditions beyond raw coverage:
+ *
+ * 1. `floor` — never serve L0 unless the caller explicitly asked for
+ *    it. Tags+entities answer "which memory", not "what is the value".
+ * 2. Decisive tokens — when the query carries a number/unit/negation
+ *    and the served text lacks it, escalate even at full coverage:
+ *    "pool size = 20" and "pool size reduced from 40" both score 1.0
+ *    on term presence, and only one of them answers the question.
+ */
+export function fidelityLevelSufficient(
+  query: string,
+  level: FidelityLevel,
+  docs: string[],
+  opts: { floor: FidelityLevel; checkDecisiveTokens: boolean },
+): boolean {
+  if (LEVEL_RANK[level] < LEVEL_RANK[opts.floor]) return false;
+  if (!opts.checkDecisiveTokens) return true;
+  const decisive = queryDecisiveTokens(query);
+  if (decisive.length === 0) return true;
+  const joined = docs.join("\n");
+  return decisive.every((tok) => textHasDecisiveToken(joined, tok));
 }
 
 // ---------------------------------------------------------------------------

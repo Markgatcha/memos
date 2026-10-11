@@ -6,6 +6,113 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added — Image memory (vision)
+
+Images are now first-class memories. An image memory is an **ordinary
+memory node** whose `content` is a caption, plus the bytes in a
+content-addressed blob store (`<dbDir>/memos-images/`). No new
+`MemoryType` member: `metadata.image` is the discriminator, so the sync
+allowlist, fidelity labels, adapters, and MCP schema all keep working
+unchanged.
+
+**Write API** — `addImageMemory(input, opts)` normalizes every input
+shape (path, URL, `{ data, mime }` base64, `data:` URL, raw bytes),
+writes the blob, and routes the caption through the normal
+`storeInner` pipeline — so quarantine screening, provenance,
+auto-linking, contradiction scan, and the tamper log all apply for
+free. Identical bytes dedupe to one blob and (per namespace) one node.
+`deleteImageMemory` unlinks the blob with refcounting, and
+`purgeOrphanImages` sweeps blobs no live node references.
+
+**Two retrieval tracks, independent:**
+- *Track A (always on)* — the caption is embedded by your normal text
+  embedder, so keyword + semantic search find images on every install
+  with zero extra downloads.
+- *Track B (opt-in via `vision.clip.enabled`)* — the image itself is
+  encoded by CLIP into a **separate** vector space
+  (`image_embeddings`, its own table and cache namespace), so a query
+  can match the pixels when its wording differs from the caption's.
+  Fails soft to Track A when the model is unavailable; never throws,
+  never substitutes a text vector.
+
+**Read API** — `searchImages(query, opts)` fuses the caption leg and the
+CLIP leg by reciprocal rank (the two spaces are not score-comparable);
+`imageMemory(ref)` resolves an `[img:…]` ref back to bytes; `listImages`
+lists them newest-first.
+
+**Accuracy invariants** (each covered by a test):
+- `[img:<ref>]` tokens are **pinned** in `compressText` — split out
+  before token-dropping and never dropped, so a caption can never be
+  compressed into prose that strands its image.
+- The token is appended at **every** fidelity level (L0–L3): a memory
+  findable at L0 whose image can't be shown is a broken memory.
+- Budget compression keeps the uncompressed form when the compressed
+  one would lose the ref (the existing no-win rule).
+- A CLIP-only hit now counts as embedding evidence for the relevance
+  gate — previously an image surfaced only by the pixel leg looked like
+  it had no semantic score and was silently dropped.
+
+**Context packs carry references, never bytes.** `ContextPackItem.images`
+holds `{ ref, mime, width, height, kind, caption, sha256, bytes }`, and
+TOON appends ` [img:<ref>]` to the content field — deliberately **not**
+an 8th column, so the fixed layout (and provider prompt caches) hold.
+`contextPack({ images: false })` opts out; a pack with no image nodes is
+byte-identical to before.
+
+**Surfaces** — CLI `memos image add|list|search|show|purge`; MCP tools
+`memos_image_add` / `memos_image_search` / `memos_image_recall`.
+
+**Disabled by default.** A bare `new MemOS()` creates the (empty)
+`image_embeddings` table and nothing else: no new API surface, no
+changed search results, no changed pack bytes.
+
+### Changed — search dispatch
+
+`search()` now takes the multi-leg hybrid path when **either** a text
+embedding provider is configured **or** the CLIP image leg can
+contribute. Gating on the text provider alone left Track B silently
+dead on exactly the installs that opted into it
+(`embeddings.enabled: false` + `vision.clip.enabled: true`).
+
+### Verified — Python 3.15 support (latest stable, released 2026-10-09)
+
+- **Added Python 3.15 to the supported range.** 3.15.0 shipped on
+  2026-10-09 (PEP 790) as the latest stable CPython, so it is now
+  exercised in CI and declared via a PyPI trove classifier. No code
+  breakage was found: the entire Python surface (`memos.server.main`,
+  `memos.server.routes`, and all three adapters) imports, builds and
+  runs unchanged on 3.15, and the dependency stack (fastapi 0.143,
+  uvicorn 0.54, pydantic 2.14 / pydantic-core 2.50, starlette 1.7)
+  publishes 3.15 wheels.
+
+- **Checked against the 3.15 removal list.** Nothing removed or changed
+  in a breaking way in 3.15 is touched by this project — notably
+  `collections.abc.ByteString`, `pathlib.PurePath.is_reserved`,
+  `glob.glob0/glob1`, `platform.java_ver`, `sre_compile`/`sre_constants`/
+  `sre_parse`, `typing.ByteString`, `typing.no_type_check_decorator`,
+  the keyword form of `NamedTuple(...)`/`TypedDict(...)`,
+  `zipimport.zipimporter.load_module`, `wave` mark methods,
+  `datetime.strptime` with a bare `%d`, the `sysconfig.is_python_build`
+  `check_home` parameter, and `threading.RLock` positional args. The
+  `sqlite3.connect` keyword-only tightening is satisfied — the backup and
+  restore CLI paths call `sqlite3.connect(db_path)` with a single
+  positional argument.
+
+- **Pinned UTF-8 on the backup manifest.** Python 3.15 makes UTF-8 the
+  default text encoding (PEP 686). `memos/server/main.py` was writing and
+  reading `*.manifest.json` through the locale default, so the read/write
+  pair only agreed by accident and was lossy for non-ASCII payloads on
+  Python ≤ 3.14 (Windows: cp1252). Both sides now pass `encoding="utf-8"`
+  explicitly, which is the PEP 686 recommendation and makes behaviour
+  identical across 3.11–3.15.
+
+- **Validation matrix.** `pytest`, `ruff check`, `ruff format --check`,
+  and a full end-to-end pass of the REST API, CLI backup/restore,
+  path-escape guard, and the dead-bridge 503 fallback were run on
+  Python 3.11, 3.12, 3.13, 3.14 and 3.15 — 5/5 green on every version.
+  Wheel metadata was rebuilt and confirmed to carry the 3.15 classifier.
+
 ### Fixed — flaky concurrency test (CI red on TypeScript ubuntu-26.04 / Node 24)
 
 - **`EmbeddingQueue concurrency › custom concurrency is honored` no longer

@@ -53,41 +53,171 @@ export function defaultDbPath(): string {
 }
 
 /**
- * Return the top `k` pairs by descending score without sorting the whole
- * array: a binary min-heap of capacity `k` keeps the largest K seen so far
- * (O(N log K)), then sorts just those K (O(K log K)). Identical result to
- * `pairs.sort(desc).slice(0, k)` — same elements, same order.
+ * Streaming bounded top-K selector.
+ *
+ * A binary min-heap of capacity `k` that keeps the largest `k` scores
+ * seen so far, so the caller never has to materialise an O(N) pair array
+ * and re-heapify it afterwards (O(N log K) either way, but without the
+ * allocation churn — and with the heap floor available *while* scanning,
+ * which is what the early-exit bound needs).
+ *
+ * Retention is identical to `takeTopK(pairs, k)` / `pairs.sort(desc).slice(0, k)`:
+ * same elements, same descending order, and the same strict-improvement
+ * rule — a candidate must beat the current floor strictly to displace it,
+ * so among equal scores the earlier-scanned one wins.
  */
-function takeTopK<T extends { score: number }>(pairs: T[], k: number): T[] {
-  if (k <= 0) return [];
-  if (pairs.length <= k) return pairs.sort((a, b) => b.score - a.score);
-  // heap[i] is the smallest of the current top-K; children at 2i+1, 2i+2.
-  const heap: T[] = pairs.slice(0, k);
-  const siftDown = (i: number): void => {
+class TopKSelector<T extends { score: number }> {
+  private readonly heap: T[] = [];
+  private readonly capacity: number;
+
+  constructor(capacity: number) {
+    this.capacity = capacity > 0 ? capacity : 0;
+  }
+
+  /** Current K-th best score, or `-Infinity` while the heap is filling. */
+  get floor(): number {
+    return this.heap.length > 0 ? this.heap[0].score : -Infinity;
+  }
+
+  /**
+   * True once the heap holds `capacity` items. The early-exit bound in
+   * the caller is only sound at this point: a full heap can never admit
+   * another candidate without a strict improvement over its floor,
+   * whereas a partially-filled heap still has slots that equally-scored
+   * (tied) candidates must be allowed to take.
+   */
+  get full(): boolean {
+    return this.heap.length >= this.capacity;
+  }
+
+  /** Offer a candidate; returns true when it was retained. */
+  push(item: T): boolean {
+    if (this.capacity === 0) return false;
+    if (this.heap.length < this.capacity) {
+      this.heap.push(item);
+      this.siftDown(0);
+      return true;
+    }
+    if (item.score > this.heap[0].score) {
+      this.heap[0] = item;
+      this.siftDown(0);
+      return true;
+    }
+    return false;
+  }
+
+  /** Retained items, best first. */
+  result(): T[] {
+    return this.heap.sort((a, b) => b.score - a.score);
+  }
+
+  private siftDown(start: number): void {
+    let i = start;
     for (;;) {
       const left = 2 * i + 1;
       const right = left + 1;
       let smallest = i;
-      if (left < k && heap[left].score < heap[smallest].score) smallest = left;
-      if (right < k && heap[right].score < heap[smallest].score)
+      if (
+        left < this.heap.length &&
+        this.heap[left].score < this.heap[smallest].score
+      )
+        smallest = left;
+      if (
+        right < this.heap.length &&
+        this.heap[right].score < this.heap[smallest].score
+      )
         smallest = right;
       if (smallest === i) break;
-      const tmp = heap[i];
-      heap[i] = heap[smallest];
-      heap[smallest] = tmp;
+      const tmp = this.heap[i];
+      this.heap[i] = this.heap[smallest];
+      this.heap[smallest] = tmp;
       i = smallest;
     }
-  };
-  for (let i = (k >> 1) - 1; i >= 0; i -= 1) siftDown(i); // heapify
-  for (let i = k; i < pairs.length; i += 1) {
-    const p = pairs[i];
-    if (p.score > heap[0].score) {
-      heap[0] = p;
-      siftDown(0);
-    }
   }
-  return heap.sort((a, b) => b.score - a.score);
 }
+
+/**
+ * Squared L2 norm, accumulated in index order.
+ *
+ * Kept as a standalone helper (rather than inlined into
+ * `cosineSimilarity`) so the semantic scan can cache it per stored row:
+ * the value only changes when the row is written, and every write goes
+ * through `SQLiteStorage.vectorCacheSet`, so the cache can never drift.
+ */
+function sumSquares(vector: ArrayLike<number>): number {
+  let total = 0;
+  for (let index = 0; index < vector.length; index += 1) {
+    const value = vector[index];
+    total += value * value;
+  }
+  return total;
+}
+
+/**
+ * A parsed stored vector plus the derived values the semantic scan needs
+ * on every query. Bundled so the cache entry — and therefore its
+ * invalidation — stays a single unit.
+ */
+interface CachedVector {
+  /** Zero-copy view over the persisted float32 BLOB. */
+  vector: Float32Array;
+  /**
+   * Which vector space this row came from. An image node has BOTH a text
+   * embedding and a CLIP embedding under the SAME nodeId — without this
+   * tag a CLIP vector could be served to a text-semantic query, silently
+   * corrupting retrieval with no visible error. The tag is written and
+   * checked on every cache access, so the two spaces can never cross.
+   */
+  space: "text" | "image";
+  /** `Σ v[i]²` — the cosine denominator half for this row. */
+  normSq: number;
+  /**
+   * Coarse prefix projection (`semanticScan: "prefilter"` only), built
+   * lazily on first use: `proj[i] = vector[i * stride]` for a fixed
+   * stride, with `projNormSq = Σ proj[i]²`.
+   */
+  proj?: Float32Array;
+  projNormSq?: number;
+}
+
+/** How the semantic leg chooses which stored vectors to score. */
+export type SemanticScanMode = "exact" | "prefilter";
+
+/**
+ * Telemetry for the most recent `querySimilarEmbeddings` call. Lets
+ * callers (and tests) see which parts of the scan actually ran without
+ * depending on wall-clock timings, which are useless in CI.
+ */
+export interface SemanticScanStats {
+  /** Candidate ids selected by SQL for the scan. */
+  candidates: number;
+  /** Candidates served straight from the in-memory vector cache. */
+  cacheHits: number;
+  /**
+   * Squared norms computed during the scan — one per vector hydrated
+   * from SQLite. `0` means every norm was already cached, which is the
+   * steady state for a warm store.
+   */
+  normComputations: number;
+  /**
+   * Candidates that fell back to the legacy JSON-stored-vector path:
+   * never cached, so their vector AND norm are re-parsed on every query.
+   * Non-zero only for databases written before the float32 BLOB format.
+   */
+  legacyRows: number;
+  /** Candidates dropped by the coarse prefilter (0 in `"exact"` mode). */
+  prefilterSkipped: number;
+  /** Candidates exactly rescored after the prefilter. */
+  rescored: number;
+  /** True when the scan stopped early because a perfect match was found. */
+  earlyExit: boolean;
+}
+
+/** Stride of the coarse prefix projection used by the prefilter mode. */
+const PREFILTER_STRIDE = 8;
+
+/** Floor for the prefilter's exact-rescore window. */
+const PREFILTER_MIN_KEEP = 32;
 
 /**
  * Minimal function-word stoplist for FTS5 query tokenization.
@@ -270,7 +400,18 @@ export class SQLiteStorage implements StorageAdapter {
   constructor(
     path: string,
     wal = true,
-    options: { vectorCacheEntries?: number; cipherKey?: string } = {},
+    options: {
+      vectorCacheEntries?: number;
+      cipherKey?: string;
+      /**
+       * How `querySimilarEmbeddings` picks which stored vectors to score.
+       * `"exact"` (default) scores every candidate. `"prefilter"` ranks
+       * candidates with a coarse prefix projection first and exactly
+       * rescodes only the top-N — bounded work at large corpus sizes,       * APPROXIMATE (a true neighbour ranked below the cutoff can be
+       * missed). Set via `MemOSConfig.storageOptions.semanticScan`.
+       */
+      semanticScan?: SemanticScanMode;
+    } = {},
   ) {
     this.path = path;
     this.wal = wal;
@@ -282,6 +423,7 @@ export class SQLiteStorage implements StorageAdapter {
       100,
       options.vectorCacheEntries ?? 25_000,
     );
+    this.semanticScanMode = options.semanticScan ?? "exact";
     this.cipherKey = options.cipherKey;
   }
 
@@ -383,6 +525,23 @@ export class SQLiteStorage implements StorageAdapter {
       -- (dimensions, model) before scoring, so without this SQLite walks
       -- the whole table even when the caller needs no node-side filters.
       CREATE INDEX IF NOT EXISTS idx_embeddings_model_dims ON embeddings(dimensions, model);
+
+      -- Image (CLIP) vectors live in their OWN space: cosine similarity
+      -- between a 512-d CLIP vector and a 384-d bge text vector is
+      -- meaningless, so the two must never share a table (every existing
+      -- query would have to reason about which space a row is in). Same
+      -- float32-LE serialization as embeddings; ON DELETE CASCADE
+      -- does the cleanup, so forget() needs no image-side change.
+      CREATE TABLE IF NOT EXISTS image_embeddings (
+        node_id    TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+        vector     BLOB NOT NULL,
+        dimensions INTEGER NOT NULL,
+        model      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_image_embeddings_model_dims
+        ON image_embeddings(dimensions, model);
 
       -- Contradiction pairs (accuracy item 4): write-time rule-based
       -- detection records node pairs that disagree (similarity in the
@@ -965,6 +1124,10 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   async deleteNode(id: string): Promise<boolean> {
+    // The `image_embeddings` row goes with the node via ON DELETE
+    // CASCADE; the in-memory cache entry has to go explicitly (a node
+    // deleted between two queries must not be served from cache).
+    this.vectorCache.delete(id);
     const result = this.db.prepare("DELETE FROM nodes WHERE id = ?").run(id);
     return result.changes > 0;
   }
@@ -1431,7 +1594,7 @@ export class SQLiteStorage implements StorageAdapter {
            updated_at = excluded.updated_at`,
       )
       .run(nodeId, normalized, vector.length, model, Date.now());
-    this.vectorCacheSet(nodeId, this.parseEmbeddingF32(normalized));
+    this.vectorCacheSet(nodeId, this.parseEmbeddingF32(normalized), "text");
   }
 
   async getEmbeddingInfo(nodeId: string): Promise<EmbeddingRecordInfo | null> {
@@ -1461,9 +1624,9 @@ export class SQLiteStorage implements StorageAdapter {
     const result = new Map<string, EmbeddingVector>();
     const missing: string[] = [];
     for (const id of nodeIds) {
-      const cached = this.vectorCacheGet(id);
+      const cached = this.vectorCacheGet(id, "text");
       if (cached) {
-        result.set(id, Array.from(cached));
+        result.set(id, Array.from(cached.vector));
       } else if (!missing.includes(id)) {
         missing.push(id);
       }
@@ -1480,6 +1643,7 @@ export class SQLiteStorage implements StorageAdapter {
           this.vectorCacheSet(
             row.node_id,
             this.parseEmbeddingF32(row.vector as Buffer | Uint8Array),
+            "text",
           );
           result.set(row.node_id, this.parseEmbedding(row.vector));
         } else {
@@ -1754,12 +1918,55 @@ export class SQLiteStorage implements StorageAdapter {
     threshold = 0,
     model?: string,
   ): Promise<ScoredMemory[]> {
+    return this.scanSimilar("text", vector, filter, limit, threshold, model);
+  }
+
+  /**
+   * Query image memories by CLIP vector similarity.
+   *
+   * Identical scoring to `querySimilarEmbeddings` — the scan loop is
+   * table-agnostic — but runs against `image_embeddings` and filters on
+   * model + dimensions, so a text-space vector can never be scored
+   * against a CLIP query (or vice versa).
+   *
+   * The hook for image→image search is already here: pass an
+   * *image-encoded* query and the same call returns the nearest
+   * neighbouring images ("more like this screenshot").
+   */
+  async querySimilarImages(
+    vector: EmbeddingVector,
+    filter: SearchFilter = {},
+    limit: number,
+    threshold = 0,
+    model?: string,
+  ): Promise<ScoredMemory[]> {
+    return this.scanSimilar("image", vector, filter, limit, threshold, model);
+  }
+
+  /**
+   * The shared semantic scan. `space` selects the vector table
+   * (`embeddings` vs `image_embeddings`) AND the vectorCache namespace,
+   * so the two spaces can never cross even when one nodeId carries both.
+   */
+  private async scanSimilar(
+    space: "text" | "image",
+    vector: EmbeddingVector,
+    filter: SearchFilter,
+    limit: number,
+    threshold: number,
+    model?: string,
+  ): Promise<ScoredMemory[]> {
+    const table = space === "image" ? "image_embeddings" : "embeddings";
+    const indexName =
+      space === "image"
+        ? "idx_image_embeddings_model_dims"
+        : "idx_embeddings_model_dims";
     const conditions: string[] = [];
     const params: unknown[] = [vector.length];
     // True as soon as any node-side (`n.*`) condition is added — only then
     // do we need the JOIN. The common case (no type/namespace/pool/tags/
-    // importance/metadata filter) selects ids straight from `embeddings`,
-    // which the idx_embeddings_model_dims index serves without a scan.
+    // importance/metadata filter) selects ids straight from the table,
+    // which the model/dims index serves without a scan.
     let needsNodeJoin = false;
 
     // Only compare vectors produced by compatible models/dimensions; cosine
@@ -1835,8 +2042,8 @@ export class SQLiteStorage implements StorageAdapter {
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const fromClause = needsNodeJoin
-      ? "FROM embeddings e JOIN nodes n ON n.id = e.node_id"
-      : "FROM embeddings e";
+      ? `FROM ${table} e JOIN nodes n ON n.id = e.node_id`
+      : `FROM ${table} e`;
 
     // Lazy hydration: score every candidate vector, but fully hydrate
     // (JSON.parse metadata + tags + timestamps) ONLY the top-`limit` rows.
@@ -1855,60 +2062,151 @@ export class SQLiteStorage implements StorageAdapter {
     // BLOB (tens of MB per query on large stores). Statement cache keys
     // include the WHERE clause — filter composition varies the SQL.
     const idRows = this.getPreparedStatement(
-      `querySimilarEmbeddingsIds::${needsNodeJoin ? "jn" : "noj"}::${where}`,
+      `querySimilarEmbeddingsIds::${space}::${needsNodeJoin ? "jn" : "noj"}::${where}`,
       `SELECT e.node_id
        ${fromClause}
        ${where}`,
     ).all(...params) as Array<{ node_id: string }>;
 
     const candidateIds = idRows.map((r) => r.node_id);
-    const missing = candidateIds.filter((id) => !this.vectorCache.has(id));
+    const missing = candidateIds.filter(
+      (id) => !this.vectorCacheGet(id, space),
+    );
 
     // Chunked fetch for cache misses (SQLite bound-parameter limits).
+    // A miss also materialises the cached squared norm (and, in prefilter
+    // mode, the coarse projection) — once per stored row, not once per
+    // query. That is the count the scan reports as `normComputations`.
+    let normsComputed = 0;
     for (let start = 0; start < missing.length; start += 500) {
       const chunk = missing.slice(start, start + 500);
       const placeholders = chunk.map(() => "?").join(",");
       const blobRows = this.getPreparedStatement(
-        `querySimilarEmbeddingsBlobs::${placeholders.length}`,
-        `SELECT node_id, vector FROM embeddings WHERE node_id IN (${placeholders})`,
+        `querySimilarEmbeddingsBlobs::${space}::${placeholders.length}`,
+        `SELECT node_id, vector FROM ${table} WHERE node_id IN (${placeholders})`,
       ).all(...chunk) as Array<{ node_id: string; vector: unknown }>;
       for (const row of blobRows) {
         if (Buffer.isBuffer(row.vector) || row.vector instanceof Uint8Array) {
           this.vectorCacheSet(
             row.node_id,
             this.parseEmbeddingF32(row.vector as Buffer | Uint8Array),
+            space,
           );
+          normsComputed += 1;
         }
       }
     }
 
     // Score — (nodeId, score) pairs only, no node hydration. Warm-cache
-    // hits reuse the parsed Float32Array; legacy JSON-stored rows (never
-    // cached) fall back to `parseEmbedding` per lookup.
-    const scoredPairs: Array<{ nodeId: string; score: number }> = [];
+    // hits reuse the parsed Float32Array AND its cached squared norm;
+    // legacy JSON-stored rows (never cached) fall back to `parseEmbedding`
+    // per lookup.
+    //
+    // Every candidate is still visited — without an ANN index there is no
+    // way to prove a candidate irrelevant without scoring it — but the
+    // PER-CANDIDATE cost is what actually dominated: `cosineSimilarity`
+    // recomputed the stored row's L2 norm on every query, paying 3·d
+    // multiply-adds per candidate where d suffice. The norm now lives in
+    // the cache entry next to the vector it came from, computed once per
+    // stored row.
+    //
+    // Scores are bit-identical to `cosineSimilarity(query, stored)`: the
+    // dot product accumulates in the same index order, and the divisor is
+    // `Math.sqrt(queryNormSq · storedNormSq)` with the same operand order,
+    // so rankings and reported scores do not move.
     const queryF32 =
       vector instanceof Float32Array ? vector : Float32Array.from(vector);
-    for (const nodeId of candidateIds) {
-      const cached = this.vectorCacheGet(nodeId);
-      const score = cached
-        ? cosineSimilarity(queryF32, cached)
-        : cosineSimilarity(
-            vector,
-            this.parseEmbedding(this.lookupStoredVector(nodeId)),
-          );
-      if (score >= threshold) {
-        scoredPairs.push({ nodeId, score });
+    const queryNormSq = sumSquares(queryF32);
+
+    // Opt-in coarse prefilter (`storageOptions.semanticScan`): rank the
+    // candidates by a strided prefix projection and exactly rescore only
+    // the best `keep`. Bounded work on large corpora, approximate: a
+    // candidate the projection ranks below the cutoff is never seen
+    // again. Off by default, so the exact scan above is the shipped
+    // behavior.
+    let scanIds = candidateIds;
+    let prefilterSkipped = 0;
+    if (
+      this.semanticScanMode === "prefilter" &&
+      candidateIds.length > PREFILTER_MIN_KEEP
+    ) {
+      const keep = Math.max(
+        PREFILTER_MIN_KEEP,
+        Math.min(candidateIds.length, limit * 4),
+      );
+      const ranked = this.rankByProjection(candidateIds, queryF32, space);
+      scanIds = ranked.slice(0, keep);
+      prefilterSkipped = candidateIds.length - scanIds.length;
+    }
+
+    // Streaming bounded top-K: the selector is fed while scoring instead
+    // of materialising an O(N) pair array and re-heapifying it, and its
+    // floor doubles as the early-exit bound. Its retention rule is
+    // identical to the previous `takeTopK(scoredPairs, limit)` — same
+    // elements, same descending order, same strict-improvement tie
+    // break — so rankings do not move.
+    const top = new TopKSelector<{ nodeId: string; score: number }>(limit);
+    let cacheHits = 0;
+    let legacyRows = 0;
+    let earlyExit = false;
+
+    for (const nodeId of scanIds) {
+      const cached = this.vectorCacheGet(nodeId, space);
+      let score: number;
+      if (cached && cached.vector.length === queryF32.length) {
+        cacheHits += 1;
+        if (cached.normSq === 0 || queryNormSq === 0) {
+          // cosineSimilarity's zero-norm guard: an all-zero row scores 0.
+          score = 0;
+        } else {
+          let dot = 0;
+          const stored = cached.vector;
+          for (let i = 0; i < stored.length; i += 1) {
+            dot += queryF32[i] * stored[i];
+          }
+          score = dot / Math.sqrt(queryNormSq * cached.normSq);
+        }
+      } else {
+        legacyRows += 1;
+        score = cosineSimilarity(
+          vector,
+          this.parseEmbedding(this.lookupStoredVector(nodeId, space)),
+        );
+      }
+      if (score < threshold) continue;
+      top.push({ nodeId, score });
+      // Cosine similarity is bounded by 1 and retention requires a
+      // STRICT improvement, so once the selector is FULL and its floor
+      // is 1.0 no remaining candidate can enter the top-K: stop
+      // scanning. Fires on exact-duplicate / verbatim-needle queries.
+      // The fullness check is what makes this correct: a full floor of
+      // 1.0 cannot be beaten, but a HALF-full heap at floor 1.0 can
+      // still admit the remaining equally-scored rows (ties keep the
+      // earlier-scanned one but must still fill the requested K), so
+      // stopping there would silently drop recall.
+      if (top.full && top.floor >= 1) {
+        earlyExit = true;
+        break;
       }
     }
 
-    // Top-K via min-heap instead of a full sort: scoring is O(N) pairs but
-    // only `limit` survive, so this is O(N log K) rather than O(N log N).
-    // The returned K keep the same descending-score order as a full sort.
-    const top = takeTopK(scoredPairs, limit);
+    this.semanticScanTelemetry = {
+      candidates: candidateIds.length,
+      cacheHits,
+      normComputations: normsComputed,
+      legacyRows,
+      prefilterSkipped,
+      rescored: scanIds.length,
+      earlyExit,
+    };
+
+    // Descending score; equal scores keep scan order (the selector only
+    // displaces the floor on a strict improvement).
+    const survivors = top.result();
 
     // Hydrate only the survivors, preserving score order.
     const results: ScoredMemory[] = [];
-    for (const { nodeId, score } of top) {
+    for (const { nodeId, score } of survivors) {
       const node = await this.getNode(nodeId);
       if (!node) continue; // node deleted between the two queries
       results.push({
@@ -1918,6 +2216,64 @@ export class SQLiteStorage implements StorageAdapter {
       });
     }
     return results;
+  }
+
+  /**
+   * Rank candidate ids by cosine against a strided prefix projection of
+   * each stored vector (opt-in prefilter path). The projection is built
+   * once per stored row and cached with it, so repeat queries pay only
+   * the `dims / PREFILTER_STRIDE` dot product per candidate.
+   *
+   * Approximate by design: it orders candidates, it does not certify
+   * them. Callers must rescore the survivors exactly.
+   */
+  private rankByProjection(
+    candidateIds: string[],
+    queryF32: Float32Array,
+    space: CachedVector["space"],
+  ): string[] {
+    const projQuery = this.project(queryF32);
+    const projQueryNormSq = sumSquares(projQuery);
+    if (projQueryNormSq === 0) return candidateIds;
+    const queryNorm = Math.sqrt(projQueryNormSq);
+    const scored: Array<{ nodeId: string; score: number }> = [];
+    for (const nodeId of candidateIds) {
+      const cached = this.vectorCacheGet(nodeId, space);
+      const proj = cached?.proj;
+      const projNormSq = cached?.projNormSq;
+      if (proj === undefined || projNormSq === undefined || projNormSq === 0) {
+        continue;
+      }
+      let dot = 0;
+      const length = Math.min(proj.length, projQuery.length);
+      for (let i = 0; i < length; i += 1) {
+        dot += projQuery[i] * proj[i];
+      }
+      scored.push({ nodeId, score: dot / (queryNorm * Math.sqrt(projNormSq)) });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    // Candidates the cache never hydrated (or whose projection vanished)
+    // are appended after the ranked ones rather than dropped, so a cold
+    // cache degrades to "projection-ranked first, everything else after"
+    // instead of silently losing rows.
+    const ranked = new Set(scored.map((s) => s.nodeId));
+    return [
+      ...scored.map((s) => s.nodeId),
+      ...candidateIds.filter((id) => !ranked.has(id)),
+    ];
+  }
+
+  /**
+   * Strided prefix projection used by the prefilter. Built lazily on the
+   * first prefilter query so the exact path never pays for it.
+   */
+  private project(vector: Float32Array): Float32Array {
+    const length = Math.ceil(vector.length / PREFILTER_STRIDE);
+    const out = new Float32Array(length);
+    for (let i = 0; i < length; i += 1) {
+      out[i] = vector[i * PREFILTER_STRIDE] ?? 0;
+    }
+    return out;
   }
 
   async getEmbeddingModelCounts(): Promise<
@@ -1934,6 +2290,96 @@ export class SQLiteStorage implements StorageAdapter {
   async deleteEmbeddingsByModel(model: string): Promise<number> {
     const info = this.db
       .prepare(`DELETE FROM embeddings WHERE model = ?`)
+      .run(model);
+    this.vectorCache.clear();
+    return info.changes;
+  }
+
+  // -----------------------------------------------------------------------
+  // Image (CLIP) embeddings — the second vector space
+  // -----------------------------------------------------------------------
+
+  async saveImageEmbedding(
+    nodeId: string,
+    vector: EmbeddingVector,
+    model: string,
+  ): Promise<void> {
+    const normalized = this.serializeEmbedding(vector);
+    this.db
+      .prepare(
+        `INSERT INTO image_embeddings (node_id, vector, dimensions, model, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(node_id) DO UPDATE SET
+           vector = excluded.vector,
+           dimensions = excluded.dimensions,
+           model = excluded.model,
+           updated_at = excluded.updated_at`,
+      )
+      .run(nodeId, normalized, vector.length, model, Date.now());
+    this.vectorCacheSet(nodeId, this.parseEmbeddingF32(normalized), "image");
+  }
+
+  async getImageEmbeddingInfo(
+    nodeId: string,
+  ): Promise<EmbeddingRecordInfo | null> {
+    const row = this.getPreparedStatement(
+      "getImageEmbeddingInfo",
+      "SELECT model, dimensions, updated_at FROM image_embeddings WHERE node_id = ?",
+    ).get(nodeId) as Record<string, unknown> | undefined;
+
+    if (!row) return null;
+    return {
+      model: row.model as string,
+      dimensions: row.dimensions as number,
+      updatedAt: row.updated_at as number,
+    };
+  }
+
+  async getAllImageEmbeddings(): Promise<
+    Array<{ nodeId: string; vector: EmbeddingVector; model: string }>
+  > {
+    const rows = this.db
+      .prepare(
+        "SELECT node_id, vector, model, dimensions FROM image_embeddings",
+      )
+      .all() as Array<{
+      node_id: string;
+      vector: Buffer;
+      model: string;
+      dimensions: number;
+    }>;
+    return rows.map((r) => ({
+      nodeId: r.node_id,
+      model: r.model,
+      vector: this.parseEmbedding(r.vector),
+    }));
+  }
+
+  async getImageEmbeddingModelCounts(): Promise<
+    Array<{ model: string; count: number }>
+  > {
+    return this.db
+      .prepare(
+        `SELECT model, COUNT(*) as count FROM image_embeddings
+         GROUP BY model ORDER BY count DESC`,
+      )
+      .all() as Array<{ model: string; count: number }>;
+  }
+
+  async deleteImageEmbedding(nodeId: string): Promise<boolean> {
+    const info = this.db
+      .prepare("DELETE FROM image_embeddings WHERE node_id = ?")
+      .run(nodeId);
+    const entry = this.vectorCache.get(nodeId);
+    if (entry && entry.space === "image") {
+      this.vectorCache.delete(nodeId);
+    }
+    return info.changes > 0;
+  }
+
+  async deleteImageEmbeddingsByModel(model: string): Promise<number> {
+    const info = this.db
+      .prepare("DELETE FROM image_embeddings WHERE model = ?")
       .run(model);
     this.vectorCache.clear();
     return info.changes;
@@ -2135,6 +2581,7 @@ export class SQLiteStorage implements StorageAdapter {
   async deleteAllNodes(): Promise<void> {
     this.vectorCache.clear();
     this.db.exec("DELETE FROM embeddings");
+    this.db.exec("DELETE FROM image_embeddings");
     this.db.exec("DELETE FROM edges");
     this.db.exec("DELETE FROM nodes");
     // Rebuild FTS index
@@ -2209,36 +2656,87 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   /**
-   * In-process parsed-vector cache (nodeId -> Float32Array). The semantic
-   * leg otherwise re-fetches EVERY stored vector BLOB from SQLite on every
-   * query (tens of MB of memcpy per query on large stores). Writes go
-   * through this class, so invalidation is exact; external writers are not
-   * tracked (single-process deployments are the supported shape — the
-   * Python bridge runs one Node process).
+   * In-process parsed-vector cache (nodeId -> vector + derived norms).
+   * The semantic leg otherwise re-fetches EVERY stored vector BLOB from
+   * SQLite on every query (tens of MB of memcpy per query on large
+   * stores). Writes go through this class, so invalidation is exact;
+   * external writers are not tracked (single-process deployments are the
+   * supported shape — the Python bridge runs one Node process).
+   *
+   * The entry bundles the squared L2 norm with the vector: it is
+   * computed once per stored row instead of once per query, and it is
+   * invalidated by the same `set`/eviction/clear that invalidates the
+   * vector itself, so it can never disagree with the stored row.
    */
-  private vectorCache = new Map<string, Float32Array>();
+  private vectorCache = new Map<string, CachedVector>();
   private vectorCacheMaxEntries = 25_000;
+  private semanticScanMode: SemanticScanMode = "exact";
 
-  private vectorCacheGet(nodeId: string): Float32Array | undefined {
-    return this.vectorCache.get(nodeId);
+  private vectorCacheGet(
+    nodeId: string,
+    space: CachedVector["space"],
+  ): CachedVector | undefined {
+    const entry = this.vectorCache.get(nodeId);
+    // A hit from the WRONG space is a miss, not a stale read: the two
+    // spaces share a nodeId (an image node has both), and serving one's
+    // vector to the other's query is the silent-corruption bug this
+    // namespace exists to prevent.
+    if (entry && entry.space !== space) return undefined;
+    return entry;
   }
 
-  private vectorCacheSet(nodeId: string, vector: Float32Array): void {
+  private vectorCacheSet(
+    nodeId: string,
+    vector: Float32Array,
+    space: CachedVector["space"],
+  ): void {
     if (
       this.vectorCache.size >= this.vectorCacheMaxEntries &&
       !this.vectorCache.has(nodeId)
     ) {
-      // FIFO eviction (Map preserves insertion order).
+      // FIFO eviction (Map preserves insertion order). The norm rides in
+      // the same entry, so deleting the entry drops both.
       const oldest = this.vectorCache.keys().next().value;
       if (oldest !== undefined) this.vectorCache.delete(oldest);
     }
-    this.vectorCache.set(nodeId, vector);
+    const entry: CachedVector = { vector, space, normSq: sumSquares(vector) };
+    // The coarse projection only exists in prefilter mode, so the exact
+    // path never pays to build it. Same funnel as the vector itself —
+    // every write re-derives it, so it can never go stale.
+    if (this.semanticScanMode === "prefilter") {
+      entry.proj = this.project(vector);
+      entry.projNormSq = sumSquares(entry.proj);
+    }
+    this.vectorCache.set(nodeId, entry);
   }
 
-  private lookupStoredVector(nodeId: string): unknown {
+  /**
+   * Telemetry for the last `querySimilarEmbeddings` call. Read-only: the
+   * scan fills it in, nothing else mutates it.
+   */
+  private semanticScanTelemetry: SemanticScanStats = {
+    candidates: 0,
+    cacheHits: 0,
+    normComputations: 0,
+    legacyRows: 0,
+    prefilterSkipped: 0,
+    rescored: 0,
+    earlyExit: false,
+  };
+
+  /** Scan telemetry for the most recent semantic query. */
+  get semanticScanStats(): SemanticScanStats {
+    return this.semanticScanTelemetry;
+  }
+
+  private lookupStoredVector(
+    nodeId: string,
+    space: CachedVector["space"],
+  ): unknown {
+    const table = space === "image" ? "image_embeddings" : "embeddings";
     const row = this.getPreparedStatement(
-      "querySimilarEmbeddingsOneVector",
-      `SELECT vector FROM embeddings WHERE node_id = ?`,
+      `querySimilarEmbeddingsOneVector::${space}`,
+      `SELECT vector FROM ${table} WHERE node_id = ?`,
     ).get(nodeId) as { vector: unknown } | undefined;
     return row?.vector;
   }

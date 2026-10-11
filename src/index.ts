@@ -83,6 +83,12 @@ export {
   scoreLevelCorpus,
   resolveRecallLevels,
   fidelityStats,
+  isInformationDense,
+  queryDecisiveTokens,
+  textHasDecisiveToken,
+  fidelityLevelSufficient,
+  shouldCompressFidelityItem,
+  DEFAULT_MIN_FIDELITY_LEVEL,
   type FidelityLevel,
   type FidelitySignals,
   type FidelityRoute,
@@ -104,6 +110,39 @@ export {
   normalizeVector,
 } from "./embeddings.js";
 export { SQLiteStorage } from "./storage/sqlite.js";
+export type { SemanticScanMode, SemanticScanStats } from "./storage/sqlite.js";
+export {
+  ClipEmbeddingProvider,
+  ClipUnavailableError,
+  DEFAULT_CLIP_MODEL,
+  DEFAULT_CLIP_DIMENSIONS,
+  FakeClipProvider,
+  ClipQueryCache,
+  DEFAULT_CLIP_QUERY_CACHE_MAX,
+} from "./vision/index.js";
+export type { ClipEmbeddingProviderOptions } from "./vision/clip.js";
+export type { FakeClipProviderOptions } from "./vision/fake-clip.js";
+// Blob store + input normalization: exported so a host model can
+// resolve an `[img:…]` ref from a context pack without going through
+// a MemOS instance.
+export {
+  blobRoot,
+  deleteRef,
+  ImageRejectedError,
+  kindFromMime,
+  normalizeImageInput,
+  purgeOrphanImages,
+  readDimensions,
+  readImage,
+  refFor,
+  resolveRef,
+  sniffMime,
+  writeImage,
+  type StoredImage,
+} from "./vision/store.js";
+// The node-level image discriminator, shared by the pack builder and
+// the fidelity renderer.
+export { imageAttachmentOf } from "./context-pack.js";
 export {
   EmbeddingQueue,
   type EmbeddingJob,
@@ -184,6 +223,21 @@ export type {
   RevertOptions,
   RevertResult,
   RevertTargetResolution,
+  // Vision (image memory)
+  ImageKind,
+  ImageSource,
+  ImageAttachment,
+  ImageMemoryMeta,
+  ImageInput,
+  AddImageMemoryOptions,
+  AddImageMemoryResult,
+  SearchImagesOptions,
+  ListImagesOptions,
+  ImageSearchResult,
+  EmbedImageProvider,
+  ClipStatus,
+  ClipMeta,
+  VisionConfig,
 } from "./types.js";
 export { DEFAULT_TRUST_SCORES } from "./types.js";
 export {

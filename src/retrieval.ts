@@ -272,6 +272,18 @@ export const DEFAULT_ENTITY_WEIGHT = 0.15;
 export const DEFAULT_ENTITY_LEG_WEIGHT = 0.1;
 
 /**
+ * Default weight of the CLIP image leg (Track B of image memory).
+ *
+ * Same role as the entity leg — a RECALL leg that surfaces candidates
+ * the text legs could not match, not a re-ranking signal — so it sits
+ * just below the semantic leg's 0.2, at the entity leg's level. The
+ * leg is inert whenever it has no results (no CLIP configured, no image
+ * embeddings stored), so this default never moves a text-only store's
+ * ranking by a single bit.
+ */
+export const DEFAULT_IMAGE_LEG_WEIGHT = 0.1;
+
+/**
  * Lower bound of the trust multiplier. A memory with trustScore 0 is
  * multiplied by `trustFloor`; trustScore 1 by 1.0. Kept gentle (0.7)
  * so trust nudges ranking without dominating pure relevance.
@@ -331,6 +343,8 @@ function rrfFuse(
   semanticResults: ScoredMemory[],
   entityResults: ScoredMemory[],
   options: FusionOptions,
+  imageResults: ScoredMemory[] = [],
+  imageLegWeight = 0,
 ): Map<string, FusedCandidate> {
   const rrfK = options.rrfK ?? DEFAULT_RRF_K;
   const keywordWeight = options.keywordWeight ?? DEFAULT_KEYWORD_WEIGHT;
@@ -353,6 +367,10 @@ function rrfFuse(
     if (existing) {
       existing.score += semanticRrf;
       existing.scores.semantic = Math.max(0, result.score);
+      // RRF stores the RAW cosine in `semantic` (ranks, not magnitudes,
+      // drive the vote here). Mirror it into `semanticRaw` so both fusion
+      // modes expose the same score shape and consumers need one branch.
+      existing.scores.semanticRaw = Math.max(0, result.score);
       existing.scores.hybrid = existing.score;
     } else {
       merged.set(result.node.id, {
@@ -361,6 +379,7 @@ function rrfFuse(
         scores: {
           keyword: 0,
           semantic: Math.max(0, result.score),
+          semanticRaw: Math.max(0, result.score),
           hybrid: semanticRrf,
         },
       });
@@ -397,6 +416,40 @@ function rrfFuse(
             semantic: 0,
             entityLeg: Math.max(0, result.score),
             hybrid: entityRrf,
+          },
+        });
+      }
+    }
+  }
+
+  // ── image leg (Track B, image memory) ── fourth RRF leg from the
+  // CLIP image→text space (`image_embeddings`, scanned by
+  // `querySimilarImages`). It ADDS RECALL exactly like the entity leg:
+  // an image whose caption shares no vocabulary with the query still
+  // enters the candidate pool because its PIXELS match. Records
+  // `scores.imageLeg` (the raw CLIP cosine) so a consumer can tell
+  // which leg surfaced an image.
+  //
+  // Inert by construction: an empty leg (no CLIP configured, no image
+  // embeddings stored, or Track B disabled) contributes nothing and
+  // leaves the merged map byte-identical to the pre-image pipeline.
+  if (imageLegWeight > 0 && imageResults.length > 0) {
+    for (const [index, result] of imageResults.entries()) {
+      const imageRrf = imageLegWeight / (rrfK + index + 1);
+      const existing = merged.get(result.node.id);
+      if (existing) {
+        existing.score += imageRrf;
+        existing.scores.imageLeg = Math.max(0, result.score);
+        existing.scores.hybrid = existing.score;
+      } else {
+        merged.set(result.node.id, {
+          node: result.node,
+          score: imageRrf,
+          scores: {
+            keyword: 0,
+            semantic: 0,
+            imageLeg: Math.max(0, result.score),
+            hybrid: imageRrf,
           },
         });
       }
@@ -512,6 +565,8 @@ function convexFuse(
   semanticResults: ScoredMemory[],
   entityResults: ScoredMemory[],
   options: FusionOptions,
+  imageResults: ScoredMemory[] = [],
+  imageLegWeight = 0,
 ): Map<string, FusedCandidate> {
   const queryEntities = options.queryEntities ?? [];
   const base = {
@@ -531,10 +586,18 @@ function convexFuse(
         };
   // Renormalize even the non-adaptive path: convex combination needs
   // weights on a common scale, unlike RRF's independent rank votes.
-  const wSum = weights.keyword + weights.semantic + weights.entityLeg;
+  // The image leg joins the same renormalization ONLY when it is active,
+  // so a text-only store's wk/ws/we are unchanged to the bit.
+  const imageActive = imageResults.length > 0 && imageLegWeight > 0;
+  const wSum =
+    weights.keyword +
+    weights.semantic +
+    weights.entityLeg +
+    (imageActive ? imageLegWeight : 0);
   const wk = wSum > 0 ? weights.keyword / wSum : 0;
   const ws = wSum > 0 ? weights.semantic / wSum : 0;
   const we = wSum > 0 ? weights.entityLeg / wSum : 0;
+  const wi = wSum > 0 && imageActive ? imageLegWeight / wSum : 0;
 
   // All legs: min-max on native scores. Proven on the deterministic eval
   // (MRR 0.9688 vs 0.875 for rank-discount keyword): with weak local-hash
@@ -544,17 +607,21 @@ function convexFuse(
   const keywordNorm = minMaxNormalizeLeg(keywordResults, false);
   const semanticNorm = minMaxNormalizeLeg(semanticResults, true);
   const entityNorm = minMaxNormalizeLeg(entityResults, true);
+  const imageNorm = imageActive
+    ? minMaxNormalizeLeg(imageResults, true)
+    : new Map<string, number>();
 
   const byId = new Map<string, ScoredMemory>();
   for (const r of keywordResults) byId.set(r.node.id, r);
   for (const r of semanticResults) byId.set(r.node.id, r);
   for (const r of entityResults) byId.set(r.node.id, r);
+  for (const r of imageResults) byId.set(r.node.id, r);
 
   const merged = new Map<string, FusedCandidate>();
   const addLeg = (
     norm: Map<string, number>,
     weight: number,
-    legName: "keyword" | "semantic" | "entityLeg",
+    legName: "keyword" | "semantic" | "entityLeg" | "imageLeg",
   ) => {
     if (weight <= 0) return;
     for (const [id, n] of norm) {
@@ -565,6 +632,13 @@ function convexFuse(
       if (existing) {
         existing.score += contrib;
         existing.scores[legName] = n;
+        // Preserve the raw leg score alongside the normalized fusion
+        // weight: `n` is min-max normalized (top candidate == 1), so it
+        // cannot answer "how similar was this actually?". The raw cosine
+        // is what `shouldAbstain`'s absolute floor needs.
+        if (legName === "semantic") {
+          existing.scores.semanticRaw = Math.max(0, r.score);
+        }
         existing.scores.hybrid = existing.score;
       } else {
         // Scores breakdown mirrors the pre-round-4 shape: a leg's key is
@@ -576,6 +650,9 @@ function convexFuse(
           score: contrib,
           scores: {
             [legName]: n,
+            ...(legName === "semantic"
+              ? { semanticRaw: Math.max(0, r.score) }
+              : {}),
             hybrid: contrib,
           },
         });
@@ -585,6 +662,10 @@ function convexFuse(
   addLeg(keywordNorm, wk, "keyword");
   addLeg(semanticNorm, ws, "semantic");
   addLeg(entityNorm, we, "entityLeg");
+  // Image (CLIP) leg — added last, with its own renormalized weight.
+  // Inert when `wi` is 0 (no CLIP, no image rows), so the three-leg
+  // result is untouched.
+  addLeg(imageNorm, wi, "imageLeg");
 
   // Temporal recency: bounded multiplicative nudge toward fresh memories,
   // active only for temporal-marker queries. At the default strength
@@ -636,12 +717,40 @@ export function fuseResults(
   semanticResults: ScoredMemory[],
   options: FusionOptions = {},
   entityResults: ScoredMemory[] = [],
+  imageResults: ScoredMemory[] = [],
 ): ScoredMemory[] {
   const mode = options.fusionMode ?? DEFAULT_FUSION_MODE;
+  // The image (CLIP) leg is additive: when it is empty — which is the
+  // case for every text-only store, and whenever Track B is off — the
+  // fusion below is byte-identical to the pre-image pipeline.
+  const imageLegWeight =
+    options.imageLegWeight ??
+    // When the caller has not pinned a weight, an ACTIVE leg gets a
+    // sane default so Track B actually contributes — otherwise the
+    // feature would be off for everyone who did not read the config
+    // docs. A store with no image results pays nothing (the weight is
+    // never consulted), so this cannot change a text-only install's
+    // output.
+    (imageResults.length > 0 ? DEFAULT_IMAGE_LEG_WEIGHT : 0);
+  const imageActive = imageResults.length > 0 && imageLegWeight > 0;
   const merged =
     mode === "convex"
-      ? convexFuse(keywordResults, semanticResults, entityResults, options)
-      : rrfFuse(keywordResults, semanticResults, entityResults, options);
+      ? convexFuse(
+          keywordResults,
+          semanticResults,
+          entityResults,
+          options,
+          imageActive ? imageResults : [],
+          imageActive ? imageLegWeight : 0,
+        )
+      : rrfFuse(
+          keywordResults,
+          semanticResults,
+          entityResults,
+          options,
+          imageActive ? imageResults : [],
+          imageActive ? imageLegWeight : 0,
+        );
 
   const trustFloor = options.trustFloor ?? DEFAULT_TRUST_FLOOR;
   const confidenceStrength =
@@ -770,4 +879,297 @@ export function fuseResults(
     score: entry.score,
     scores: entry.scores,
   }));
+}
+
+/* ------------------------------------------------------------------ *
+ * Relevance gating: abstention + tail trimming
+ *
+ * Two different problems, one knob each.
+ *
+ * 1. ABSTENTION. When nothing in the store is genuinely about the
+ *    query, the honest answer is "no memories" — not "the ten least
+ *    bad rows". A memory layer that always returns k results forces
+ *    the caller to invent an answer. LongMemEval scores this directly
+ *    through its `_abs` questions (events that never happened) and
+ *    LoCoMo through its adversarial category, which is why this lives
+ *    here rather than in the caller.
+ *
+ * 2. TAIL TRIMMING. Precision@10 measured 0.099 on LoCoMo: about nine
+ *    of every ten injected items were noise. Dropping candidates that
+ *    trail the top score by a large factor costs little recall and
+ *    sharply improves the signal-to-noise of a context pack.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Default tail-trim threshold: a candidate is kept when its fused score
+ * is at least this fraction of the top score. Deliberately low — it
+ * exists to cut the long tail of "matched one stopword" rows, not to
+ * make fine-grained relevance decisions.
+ */
+export const DEFAULT_RELEVANCE_RATIO = 0.15;
+
+/**
+ * Default abstention floor on the semantic leg's cosine similarity.
+ *
+ * 0.3 is not arbitrary: `SEMANTIC_FUSION_THRESHOLD` and the fusion
+ * comments already treat ~0.3 as the point where a real embedder's
+ * paraphrase matches begin. Below it, a hit is coincidence.
+ *
+ * This is OPT-IN (`filter.abstainBelowSimilarity`) because the floor is
+ * embedder-dependent — a 256-d hash embedder and a 1024-d transformer
+ * do not share a cosine scale. Calibrate per embedder before enabling.
+ */
+export const DEFAULT_ABSTAIN_SIMILARITY = 0.3;
+
+/** Compact English function-word list for query-expansion filtering. */
+const STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "that",
+  "this",
+  "from",
+  "have",
+  "has",
+  "had",
+  "was",
+  "were",
+  "are",
+  "you",
+  "your",
+  "they",
+  "them",
+  "their",
+  "there",
+  "here",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "whom",
+  "how",
+  "why",
+  "did",
+  "does",
+  "doing",
+  "would",
+  "could",
+  "should",
+  "about",
+  "into",
+  "than",
+  "then",
+  "them",
+  "some",
+  "any",
+  "all",
+  "one",
+  "two",
+  "also",
+  "just",
+  "like",
+  "been",
+  "being",
+  "over",
+  "under",
+  "more",
+  "most",
+  "much",
+  "many",
+  "very",
+  "will",
+  "can",
+  "not",
+  "but",
+  "she",
+  "him",
+  "her",
+  "his",
+  "its",
+  "our",
+  "out",
+  "get",
+  "got",
+  "say",
+  "said",
+]);
+
+export interface RelevanceGateOptions {
+  /**
+   * Abstain (return nothing) when no candidate reaches this cosine
+   * similarity AND nothing matched the query literally. `undefined`
+   * disables abstention. See {@link DEFAULT_ABSTAIN_SIMILARITY}.
+   */
+  abstainBelowSimilarity?: number;
+  /**
+   * Keep only candidates scoring at least `topScore * relevanceRatio`.
+   * `undefined` or `0` disables trimming.
+   */
+  relevanceRatio?: number;
+}
+
+/** Lowercase alphanumeric tokens — shared by gating and expansion. */
+function tokenize(text: string): string[] {
+  return text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
+
+/**
+ * True when any candidate literally contains a query term.
+ *
+ * Guards abstention against its main failure mode: a bullseye exact-term
+ * hit (a rare proper noun, a product name) can score a low cosine when
+ * the embedder barely knows the word. Abstaining there would throw away
+ * a perfect answer, so a literal match always wins over the cosine test.
+ */
+export function hasExactTermMatch(
+  query: string,
+  results: ScoredMemory[],
+): boolean {
+  const terms = tokenize(query).filter((term) => term.length >= 3);
+  if (terms.length === 0) return false;
+  for (const result of results) {
+    const haystack =
+      `${result.node.summary ?? ""} ${result.node.content ?? ""}`.toLowerCase();
+    for (const term of terms) {
+      if (haystack.includes(term)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Decide whether retrieval found anything worth returning at all.
+ *
+ * Conservative by construction — three independent escape hatches, each
+ * of which suppresses abstention:
+ *
+ * - no floor configured, or no results at all → never abstain;
+ * - no candidate carries a semantic score (keyword-only retrieval, or no
+ *   embedding provider) → cannot judge similarity, so never abstain;
+ * - any candidate reaches the cosine floor → clearly relevant, return.
+ *
+ * Only when every candidate is below the floor do we abstain, and even
+ * then a literal term match rescues the result set.
+ *
+ * **Reads `scores.semanticRaw`, never `scores.semantic`.** Convex fusion
+ * (the default mode) min-max-normalizes each leg, so `scores.semantic`
+ * holds a fusion weight whose top candidate is always exactly `1` —
+ * comparing that against an absolute floor can never fail, which made
+ * abstention dead code on the default path. `semanticRaw` carries the
+ * unnormalized cosine on the embedder's own scale. The fallback to
+ * `scores.semantic` is for hand-built results and custom fusion paths
+ * that predate the raw field; those already store a raw value in
+ * `semantic` (see `rrfFuse`).
+ */
+export function shouldAbstain(
+  results: ScoredMemory[],
+  query: string,
+  options: RelevanceGateOptions = {},
+): boolean {
+  const floor = options.abstainBelowSimilarity;
+  if (floor === undefined || results.length === 0) return false;
+
+  const similarities: number[] = [];
+  for (const result of results) {
+    const similarity =
+      result.scores?.semanticRaw ??
+      result.scores?.semantic ??
+      // The CLIP image leg is a genuine relevance signal too: an image
+      // matched by pixels carries a real cosine in ITS space. Without
+      // this, an image surfaced only by the image leg looks like it has
+      // no embedding evidence at all and the gate abstains on it — the
+      // one case where abstention is plainly wrong, because something
+      // DID match.
+      result.scores?.imageLeg;
+    if (typeof similarity === "number") similarities.push(similarity);
+  }
+  // No embedding signal anywhere: cannot judge, so do not abstain.
+  if (similarities.length === 0) return false;
+
+  if (Math.max(...similarities) >= floor) return false;
+  return !hasExactTermMatch(query, results);
+}
+
+/**
+ * Apply abstention and tail trimming to a fused, best-first result list.
+ *
+ * Pure and dependency-free (like {@link fuseResults}) so it can be unit
+ * tested without storage, embeddings, or a MemOS instance.
+ */
+export function applyRelevanceGate(
+  results: ScoredMemory[],
+  query: string,
+  options: RelevanceGateOptions = {},
+): ScoredMemory[] {
+  if (results.length === 0) return results;
+  if (shouldAbstain(results, query, options)) return [];
+
+  const ratio = options.relevanceRatio;
+  if (ratio === undefined || ratio <= 0) return results;
+
+  const top = results[0]!.score;
+  if (top <= 0) return results;
+  const floor = top * ratio;
+  return results.filter((result) => result.score >= floor);
+}
+
+/* ------------------------------------------------------------------ *
+ * Pseudo-relevance feedback (PRF) query expansion
+ *
+ * Open-domain questions are memos' weakest LoCoMo category (hit@10
+ * 0.533). They are phrased with vocabulary the stored memories never
+ * use, so the keyword leg misses and a small embedding model has little
+ * to work with. PRF is the classic LLM-free fix: take the top few
+ * candidates from a first pass on faith, harvest their distinctive
+ * vocabulary, and re-run the query with those terms appended.
+ *
+ * Blindly trusting the first pass is what makes this risky — hence
+ * opt-in via `filter.queryExpansion`, and the two result lists are
+ * RRF-fused so a bad expansion can only dilute, never replace, the
+ * original ranking.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Build an expanded query by harvesting distinctive terms from the top
+ * `maxDocs` candidates of a first retrieval pass.
+ *
+ * Scores terms by DOCUMENT FREQUENCY across the top candidates rather
+ * than raw term frequency, so one long memory cannot dominate the
+ * expansion. Returns `""` when nothing was harvested, which callers
+ * treat as "skip the second pass".
+ */
+export function expandQueryWithPseudoRelevance(
+  query: string,
+  results: ScoredMemory[],
+  options: { maxDocs?: number; maxTerms?: number } = {},
+): string {
+  const maxDocs = options.maxDocs ?? 3;
+  const maxTerms = options.maxTerms ?? 8;
+  if (!query.trim() || results.length === 0) return "";
+
+  const queryTerms = new Set(tokenize(query));
+  const docFrequency = new Map<string, number>();
+
+  for (const result of results.slice(0, maxDocs)) {
+    const text = `${result.node.summary ?? ""} ${result.node.content ?? ""}`;
+    const seenInDoc = new Set<string>();
+    for (const term of tokenize(text)) {
+      if (term.length < 3) continue;
+      if (STOPWORDS.has(term)) continue;
+      if (queryTerms.has(term)) continue;
+      if (seenInDoc.has(term)) continue;
+      seenInDoc.add(term);
+      docFrequency.set(term, (docFrequency.get(term) ?? 0) + 1);
+    }
+  }
+
+  const harvested = [...docFrequency.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, maxTerms)
+    .map(([term]) => term);
+
+  if (harvested.length === 0) return "";
+  return `${query} ${harvested.join(" ")}`;
 }
