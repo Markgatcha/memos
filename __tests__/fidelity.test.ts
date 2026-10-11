@@ -417,7 +417,9 @@ describe("MemOS.recall", () => {
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]!.node.id).toBe(targetId);
     expect(hits[0]!.level).toBe("L1");
-    expect(hits[0]!.escalations).toEqual(["L1"]);
+    // The ledger records the levels LEFT BEHIND, never the level
+    // actually served (the old off-by-one put L1 in its own history).
+    expect(hits[0]!.escalations).toEqual(["L0"]);
     expect(hits[0]!.text).toContain("maximum of 25 connections");
     await memos.close();
   });
@@ -435,9 +437,11 @@ describe("MemOS.recall", () => {
 
   test("no escalation when the starting level already satisfies", async () => {
     const { memos, targetId } = await seed();
-    // "postgres" is in L0 entities -> hit at L0, no escalation.
+    // "postgres" is in L0 entities, and an explicit fidelity:"L0" is
+    // a contract that overrides the escalation floor -> stays at L0.
     const hits = await memos.recall("postgres", {
       fidelity: "L0",
+      minLevel: "L0",
       maxFidelity: "L3",
     });
     expect(hits.length).toBeGreaterThan(0);
@@ -453,10 +457,15 @@ describe("MemOS.recall", () => {
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]!.node.id).toBe(targetId);
     expect(hits[0]!.route).toBeDefined();
+    // The router may START at L0...
     expect(hits[0]!.route!.level).toBe("L0");
-    // Adaptive serves the cheapest sufficient level: L0 text, not verbatim.
-    expect(hits[0]!.level).toBe("L0");
-    expect(hits[0]!.text.length).toBeLessThan(hits[0]!.node.content.length);
+    // ...but the escalation floor (L1) means an adaptive call never
+    // SERVES tag soup as the answer: the caller gets the fact text,
+    // not "tags: database | entities: …".
+    expect(hits[0]!.level).toBe("L1");
+    expect(hits[0]!.text).not.toMatch(/^tags: /);
+    expect(hits[0]!.text).not.toMatch(/\| entities: /);
+    expect(hits[0]!.text).toContain("Postgres connection pool");
     await memos.close();
   });
 

@@ -175,10 +175,25 @@ describe("sessionExpansion", () => {
     return memos;
   }
 
-  test("off by default: no result carries a session score", async () => {
+  test("on by default: the seed's session siblings are injected", async () => {
     const memos = await seed();
     const results = await memos.search({ query: "zebra sighting", limit: 5 });
     expect(results[0].node.content).toBe("zebra sighting at the zoo");
+    const lunch = results.find(
+      (r) => r.node.content === "lunch was sandwiches",
+    );
+    expect(lunch).toBeDefined();
+    expect(lunch?.scores?.session).toBeGreaterThan(0);
+    await memos.close();
+  });
+
+  test("opt-out: sessionExpansion false injects no session scores", async () => {
+    const memos = await seed();
+    const results = await memos.search({
+      query: "zebra sighting",
+      limit: 5,
+      sessionExpansion: false,
+    });
     for (const r of results) {
       expect(r.scores?.session).toBeUndefined();
     }
@@ -242,6 +257,25 @@ describe("graphExpansion", () => {
     );
     expect(linked).toBeDefined();
     expect(linked?.scores?.graph).toBeGreaterThan(0);
+    await memos.close();
+  });
+
+  test("on by default when experimental.graphExpansion is unspecified", async () => {
+    const memos = makeMemos(new MarkerProvider(), {
+      experimental: { semanticSearch: true, namespaces: true },
+    });
+    await memos.init();
+    const seedNode = await memos.store("zebra sighting at the zoo");
+    const linked = await memos.store("zoo map and opening hours");
+    await memos.store("totally unrelated stock prices");
+    await memos.link(seedNode.node.id, linked.node.id);
+
+    const results = await memos.search({ query: "zebra sighting", limit: 5 });
+    const neighbour = results.find(
+      (r) => r.node.content === "zoo map and opening hours",
+    );
+    expect(neighbour).toBeDefined();
+    expect(neighbour?.scores?.graph).toBeGreaterThan(0);
     await memos.close();
   });
 });

@@ -59,6 +59,21 @@ function contents(results: { node: { content: string } }[]): string[] {
   return results.map((r) => r.node.content);
 }
 
+/**
+ * The other default-on recall expansions (`experimental.graphExpansion`
+ * neighbour injection and `experimental.sessionExpansion`) must be
+ * switched OFF for these searches: the two seeded memories auto-link on
+ * the shared entity "controller", so graph injection surfaces the
+ * expansion-only candidate B on its own — which has nothing to do with
+ * PRF. These tests are about PRF gating ALONE, so every other
+ * expansion path is suppressed via the per-query opt-outs. B then
+ * appears in the results if and only if PRF fires.
+ */
+const PRF_ISOLATION = {
+  graphExpansion: false,
+  sessionExpansion: false,
+} as const;
+
 describe("PRF expansion gating (hybridSearch integration)", () => {
   const OLD_ENV = process.env.MEMOS_PRF;
 
@@ -69,7 +84,10 @@ describe("PRF expansion gating (hybridSearch integration)", () => {
 
   test("default off: expansion candidate absent from results", async () => {
     const memos = await makePrfMemos();
-    const results = await memos.search("kubernetes ingress");
+    const results = await memos.search({
+      query: "kubernetes ingress",
+      ...PRF_ISOLATION,
+    });
     const c = contents(results);
     expect(c).toContain("The kubernetes ingress controller");
     // B is in no leg without PRF: no keyword match, zero semantic vector.
@@ -79,7 +97,10 @@ describe("PRF expansion gating (hybridSearch integration)", () => {
 
   test("config opt-in (experimental.prfExpansion): expansion candidate appears", async () => {
     const memos = await makePrfMemos(true);
-    const results = await memos.search("kubernetes ingress");
+    const results = await memos.search({
+      query: "kubernetes ingress",
+      ...PRF_ISOLATION,
+    });
     const c = contents(results);
     expect(c).toContain("The kubernetes ingress controller");
     expect(c).toContain("The controller configuration guide");
@@ -91,7 +112,10 @@ describe("PRF expansion gating (hybridSearch integration)", () => {
   test("env opt-in (MEMOS_PRF=1): expansion candidate appears", async () => {
     process.env.MEMOS_PRF = "1";
     const memos = await makePrfMemos();
-    const results = await memos.search("kubernetes ingress");
+    const results = await memos.search({
+      query: "kubernetes ingress",
+      ...PRF_ISOLATION,
+    });
     expect(contents(results)).toContain("The controller configuration guide");
     await memos.close();
   });
@@ -103,7 +127,10 @@ describe("PRF expansion gating (hybridSearch integration)", () => {
       await memos.store(`kubernetes ingress note ${i}`);
     }
     await memos.flushEmbeddings();
-    const results = await memos.search("kubernetes ingress");
+    const results = await memos.search({
+      query: "kubernetes ingress",
+      ...PRF_ISOLATION,
+    });
     // B would only arrive via expansion; the rich primary leg gates it.
     expect(contents(results)).not.toContain(
       "The controller configuration guide",

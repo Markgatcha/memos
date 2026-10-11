@@ -561,8 +561,10 @@ export interface SearchFilter {
    * value. Multi-hop / multi-evidence answers typically live across many turns
    * of one conversation, so once a single relevant turn is retrieved, pulling
    * its conversation neighbours into the ranking materially raises All-Evidence
-   * Recall. Deterministic, model-free, and OFF by default so single-node
-   * retrieval keeps its exact ordering.
+   * Recall. Deterministic, model-free, and ON by default (override with
+   * `config.experimental.sessionExpansion`); injected siblings are ranked
+   * behind every organically-retrieved result, so head ordering never moves
+   * and only the empty tail is filled.
    */
   sessionExpansion?: boolean;
   /** Timestamp filter (Unix ms): only return memories valid at this time. */
