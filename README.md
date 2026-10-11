@@ -155,6 +155,7 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 | Token-savings telemetry (`memos stats`, `memos_usage`) | ✅ |
 | Claude Code plugin (auto-recall + auto-consolidation hooks) | ✅ |
 | Retrieval regression eval in CI | ✅ |
+| Image memory — captions + CLIP pixel search (`memos image`, `memos_image_*`) | ✅ v1.6.27 |
 | Multi-user isolation | 🔜 v3.0 |
 | Plugin system for custom backends | 🔜 v3.0 |
 | Admin dashboard | 🔜 v4.0 |
@@ -657,6 +658,65 @@ console.log(diag);
 //   storageCapabilities: { peekNode: true, evictLeastImportant: true, ... }
 // }
 ```
+
+### Image memory
+
+Remember images alongside text. An image memory is an ordinary memory whose
+`content` is a **caption**, plus the image bytes in a content-addressed blob
+store next to the database. Identical bytes are stored once.
+
+```ts
+import { MemOS } from "@mem-os/sdk";
+
+const memos = new MemOS({
+  vision: {
+    enabled: true,
+    // Optional: match the PIXELS, not just the caption's wording.
+    clip: { enabled: true },
+  },
+});
+await memos.init();
+
+// Store — path, URL, base64, or raw bytes.
+const { node, image } = await memos.addImageMemory("./diagram.png", {
+  caption: "gateway → auth → orders → postgres, with a retry loop on orders",
+  kind: "diagram",
+  tags: ["arch"],
+});
+
+// Find it by text.
+const hits = await memos.searchImages("the retry-loop diagram");
+
+// Resolve a ref back to bytes (for a vision-capable model).
+const { buffer, mime } = await memos.imageMemory(image.ref);
+```
+
+Two independent tracks:
+
+| Track | What is embedded | What it gives you | Extra download |
+|---|---|---|---|
+| **A — caption (default)** | the caption, by your normal text embedder | keyword + semantic search find the image on every install | none |
+| **B — CLIP (opt-in)** | the image itself, in a separate vector space | matches the **pixels** when the query's wording differs from the caption's | ~350 MB on first use |
+
+Track B degrades to Track A when the model isn't available — it never throws
+and never substitutes a text vector for an image one. CLIP vectors live in
+their own `image_embeddings` table, so the two spaces can never be mixed.
+
+**Context packs carry references, never bytes.** An image item renders as
+`[img:<ref>]` in TOON and as an `images` array in JSON, so a pack stays
+byte-stable for provider prompt caching. The token survives compression and
+every fidelity level, and `memos.imageMemory(ref)` resolves it when a
+vision-capable host needs to actually see the image.
+
+```bash
+memos image add ./diagram.png --caption "deploy topology" --kind diagram
+memos image list
+memos image search "the retry-loop diagram"
+memos image show img_3f9a2b8c1a2b --out ./out.png
+memos image purge          # delete blobs no live node references
+```
+
+MCP tools: `memos_image_add`, `memos_image_search`, `memos_image_recall`.
 
 ### OpenAI adapter
 
