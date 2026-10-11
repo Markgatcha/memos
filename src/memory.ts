@@ -35,6 +35,8 @@ import { createEmbeddingProvider, cosineSimilarity } from "./embeddings.js";
 import { EmbeddingQueue } from "./embedding-queue.js";
 import {
   buildContextPack,
+  derivePackCandidateDepth,
+  derivePackItemLimit,
   estimateTokens,
   searchResultsToToon,
   searchResultsToToonCompact,
@@ -42,12 +44,23 @@ import {
 } from "./context-pack.js";
 import type { ContextPack } from "./context-pack.js";
 import {
+  applyRelevanceGate,
   compareScoredMemories,
+  DEFAULT_ABSTAIN_SIMILARITY,
+  DEFAULT_RELEVANCE_RATIO,
   fuseResults,
   harvestPrfTerms,
   mergeKeywordLegs,
   prfTokenize,
 } from "./retrieval.js";
+import {
+  computeEffectiveImportance,
+  DEFAULT_IMPORTANCE_CONFIG,
+  DEFAULT_IMPORTANCE_RANK_WEIGHT,
+  importanceRankFactor,
+  recencyScore,
+  type ImportanceConfig,
+} from "./importance.js";
 import { scorePairsLocal } from "./rerank-local.js";
 import {
   DEFAULT_GRAPH_EXPANSION_ALPHA,
@@ -68,6 +81,8 @@ import type { DeletionCertificate } from "./proof-of-forgetting.js";
 import { replayAt } from "./time-travel.js";
 import type { NodeSnapshot } from "./time-travel.js";
 import {
+  DEFAULT_MIN_FIDELITY_LEVEL,
+  fidelityLevelSufficient,
   fidelityStats,
   hasFidelityCache,
   levelText,
@@ -89,6 +104,8 @@ import { appendTamperEntry, verifyTamperLog } from "./tamper-log.js";
 import type { TamperVerifyResult } from "./tamper-log.js";
 import type { TamperLogEntry, TamperOp } from "./types.js";
 import type {
+  RelevanceGateConfig,
+  RelevanceGateResult,
   MemoryNode,
   MemoryEdge,
   MemoryPool,
@@ -110,6 +127,8 @@ import type {
   ImportOptions,
   ImportResult,
   ExperimentalConfig,
+  ContextPackCompressionOptions,
+  ContextPackWireFormat,
   EmbeddingProvider,
   EmbeddingRuntimeInfo,
   MemoryType,
@@ -192,6 +211,36 @@ import {
   SemanticScreen,
   semanticEscalationPoints,
 } from "./semantic-screen.js";
+// Vision (image memory). The blob store and the CLIP provider live
+// outside the text pipeline on purpose — see `src/vision/store.ts` and
+// `src/vision/clip.ts` for why the two vector spaces must never mix.
+import {
+  blobRoot,
+  deleteRef,
+  kindFromMime,
+  normalizeImageInput,
+  readImage,
+  resolveRef,
+  writeImage,
+  ImageRejectedError,
+} from "./vision/store.js";
+import { ClipEmbeddingProvider } from "./vision/clip.js";
+import { ClipQueryCache } from "./vision/clip-query-cache.js";
+import type {
+  AddImageMemoryOptions,
+  AddImageMemoryResult,
+  ClipMeta,
+  ClipStatus,
+  EmbedImageProvider,
+  ImageAttachment,
+  ImageInput,
+  ImageKind,
+  ImageMemoryMeta,
+  ImageSearchResult,
+  ImageSource,
+  ListImagesOptions,
+  SearchImagesOptions,
+} from "./types.js";
 
 /**
  * Minimum cosine similarity for a memory to enter the semantic leg of
@@ -200,6 +249,50 @@ import {
  * land far above this floor for any real embedder.
  */
 const SEMANTIC_FUSION_THRESHOLD = 0.05;
+
+/**
+ * In-memory mirror of `SQLiteStorage.buildNamespaceCondition`
+ * (src/storage/sqlite.ts:2648-2675): does a node's namespace satisfy the
+ * filter's namespace constraints?
+ *
+ * The three constraints — exact `namespace`, multi `namespaces` (OR
+ * list), and hierarchical `namespacePrefix` — are OR'd together by the
+ * storage layer, so a node passes when ANY applicable constraint matches
+ * (ANDing them would reject nodes the SQL legs accept). Returns true when
+ * no namespace constraint is set (unscoped searches are untouched).
+ *
+ * Exists so the entity leg of hybrid search, which filters in JS rather
+ * than SQL, evaluates scope identically to the keyword and semantic legs.
+ */
+function namespaceInScope(
+  namespace: string,
+  filter: Pick<SearchFilter, "namespace" | "namespaces" | "namespacePrefix">,
+): boolean {
+  if (
+    filter.namespace === undefined &&
+    filter.namespaces === undefined &&
+    filter.namespacePrefix === undefined
+  ) {
+    return true;
+  }
+  if (filter.namespace !== undefined && namespace === filter.namespace) {
+    return true;
+  }
+  if (
+    filter.namespaces !== undefined &&
+    filter.namespaces.length > 0 &&
+    filter.namespaces.includes(namespace)
+  ) {
+    return true;
+  }
+  if (
+    filter.namespacePrefix !== undefined &&
+    namespace.startsWith(filter.namespacePrefix)
+  ) {
+    return true;
+  }
+  return false;
+}
 
 /** Squash a cross-encoder logit into [0,1] for score display/ordering. */
 function sigmoid(x: number): number {
@@ -466,7 +559,39 @@ export class MemOS {
     { results: ScoredMemory[]; expiry: number }
   > = new Map();
   private searchCacheMaxEntries = 128;
-  private searchCacheTtlMs = 5_000; // 5 seconds
+  private searchCacheTtlMs = 5_000;
+  /**
+   * Vision (image memory) runtime state. All three fields stay inert
+   * until `vision.enabled` is set, so a bare `new MemOS()` pays nothing
+   * and behaves exactly as it did before image memory existed.
+   *
+   * - `blobRoot` is derived once from the db path so every image write
+   *   resolves the same directory.
+   * - `clipProvider` is the Track B encoder (explicit from config, or
+   *   the lazily-loaded default). Null when Track B is off.
+   * - `clipQueryCache` memoizes CLIP query encodings; it is deliberately
+   *   separate from `queryEmbeddingCache` so a CLIP vector can never be
+   *   served to a text-semantic query.
+   */
+  private imageBlobRoot: string | null = null;
+  private clipProvider: EmbedImageProvider | null = null;
+  private clipQueryCache: ClipQueryCache | null = null;
+  /** In-flight image embeds, drained by `flushEmbeddings`. */
+  private pendingImageEmbeds = new Set<Promise<void>>();
+  /**
+   * Idempotency guard for the ranking-modulation chain (effective
+   * importance + triple boost + Ebbinghaus reinforcement).
+   *
+   * `applyRankingModulators` is additive, so running it twice would
+   * double-count. It now lives inside `hybridSearch` (so `contextPack`,
+   * `multiStreamSearch`, and the store-time evidence pass rank like
+   * `search`), while `postSortResults` — the historical owner — is still
+   * reached by `search()` on both the hybrid and the keyword-only path.
+   * `postSortResults` therefore skips the chain when it recognizes the
+   * very objects `applyRankingModulators` produced: `hybridSearch` hands
+   * back that same array, so `results[0]` is still the marked entry.
+   */
+  private readonly rankingModulated = new WeakSet<ScoredMemory>(); // 5 seconds
   /** Warn only once when the rerank endpoint fails (graceful degradation). */
   private rerankFailureWarned = false;
   /**
@@ -556,6 +681,9 @@ export class MemOS {
       embeddings: config.embeddings ?? {},
       embeddingQueue: config.embeddingQueue ?? {},
       fusion: config.fusion ?? {},
+      // Relevance-gate tuning (abstention + tail trimming). Off unless
+      // `relevanceGate.enabled` — see `RelevanceGateConfig`.
+      retrieval: config.retrieval ?? {},
       entityAliases: config.entityAliases,
       enrichMemory: config.enrichMemory,
       summarizeClusterLlm: config.summarizeClusterLlm,
@@ -563,6 +691,10 @@ export class MemOS {
       // ops-friendly fallback. Empty string disables.
       cipherKey: config.cipherKey ?? process.env.MEMOS_KEY ?? "",
       storageOptions: config.storageOptions ?? {},
+      // Vision (image memory). Disabled by default: a bare `new MemOS()`
+      // changes nothing — the new vector table is empty and no new API
+      // surface is wired until this is set.
+      vision: config.vision ?? { enabled: false },
     };
 
     this.experimental = this.config.experimental;
@@ -583,6 +715,11 @@ export class MemOS {
       new SQLiteStorage(this.config.dbPath, this.config.wal, {
         vectorCacheEntries:
           this.config.storageOptions?.vectorCacheEntries ?? 25_000,
+        // Semantic-scan strategy ("exact" default — prefilter bounds the
+        // scan on large corpora at the cost of approximate recall).
+        ...(this.config.storageOptions?.semanticScan
+          ? { semanticScan: this.config.storageOptions.semanticScan }
+          : {}),
         // Only forward the key when set — otherwise the default plaintext
         // driver is used and the optional cipher dependency is never loaded.
         ...(this.config.cipherKey ? { cipherKey: this.config.cipherKey } : {}),
@@ -1221,6 +1358,597 @@ export class MemOS {
     return this.storage.getNode(id);
   }
 
+  // -----------------------------------------------------------------------
+  // Vision — image memories
+  // -----------------------------------------------------------------------
+
+  /**
+   * Store an image as a durable memory.
+   *
+   * An image memory is an ORDINARY memory node plus two side artifacts:
+   * a caption stored as the node's `content` (so every existing text
+   * retrieval path finds it), and the image bytes in a content-addressed
+   * blob store next to the database. The node shape does not change and
+   * no new `MemoryType` member is introduced — `metadata.image` is the
+   * discriminator, exactly like `metadata.context`.
+   *
+   * Because it routes through `storeInner`, the write goes through the
+   * same pipeline as every text memory: retain triage, quarantine
+   * screening, provenance resolution, auto-linking, contradiction scan,
+   * tamper log. That is the difference between ~250 lines and ~800.
+   *
+   * Two embedding tracks, independent of each other:
+   * - **Track A (always on):** the caption is embedded by the normal
+   *   TEXT provider, so the image is found by keyword and text-semantic
+   *   search on every install. Zero extra model downloads.
+   * - **Track B (opt-in via `vision.clip.enabled`):** the image itself
+   *   is encoded by CLIP into a separate vector space, so a query can
+   *   match the PIXELS when its wording differs from the caption's.
+   *   Degrades to Track A when the transformers package is missing —
+   *   it never throws and never substitutes a text vector.
+   *
+   * @param input — A filesystem path, raw bytes, `{ data, mime }`
+   *   (base64), `{ url }`, or a `data:` URL.
+   * @param opts — Caption, kind, tags, and the usual store options.
+   * @returns The created node, its image attachment, and the CLIP status.
+   *
+   * @example
+   * ```ts
+   * const { node, image } = await memos.addImageMemory("./diagram.png", {
+   *   caption: "gateway → auth → orders → postgres, retry loop on orders",
+   *   kind: "diagram",
+   *   tags: ["arch"],
+   * });
+   * ```
+   */
+  async addImageMemory(
+    input: ImageInput,
+    opts: AddImageMemoryOptions = {},
+  ): Promise<AddImageMemoryResult> {
+    this.assertInit();
+    if (!this.config.vision?.enabled) {
+      throw new Error(
+        "image memory is disabled — construct MemOS with vision: { enabled: true }",
+      );
+    }
+
+    const normalized = await normalizeImageInput(input);
+    const maxBytes = this.config.vision.maxImageBytes ?? 5 * 1024 * 1024;
+    if (normalized.bytes.length > maxBytes) {
+      throw new ImageRejectedError(
+        `image is ${normalized.bytes.length} bytes, above the ${maxBytes}-byte limit`,
+        "size",
+      );
+    }
+
+    const root = this.resolveImageBlobRoot();
+    const stored = writeImage(
+      normalized.bytes,
+      normalized.mime,
+      root,
+      maxBytes,
+    );
+
+    // Content-addressed dedupe: identical bytes already stored in this
+    // namespace resolve to the existing node instead of creating a
+    // second copy. A repeated image in a DIFFERENT namespace still gets
+    // its own node — namespaces are an isolation boundary, not a
+    // dedupe boundary.
+    const namespace = opts.scope
+      ? composeScope(opts.scope)
+      : (opts.namespace ?? "default");
+    const existing = await this.findImageNodeByDigest(stored.sha256, namespace);
+    if (existing) {
+      return {
+        node: existing,
+        image: this.imageAttachmentOf(existing) as ImageMemoryMeta,
+        clipStatus: this.clipStatusOf(existing),
+        deduped: true,
+      };
+    }
+
+    const kind = opts.kind ?? kindFromMime(stored.mime);
+    const caption =
+      opts.caption ??
+      `[image] ${kind} ${stored.width || "?"}x${stored.height || "?"}`;
+    const imageMeta: ImageMemoryMeta = {
+      ref: stored.ref,
+      mime: stored.mime,
+      width: stored.width,
+      height: stored.height,
+      kind,
+      caption,
+      sha256: stored.sha256,
+      bytes: stored.bytes,
+      // The blob path is resolved relative to the DB directory, so a
+      // store that is moved as a unit keeps working.
+      path: stored.path,
+      capturedAt: opts.capturedAt ?? Date.now(),
+      source: opts.imageSource ?? "user",
+      captionSource: opts.caption ? "user" : "generated",
+      ...(opts.conversationId ? { conversationId: opts.conversationId } : {}),
+    };
+
+    const { node } = await this.storeInner(
+      caption,
+      {
+        ...opts,
+        type: opts.type ?? "fact",
+        pool: opts.pool ?? "visual",
+        // The `image` tag makes an image memory filterable with the same
+        // tags API as everything else; caller tags are preserved.
+        tags: ["image", ...(opts.tags ?? [])],
+        metadata: { ...(opts.metadata ?? {}), image: imageMeta },
+      },
+      false,
+    );
+
+    // Track B: schedule the CLIP embed on its own path. The text
+    // EmbeddingQueue is storage-agnostic and text-only by contract
+    // (it persists to the `embeddings` table), so routing CLIP through
+    // it would write image vectors into the text space.
+    const clipStatus = this.scheduleImageEmbedding(node, root);
+
+    return { node, image: imageMeta, clipStatus, deduped: false };
+  }
+
+  /**
+   * Resolve an image reference (or node id) to its bytes.
+   *
+   * Takes the REF, not the node id, so a host model that only saw
+   * `[img:…]` in a context pack can resolve it without any other
+   * context. Also accepts a node id for convenience.
+   *
+   * @returns The blob bytes and MIME type, or null when missing.
+   */
+  async imageMemory(
+    refOrId: string,
+  ): Promise<{ buffer: Buffer; mime: string; ref: string } | null> {
+    this.assertInit();
+    if (!this.config.vision?.enabled) {
+      throw new Error(
+        "image memory is disabled — construct MemOS with vision: { enabled: true }",
+      );
+    }
+    let ref = refOrId;
+    if (!ref.startsWith("img_")) {
+      // A node id was passed: look the ref up in its metadata.
+      const node = await this.storage.getNode(refOrId);
+      const image = node ? this.imageAttachmentOf(node) : null;
+      if (!image) return null;
+      ref = image.ref;
+    }
+    const root = this.resolveImageBlobRoot();
+    const path = resolveRef(ref, root);
+    const buffer = readImage(ref, root);
+    if (!buffer || !path) return null;
+    const node = await this.findImageNodeByRef(ref);
+    return {
+      buffer,
+      mime: node
+        ? (this.imageAttachmentOf(node)?.mime ?? "image/png")
+        : "image/png",
+      ref,
+    };
+  }
+
+  /**
+   * Search image memories by text query.
+   *
+   * Runs the caption leg (keyword + text-semantic — the same legs every
+   * other memory uses) and, when Track B is enabled, the CLIP leg, then
+   * fuses them. The CLIP leg is what makes a query match the PIXELS
+   * when its wording shares nothing with the caption.
+   *
+   * Only nodes carrying `metadata.image` are returned.
+   */
+  async searchImages(
+    query: string,
+    opts: SearchImagesOptions = {},
+  ): Promise<ImageSearchResult[]> {
+    this.assertInit();
+    if (!this.config.vision?.enabled) {
+      throw new Error(
+        "image memory is disabled — construct MemOS with vision: { enabled: true }",
+      );
+    }
+    const limit = opts.limit ?? 20;
+    const threshold = opts.threshold ?? 0.15;
+
+    // Caption leg: ordinary search, restricted to image-tagged nodes.
+    const textHits = await this.search({
+      query,
+      limit: Math.max(limit * 2, 20),
+      tags: ["image"],
+      ...(opts.namespace ? { namespace: opts.namespace } : {}),
+      ...(opts.namespaces ? { namespaces: opts.namespaces } : {}),
+      ...(opts.kind ? { metadata: { image: { kind: opts.kind } } } : {}),
+    });
+
+    // CLIP leg: encode the query into the image space and scan
+    // `image_embeddings`. Skipped entirely when Track B is off or the
+    // provider cannot encode text — the caption leg stands alone.
+    let clipHits: ScoredMemory[] = [];
+    const clip = this.resolveClipProvider();
+    if (clip?.embedImageText && this.storage.querySimilarImages) {
+      try {
+        const cache = this.resolveClipQueryCache();
+        const vector = await cache.get(query, clip);
+        if (vector) {
+          clipHits = await this.storage.querySimilarImages(
+            vector,
+            {
+              tags: ["image"],
+              ...(opts.namespace ? { namespace: opts.namespace } : {}),
+              ...(opts.namespaces ? { namespaces: opts.namespaces } : {}),
+            },
+            Math.max(limit * 2, 20),
+            threshold,
+            clip.model,
+          );
+        }
+      } catch {
+        // A CLIP failure must degrade to the caption leg, never fail
+        // the query. Track B is an upgrade, not a requirement.
+        clipHits = [];
+      }
+    }
+
+    // Fuse the two legs by reciprocal rank, then keep image nodes only.
+    const fused = this.fuseImageLegs(textHits, clipHits);
+    const seen = new Set<string>();
+    const results: ImageSearchResult[] = [];
+    for (const hit of fused) {
+      if (seen.has(hit.node.id)) continue;
+      seen.add(hit.node.id);
+      const image = this.imageAttachmentOf(hit.node);
+      if (!image) continue;
+      results.push({ node: hit.node, score: hit.score, image });
+      if (results.length >= limit) break;
+    }
+    return results;
+  }
+
+  /**
+   * All image memories in a namespace, newest first.
+   *
+   * Requires vision to be enabled, so an operator who has not turned
+   * the feature on gets told how rather than an empty list that looks
+   * like "no images stored".
+   */
+  async listImages(opts: ListImagesOptions = {}): Promise<ImageSearchResult[]> {
+    this.assertInit();
+    if (!this.config.vision?.enabled) {
+      throw new Error(
+        "image memory is disabled — construct MemOS with vision: { enabled: true }",
+      );
+    }
+    const nodes = await this.storage.queryNodes({
+      tags: ["image"],
+      ...(opts.namespace ? { namespace: opts.namespace } : {}),
+      limit: opts.limit ?? 100,
+      sortBy: "createdAt",
+      sortOrder: "desc",
+    });
+    const results: ImageSearchResult[] = [];
+    for (const scored of nodes) {
+      const image = this.imageAttachmentOf(scored.node);
+      if (image) {
+        results.push({ node: scored.node, score: scored.score, image });
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Delete an image memory: the node, its blob, and its CLIP vector.
+   * The embedding row cascades with the node (ON DELETE CASCADE).
+   */
+  async deleteImageMemory(nodeId: string): Promise<boolean> {
+    this.assertInit();
+    if (!this.config.vision?.enabled) {
+      throw new Error(
+        "image memory is disabled — construct MemOS with vision: { enabled: true }",
+      );
+    }
+    const node = await this.storage.getNode(nodeId);
+    if (!node) return false;
+    const image = this.imageAttachmentOf(node);
+    if (image) {
+      const root = this.resolveImageBlobRoot();
+      // Only unlink the blob when no OTHER node still references the
+      // same digest — content addressing means two nodes can share one
+      // file, and deleting one must not blind the other.
+      const siblings = await this.countImageNodesByDigest(image.sha256);
+      if (siblings <= 1) deleteRef(image.ref, root);
+    }
+    return this.forget(nodeId);
+  }
+
+  /**
+   * Delete blobs no live node references any more.
+   *
+   * Explicit rather than scheduled: eviction paths (`forgetByDecay`,
+   * `archive`) delete nodes, so their blobs become unreachable garbage
+   * that only an explicit sweep removes.
+   */
+  async purgeOrphanImages(): Promise<number> {
+    this.assertInit();
+    if (!this.config.vision?.enabled) {
+      throw new Error(
+        "image memory is disabled — construct MemOS with vision: { enabled: true }",
+      );
+    }
+    const liveRefs = await this.collectLiveImageRefs();
+    const { purgeOrphanImages } = await import("./vision/store.js");
+    return purgeOrphanImages(this.resolveImageBlobRoot(), liveRefs);
+  }
+
+  // ---- Vision internals -------------------------------------------------
+
+  /**
+   * The CLIP retrieval leg for a hybrid search, or [] when it cannot
+   * contribute.
+   *
+   * Returns an empty list — with zero storage reads — whenever any of
+   * these holds:
+   *  - the query is empty (a structured-only filter search),
+   *  - `vision.clip.enabled` is false (the default),
+   *  - the provider cannot encode text (`embedImageText` missing), or
+   *  - the storage adapter has no `querySimilarImages`.
+   *
+   * That is what makes the leg free for a text-only install: not one
+   * extra query, not one changed byte. When it IS active, the query is
+   * encoded through the dedicated CLIP LRU (never `embedQueryCached`,
+   * whose keys belong to the text provider) and scanned against
+   * `image_embeddings` with the caller's own filter mirrored — so an
+   * image in another namespace can never leak into this scope.
+   *
+   * A CLIP failure degrades to [] rather than propagating: Track B is a
+   * recall upgrade, and losing it must never break a text search.
+   */
+  private async fetchImageLeg(
+    filter: SearchFilter,
+    limit: number,
+  ): Promise<ScoredMemory[]> {
+    const query = filter.query;
+    if (!query) return [];
+    const clip = this.resolveClipProvider();
+    if (!clip?.embedImageText || !this.storage.querySimilarImages) return [];
+    try {
+      const vector = await this.resolveClipQueryCache().get(query, clip);
+      if (!vector) return [];
+      return await this.storage.querySimilarImages(
+        vector,
+        filter,
+        limit,
+        // Same floor rationale as the text semantic leg: unrelated rows
+        // must not vote in fusion or occupy candidate slots.
+        0.05,
+        clip.model,
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  /** Resolve (and memoize) the blob-store root for this instance. */
+  private resolveImageBlobRoot(): string {
+    if (!this.imageBlobRoot) {
+      this.imageBlobRoot =
+        this.config.vision?.storeRoot ?? blobRoot(this.config.dbPath);
+    }
+    return this.imageBlobRoot;
+  }
+
+  /**
+   * Resolve the Track B image encoder.
+   *
+   * Order: an explicitly injected provider, then the lazily-constructed
+   * default. Null whenever Track B is off — which is the common case, so
+   * the default `ClipEmbeddingProvider` is never even allocated.
+   */
+  private resolveClipProvider(): EmbedImageProvider | null {
+    if (this.clipProvider) return this.clipProvider;
+    if (!this.config.vision?.clip?.enabled) return null;
+    this.clipProvider =
+      this.config.vision.clip.embedImage ??
+      new ClipEmbeddingProvider({
+        ...(this.config.vision.clip.model
+          ? { model: this.config.vision.clip.model }
+          : {}),
+        ...(this.config.vision.clip.dimensions
+          ? { dimensions: this.config.vision.clip.dimensions }
+          : {}),
+      });
+    return this.clipProvider;
+  }
+
+  private resolveClipQueryCache(): ClipQueryCache {
+    if (!this.clipQueryCache) {
+      this.clipQueryCache = new ClipQueryCache();
+    }
+    return this.clipQueryCache;
+  }
+
+  /**
+   * The image payload carried by a node, or null when it is not an
+   * image memory. `metadata.image` — not `type`, not a new MemoryType
+   * member — is the discriminator, so MemoryType exhaustiveness stays
+   * intact everywhere (sync allowlist, fidelity labels, adapters, MCP
+   * schema).
+   */
+  private imageAttachmentOf(node: MemoryNode): ImageMemoryMeta | null {
+    const raw = node.metadata?.image;
+    if (!raw || typeof raw !== "object") return null;
+    const image = raw as Partial<ImageMemoryMeta>;
+    if (typeof image.ref !== "string" || typeof image.sha256 !== "string") {
+      return null;
+    }
+    return image as ImageMemoryMeta;
+  }
+
+  /** The CLIP bookkeeping recorded in `metadata.clip`. */
+  private clipMetaOf(node: MemoryNode): ClipMeta | null {
+    const raw = node.metadata?.clip;
+    if (!raw || typeof raw !== "object") return null;
+    return raw as ClipMeta;
+  }
+
+  private clipStatusOf(node: MemoryNode): ClipStatus {
+    return this.clipMetaOf(node)?.status ?? "skipped";
+  }
+
+  /**
+   * Schedule the CLIP embed for a freshly written image node.
+   *
+   * Deliberately NOT routed through `EmbeddingQueue`: that queue's
+   * batch-and-persist contract writes to the TEXT `embeddings` table,
+   * and CLIP vectors belong in `image_embeddings`. This is a small
+   * in-flight set drained by `flushEmbeddings`, with retry-free
+   * fail-soft semantics — a CLIP failure records
+   * `metadata.clip.status = "failed"` and leaves Track A intact.
+   */
+  private scheduleImageEmbedding(node: MemoryNode, root: string): ClipStatus {
+    const clip = this.resolveClipProvider();
+    if (!clip) {
+      return "skipped";
+    }
+    const image = this.imageAttachmentOf(node);
+    if (!image) return "skipped";
+
+    const run = (async (): Promise<void> => {
+      try {
+        const bytes = readImage(image.ref, root);
+        if (!bytes) {
+          this.recordClipStatus(node, "failed", "blob not found");
+          return;
+        }
+        const vector = await clip.embedImage(bytes);
+        if (this.storage.saveImageEmbedding) {
+          await this.storage.saveImageEmbedding(node.id, vector, clip.model);
+        }
+        this.recordClipStatus(node, "ready");
+      } catch (err) {
+        // Record WHY it failed so a degraded install is diagnosable,
+        // and never substitute a text vector.
+        this.recordClipStatus(
+          node,
+          "failed",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    })();
+
+    this.pendingImageEmbeds.add(run);
+    void run.finally(() => this.pendingImageEmbeds.delete(run));
+    return "pending";
+  }
+
+  /** Persist `metadata.clip` on the node. */
+  private recordClipStatus(
+    node: MemoryNode,
+    status: ClipStatus,
+    error?: string,
+  ): void {
+    const meta: ClipMeta = {
+      model: this.resolveClipProvider()?.model ?? "unknown",
+      dims: this.resolveClipProvider()?.dimensions ?? 0,
+      status,
+      updatedAt: Date.now(),
+      ...(error ? { error } : {}),
+    };
+    void this.storage.updateNode(node.id, {
+      metadata: { ...node.metadata, clip: meta },
+    });
+  }
+
+  /** Find an image node with the same content digest in one namespace. */
+  private async findImageNodeByDigest(
+    sha256: string,
+    namespace: string,
+  ): Promise<MemoryNode | null> {
+    const hits = await this.storage.queryNodes({
+      tags: ["image"],
+      namespace,
+      limit: 1,
+      // Newest first so a re-store after several updates resolves to
+      // the current version rather than the original.
+      sortBy: "createdAt",
+      sortOrder: "desc",
+    });
+    for (const scored of hits) {
+      const image = this.imageAttachmentOf(scored.node);
+      if (image?.sha256 === sha256) return scored.node;
+    }
+    return null;
+  }
+
+  /** Find an image node by its blob ref. */
+  private async findImageNodeByRef(ref: string): Promise<MemoryNode | null> {
+    const hits = await this.storage.queryNodes({ tags: ["image"], limit: 200 });
+    for (const scored of hits) {
+      const image = this.imageAttachmentOf(scored.node);
+      if (image?.ref === ref) return scored.node;
+    }
+    return null;
+  }
+
+  /** Count image nodes sharing one digest (blob refcount). */
+  private async countImageNodesByDigest(sha256: string): Promise<number> {
+    const hits = await this.storage.queryNodes({
+      tags: ["image"],
+      limit: 1000,
+    });
+    let count = 0;
+    for (const scored of hits) {
+      if (this.imageAttachmentOf(scored.node)?.sha256 === sha256) count += 1;
+    }
+    return count;
+  }
+
+  /** Every ref referenced by a live image node. */
+  private async collectLiveImageRefs(): Promise<Set<string>> {
+    const hits = await this.storage.queryNodes({
+      tags: ["image"],
+      limit: 100_000,
+    });
+    const refs = new Set<string>();
+    for (const scored of hits) {
+      const image = this.imageAttachmentOf(scored.node);
+      if (image) refs.add(image.ref);
+    }
+    return refs;
+  }
+
+  /**
+   * Fuse the caption leg and the CLIP leg by reciprocal rank.
+   *
+   * RRF rather than score blending: the two legs live in different
+   * vector spaces, so their raw scores are not comparable — only their
+   * RANKS are. An image found by both legs outranks one found by
+   * either alone, which is exactly the intended behaviour.
+   */
+  private fuseImageLegs(
+    textHits: ScoredMemory[],
+    clipHits: ScoredMemory[],
+    k = 60,
+  ): ScoredMemory[] {
+    const scores = new Map<string, { node: MemoryNode; score: number }>();
+    for (const hits of [textHits, clipHits]) {
+      hits.forEach((hit, index) => {
+        const contribution = 1 / (k + index + 1);
+        const existing = scores.get(hit.node.id);
+        if (existing) {
+          existing.score += contribution;
+        } else {
+          scores.set(hit.node.id, { node: hit.node, score: contribution });
+        }
+      });
+    }
+    return [...scores.values()].sort((a, b) => b.score - a.score);
+  }
+
   /**
    * Search memories by text query and/or structured filters.
    *
@@ -1282,7 +2010,7 @@ export class MemOS {
         }
       }
       const results =
-        filter.query && this.embeddingProvider
+        filter.query && this.canRunHybrid(filter)
           ? await this.hybridSearch(filter)
           : await this.storage.queryNodes(filter);
 
@@ -1296,13 +2024,34 @@ export class MemOS {
       return sorted;
     }
 
-    if (filter.query && this.embeddingProvider) {
+    if (filter.query && this.canRunHybrid(filter)) {
       const results = await this.hybridSearch(filter);
       return this.postSortResults(results, filter);
     }
 
     const results = await this.storage.queryNodes(filter);
     return this.postSortResults(results, filter);
+  }
+
+  /**
+   * Whether a text query should take the hybrid (multi-leg) path.
+   *
+   * Historically this was just "is a text embedding provider
+   * configured". The CLIP image leg is a second, INDEPENDENT reason to
+   * fuse: an install with `embeddings.enabled: false` but
+   * `vision.clip.enabled: true` still has a vector leg to run, and
+   * gating on the text provider alone would leave Track B silently
+   * dead on exactly the installs that opted into it.
+   *
+   * Cheap: the check is a boolean on resolved config, not a probe.
+   */
+  private canRunHybrid(filter: SearchFilter): boolean {
+    if (this.embeddingProvider) return true;
+    return (
+      !!filter.query &&
+      !!this.config.vision?.clip?.enabled &&
+      !!this.storage.querySimilarImages
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -1324,9 +2073,18 @@ export class MemOS {
    * plain search. Pass `fidelity: "adaptive"` (or a fixed lower level)
    * to opt into token savings.
    *
+   * Two guards keep an adaptive call answerable:
+   *   - the escalation FLOOR (default L1) — an L0 tag/entity listing
+   *     is a retrieval affordance, not an answer, so it is never the
+   *     terminal level unless the caller explicitly asked for L0;
+   *   - the DECISIVE-TOKEN check — when the query carries a number,
+   *     unit or negation that the served text lacks, escalation
+   *     continues regardless of the IDF coverage score.
+   *
    * @example
    * ```ts
-   * // Entity lookup served at L0 (~tens of tokens instead of verbatim)
+   * // Adaptive never serves tag soup: a factoid starts at L1 and
+   * // escalates to L3 when the decisive token is still missing.
    * const hits = await memos.recall("postgres pool size", {
    *   fidelity: "adaptive",
    *   maxFidelity: "L2",
@@ -1352,9 +2110,35 @@ export class MemOS {
       opts.harness,
     ).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
+    // Effective-importance tie-break, configured only. Exact score ties
+    // in `recall()` resolve by node id today; when the `importance`
+    // block is configured, IRF-weighted effective importance (and then
+    // raw recency) breaks them instead. Unconfigured instances take the
+    // `null` branch and keep the historical id tiebreak exactly.
+    const importanceCfg = this.resolveImportanceRanking();
+    const importanceNow = Date.now();
+    const importanceHalfLife =
+      importanceCfg?.halfLifeDays ?? DEFAULT_IMPORTANCE_CONFIG.halfLifeDays;
+
     // Start low, escalate on demand: re-score the corpus at each level
-    // until enough hits clear the threshold or the ceiling is reached.
+    // until enough hits clear the threshold, the escalation floor is
+    // satisfied, AND every decisive token the query carries is
+    // present in the served text — or the ceiling is reached.
+    //
+    // The floor (default L1) is what stops an L0 tag-soup hit from
+    // being terminal: "postgres pool size" against a node tagged
+    // `postgres` scores 0.23 on IDF coverage, which clears the
+    // threshold, so without the floor the model receives
+    // "tags: postgres | entities: postgres" as the answer and
+    // everything it says is invention.
+    //
+    // The decisive-token leg is what stops a factoid from stopping
+    // early: IDF coverage is term PRESENCE, so "pool = 20" and
+    // "pool was reduced from 40" score identically — only the
+    // literal token check notices which one was actually served.
     const escalations: FidelityRecallResult["escalations"] = [];
+    const floor = opts.minLevel ?? DEFAULT_MIN_FIDELITY_LEVEL;
+    const checkDecisiveTokens = opts.escalateOnMissingDecisiveToken ?? true;
     let level = start;
     let hits: Array<{ node: MemoryNode; score: number }> = [];
     for (;;) {
@@ -1363,11 +2147,50 @@ export class MemOS {
       hits = nodes
         .map((node, i) => ({ node, score: scores[i]! }))
         .filter((h) => h.score >= threshold)
-        .sort((a, b) => b.score - a.score || (a.node.id < b.node.id ? -1 : 1))
+        .sort((a, b) => {
+          if (b.score !== a.score) return b.score - a.score;
+          // Configured only: effective importance, then raw recency,
+          // replace the id tiebreak so a reinforced memory outranks an
+          // identical-scoring untouched one.
+          if (importanceCfg) {
+            const aIRF = importanceRankFactor(
+              computeEffectiveImportance(a.node, importanceNow, importanceCfg),
+              importanceCfg.rankingWeight ?? DEFAULT_IMPORTANCE_RANK_WEIGHT,
+            );
+            const bIRF = importanceRankFactor(
+              computeEffectiveImportance(b.node, importanceNow, importanceCfg),
+              importanceCfg.rankingWeight ?? DEFAULT_IMPORTANCE_RANK_WEIGHT,
+            );
+            if (aIRF !== bIRF) return bIRF - aIRF;
+            const aRecency = recencyScore(
+              a.node,
+              importanceNow,
+              importanceHalfLife,
+            );
+            const bRecency = recencyScore(
+              b.node,
+              importanceNow,
+              importanceHalfLife,
+            );
+            if (aRecency !== bRecency) return bRecency - aRecency;
+          }
+          return a.node.id < b.node.id ? -1 : a.node.id > b.node.id ? 1 : 0;
+        })
         .slice(0, limit);
-      if (hits.length >= minResults || level === max) break;
-      level = nextFidelityLevel(level)!;
+      const sufficient =
+        hits.length >= minResults &&
+        fidelityLevelSufficient(
+          query,
+          level,
+          hits.map((h) => levelText(h.node, level)),
+          {
+            floor,
+            checkDecisiveTokens,
+          },
+        );
+      if (sufficient || level === max) break;
       escalations.push(level);
+      level = nextFidelityLevel(level)!;
     }
 
     return hits.map((h) => ({
@@ -1555,37 +2378,24 @@ export class MemOS {
    * Apply post-query sorting that the storage layer can't do natively
    * (e.g. trustScore when the query went through FTS which always
    * sorts by rank).
+   *
+   * The ranking-modulation chain (triple boost, effective importance,
+   * Ebbinghaus reinforcement) is owned by `hybridSearch` these days —
+   * see {@link applyRankingModulators} — so this method only runs it for
+   * the keyword-only path, where `hybridSearch` is never reached. On the
+   * hybrid path the incoming array is already modulated and is passed
+   * through untouched (the `rankingModulated` WeakSet tells the two
+   * apart).
    */
   private postSortResults(
     results: ScoredMemory[],
     filter: SearchFilter,
   ): ScoredMemory[] {
-    // Experimental: triple-aware retrieval boosting. If triple extraction
-    // is enabled, boost results whose stored triples match the query's
-    // triples (Memori-style write-time structuring).
-    let boosted = results;
-    if (
-      this.config.experimental?.tripleExtraction &&
-      filter.query &&
-      results.length > 0
-    ) {
-      boosted = this.applyTripleBoost(results, filter.query);
-    }
-
-    // Experimental: Ebbinghaus reinforcement (MemoryBank). Blend the
-    // forgetting-curve score as a small additive term.
-    if (this.config.experimental?.ebbinghaus && boosted.length > 0) {
-      const now = Date.now();
-      boosted = boosted
-        .map((r) => ({
-          ...r,
-          score: r.score + EBBINGHAUS_WEIGHT * recallStrength(r.node, now),
-        }))
-        .sort((a, b) => b.score - a.score);
-      // Fire-and-forget: bump access counters for reinforcement.
-      this.bumpAccessCounters(boosted).catch(() => {});
-    }
-
+    const first = results[0];
+    const boosted =
+      first !== undefined && this.rankingModulated.has(first)
+        ? results
+        : this.applyRankingModulators(results, filter);
     if (filter.sortBy === "trustScore") {
       const order = filter.sortOrder ?? "desc";
       const sorted = [...boosted].sort((a, b) =>
@@ -1596,6 +2406,118 @@ export class MemOS {
       return sorted;
     }
     return boosted;
+  }
+
+  /**
+   * The shared ranking-modulation chain: everything that re-ranks a
+   * fused result set AFTER relevance. Runs inside `hybridSearch`'s
+   * post-fusion stages so every caller of the hybrid pipeline —
+   * `search()`, `contextPack()`, `multiStreamSearch()`, the store-time
+   * evidence pass — ranks identically instead of `search()` alone.
+   *
+   * Three independent, individually-gated stages:
+   *
+   *  1. TRIPLE BOOST (`experimental.tripleExtraction`) — ×1.15 when a
+   *     memory's stored triples match the query's triples.
+   *  2. EFFECTIVE IMPORTANCE (`config.importance`, opt-in) — a bounded
+   *     multiplicative factor from `computeEffectiveImportance()`, so
+   *     recency decay and access reinforcement modulate ranking the same
+   *     way they already modulate eviction and archival.
+   *  3. EBBINGHAUS REINFORCEMENT (`experimental.ebbinghaus`) — a small
+   *     additive forgetting-curve term, plus the access-counter bump.
+   *
+   * Every stage is off unless its own config says otherwise, and stage 2
+   * additionally requires the `importance` block to be non-empty — so an
+   * unconfigured instance passes its exact input array through.
+   */
+  private applyRankingModulators(
+    results: ScoredMemory[],
+    filter: SearchFilter,
+  ): ScoredMemory[] {
+    if (results.length === 0) return results;
+
+    let scored = results;
+    let modulated = false;
+
+    // (1) Experimental: triple-aware retrieval boosting. If triple
+    // extraction is enabled, boost results whose stored triples match
+    // the query's triples (Memori-style write-time structuring).
+    if (this.config.experimental?.tripleExtraction && filter.query) {
+      const boosted = this.applyTripleBoost(scored, filter.query);
+      if (boosted !== scored) {
+        scored = boosted;
+        modulated = true;
+      }
+    }
+
+    // (2) Effective importance: recency decay + access reinforcement,
+    // resolved only when the user configured the `importance` block.
+    const importance = this.resolveImportanceRanking();
+    if (importance) {
+      const now = Date.now();
+      const weight = importance.rankingWeight ?? DEFAULT_IMPORTANCE_RANK_WEIGHT;
+      if (weight > 0) {
+        scored = scored
+          .map((r) => {
+            const factor = importanceRankFactor(
+              computeEffectiveImportance(r.node, now, importance),
+              weight,
+            );
+            if (factor === 1) return r;
+            return {
+              ...r,
+              score: r.score * factor,
+              scores: r.scores
+                ? { ...r.scores, hybrid: r.score * factor }
+                : r.scores,
+            };
+          })
+          .sort(compareScoredMemories);
+        modulated = true;
+      }
+    }
+
+    // (3) Experimental: Ebbinghaus reinforcement (MemoryBank). Blend the
+    // forgetting-curve score as a small additive term.
+    if (this.config.experimental?.ebbinghaus) {
+      const now = Date.now();
+      scored = scored
+        .map((r) => ({
+          ...r,
+          score: r.score + EBBINGHAUS_WEIGHT * recallStrength(r.node, now),
+        }))
+        .sort((a, b) => b.score - a.score);
+      // Fire-and-forget: bump access counters for reinforcement.
+      this.bumpAccessCounters(scored).catch(() => {});
+      modulated = true;
+    }
+
+    if (!modulated) return scored;
+    for (const entry of scored) this.rankingModulated.add(entry);
+    return scored;
+  }
+
+  /**
+   * Resolve the effective-importance config for ranking / eviction /
+   * archival, or `null` when the user left it unconfigured.
+   *
+   * The constructor normalises `config.importance` to `{}`, so "unset"
+   * and "explicitly empty" are indistinguishable there — and BOTH must
+   * keep the historical behaviour (raw `node.importance`) exactly, since
+   * this is a published SDK. An object carrying at least one defined
+   * field is therefore the opt-in signal.
+   *
+   * @returns The configured tuning block, or `null` for "use raw importance".
+   */
+  private resolveImportanceRanking(): ImportanceConfig | null {
+    // Widened to the all-optional shape: the resolved config declares
+    // every field as present, but the caller may have passed `{}`.
+    const cfg = this.config.importance as ImportanceConfig | undefined;
+    if (!cfg) return null;
+    for (const value of Object.values(cfg)) {
+      if (value !== undefined) return cfg;
+    }
+    return null;
   }
 
   /**
@@ -2848,7 +3770,35 @@ export class MemOS {
       }
     }
 
-    scored.sort((a, b) => b.score - a.score);
+    // Recency-aware ordering for the no-provider fallback scan.
+    //
+    // Configured only (`importance` non-empty): exact score ties resolve
+    // by effective importance — recency decay plus access reinforcement —
+    // and then by the raw `recencyScore` term, instead of falling through
+    // to the stable sort's insertion order. With the block unset the
+    // comparator reduces to `b.score - a.score`, i.e. byte-identical to
+    // the pre-wiring scan.
+    const importanceCfg = this.resolveImportanceRanking();
+    const recallNow = Date.now();
+    const recallHalfLife =
+      importanceCfg?.halfLifeDays ?? DEFAULT_IMPORTANCE_CONFIG.halfLifeDays;
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (!importanceCfg) return 0;
+      const aIRF = importanceRankFactor(
+        computeEffectiveImportance(a.node, recallNow, importanceCfg),
+        importanceCfg.rankingWeight ?? DEFAULT_IMPORTANCE_RANK_WEIGHT,
+      );
+      const bIRF = importanceRankFactor(
+        computeEffectiveImportance(b.node, recallNow, importanceCfg),
+        importanceCfg.rankingWeight ?? DEFAULT_IMPORTANCE_RANK_WEIGHT,
+      );
+      if (aIRF !== bIRF) return bIRF - aIRF;
+      return (
+        recencyScore(b.node, recallNow, recallHalfLife) -
+        recencyScore(a.node, recallNow, recallHalfLife)
+      );
+    });
     return scored.slice(0, limit);
   }
 
@@ -3203,6 +4153,40 @@ export class MemOS {
      * for the query; a number sets k. Uses the pack's namespace.
      */
     lessons?: boolean | number;
+    /**
+     * Wire format the pack will be serialized to. When set, the token
+     * budget is enforced against what each item actually costs on the
+     * wire for that format — TOON row scaffolding (`id|score|trust|src|
+     * epochDelta|tags|content`, base64url ids, citations) or the JSON
+     * serializer's field names and quotes — instead of a flat
+     * `content + summary + 4` estimate. Without it the item selection is
+     * exactly what it has always been.
+     */
+    wireFormat?: ContextPackWireFormat;
+    /**
+     * Hard ceiling on the token count of the SERIALIZED output. When the
+     * rendered string exceeds it, the lowest-ranked rows are dropped
+     * until it fits. Only meaningful together with a TOON `format`;
+     * ignored for "json" (an object has no length to trim). Omitted by
+     * default, which leaves the rendered bytes untouched.
+     */
+    maxWireTokens?: number;
+    /**
+     * Compression for items that don't fit the budget: an oversized item
+     * is re-rendered through `compressText` and admitted if the
+     * compressed form fits. Defaults to
+     * `experimental.packCompression`; off unless that config enables it,
+     * so default pack contents stay byte-identical.
+     */
+    compression?: ContextPackCompressionOptions;
+    /**
+     * Attach image references to pack items that are image memories.
+     * Default `true` when any candidate item is an image memory (the
+     * attachment is a reference, never bytes, so there is no token cost
+     * to justify an off-by-default); pass `false` to omit them. Bytes
+     * are resolved separately via `memos.imageMemory(ref)`.
+     */
+    images?: boolean;
   }): Promise<ContextPack | string> {
     this.assertInit();
     const scopeFilter = this.resolveScopeFilter({
@@ -3212,16 +4196,17 @@ export class MemOS {
     });
     const namespace =
       scopeFilter.namespace ?? scopeFilter.namespacePrefix ?? "default";
-    const limit =
-      opts.limit ??
-      Math.min(50, Math.max(8, Math.floor(opts.tokenBudget / 80)));
+    const limit = opts.limit ?? derivePackItemLimit(opts.tokenBudget);
     // Always go through the hybrid path so we get a score breakdown,
     // and a wider candidate set so budget trimming has material to work
     // with. Falls back to keyword search when no embedding provider is
     // configured.
     const filter: SearchFilter = {
       query: opts.query,
-      limit: limit * 4,
+      // Candidate depth scales with the (now larger) item limit so a big
+      // budget retrieves a proportionally larger pool before packing,
+      // instead of trimming a pool sized for a 4k window.
+      limit: derivePackCandidateDepth(limit),
       // Forward the pack-level graph-expansion opt-out to the hybrid
       // search's PPR-lite expansion (undefined keeps the default on).
       graphExpansion: opts.graphExpansion,
@@ -3265,6 +4250,8 @@ export class MemOS {
       }
     }
 
+    const packCompression =
+      opts.compression ?? this.experimental.packCompression;
     const pack = buildContextPack({
       query: opts.query,
       namespace,
@@ -3276,6 +4263,11 @@ export class MemOS {
       fidelity: opts.fidelity,
       embeddings,
       citations: opts.citations,
+      // Forward the image toggle explicitly: `undefined` lets the pack
+      // builder default it on when any candidate is an image memory.
+      ...(opts.images !== undefined ? { images: opts.images } : {}),
+      ...(opts.wireFormat ? { wireFormat: opts.wireFormat } : {}),
+      ...(packCompression ? { compression: packCompression } : {}),
       ...(await this.packLessons(opts, namespace)),
     });
     // Telemetry: the naive baseline is what dumping the SAME candidates as
@@ -3289,7 +4281,15 @@ export class MemOS {
     // Serialize in the requested format if not "json"
     if (opts.format && opts.format !== "json") {
       // Guarded above: non-json formats always serialize to a string.
-      const serialized = serializeContextPack(pack, opts.format) as string;
+      // `maxWireTokens` is opt-in: when the caller asks for a hard
+      // ceiling on the rendered bytes, the compact serializer drops the
+      // lowest-ranked rows until the wire form fits it.
+      const serialized = serializeContextPack(
+        pack,
+        opts.format,
+        undefined,
+        opts.maxWireTokens,
+      ) as string;
       this.trackPackUsage(estimateTokens(serialized), naiveBaselineTokens);
       return serialized;
     }
@@ -3991,8 +4991,17 @@ export class MemOS {
    * resolves immediately.
    */
   async flushEmbeddings(): Promise<void> {
-    if (!this.embeddingQueue) return;
-    await this.embeddingQueue.flush();
+    if (this.embeddingQueue) {
+      await this.embeddingQueue.flush();
+    }
+    // Drain the image (CLIP) embeds too. They are a separate in-flight
+    // set because CLIP persists to a different table, but a caller
+    // awaiting "embeddings are done" means BOTH tracks — otherwise a
+    // `searchImages` right after `addImageMemory` would miss the image
+    // leg for the just-written memory.
+    if (this.pendingImageEmbeds.size > 0) {
+      await Promise.allSettled([...this.pendingImageEmbeds]);
+    }
   }
 
   /**
@@ -4165,9 +5174,21 @@ export class MemOS {
     id: string,
     validFrom: number | null,
     validTo: number | null,
+    /** Optional confidence to stamp alongside the validity change. */
+    confidence?: number,
+    /** Optional evidence count to stamp alongside the validity change. */
+    evidenceCount?: number,
   ): Promise<MemoryNode | null> {
     this.assertInit();
-    const node = await this.updateNodeLogged(id, { validFrom, validTo });
+    // Closing the validity interval is how a memory is retracted, and a
+    // retraction is exactly what the confidence machine's "contradicted"
+    // transition expresses: drive confidence to 0 so the fact is actually
+    // demoted at read time instead of keeping its reinforced score and
+    // ranking at ~93% of full weight.
+    const base: Partial<MemoryNode> = { validFrom, validTo };
+    if (confidence !== undefined) base.confidence = confidence;
+    if (evidenceCount !== undefined) base.evidenceCount = evidenceCount;
+    const node = await this.updateNodeLogged(id, base);
     if (node) {
       this.graph.updateNode(node);
       this.emit("validity:changed", { nodeId: id, validFrom, validTo });
@@ -4208,11 +5229,18 @@ export class MemOS {
    *
    * @param id — The memory to supersede.
    * @param replacementId — Optional ID of the new memory that replaces it.
+   * @param confidence — Optional confidence to stamp on the retracted
+   *   node. Supersession is a contradiction: when the evidence state
+   *   machine has already computed the crushed score, pass it here so
+   *   the old version stops outranking its replacement. Omit to leave
+   *   confidence untouched (pure temporal supersession).
    * @returns The superseded (updated) node, or null if not found.
    */
   async supersede(
     id: string,
     replacementId?: string,
+    confidence?: number,
+    evidenceCount?: number,
   ): Promise<MemoryNode | null> {
     this.assertInit();
     const now = Date.now();
@@ -4220,7 +5248,13 @@ export class MemOS {
     const current =
       (await this.storage.peekNode?.(id)) ?? (await this.storage.getNode(id));
     if (!current) return null;
-    const node = await this.setValidity(id, current.validFrom, now);
+    const node = await this.setValidity(
+      id,
+      current.validFrom,
+      now,
+      confidence,
+      evidenceCount,
+    );
     if (node) {
       // Read-time invalidation (add-only): close the validity interval of
       // the superseded node's currently-valid edges instead of deleting
@@ -5003,17 +6037,18 @@ export class MemOS {
       }
       if (!bestNode) return { action: "new" };
 
-      // Reinforce ONLY on a genuine confirmation: pair similarity in the
-      // confirmed band. `classifyEvidence` also returns "confirmed" as
-      // its NEUTRAL fallthrough for unrelated content (similarity < 0.3,
-      // no signal words) — that case must fall through to a normal write.
+      // Reinforce ONLY on a genuine confirmation: the pair sits in the
+      // confirmed band. `classifyEvidence` returns the distinct neutral
+      // outcome "unrelated" for content that compares to nothing, so a
+      // "confirmed" here is by construction a real confirmation — but the
+      // 0.85 gate stays explicit to pin the documented contract.
       const outcome = classifyEvidence(
         bestNode.content,
         content,
         bestPairSimilarity,
       );
       const isGenuineConfirm =
-        bestPairSimilarity >= 0.5 && outcome === "confirmed";
+        bestPairSimilarity >= 0.85 && outcome === "confirmed";
 
       if (isGenuineConfirm) {
         const update = applyEvidence(
@@ -5045,14 +6080,33 @@ export class MemOS {
         outcome === "contradicted" &&
         sharesSubject(bestNode.content, content)
       ) {
+        // Drive the retracted node's confidence through the state machine
+        // so "contradicted" actually reaches applyEvidence's zeroing branch
+        // (the only production caller used to hardcode "confirmed", which
+        // made the whole suppression machinery unreachable). `supersede`
+        // stamps validTo and the replacement edge, and now also persists
+        // confidence 0, so the retracted fact stops ranking at ~93% of a
+        // still-valid one.
+        const update = applyEvidence(
+          bestNode.confidence ?? INITIAL_CONFIDENCE,
+          bestNode.evidenceCount ?? 0,
+          "contradicted",
+        );
         // Mark the old version historical; the new version is written by
         // the caller as a fresh node. `supersede` preserves validFrom
         // and records a temporal_precedes edge.
-        await this.supersede(bestNode.id);
+        await this.supersede(
+          bestNode.id,
+          undefined,
+          update.confidence,
+          update.evidenceCount,
+        );
         this.invalidateSearchCache();
         this.emit("memory:superseded", {
           nodeId: bestNode.id,
           by: content,
+          confidence: update.confidence,
+          evidenceCount: update.evidenceCount,
         });
         return { action: "superseded", nodeId: bestNode.id };
       }
@@ -5394,13 +6448,14 @@ export class MemOS {
       if (!node) continue;
       // Scope parity with the keyword/semantic legs (see `queryNodes` and
       // the semantic-search filter loop).
-      if (filter.namespace && node.namespace !== filter.namespace) continue;
-      if (
-        filter.namespacePrefix &&
-        !node.namespace.startsWith(filter.namespacePrefix)
-      ) {
-        continue;
-      }
+      //
+      // The three namespace constraints are OR'd together by `queryNodes`
+      // (`buildNamespaceCondition` in src/storage/sqlite.ts:2648-2675), so
+      // they must be treated as independent pass conditions here too —
+      // ANDing them would reject a node that any single constraint
+      // accepts. `namespaceInScope` is that predicate verbatim, keeping
+      // this leg and the SQL legs from drifting apart again.
+      if (!namespaceInScope(node.namespace, filter)) continue;
       if (filter.type && node.type !== filter.type) continue;
       if (poolFilter && !poolFilter.includes(node.pool ?? "event")) continue;
       if (filter.tags && filter.tags.some((t) => !node.tags.includes(t))) {
@@ -5433,7 +6488,12 @@ export class MemOS {
 
   private async hybridSearch(
     filter: SearchFilter,
-    opts: { internal?: boolean; queryVector?: number[] } = {},
+    opts: {
+      internal?: boolean;
+      queryVector?: number[];
+      /** Mutable out-param: the relevance gate's outcome for this call. */
+      gateOut?: RelevanceGateResult;
+    } = {},
   ): Promise<ScoredMemory[]> {
     const limit = filter.limit ?? 20;
     const offset = filter.offset ?? 0;
@@ -5444,10 +6504,20 @@ export class MemOS {
     // query but neither leg found.
     // `filter.candidateDepth` widens the pool on demand (two-stage reranking
     // or expansion stages narrow it afterwards).
+    //
+    // When the caller does NOT pin a depth, the floor scales with the
+    // corpus: `limit * 4` (and the flat 20) is plenty for a 30-memory
+    // store but starves recall on a 10k one, where 20 candidates is 0.2%
+    // of the corpus. `this.count` is the in-memory graph size (O(1)), and
+    // the growth is capped so the candidate scan stays bounded.
+    const corpusScaledFloor =
+      filter.candidateDepth === undefined
+        ? Math.min(200, Math.max(20, Math.ceil(this.count / 50)))
+        : 20;
     const candidateLimit = Math.max(
       limit + offset,
       filter.candidateDepth ?? limit * 4,
-      20,
+      corpusScaledFloor,
     );
 
     // ── item2: entity leg ── query entities are extracted once and feed
@@ -5460,7 +6530,10 @@ export class MemOS {
     );
 
     // Run keyword, semantic, and entity retrieval in parallel for lower
-    // latency.
+    // latency. The CLIP image leg is fetched first — it is the only leg
+    // that can be entirely absent, and resolving it before the
+    // Promise.all keeps the three text legs' dispatch unchanged.
+    const imageLeg = await this.fetchImageLeg(filter, candidateLimit);
     const [semanticResults, keywordResults, entityResults] = await Promise.all([
       // Threshold floor: cosine-0 memories are unrelated and must not
       // vote in fusion (nor occupy candidate slots). A small positive
@@ -5540,6 +6613,7 @@ export class MemOS {
         query: filter.query,
       },
       entityResults,
+      imageLeg,
     );
 
     // Retrieval-time trust anomaly (topic-conditioned): memories whose
@@ -5559,6 +6633,9 @@ export class MemOS {
 
     const expanded = await this.applyGraphExpansion(
       resolved,
+      // `undefined` = "resolve the default" (fusion-configured ⇒ off,
+      // `experimental.graphExpansion` if set, otherwise on). The pack
+      // path passes its own resolved config instead.
       undefined,
       filter,
     );
@@ -5569,7 +6646,187 @@ export class MemOS {
       : await this.applyRerank(withSessions, filter);
     const deduped = await this.applySearchDedup(reranked, filter);
 
-    return deduped.slice(offset, offset + limit);
+    // ── Ranking modulation ── effective importance (recency decay +
+    // access reinforcement), triple boost, and Ebbinghaus reinforcement.
+    // Lives HERE rather than only in `postSortResults` so `contextPack()`,
+    // `multiStreamSearch()`, and the store-time evidence pass rank the
+    // same way `search()` does. Idempotent: `postSortResults` recognizes
+    // the marked objects and does not re-run the chain.
+    const modulated = this.applyRankingModulators(deduped, filter);
+
+    // ── Relevance gate (src/retrieval.ts) ── abstention + tail trimming.
+    // The LAST scoring stage, after graph / PPR / session expansion and
+    // the optional rerank, and before pagination — so it can only remove
+    // candidates from the tail, never reorder or re-score the survivors.
+    const gated = this.applyRelevanceGateStage(modulated, filter, opts);
+
+    return gated.results.slice(offset, offset + limit);
+  }
+
+  /**
+   * Search and report the relevance gate's verdict alongside the results.
+   *
+   * Backward-compatible sibling of {@link search}: `search()` keeps
+   * returning a bare `ScoredMemory[]`, and every result still carries the
+   * same `relevanceGate` metadata this method exposes as a first-class
+   * member. Unlike `search()` this method bypasses the result cache, so
+   * the reported verdict always describes the call you just made.
+   *
+   * @example
+   * ```ts
+   * const memos = new MemOS({
+   *   retrieval: { relevanceGate: { enabled: true, abstainSimilarity: 0.3 } },
+   * });
+   * const { results, gate } = await memos.searchWithGate("anything");
+   * if (gate.abstained) {
+   *   // The store has nothing about this query — answer from world
+   *   // knowledge instead of inventing a memory recall.
+   * }
+   * ```
+   */
+  async searchWithGate(
+    queryOrFilter: string | SearchFilter,
+  ): Promise<{ results: ScoredMemory[]; gate: RelevanceGateResult }> {
+    this.assertInit();
+    await this.flushEmbeddings();
+
+    const filter: SearchFilter =
+      typeof queryOrFilter === "string"
+        ? { query: queryOrFilter, limit: 20 }
+        : { limit: 20, ...queryOrFilter };
+
+    // Scope → namespace matching, identical to `search()`.
+    const scopeFilter = this.resolveScopeFilter(filter);
+    if (scopeFilter.namespace !== undefined) {
+      filter.namespace = scopeFilter.namespace;
+    }
+    if (scopeFilter.namespaces !== undefined) {
+      filter.namespaces = scopeFilter.namespaces;
+    }
+    if (scopeFilter.namespacePrefix !== undefined) {
+      filter.namespacePrefix = scopeFilter.namespacePrefix;
+    }
+    if (scopeFilter.includeSharedScope !== undefined) {
+      filter.includeSharedScope = scopeFilter.includeSharedScope;
+    }
+
+    const gate: RelevanceGateResult = {
+      abstained: false,
+      trimmed: false,
+      dropped: 0,
+    };
+    if (filter.query && this.embeddingProvider) {
+      const results = await this.hybridSearch(filter, { gateOut: gate });
+      return { results, gate };
+    }
+    // No hybrid path available: the gate has no semantic signal to judge,
+    // so the verdict stays at its defaults.
+    return {
+      results: this.postSortResults(
+        await this.storage.queryNodes(filter),
+        filter,
+      ),
+      gate,
+    };
+  }
+
+  /**
+   * Resolve the relevance-gate config, or `null` when the gate is off.
+   *
+   * Off means byte-identical output: the stage is skipped entirely and
+   * the pipeline returns exactly what fusion + expansion + rerank
+   * produced. `enabled` defaults to false because this is a published
+   * SDK and an enabled gate changes how many memories a search returns
+   * for the same query. `MEMOS_RELEVANCE_GATE=1` turns it on without a
+   * config change (experiments and A/B runs).
+   */
+  private resolveRelevanceGate(): {
+    ratio: number;
+    abstainSimilarity?: number;
+    minResults: number;
+  } | null {
+    const raw: RelevanceGateConfig | undefined =
+      this.config.retrieval?.relevanceGate;
+    const envEnabled = process.env.MEMOS_RELEVANCE_GATE === "1";
+    const enabled = raw?.enabled ?? envEnabled;
+    if (!enabled) return null;
+    return {
+      ratio: raw?.ratio ?? DEFAULT_RELEVANCE_RATIO,
+      ...(raw?.abstainSimilarity !== undefined
+        ? { abstainSimilarity: raw.abstainSimilarity }
+        : {}),
+      minResults: Math.max(0, Math.floor(raw?.minResults ?? 0)),
+    };
+  }
+
+  /**
+   * Apply the relevance gate to a finished, best-first result list.
+   *
+   * `applyRelevanceGate` (src/retrieval.ts) is pure and already covers
+   * abstention and tail trimming; this wrapper adds the two things the
+   * SDK needs around it:
+   *
+   *  - a `minResults` floor, so a caller that needs N items is never left
+   *    with fewer by an aggressive ratio;
+   *  - reporting — the outcome is written to `opts.gateOut` (when the
+   *    caller wants it, e.g. `searchWithGate`) and stamped onto every
+   *    surviving result as `ScoredMemory.relevanceGate`.
+   *
+   * Only runs when the gate is configured; otherwise the input array is
+   * returned untouched.
+   */
+  private applyRelevanceGateStage(
+    results: ScoredMemory[],
+    filter: SearchFilter,
+    opts: { gateOut?: RelevanceGateResult } = {},
+  ): { results: ScoredMemory[]; gate: RelevanceGateResult } {
+    const gate: RelevanceGateResult = {
+      abstained: false,
+      trimmed: false,
+      dropped: 0,
+    };
+    const cfg = this.resolveRelevanceGate();
+    if (!cfg || results.length === 0 || !filter.query) {
+      return { results, gate };
+    }
+
+    const gated = applyRelevanceGate(results, filter.query, {
+      ...(cfg.abstainSimilarity !== undefined
+        ? { abstainBelowSimilarity: cfg.abstainSimilarity }
+        : {}),
+      ...(cfg.ratio > 0 ? { relevanceRatio: cfg.ratio } : {}),
+    });
+
+    let kept = gated;
+    // Abstention is the only way the gate can return an empty list — the
+    // tail trimmer always keeps the top result.
+    if (kept.length === 0) {
+      gate.abstained = true;
+    } else if (
+      cfg.minResults > 0 &&
+      kept.length < cfg.minResults &&
+      kept.length < results.length
+    ) {
+      kept = results.slice(0, Math.min(cfg.minResults, results.length));
+    }
+
+    gate.dropped = results.length - kept.length;
+    gate.trimmed = gate.dropped > 0;
+
+    if (opts.gateOut) {
+      opts.gateOut.abstained = gate.abstained;
+      opts.gateOut.trimmed = gate.trimmed;
+      opts.gateOut.dropped = gate.dropped;
+    }
+
+    // Stamp the verdict onto every survivor (same object reference, so
+    // this is one allocation per result).
+    return {
+      results: kept.map((r) =>
+        r.relevanceGate === gate ? r : { ...r, relevanceGate: gate },
+      ),
+      gate,
+    };
   }
 
   /**
@@ -5731,20 +6988,52 @@ export class MemOS {
   }
 
   /**
-   * Graph-expansion recall leg (experimental, off by default). Takes the
-   * top `maxSeeds` fused results, follows their graph edges in both
-   * directions, and injects unseen neighbours at `seedScore × scoreFactor`
-   * (halved for each subsequent neighbour of the same seed). Lifts
-   * multi-evidence / multi-hop queries where related facts are connected
-   * by edges but neither retrieval leg surfaces them.
+   * Graph-expansion recall leg. Takes the top `maxSeeds` fused results,
+   * follows their graph edges in both directions, and injects unseen
+   * neighbours at `seedScore × scoreFactor` (halved for each subsequent
+   * neighbour of the same seed). Lifts multi-evidence / multi-hop
+   * queries where related facts are connected by edges but neither
+   * retrieval leg surfaces them.
+   *
+   * An EXPLICIT `config` (passed by `contextPack`, which resolves its
+   * own `graphExpansion` opt-out) is authoritative — it is used as-is.
+   * When `config` is omitted the leg resolves its own default:
+   * `experimental.graphExpansion` when present, otherwise ON, and OFF
+   * when `fusion.graphExpansion` is configured (that flag is the
+   * PPR-leg knob — see `applyPprGraphExpansion` — and when a caller
+   * tunes it the PPR walk owns graph expansion, so this older
+   * injection leg stays out of the way rather than double-injecting
+   * nodes the PPR walk should be reporting on).
+   *
+   * `SearchFilter.graphExpansion` is an opt-OUT here (`false` suppresses
+   * injection for one query, which is how the pack path turns expansion
+   * off); `true` is the PPR leg's business and must not turn injection
+   * on when it is otherwise off.
    */
   private async applyGraphExpansion(
     fused: ScoredMemory[],
-    config: NonNullable<ExperimentalConfig["graphExpansion"]> | undefined = this
-      .experimental.graphExpansion,
+    config?: NonNullable<ExperimentalConfig["graphExpansion"]> | undefined,
     filter: SearchFilter = {},
   ): Promise<ScoredMemory[]> {
-    if (!config?.enabled || fused.length === 0) return fused;
+    if (fused.length === 0) return fused;
+    // An explicitly-passed config wins outright (pack path).
+    if (config === undefined) {
+      const fusionConfigured = this.config.fusion?.graphExpansion !== undefined;
+      config = fusionConfigured
+        ? { enabled: false }
+        : (this.experimental.graphExpansion ?? {
+            enabled: true,
+            maxSeeds: 3,
+            maxAdded: 5,
+            scoreFactor: 0.85,
+          });
+    }
+    if (config.enabled === false) return fused;
+    // The per-query flag is an opt-OUT only: `graphExpansion: false`
+    // suppresses injection for one query (the pack path relies on this
+    // via its forwarded filter), while `true` is the PPR leg's business
+    // and must not turn injection on when it is otherwise off.
+    if (filter.graphExpansion === false) return fused;
 
     const maxSeeds = config.maxSeeds ?? 3;
     const maxAdded = config.maxAdded ?? 5;
@@ -5752,6 +7041,7 @@ export class MemOS {
 
     const present = new Set(fused.map((r) => r.node.id));
     const injected = new Map<string, ScoredMemory>();
+    const now = Date.now();
 
     for (const seed of fused.slice(0, maxSeeds)) {
       if (injected.size >= maxAdded) break;
@@ -5770,9 +7060,13 @@ export class MemOS {
         // stale fact must never appear when defaults hide history.
         const seedHistorical = seed.node.validTo !== null;
         if ((neighbour.validTo !== null) !== seedHistorical) continue;
-        // Provenance-trust: a quarantined neighbour must not ride into
-        // recall along a graph edge — same visibility rule as the legs.
-        if (!quarantineVisible(neighbour.quarantined, filter)) continue;
+        // Graph traversal bypasses the SQL legs' structured filters, so an
+        // injected neighbour must satisfy the same constraints (pool, type,
+        // tags, metadata, importance/trust bounds, temporal windows, and
+        // quarantine) or injection would leak across filter boundaries —
+        // e.g. a procedure-only search surfacing an event-pool neighbour.
+        // Same gate the PPR leg applies (`pprInjectedNodePassesFilter`).
+        if (!this.pprInjectedNodePassesFilter(neighbour, filter, now)) continue;
         present.add(neighbourId);
         injected.set(neighbourId, {
           node: neighbour,
@@ -6107,18 +7401,29 @@ export class MemOS {
   }
 
   /**
-   * Session-sibling expansion (opt-in per search via `filter.sessionExpansion`).
-   * Memories recorded from the same conversation (`metadata.sessionId` /
-   * `metadata.instanceId`) are pulled in behind their seed at a decaying
-   * fraction of the seed score. Multi-hop answers typically span many turns
-   * of one session, so recovering the neighbours of a single relevant turn
-   * raises all-evidence recall without another embedding pass.
+   * Session-sibling expansion. Memories recorded from the same
+   * conversation (`metadata.sessionId` / `metadata.instanceId`) are
+   * pulled in behind their seed at a decaying fraction of the seed
+   * score. Multi-hop answers typically span many turns of one session,
+   * so recovering the neighbours of a single relevant turn raises
+   * all-evidence recall without another embedding pass.
+   *
+   * ON by default (`experimental.sessionExpansion`, default true):
+   * injected siblings sit BEHIND every organically-retrieved result at a
+   * decaying `seed.score * scoreFactor^k`, so the head ordering never
+   * moves and only the empty tail is filled — the injected node is only
+   * ever ranked above nodes that scored below it. An explicit
+   * `filter.sessionExpansion === false` disables it per query.
    */
   private async applySessionExpansion(
     fused: ScoredMemory[],
     filter: SearchFilter,
   ): Promise<ScoredMemory[]> {
-    if (!filter.sessionExpansion || fused.length === 0) return fused;
+    const enabled =
+      filter.sessionExpansion ??
+      this.config.experimental?.sessionExpansion ??
+      true;
+    if (!enabled || fused.length === 0) return fused;
 
     const maxSeeds = 5;
     const maxSiblingsPerSeed = 20;

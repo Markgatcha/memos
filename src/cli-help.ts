@@ -17,6 +17,7 @@ export const CLI_COMMANDS: readonly string[] = [
   "summarize",
   "graph",
   "browse",
+  "image",
   "link",
   "count",
   "tag",
@@ -137,6 +138,26 @@ Mermaid diagram (memos graph --mermaid > graph.mmd).`,
   browse: `memos browse
 
 Interactive terminal browser: search, inspect, and forget memories.`,
+  image: `memos image add <path|url> [--caption <text>] [--kind <kind>] [--tags a,b]
+memos image list [--limit <n>]
+memos image search <query> [--limit <n>]
+memos image show <ref|id> [--out <path>]
+memos image purge
+
+Image memories. Requires --vision (caption track only) or
+--vision-clip (also matches image pixels with CLIP). Both can be set
+permanently in .memos.json under "vision".
+
+add     Store an image. The caption becomes the memory's text, so
+        keyword and semantic search find it like any other memory.
+        --kind sets the taxonomy (photo|screenshot|chart|diagram|
+        memo|meme|other); --tags adds filter tags.
+list    List stored images, newest first.
+search  Find images by query — caption leg always, CLIP pixel leg
+        when --vision-clip is on.
+show    Resolve an [img:...] ref (or a node id) back to its bytes.
+        --out writes them to a file.
+purge   Delete blobs no live node references any more.`,
   link: `memos link <src-id> <dst-id> [--json]
 
 Create an explicit link between two memories.`,

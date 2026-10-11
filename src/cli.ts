@@ -34,8 +34,10 @@ import { isProvenanceTier } from "./provenance.js";
 import { parseRevertCliArgs } from "./revert.js";
 import { listReminders, splitRemindText } from "./event-memory.js";
 import { parseTemporal } from "./temporal.js";
+import { cipherKeyEnvName, loadProjectConfig } from "./project-config.js";
 import type { MemoryPool } from "./types.js";
 import type { CreateMemoryInput, ExportFormat } from "./types.js";
+import type { ImageKind } from "./types.js";
 import type { StorageAdapter } from "./types.js";
 import type { ChildProcess } from "node:child_process";
 import type { SQLiteStorage } from "./storage/sqlite.js";
@@ -102,16 +104,24 @@ function nonFlagArgs(args: string[], startIndex: number): string[] {
  * Returns null when MEMOS_EMBEDDING_PROVIDER is unset so callers fall
  * through to the config file / SDK default.
  */
-function cliEmbeddingsConfig(): EmbeddingConfig | null {
-  const provider = process.env.MEMOS_EMBEDDING_PROVIDER;
+function cliEmbeddingsConfig(project?: {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  dimensions?: number;
+}): EmbeddingConfig | null {
+  const provider = process.env.MEMOS_EMBEDDING_PROVIDER ?? project?.provider;
   if (!provider) return null;
   const dimensions = process.env.MEMOS_EMBEDDING_DIMENSIONS;
+  const dimensionsRaw = process.env.MEMOS_EMBEDDING_DIMENSIONS;
   return {
     provider: provider as EmbeddingProviderKind,
-    model: process.env.MEMOS_EMBEDDING_MODEL,
-    baseUrl: process.env.MEMOS_EMBEDDING_BASE_URL,
+    model: process.env.MEMOS_EMBEDDING_MODEL ?? project?.model,
+    baseUrl: process.env.MEMOS_EMBEDDING_BASE_URL ?? project?.baseUrl,
     apiKey: process.env.MEMOS_EMBEDDING_API_KEY,
-    dimensions: dimensions ? parseInt(dimensions, 10) : undefined,
+    dimensions: dimensionsRaw
+      ? parseInt(dimensionsRaw, 10)
+      : project?.dimensions,
     queryPrefix: process.env.MEMOS_EMBEDDING_QUERY_PREFIX,
     documentPrefix: process.env.MEMOS_EMBEDDING_DOCUMENT_PREFIX,
   };
@@ -754,6 +764,12 @@ Commands:
                           GitHub-renderable Mermaid diagram)
   browse                  Interactive terminal browser (search, inspect,
                           forget memories)
+  image <add|list|search|show|purge>
+                          Image memories (needs --vision, or
+                          --vision-clip to also match pixels): add
+                          <path|url> [--caption <text>] [--kind <kind>]
+                          [--tags a,b]; list; search <query>;
+                          show <ref|id> [--out <path>]; purge
   link <src> <dst>        Link two memories
   count                   Show memory count
   tag <id> <tag> [...]    Add tags to a memory
@@ -850,6 +866,9 @@ Options:
   --output <path>         Output path (export/backup)
   --tag <tag>             Tag filter (export/list)
   --json                  Output as JSON
+  --vision                Enable image memory (caption track)
+  --vision-clip           Also enable CLIP pixel search (~350 MB model on
+                          first use)
 
 Examples:
   memos store "User prefers dark mode" --type preference
@@ -897,7 +916,24 @@ async function main(): Promise<void> {
   // SDK default (~/.memos/memos.db).
   const dbPath = resolveDbPath(cliDbPath);
   const jsonFlag = args.includes("--json");
-  // Encryption key for at-rest-encrypted databases: --key or MEMOS_KEY.
+  // Memory-as-code: nearest .memos.json (walking up) supplies policy
+  // defaults — scope, consolidation knobs, embedding routing, and the
+  // NAME of the env var holding the encryption key.
+  const projectConfig = loadProjectConfig(process.cwd());
+  const projectScope =
+    projectConfig?.scope &&
+    (projectConfig.scope.user || projectConfig.scope.agent)
+      ? {
+          ...(projectConfig.scope.user
+            ? { user: projectConfig.scope.user }
+            : {}),
+          ...(projectConfig.scope.agent
+            ? { agent: projectConfig.scope.agent }
+            : {}),
+        }
+      : undefined;
+  // Encryption key for at-rest-encrypted databases: --key, the project's
+  // cipherKeyEnv, or MEMOS_KEY.
   // encrypt/decrypt are excluded — they perform the conversion itself and
   // must open the source at its CURRENT (pre/post conversion) state.
   const keyFlagIdx = args.indexOf("--key");
@@ -906,7 +942,7 @@ async function main(): Promise<void> {
       ? undefined
       : keyFlagIdx !== -1
         ? args[keyFlagIdx + 1]
-        : process.env.MEMOS_KEY;
+        : process.env[cipherKeyEnvName(projectConfig)];
 
   if (command === "completion") {
     const shell = args[1];
@@ -924,7 +960,7 @@ async function main(): Promise<void> {
 
   if (command === "mcp") {
     const { runMcpServer } = await import("./mcp.js");
-    const embeddings = resolveCliEmbeddingsConfig();
+    const embeddings = cliEmbeddingsConfig(projectConfig?.embeddings);
     await runMcpServer({
       dbPath,
       ...(embeddings ? { embeddings: { ...embeddings, enabled: true } } : {}),
@@ -1111,15 +1147,34 @@ async function main(): Promise<void> {
 
   // Embedding config via environment (same variables the Python server
   // and benchmark scripts accept). Without MEMOS_EMBEDDING_PROVIDER the
-  // SDK default applies: embeddings enabled with the local fastembed
-  // provider (real ONNX embeddings when @huggingface/transformers is
-  // installed, loud local-hash fallback otherwise).
-  const embeddingsConfig = cliEmbeddingsConfig();
+  // CLI runs the default local-hash provider.
+  const embeddingsConfig = cliEmbeddingsConfig(projectConfig?.embeddings);
+  // Vision (image memory) config: `--vision` enables the caption track,
+  // `--vision-clip` additionally enables the CLIP pixel track. Env
+  // fallbacks (MEMOS_VISION=1 / MEMOS_VISION_CLIP=1) let scripts turn it
+  // on without flags. Off by default — a plain `memos` install has no
+  // image surface at all.
+  const visionEnabled =
+    args.includes("--vision") ||
+    process.env.MEMOS_VISION === "1" ||
+    (projectConfig?.vision?.enabled ?? false);
+  const visionClipEnabled =
+    args.includes("--vision-clip") ||
+    process.env.MEMOS_VISION_CLIP === "1" ||
+    (projectConfig?.vision?.clip?.enabled ?? false);
   const memos = new MemOS({
     dbPath,
     ...(cipherKey ? { cipherKey } : {}),
     ...(embeddingsConfig
       ? { embeddings: { ...embeddingsConfig, enabled: true } }
+      : {}),
+    ...(visionEnabled || visionClipEnabled
+      ? {
+          vision: {
+            enabled: true,
+            ...(visionClipEnabled ? { clip: { enabled: true } } : {}),
+          },
+        }
       : {}),
   });
   await memos.init();
@@ -1163,6 +1218,8 @@ async function main(): Promise<void> {
         const scopeIdx = args.indexOf("--scope");
         if (scopeIdx !== -1 && args[scopeIdx + 1]) {
           opts.scope = parseScopeArg(args[scopeIdx + 1]);
+        } else if (projectScope) {
+          opts.scope = projectScope;
         }
         // Free-form scope/namespace (convention: project:<name>,
         // harness:<name>). Explicit --namespace wins over --scope.
@@ -1391,6 +1448,209 @@ async function main(): Promise<void> {
       case "browse": {
         const { runBrowse } = await import("./cli-browse.js");
         await runBrowse(memos);
+        break;
+      }
+
+      case "image": {
+        // Vision (image memory). The subcommand reports plainly how to
+        // turn it on rather than throwing a stack trace at an operator
+        // who has not configured it yet.
+        const sub = args[1];
+        const target = args[2];
+        if (!sub || !["add", "list", "search", "show", "purge"].includes(sub)) {
+          console.error(
+            "Error: image subcommand is required.\n" +
+              "  Usage: memos image add <path|url> [--caption <text>] [--kind <kind>] [--tags a,b]\n" +
+              "         memos image list [--limit <n>]\n" +
+              "         memos image search <query> [--limit <n>]\n" +
+              "         memos image show <ref|id>\n" +
+              "         memos image purge",
+          );
+          process.exit(1);
+        }
+
+        // Fail with instructions, not a stack trace, when vision is off.
+        // Every `image` subcommand needs it (even `list` — it reads
+        // image-tagged nodes, which is harmless but meaningless without
+        // the feature, and the message is more useful than an empty list).
+        try {
+          // A cheap probe: listImages throws only when vision is off.
+          if (sub !== "add") await memos.listImages({ limit: 1 });
+          else
+            await memos.addImageMemory(Buffer.alloc(0), { caption: "probe" });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (/disabled/i.test(message)) {
+            console.error(
+              "Error: image memory is disabled.\n" +
+                "  Enable it with --vision (caption search) or --vision-clip\n" +
+                "  (also matches image pixels with CLIP), or set it in\n" +
+                '  .memos.json: { "vision": { "enabled": true } }',
+            );
+            process.exit(1);
+          }
+          // Any other error from the probe is not a config problem —
+          // fall through and let the real subcommand run.
+        }
+
+        if (sub === "add") {
+          if (!target) {
+            console.error(
+              "Error: image path or URL is required.\n  Usage: memos image add <path|url> [--caption <text>]",
+            );
+            process.exit(1);
+          }
+          const captionIdx = args.indexOf("--caption");
+          const kindIdx = args.indexOf("--kind");
+          const imageTagsIdx = args.indexOf("--tags");
+          const nsIdx = args.indexOf("--namespace");
+          const result = await memos.addImageMemory(target, {
+            ...(captionIdx !== -1 && args[captionIdx + 1]
+              ? { caption: args[captionIdx + 1] }
+              : {}),
+            ...(kindIdx !== -1 && args[kindIdx + 1]
+              ? { kind: args[kindIdx + 1] as ImageKind }
+              : {}),
+            ...(imageTagsIdx !== -1 && args[imageTagsIdx + 1]
+              ? { tags: args[imageTagsIdx + 1].split(",").map((t) => t.trim()) }
+              : {}),
+            ...(nsIdx !== -1 && args[nsIdx + 1]
+              ? { namespace: args[nsIdx + 1] }
+              : {}),
+          });
+          if (jsonFlag) {
+            console.log(JSON.stringify(result, null, 2));
+          } else {
+            const verb = result.deduped ? "already stored" : "stored";
+            console.log(`Image ${verb}: ${result.image.ref}`);
+            console.log(`  Node:  ${result.node.id}`);
+            console.log(
+              `  Kind:  ${result.image.kind}  ${result.image.width}x${result.image.height}`,
+            );
+            console.log(
+              `  Bytes: ${result.image.bytes}  (${result.image.mime})`,
+            );
+            if (result.clipStatus !== "skipped") {
+              console.log(`  CLIP:  ${result.clipStatus}`);
+            }
+          }
+          break;
+        }
+
+        if (sub === "list") {
+          const listLimitIdx = args.indexOf("--limit");
+          const listNsIdx = args.indexOf("--namespace");
+          const images = await memos.listImages({
+            limit:
+              listLimitIdx !== -1 ? parseInt(args[listLimitIdx + 1], 10) : 50,
+            ...(listNsIdx !== -1 && args[listNsIdx + 1]
+              ? { namespace: args[listNsIdx + 1] }
+              : {}),
+          });
+          if (jsonFlag) {
+            console.log(JSON.stringify(images, null, 2));
+          } else if (images.length === 0) {
+            console.log("No images stored.");
+          } else {
+            console.log(`${images.length} image(s):\n`);
+            for (const hit of images) {
+              console.log(
+                `  ${hit.image.ref}  [${hit.image.kind}]  ${hit.image.width}x${hit.image.height}`,
+              );
+              console.log(`    ${hit.image.caption}`);
+              console.log(`    Node: ${hit.node.id}`);
+            }
+          }
+          break;
+        }
+
+        if (sub === "search") {
+          if (!target) {
+            console.error(
+              "Error: query is required.\n  Usage: memos image search <query> [--limit <n>]",
+            );
+            process.exit(1);
+          }
+          const searchLimitIdx = args.indexOf("--limit");
+          const searchNsIdx = args.indexOf("--namespace");
+          const hits = await memos.searchImages(target, {
+            limit:
+              searchLimitIdx !== -1
+                ? parseInt(args[searchLimitIdx + 1], 10)
+                : 10,
+            ...(searchNsIdx !== -1 && args[searchNsIdx + 1]
+              ? { namespace: args[searchNsIdx + 1] }
+              : {}),
+          });
+          if (jsonFlag) {
+            console.log(JSON.stringify(hits, null, 2));
+          } else if (hits.length === 0) {
+            console.log("No matching images found.");
+          } else {
+            console.log(`Found ${hits.length} image(s):\n`);
+            for (const hit of hits) {
+              console.log(
+                `  ${hit.image.ref}  [${hit.image.kind}]  score ${hit.score.toFixed(3)}`,
+              );
+              console.log(`    ${hit.image.caption}`);
+              console.log(`    Node: ${hit.node.id}`);
+            }
+          }
+          break;
+        }
+
+        if (sub === "show") {
+          if (!target) {
+            console.error(
+              "Error: image ref or node id is required.\n  Usage: memos image show <ref|id>",
+            );
+            process.exit(1);
+          }
+          const resolved = await memos.imageMemory(target);
+          if (!resolved) {
+            console.error(`Image not found: ${target}`);
+            process.exit(1);
+          }
+          // Write the bytes somewhere the user can open them: stdout
+          // would corrupt the terminal for anything non-textual.
+          const outIdx = args.indexOf("--out");
+          const outPath = outIdx !== -1 ? args[outIdx + 1] : undefined;
+          if (outPath) {
+            const { writeFile } = await import("node:fs/promises");
+            await writeFile(outPath, resolved.buffer);
+            console.log(`Wrote ${resolved.buffer.length} bytes to ${outPath}`);
+          } else if (jsonFlag) {
+            console.log(
+              JSON.stringify(
+                {
+                  ref: resolved.ref,
+                  mime: resolved.mime,
+                  bytes: resolved.buffer.length,
+                },
+                null,
+                2,
+              ),
+            );
+          } else {
+            console.log(
+              `${resolved.ref}  (${resolved.mime}, ${resolved.buffer.length} bytes)`,
+            );
+            console.log("  Use --out <path> to write the bytes to a file.");
+          }
+          break;
+        }
+
+        // sub === "purge"
+        const purged = await memos.purgeOrphanImages();
+        if (jsonFlag) {
+          console.log(JSON.stringify({ purged }, null, 2));
+        } else {
+          console.log(
+            purged === 0
+              ? "No orphaned image blobs."
+              : `Purged ${purged} orphaned image blob(s).`,
+          );
+        }
         break;
       }
 
@@ -1849,11 +2109,27 @@ async function main(): Promise<void> {
           }
         }
 
+        // Consolidation defaults come from .memos.json; an explicit CLI
+        // flag still wins (each spread below is guarded by `=== undefined`).
+        const projectConsolidation = projectConfig?.consolidation;
+
         const result = await memos.consolidate({
           ...(namespace ? { namespace } : {}),
           dryRun,
           summarize,
           decay,
+          ...(projectConsolidation?.minRetentionScore !== undefined &&
+          minRetentionScore === undefined
+            ? { minRetentionScore: projectConsolidation.minRetentionScore }
+            : {}),
+          ...(projectConsolidation?.decayHalfLifeDays !== undefined &&
+          decayHalfLifeDays === undefined
+            ? { decayHalfLifeDays: projectConsolidation.decayHalfLifeDays }
+            : {}),
+          ...(projectConsolidation?.olderThanDays !== undefined &&
+          olderThanDays === undefined
+            ? { olderThanDays: projectConsolidation.olderThanDays }
+            : {}),
           ...(decayHalfLifeDays !== undefined &&
           !Number.isNaN(decayHalfLifeDays)
             ? { decayHalfLifeDays }
@@ -2456,7 +2732,7 @@ async function main(): Promise<void> {
         }
 
         // 4. Provider probe — embed one query and report what actually loaded.
-        const embeddings = cliEmbeddingsConfig();
+        const embeddings = cliEmbeddingsConfig(projectConfig?.embeddings);
         if (embeddings?.provider && embeddings.baseUrl) {
           const started = Date.now();
           try {

@@ -131,7 +131,7 @@ const scopeInputSchema = z
 // tool here gets all four hints set explicitly — otherwise pure reads like
 // memos_search would still trigger an approval prompt.
 //
-// All 21 tools operate on the local MemOS database only; nothing reaches
+// All tools operate on the local MemOS database only; nothing reaches
 // outside it, so openWorldHint is false everywhere.
 // ---------------------------------------------------------------------------
 
@@ -194,6 +194,17 @@ export const TOOL_ANNOTATIONS: Record<string, McpToolAnnotations> = {
   // Marks a memory historical (add-only; never deletes).
   memos_supersede: ANNOTATE_WRITE,
   memos_set_trust: ANNOTATE_WRITE,
+  // Image memory: `add` writes a node plus a blob (content-addressed,
+  // so re-storing identical bytes is a no-op → idempotent);
+  // `recall`/`search` are pure reads.
+  memos_image_add: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  memos_image_recall: ANNOTATE_READ,
+  memos_image_search: ANNOTATE_READ,
   // Pure read by default, but autoStore=true writes — so not read-only.
   memos_extract_facts: ANNOTATE_WRITE,
   memos_diagnostics: ANNOTATE_READ,
@@ -1293,6 +1304,272 @@ function registerTools(server: McpServer, memos: MemOS): void {
       };
     },
   );
+
+  // ---- Image memory (vision) -------------------------------------------
+  //
+  // Three tools mirroring the CLI's `image` subcommands. They are
+  // always registered (so the tool list is stable) but fail soft with a
+  // plain message when vision is disabled, rather than vanishing from
+  // the surface — an agent that sees the tool knows it exists and how
+  // to turn it on.
+
+  server.registerTool(
+    "memos_image_add",
+    {
+      title: "Store Image Memory",
+      annotations: TOOL_ANNOTATIONS.memos_image_add,
+      description:
+        "Store an image as a durable memory. The image is written to a " +
+        "content-addressed blob next to the database (identical bytes " +
+        "are stored once) and a caption becomes the memory's text, so " +
+        "ordinary search and context packs find it. Requires the MemOS " +
+        "instance to be constructed with vision: { enabled: true }. " +
+        "Pass `data` as base64 plus `mime`, or `path`/`url` to fetch. " +
+        "Use a DESCRIPTIVE caption: it is what text retrieval matches, " +
+        "and with CLIP disabled (the default) it is the only way the " +
+        "image is found.",
+      inputSchema: z.object({
+        path: z
+          .string()
+          .optional()
+          .describe("Filesystem path to the image (or a data: URL)."),
+        url: z
+          .string()
+          .optional()
+          .describe("http(s)/file URL to fetch the image from."),
+        data: z
+          .string()
+          .optional()
+          .describe("Base64-encoded image bytes (with `mime`)."),
+        mime: z
+          .string()
+          .optional()
+          .describe("MIME type for `data` (e.g. image/png)."),
+        caption: z
+          .string()
+          .optional()
+          .describe(
+            "What the image shows. Be specific — this is the searchable text.",
+          ),
+        kind: z
+          .enum([
+            "photo",
+            "screenshot",
+            "chart",
+            "diagram",
+            "memo",
+            "meme",
+            "other",
+          ])
+          .optional()
+          .describe("Coarse taxonomy. Defaults from the image format."),
+        tags: z.array(z.string()).optional().describe("Optional filter tags."),
+        namespace: z.string().optional().describe("Target namespace."),
+        conversationId: z
+          .string()
+          .optional()
+          .describe("Conversation this image was shared in."),
+      }),
+      outputSchema: z.object({
+        node: memoryNodeSchema,
+        ref: z.string(),
+        kind: z.string(),
+        width: z.number(),
+        height: z.number(),
+        bytes: z.number(),
+        mime: z.string(),
+        clipStatus: z.string(),
+        deduped: z.boolean(),
+      }),
+    },
+    async ({
+      path,
+      url,
+      data,
+      mime,
+      caption,
+      kind,
+      tags,
+      namespace,
+      conversationId,
+    }) => {
+      const input =
+        data !== undefined
+          ? { data, mime: mime ?? "image/png" }
+          : url !== undefined
+            ? { url }
+            : path;
+      if (input === undefined) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Provide `path`, `url`, or `data`+`mime`.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      try {
+        const result = await memos.addImageMemory(input, {
+          ...(caption !== undefined ? { caption } : {}),
+          ...(kind !== undefined ? { kind } : {}),
+          ...(tags ? { tags } : {}),
+          ...(namespace !== undefined ? { namespace } : {}),
+          ...(conversationId !== undefined ? { conversationId } : {}),
+        });
+        const text = result.deduped
+          ? `Image already stored: ${result.image.ref} (node ${result.node.id})`
+          : `Stored image ${result.image.ref} ` +
+            `(${result.image.kind}, ${result.image.width}x${result.image.height}, ` +
+            `${result.image.bytes} bytes) as node ${result.node.id}.` +
+            (result.clipStatus !== "skipped"
+              ? ` CLIP: ${result.clipStatus}.`
+              : "");
+        return {
+          content: [{ type: "text" as const, text }],
+          structuredContent: {
+            node: result.node as unknown as Record<string, unknown>,
+            ref: result.image.ref,
+            kind: result.image.kind,
+            width: result.image.width,
+            height: result.image.height,
+            bytes: result.image.bytes,
+            mime: result.image.mime,
+            clipStatus: result.clipStatus,
+            deduped: result.deduped,
+          },
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [
+            { type: "text" as const, text: `Image store failed: ${message}` },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "memos_image_recall",
+    {
+      title: "Resolve Image",
+      annotations: TOOL_ANNOTATIONS.memos_image_recall,
+      description:
+        "Resolve an image reference (the `[img:...]` token a context pack " +
+        "carries, or a memory node id) back to its bytes. Returns the " +
+        "blob as base64 plus its MIME type so a vision-capable host can " +
+        "actually see the image. The bytes are NEVER inlined into a " +
+        "context pack — call this when you need them.",
+      inputSchema: z.object({
+        ref: z
+          .string()
+          .describe("Image ref (`img_<sha256[0:12]>`) or a node id."),
+      }),
+      outputSchema: z.object({
+        ref: z.string(),
+        mime: z.string(),
+        bytes: z.number(),
+        data: z.string(),
+      }),
+    },
+    async ({ ref }) => {
+      const resolved = await memos.imageMemory(ref);
+      if (!resolved) {
+        return {
+          content: [{ type: "text" as const, text: `Image not found: ${ref}` }],
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${resolved.ref} — ${resolved.mime}, ${resolved.buffer.length} bytes`,
+          },
+        ],
+        structuredContent: {
+          ref: resolved.ref,
+          mime: resolved.mime,
+          bytes: resolved.buffer.length,
+          data: resolved.buffer.toString("base64"),
+        },
+      };
+    },
+  );
+
+  server.registerTool(
+    "memos_image_search",
+    {
+      title: "Search Images",
+      annotations: TOOL_ANNOTATIONS.memos_image_search,
+      description:
+        "Search stored images by text query. The caption leg (keyword + " +
+        "semantic) always runs; the CLIP pixel leg runs only when the " +
+        "instance was constructed with vision.clip.enabled, and is what " +
+        "finds an image whose caption shares no vocabulary with the " +
+        "query. Returns refs — resolve them with memos_image_recall.",
+      inputSchema: z.object({
+        query: z.string().describe("What to look for."),
+        limit: z.number().optional().describe("Maximum result count."),
+        namespace: z.string().optional().describe("Namespace filter."),
+        kind: z
+          .enum([
+            "photo",
+            "screenshot",
+            "chart",
+            "diagram",
+            "memo",
+            "meme",
+            "other",
+          ])
+          .optional()
+          .describe("Restrict to one image kind."),
+      }),
+      outputSchema: z.object({
+        results: z.array(
+          z.object({
+            id: z.string(),
+            ref: z.string(),
+            kind: z.string(),
+            width: z.number(),
+            height: z.number(),
+            caption: z.string(),
+            score: z.number(),
+          }),
+        ),
+      }),
+    },
+    async ({ query, limit, namespace, kind }) => {
+      const hits = await memos.searchImages(query, {
+        limit: limit ?? 10,
+        ...(namespace !== undefined ? { namespace } : {}),
+        ...(kind !== undefined ? { kind } : {}),
+      });
+      const results = hits.map((hit) => ({
+        id: hit.node.id,
+        ref: hit.image.ref,
+        kind: hit.image.kind,
+        width: hit.image.width,
+        height: hit.image.height,
+        caption: hit.image.caption,
+        score: Number(hit.score.toFixed(4)),
+      }));
+      const text =
+        results.length === 0
+          ? "No matching images found."
+          : `${results.length} image(s):\n` +
+            results
+              .map((r) => `• ${r.ref} [${r.kind}] (${r.score}) — ${r.caption}`)
+              .join("\n");
+      return {
+        content: [{ type: "text" as const, text }],
+        structuredContent: { results },
+      };
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1499,7 +1776,10 @@ export function createMcpServer(memos: MemOS): McpServer {
         "prior sessions. memos_search finds raw results; " +
         "memos_context_pack returns a token-budgeted slice ready for " +
         "prompt injection. Superseded facts stay queryable via " +
-        "memos_search_temporal. All data stays on this machine.",
+        "memos_search_temporal. Images: memos_image_add stores one with a " +
+        "caption (be specific — the caption is what text search matches), " +
+        "memos_image_search finds them, memos_image_recall resolves an " +
+        "[img:...] ref to bytes. All data stays on this machine.",
       cacheHints: {
         "tools/list": { ttlMs: 300_000, cacheScope: "private" },
         "server/discover": { ttlMs: 600_000, cacheScope: "private" },
@@ -1929,12 +2209,119 @@ const TOOL_METADATA: McpToolInfo[] = [
       z.object({ reminders: z.unknown() }),
     ) as Record<string, unknown>,
   },
+  {
+    name: "memos_image_add",
+    annotations: TOOL_ANNOTATIONS.memos_image_add,
+    description:
+      "Store an image as a durable memory. The image is written to a " +
+      "content-addressed blob next to the database and a caption becomes " +
+      "the memory's text. Requires vision: { enabled: true }.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        path: z.string().optional(),
+        url: z.string().optional(),
+        data: z.string().optional(),
+        mime: z.string().optional(),
+        caption: z.string().optional(),
+        kind: z
+          .enum([
+            "photo",
+            "screenshot",
+            "chart",
+            "diagram",
+            "memo",
+            "meme",
+            "other",
+          ])
+          .optional(),
+        tags: z.array(z.string()).optional(),
+        namespace: z.string().optional(),
+        conversationId: z.string().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({
+        node: z.unknown(),
+        ref: z.string(),
+        kind: z.string(),
+        width: z.number(),
+        height: z.number(),
+        bytes: z.number(),
+        mime: z.string(),
+        clipStatus: z.string(),
+        deduped: z.boolean(),
+      }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_image_recall",
+    annotations: TOOL_ANNOTATIONS.memos_image_recall,
+    description:
+      "Resolve an [img:...] ref (or a node id) back to its bytes, as " +
+      "base64 plus MIME type.",
+    inputSchema: z.toJSONSchema(z.object({ ref: z.string() })) as Record<
+      string,
+      unknown
+    >,
+    outputSchema: z.toJSONSchema(
+      z.object({
+        ref: z.string(),
+        mime: z.string(),
+        bytes: z.number(),
+        data: z.string(),
+      }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_image_search",
+    annotations: TOOL_ANNOTATIONS.memos_image_search,
+    description:
+      "Search stored images by text query. Caption leg always; CLIP " +
+      "pixel leg only when vision.clip.enabled.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        query: z.string(),
+        limit: z.number().optional(),
+        namespace: z.string().optional(),
+        kind: z
+          .enum([
+            "photo",
+            "screenshot",
+            "chart",
+            "diagram",
+            "memo",
+            "meme",
+            "other",
+          ])
+          .optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({
+        results: z.array(
+          z.object({
+            id: z.string(),
+            ref: z.string(),
+            kind: z.string(),
+            width: z.number(),
+            height: z.number(),
+            caption: z.string(),
+            score: z.number(),
+          }),
+        ),
+      }),
+    ) as Record<string, unknown>,
+  },
 ];
 
 /**
  * Return static metadata about the MCP tools exposed by MemOS.
  * Useful for programmatic consumers and tests that need tool definitions
  * without spinning up a live server connection.
+ *
+ * Kept in the SAME ORDER as the live `registerTools` registrations —
+ * the annotations test asserts the two surfaces match exactly, so a
+ * reorder here must be mirrored there.
  */
 export function getMcpTools(): readonly McpToolInfo[] {
   return TOOL_METADATA;

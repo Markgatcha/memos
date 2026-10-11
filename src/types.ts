@@ -8,6 +8,10 @@
  * @module @memos/types
  */
 
+// Type-only import: `compression.ts` is a pure string module with no
+// imports of its own, so this cannot create a module cycle.
+import type { CompressionLevel } from "./compression.js";
+
 // Type-only import: `ImportanceConfig` is defined in `src/importance.ts`,
 // which itself imports `MemoryNode` from this file. Type-only circular
 // imports are erased at compile time, so there is no runtime cycle.
@@ -85,10 +89,13 @@ export type ProvenanceTier =
  * - `note`       — distilled summaries produced by consolidation
  *                  (`summarizeCluster` writes here).
  * - `procedure`  — workflow/procedural knowledge ("how to" steps).
+ * - `visual`     — image memories (the node is `type: "fact"` with
+ *                  `metadata.image` present); multi-stream packs search
+ *                  this as a dedicated stream.
  * Pools are queryable via `SearchFilter.pool` and searched as separate
  * streams by multi-stream context packs.
  */
-export type MemoryPool = "event" | "note" | "procedure";
+export type MemoryPool = "event" | "note" | "procedure" | "visual";
 
 /**
  * Typed multi-scope keys for isolating memories per user, agent, and run.
@@ -670,10 +677,23 @@ export interface ScoredMemory {
    * and `entityLeg` the matched-entity count from the entity-inverted-index
    * RRF leg (recall signal, distinct from the `entity` scoring boost),
    * and `provenance` the per-tier trust multiplier from the
-   * provenance-trust layer. */
+   * provenance-trust layer.
+   *
+   * `semantic` vs `semanticRaw`: `semantic` is the leg's MIN-MAX
+   * NORMALIZED contribution used for fusion — its top candidate is
+   * always exactly `1`, so it is a fusion weight and never an absolute
+   * similarity. `semanticRaw` carries the raw embedding cosine on the
+   * embedder's own scale, which is the only form that can be compared
+   * against an absolute floor such as the abstention threshold in
+   * `shouldAbstain`. Consumers fall back to `semantic` when
+   * `semanticRaw` is absent (hand-built results, custom fusion paths).
+   */
   scores?: {
     keyword?: number;
+    /** Normalized semantic-leg contribution (fusion weight, 0..1). */
     semantic?: number;
+    /** Raw embedding cosine (absolute similarity, embedder scale). */
+    semanticRaw?: number;
     hybrid?: number;
     graph?: number;
     ppr?: number;
@@ -688,6 +708,14 @@ export interface ScoredMemory {
     contradiction_demoted?: number;
     entityLeg?: number;
     /**
+     * Raw CLIP cosine from the image-memory leg (`image_embeddings`,
+     * scanned by `querySimilarImages`). Present only when Track B is
+     * enabled and the leg actually retrieved this candidate — an absent
+     * value means the image leg did not surface it, exactly like
+     * `entityLeg`.
+     */
+    imageLeg?: number;
+    /**
      * Present when provenance-trust weighting ran: the per-tier trust
      * multiplier applied (`1 - strength * (1 - tierTrust)` — see
      * `provenanceMultiplier` in src/provenance.ts).
@@ -701,6 +729,17 @@ export interface ScoredMemory {
      */
     retrievalAnomaly?: number;
   };
+  /**
+   * Relevance-gate outcome (see `RelevanceGateConfig` /
+   * `applyRelevanceGate`). Present on every result only when the gate is
+   * enabled (`retrieval.relevanceGate.enabled`, or `MEMOS_RELEVANCE_GATE=1`)
+   * — an absent field means the gate never ran, so the list is exactly
+   * what the pre-gate pipeline produced.
+   *
+   * `abstained` is `false` on every kept result: abstention empties the
+   * result list rather than marking survivors.
+   */
+  relevanceGate?: RelevanceGateResult;
 }
 
 /**
@@ -921,6 +960,15 @@ export interface EmbeddingProvider {
    * input type here (e.g. Cohere `search_document`).
    */
   embedDocuments?(texts: string[]): Promise<EmbeddingVector[]>;
+  /**
+   * Optional image encoder. Text and CLIP vectors live in different
+   * vector spaces (and different tables), so this is an OPTIONAL extra
+   * capability, never the provider's primary contract — a text provider
+   * that also encodes images can satisfy both interfaces, and the
+   * image-embedding path must never be handed to the text embedding
+   * queue. See {@link EmbedImageProvider} for the dedicated contract.
+   */
+  embedImage?(image: Buffer | string): Promise<EmbeddingVector>;
 }
 
 export type EmbeddingProviderKind =
@@ -1254,6 +1302,56 @@ export interface StorageAdapter {
   /** Delete all embedding rows stored by the given model. Returns the count. */
   deleteEmbeddingsByModel?(model: string): Promise<number>;
 
+  // -------------------------------------------------------------------------
+  // Vision (image memory) — all optional; adapters that omit them fail soft
+  // to caption-only (Track A) image memories.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Persist a CLIP image vector for a node, in the SEPARATE
+   * `image_embeddings` space. Never mixed with text `embeddings`:
+   * cosine similarity across the two spaces is meaningless.
+   */
+  saveImageEmbedding?(
+    nodeId: string,
+    vector: EmbeddingVector,
+    model: string,
+  ): Promise<void>;
+
+  /** Every stored image vector (node id + vector + model), for reindex/audit. */
+  getAllImageEmbeddings?(): Promise<
+    Array<{ nodeId: string; vector: EmbeddingVector; model: string }>
+  >;
+
+  /**
+   * Query image memories by CLIP vector similarity. Behaves exactly like
+   * `querySimilarEmbeddings`, except it scans `image_embeddings` and
+   * filters on model + dimensions — a 768-d text vector must never be
+   * scored against a 512-d CLIP query.
+   */
+  querySimilarImages?(
+    vector: EmbeddingVector,
+    filter: SearchFilter,
+    limit: number,
+    threshold?: number,
+    /** Only rows stored by this exact CLIP model are compared. */
+    model?: string,
+  ): Promise<ScoredMemory[]>;
+
+  /**
+   * Image-embedding model counts, for `memos diagnostics` / reindex
+   * support. Grouped by model like `getEmbeddingModelCounts`.
+   */
+  getImageEmbeddingModelCounts?(): Promise<
+    Array<{ model: string; count: number }>
+  >;
+
+  /**
+   * Delete the image-embedding row for a node (used by the node-delete
+   * path alongside the blob unlink). Returns true when a row was removed.
+   */
+  deleteImageEmbedding?(nodeId: string): Promise<boolean>;
+
   /** Query edges, optionally filtered by source/target. */
   queryEdges(filter?: {
     sourceId?: string;
@@ -1378,6 +1476,50 @@ export interface StorageAdapter {
 /**
  * Experimental feature flags.
  */
+/**
+ * Wire format a context pack will be serialized to. Used by the
+ * budget-accounting path to charge each item what it actually costs on
+ * the wire (TOON row scaffolding / JSON field names, citations)
+ * instead of the legacy flat `content + summary + 4` estimate.
+ *
+ * See `wireFormat` on the context-pack options in
+ * `src/context-pack.ts`.
+ */
+export type ContextPackWireFormat = "json" | "toon" | "toon-compact";
+
+/**
+ * Compression knobs for the context-pack budget path — the switch that
+ * finally uses `compressText` from `src/compression.ts`.
+ *
+ * Compression is attempted ONLY for an item that does not fit the
+ * pack's `tokenBudget`: the compressor runs over the item's
+ * already-debloated content (and summary) and the item is admitted when
+ * the compressed form fits. An item that still does not fit after
+ * compression is skipped exactly as it is today, so enabling
+ * compression can only ever ADD items to a pack, never remove them.
+ *
+ * Default `enabled: false`, deliberately: `compressText` is a lossy
+ * stopword filter ("the deploy pipeline" → "deploy pipeline"), so the
+ * default build keeps every content byte identical to the
+ * pre-compression pack. Opt in when you want the extra recall and
+ * accept terser evidence text.
+ */
+export interface ContextPackCompressionOptions {
+  /**
+   * Try `compressText` on items that would otherwise be dropped for
+   * not fitting the token budget. Default false — when false the
+   * compressor is never invoked and no content is altered.
+   */
+  enabled?: boolean;
+  /**
+   * Compression aggressiveness. `"light"` drops articles, copulas and
+   * common prepositions; `"aggressive"` additionally drops filler
+   * adverbs and most pronouns (roughly 40-60% of prose tokens — read
+   * the output before trusting it). Default `"light"`.
+   */
+  level?: CompressionLevel;
+}
+
 export interface ExperimentalConfig {
   /**
    * @deprecated No longer required — `semanticSearch()` works without it.
@@ -1385,6 +1527,17 @@ export interface ExperimentalConfig {
    * (equivalent to `embeddings: { enabled: true }`).
    */
   semanticSearch?: boolean;
+  /**
+   * Context-pack budget compression. When `enabled`, items that do not
+   * fit `contextPack({ tokenBudget })` are first re-rendered through
+   * `compressText` (`src/compression.ts`) and admitted if the compressed
+   * form fits; only items that are still too big are skipped.
+   *
+   * Default off: compression is lossy, so the default pack contents stay
+   * byte-identical to the pre-compression build. Read the rationale in
+   * `ContextPackCompressionOptions`.
+   */
+  packCompression?: ContextPackCompressionOptions;
   /** Enable graph visualization export. */
   graphViz?: boolean;
   /** Enable namespace isolation. */
@@ -1524,6 +1677,108 @@ export interface ExperimentalConfig {
     /** Request timeout in ms. Default 5000. */
     timeoutMs?: number;
   };
+  /**
+   * Session-neighbour expansion for hybrid search. After fusion, the top
+   * `maxSeeds` results are expanded along their same-conversation
+   * neighbours and unseen siblings are injected into the ranking at a
+   * decaying `seed.score * scoreFactor^k`. Multi-hop answers typically
+   * span many turns of one session, so recovering the neighbours of a
+   * single relevant turn raises all-evidence recall without another
+   * embedding pass. Default: true (injected siblings sit behind every
+   * organically-retrieved result, so head ordering never moves).
+   */
+  sessionExpansion?: boolean;
+}
+
+/**
+ * Relevance-gate knobs for hybrid search (see `applyRelevanceGate` and
+ * `shouldAbstain` in `src/retrieval.ts`).
+ *
+ * Two independent problems, one knob each:
+ *
+ *  - ABSTENTION. When nothing in the store is genuinely about the query,
+ *    the honest answer is "no memories" — not "the ten least-bad rows".
+ *    A memory layer that always returns k results forces the caller to
+ *    invent an answer.
+ *  - TAIL TRIMMING. Precision@10 measured 0.099 on LoCoMo: about nine of
+ *    every ten injected items were noise. Dropping candidates that trail
+ *    the top score by a large factor costs little recall and sharply
+ *    improves a context pack's signal-to-noise ratio.
+ *
+ * Lives in `types.ts` (dependency-free) and is forwarded by
+ * `MemOSConfig.retrieval.relevanceGate` into every hybrid search
+ * (`search`, `contextPack`, `multiStreamSearch`, `recall`'s scoring
+ * pipeline). Off unless `enabled` is true — see the field's default.
+ */
+export interface RelevanceGateConfig {
+  /**
+   * Master switch for the whole gate (tail trimming AND abstention).
+   *
+   * Defaults to `false`. This is a published SDK: an enabled gate
+   * changes how many memories `search()` returns for the same query
+   * (results whose fused score trails the top hit by more than
+   * `1 - ratio` are dropped), and silently shrinking a consumer's result
+   * count on upgrade is not a behaviour change we can make for them.
+   * Turning it on is deliberately one explicit field:
+   *
+   * ```ts
+   * new MemOS({ retrieval: { relevanceGate: { enabled: true } } })
+   * // or, for a one-off experiment with no config change:
+   * //   MEMOS_RELEVANCE_GATE=1
+   * ```
+   */
+  enabled?: boolean;
+  /**
+   * Keep only candidates whose fused score is at least
+   * `topScore * ratio`. `0` disables trimming while leaving abstention
+   * (if configured) active.
+   *
+   * Default 0.15 (`DEFAULT_RELEVANCE_RATIO` in `src/retrieval.ts`) —
+   * deliberately low: it exists to cut the long tail of "matched one
+   * stopword" rows, not to make fine-grained relevance decisions.
+   */
+  ratio?: number;
+  /**
+   * Abstain (return nothing) when no candidate reaches this cosine
+   * similarity on the semantic leg AND nothing matched the query
+   * literally. `undefined` disables abstention entirely.
+   *
+   * Deliberately unset by default even when the gate is enabled: the
+   * floor is embedder-dependent — a 256-d hash embedder and a 1024-d
+   * transformer do not share a cosine scale. Calibrate against your
+   * embedder before switching this on (0.3 is a reasonable starting
+   * point for paraphrase-quality embedders — see
+   * `DEFAULT_ABSTAIN_SIMILARITY`).
+   */
+  abstainSimilarity?: number;
+  /**
+   * Safety floor: never trim below this many results, whatever the ratio
+   * says. Useful for callers that need at least N items to render a view.
+   * `0` means no floor.
+   */
+  minResults?: number;
+}
+
+/**
+ * Outcome of one relevance-gate pass. Additive metadata — never breaks
+ * the `ScoredMemory[]` shape `search()` has always returned.
+ *
+ * Surface points:
+ *  - `ScoredMemory.relevanceGate` on every result of a gated search;
+ *  - the `{ results, gate }` member pair returned by
+ *    `MemOS.searchWithGate()`.
+ */
+export interface RelevanceGateResult {
+  /**
+   * True when the gate decided nothing in the store is relevant to the
+   * query. The result list is empty and the caller should answer from
+   * its own knowledge rather than from memory.
+   */
+  abstained: boolean;
+  /** True when at least one candidate was dropped by tail trimming. */
+  trimmed: boolean;
+  /** How many fused candidates the gate removed. */
+  dropped: number;
 }
 
 /**
@@ -1658,6 +1913,19 @@ export interface FusionOptions {
    * disable.
    */
   temporalRecencyStrength?: number;
+  /**
+   * Weight of the CLIP image leg (Track B of image memory). Applied
+   * exactly like the entity leg: `imageLegWeight / (rrfK + rank)` per
+   * candidate in RRF mode, as a renormalized convex term otherwise.
+   *
+   * Defaults to {@link DEFAULT_IMAGE_LEG_WEIGHT} (0.1) whenever the leg
+   * actually has results, so Track B contributes without any config.
+   * The leg is inert when `vision.clip.enabled` is unset or the store
+   * holds no image embeddings — a text-only install never pays for it
+   * and its results are byte-identical to before. Set to 0 explicitly
+   * to disable the leg even when images exist.
+   */
+  imageLegWeight?: number;
 }
 
 /**
@@ -1750,7 +2018,26 @@ export interface MemOSConfig {
    * parsed-vector cache (default 25,000 ≈ 100MB at 1024 dims); lower it
    * for memory-constrained hosts.
    */
-  storageOptions?: { vectorCacheEntries?: number };
+  storageOptions?: {
+    vectorCacheEntries?: number;
+    /**
+     * How the semantic leg (`querySimilarEmbeddings`) picks which stored
+     * vectors to score.
+     *
+     * - `"exact"` (default): every candidate vector is scored. Cosine
+     *   results and rankings are bit-identical to the pre-optimisation
+     *   implementation — the scan only got cheaper per candidate
+     *   (cached norms, fused dot product, streaming bounded top-K,
+     *   early exit once a perfect match is found).
+     * - `"prefilter"`: candidates are first ranked by a coarse strided
+     *   projection and only the top `max(32, limit * 4)` are exactly
+     *   rescored. Bounds the scan on large corpora, but is APPROXIMATE:
+     *   a true neighbour ranked below the cutoff is never returned.
+     *
+     * Only the built-in SQLite adapter reads this.
+     */
+    semanticScan?: "exact" | "prefilter";
+  };
   /**
    * Encryption key for at-rest encryption of the SQLite database.
    * Requires the optional `better-sqlite3-multiple-ciphers` driver
@@ -1774,10 +2061,27 @@ export interface MemOSConfig {
 
   /**
    * Effective importance model tuning. Controls how recency decay and
-   * access reinforcement modulate the base `importance` for eviction
-   * and archival decisions. See `ImportanceConfig` in `src/importance.ts`.
+   * access reinforcement modulate the base `importance` for eviction,
+   * archival, decay-forgetting, and (since the ranking wiring) hybrid
+   * search ranking. See `ImportanceConfig` in `src/importance.ts`.
+   *
+   * OPT-IN: leaving this unset (or passing `{}`) keeps the historical
+   * behaviour byte-for-byte — raw `node.importance` is still what
+   * eviction, archival, and ranking use. Setting at least one field
+   * switches those paths to `computeEffectiveImportance()`, so an old,
+   * frequently-reinforced memory now outranks an equally-scored fresh
+   * one, and a long-untouched memory is evicted sooner.
    */
   importance?: ImportanceConfig;
+
+  /**
+   * Retrieval-quality knobs: the relevance gate (abstention + tail
+   * trimming). Off by default — see `RelevanceGateConfig.enabled` for
+   * why turning it on is an explicit opt-in.
+   */
+  retrieval?: {
+    relevanceGate?: RelevanceGateConfig;
+  };
 
   /**
    * Half-life (days) for the optional recency boost in hybrid search
@@ -1796,6 +2100,214 @@ export interface MemOSConfig {
    * embedding provider is configured. See `EmbeddingQueueConfig`.
    */
   embeddingQueue?: EmbeddingQueueConfig;
+
+  /**
+   * Image memory (vision) configuration. Disabled by default: a bare
+   * `new MemOS()` changes nothing — no new vector rows, no new search
+   * results, no new pack bytes. See {@link VisionConfig}.
+   */
+  vision?: VisionConfig;
+}
+
+// ---------------------------------------------------------------------------
+// Vision (image memory)
+// ---------------------------------------------------------------------------
+
+/**
+ * Coarse taxonomy for what an image *is*, used for filtering and prompt
+ * context — never as the type discriminator (see `metadata.image`).
+ */
+export type ImageKind =
+  "photo" | "screenshot" | "chart" | "diagram" | "memo" | "meme" | "other";
+
+/**
+ * Reference form of an image carried by context packs and API results.
+ * The bytes are NEVER inlined — consumers resolve the `ref` through the
+ * blob store.
+ */
+export interface ImageAttachment {
+  /** Content-addressed key, `img_<sha256[0:12]>`. */
+  ref: string;
+  mime: string;
+  width: number;
+  height: number;
+  kind: ImageKind;
+  /** The caption text stored as the node's `content`. */
+  caption: string;
+  /** Full hex digest of the image bytes (dedupe + integrity). */
+  sha256: string;
+  /** Size of the stored blob in bytes. */
+  bytes: number;
+}
+
+/**
+ * The vision payload stored in `MemoryNode.metadata.image`. Presence of
+ * this key — not `type`, not a new `MemoryType` member — is what marks a
+ * node as an image memory (same discriminator pattern as
+ * `metadata.context`), so `MemoryType` exhaustiveness stays intact
+ * everywhere (sync allowlist, fidelity labels, adapters, MCP schema).
+ */
+export interface ImageMemoryMeta extends ImageAttachment {
+  /** Blob path, resolved relative to the database directory. */
+  path: string;
+  /** When the image was captured (not stored). Unix ms. */
+  capturedAt: number;
+  /** Optional conversation this image was shared in. */
+  conversationId?: string;
+  /** Who supplied the image. */
+  source: ImageSource;
+  /** Which caption production path produced the caption. */
+  captionSource: "user" | "llm" | "generated";
+}
+
+/** Where an image came from. */
+export type ImageSource = "user" | "agent" | "tool";
+
+/**
+ * CLIP leg status recorded in `metadata.clip.status`. Track A (caption →
+ * text embeddings) works regardless of this value.
+ */
+export type ClipStatus = "ready" | "pending" | "failed" | "skipped";
+
+/** CLIP bookkeeping recorded in `metadata.clip` when Track B is enabled. */
+export interface ClipMeta {
+  model: string;
+  dims: number;
+  status: ClipStatus;
+  /** Set when `status` is `"failed"`. */
+  error?: string;
+  /** Unix ms of the last status transition. */
+  updatedAt: number;
+}
+
+/**
+ * A provider that encodes images — and optionally the CLIP text side, for
+ * text→image queries.
+ *
+ * Deliberately separate from `EmbeddingProvider`: CLIP vectors live in a
+ * different vector space (and a different table) than text embeddings, so
+ * the image encoder must never be handed to the text embedding queue.
+ */
+export interface EmbedImageProvider {
+  /** Stable provider identifier, e.g. `"clip"`. */
+  readonly id: string;
+  /** Model the provider encodes with. */
+  readonly model: string;
+  /** Vector dimensionality (512 for `clip-vit-base-patch32`). */
+  readonly dimensions: number;
+  /** Encode image bytes (or a path/URL) to a normalized vector. */
+  embedImage(image: Buffer | string): Promise<EmbeddingVector>;
+  /**
+   * Encode a text query into the CLIP image space. Optional: providers
+   * that can only do image→image search leave it unimplemented, and the
+   * text→image leg silently degrades to the caption leg.
+   */
+  embedImageText?(query: string): Promise<EmbeddingVector>;
+}
+
+/** Image-memory configuration. Disabled by default — a bare
+ *  `new MemOS()` is byte-for-byte unchanged. */
+export interface VisionConfig {
+  /** Master switch. Default false. */
+  enabled?: boolean;
+  clip?: {
+    /** Track B opt-in. Default false (no ~350 MB model download). */
+    enabled?: boolean;
+    /** CLIP model id. Default `"Xenova/clip-vit-base-patch32"`. */
+    model?: string;
+    /** Expected dimensionality. Default 512. */
+    dimensions?: number;
+    /**
+     * Explicit image encoder. When omitted, `ClipEmbeddingProvider` is
+     * constructed lazily; when the transformers package is missing,
+     * Track B fails soft to Track A — it never throws and never
+     * substitutes a text vector.
+     */
+    embedImage?: EmbedImageProvider;
+  };
+  /** Blob store root. Default `<dbDir>/memos-images`. */
+  storeRoot?: string;
+  /** Max accepted image size in bytes. Default 5 MiB. */
+  maxImageBytes?: number;
+  /** Max edge length before re-encode is required. Default 4096. */
+  maxDimension?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Image memory — write/read API types
+// ---------------------------------------------------------------------------
+
+/**
+ * Every shape `addImageMemory` accepts, resolved by one normalizer.
+ *
+ * - `string`  → a filesystem path (or a `data:` URL, detected by prefix)
+ * - `Buffer` / `Uint8Array` → raw bytes
+ * - `{ data, mime }`        → base64 payload plus its declared MIME type
+ * - `{ url }`               → an http(s)/file/data URL to fetch
+ */
+export type ImageInput =
+  | string
+  | Buffer
+  | Uint8Array
+  | { data: string; mime: string }
+  | { url: string };
+
+/** Options for {@link MemOS.addImageMemory}. Extends the store options. */
+export interface AddImageMemoryOptions extends Omit<
+  CreateMemoryInput,
+  "content"
+> {
+  /**
+   * The caption stored as the node's `content` — this is what text
+   * retrieval actually matches. When omitted, a generated placeholder
+   * records the kind and dimensions so the memory is still findable by
+   * tag and still resolvable.
+   */
+  caption?: string;
+  /** Coarse taxonomy override. Defaults to the MIME-derived kind. */
+  kind?: ImageKind;
+  /** When the image was captured (not stored). Defaults to now. */
+  capturedAt?: number;
+  /** Who supplied the image. Default `"user"`. */
+  imageSource?: ImageSource;
+  /** Optional conversation this image was shared in. */
+  conversationId?: string;
+}
+
+/** What {@link MemOS.addImageMemory} returns. */
+export interface AddImageMemoryResult {
+  /** The memory node (caption as content, `metadata.image` present). */
+  node: MemoryNode;
+  /** The image payload now carried by the node. */
+  image: ImageMemoryMeta;
+  /** Track B status: `ready` | `pending` | `skipped` | `failed`. */
+  clipStatus: ClipStatus;
+  /** True when identical bytes already existed and no new node was written. */
+  deduped: boolean;
+}
+
+/** Options for {@link MemOS.searchImages}. */
+export interface SearchImagesOptions {
+  limit?: number;
+  /** Minimum CLIP cosine for the image leg. Default 0.15. */
+  threshold?: number;
+  namespace?: string;
+  namespaces?: string[];
+  /** Restrict to one image kind (e.g. `"diagram"`). */
+  kind?: ImageKind;
+}
+
+/** Options for {@link MemOS.listImages}. */
+export interface ListImagesOptions {
+  limit?: number;
+  namespace?: string;
+}
+
+/** One image hit: the node, its fused score, and the attachment. */
+export interface ImageSearchResult {
+  node: MemoryNode;
+  score: number;
+  image: ImageMemoryMeta;
 }
 
 // ---------------------------------------------------------------------------
