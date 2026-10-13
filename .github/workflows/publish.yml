@@ -38,7 +38,19 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Check if version is already on npm
+        id: npmcheck
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@mem-os/sdk@${VERSION}" version >/dev/null 2>&1; then
+            echo "@mem-os/sdk@${VERSION} already on npm — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm
+        if: steps.npmcheck.outputs.skip != 'true'
         run: pnpm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISHER_TOKEN_LATEST }}
