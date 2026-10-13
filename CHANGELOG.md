@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.27] - 2026-10-13
+
 ### Added — Image memory (vision)
 
 Images are now first-class memories. An image memory is an **ordinary
@@ -791,7 +793,8 @@ All experimental features gated behind `experimental` config object:
 - GitHub Actions CI (lint + test + typecheck)
 - README, LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY docs
 
-[Unreleased]: https://github.com/Markgatcha/memos/compare/v1.6.26...HEAD
+[Unreleased]: https://github.com/Markgatcha/memos/compare/v1.6.27...HEAD
+[1.6.27]: https://github.com/Markgatcha/memos/compare/v1.6.26...v1.6.27
 [1.6.26]: https://github.com/Markgatcha/memos/compare/v1.5.0...v1.6.26
 [1.5.0]: https://github.com/Markgatcha/memos/compare/v1.5.0-beta.1...v1.5.0
 [1.5.0-beta.1]: https://github.com/Markgatcha/memos/compare/v0.1.1...v1.5.0-beta.1

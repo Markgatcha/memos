@@ -1,6 +1,6 @@
 {
   "name": "@mem-os/sdk",
-  "version": "1.6.26",
+  "version": "1.6.27",
   "description": "Universal, local-first, persistent memory layer for AI agents, LLM apps, and chatbots.",
   "license": "MIT",
   "author": "Markgatcha",
