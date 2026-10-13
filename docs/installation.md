@@ -86,20 +86,20 @@ Run it again. And again. The memory is still there every time — it's in `~/.me
 
 ## Option 2 — Python (PyPI)
 
-The Python package lives on PyPI as **`mem-os-sdk`** (matching npm's `@mem-os/sdk`). It wraps the TypeScript SDK, so you'll also need Node.js 18+ on your PATH.
+The Python package lives on PyPI as **`mem-os-python`** (the npm distribution is `@mem-os/sdk`). It wraps the TypeScript SDK, so you'll also need Node.js 18+ on your PATH.
 
 **Step 1. Install from PyPI**
 
 ```bash
-pip install mem-os-sdk
+pip install mem-os-python
 ```
 
 Want the framework adapters too? Grab them in one go:
 
 ```bash
-pip install "mem-os-sdk[langchain]"   # LangChain adapter
-pip install "mem-os-sdk[ollama]"      # Ollama adapter
-pip install "mem-os-sdk[all]"         # both of the above
+pip install "mem-os-python[langchain]"   # LangChain adapter
+pip install "mem-os-python[ollama]"      # Ollama adapter
+pip install "mem-os-python[all]"         # both of the above
 ```
 
 Prefer living on the bleeding edge? Install from source instead:

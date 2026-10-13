@@ -521,6 +521,10 @@ dead on exactly the installs that opted into it
 - **Dependabot ignore rules** — added `ignore` entry for `better-sqlite3` major version bumps (v13 has breaking native-build changes). `oxlint-tsgolint` is now updated to latest (7.0.2001).
 - **Debian (trixie, latest stable) added to the native-deps matrix** — alongside Fedora, Arch, and openSUSE, so the SQLite native build is exercised on Debian's current stable release.
 
+### Changed — packaging
+
+- **PyPI distribution name** — `mem-os-sdk` could not be created: PyPI's confusable-name check flags it as too similar to the pre-existing `memos-sdk` project (the comparison is punctuation-insensitive, so `mem-os-sdk` and `memos-sdk` read as the same name). The first PyPI release therefore ships as **`mem-os-python`** (`pip install mem-os-python`). The npm distribution stays `@mem-os/sdk` and the Python import name stays `memos`.
+
 ## [1.6.26] - 2026-06-17
 
 Stable v1.6.26 release. Adds the background embedding queue, HTTP+SSE MCP transport, three new embedding providers, memory consolidation, the CLI REPL, cross-OS perf hardening, AI Trio context packs, MCP 2025-06-18 compliance, and a retrieval-quality benchmark.

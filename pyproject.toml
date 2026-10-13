@@ -3,9 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-# NOTE: the PyPI name is "mem-os-sdk" (matching npm's @mem-os/sdk). The
-# plain name "memos" is already taken on PyPI by an unrelated project.
-name = "mem-os-sdk"
+# NOTE: the PyPI name is "mem-os-python" — "mem-os-sdk" is blocked by
+# PyPI's confusable-name check (punctuation-insensitive match against the
+# pre-existing "memos-sdk"), and plain "memos" is taken by an unrelated
+# project. The npm scope stays @mem-os/sdk; the import name stays `memos`.
+name = "mem-os-python"
 version = "1.6.27"
 description = "Universal, local-first, persistent memory layer for AI agents, LLM apps, and chatbots."
 readme = "README.md"
@@ -55,7 +57,7 @@ ollama = [
     "ollama>=0.6.2",
 ]
 all = [
-    "mem-os-sdk[langchain,ollama]",
+    "mem-os-python[langchain,ollama]",
 ]
 dev = [
     "ruff>=0.16.3",

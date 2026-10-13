@@ -53,11 +53,11 @@ npm install @mem-os/sdk
 
 ### Python (PyPI)
 
-PyPI par package ka naam **`mem-os-sdk`** hai (npm ke `@mem-os/sdk` ke anuroop). Yah TypeScript SDK ko wrap karta hai, isliye Node.js 18+ bhi chahiye.
+PyPI par package ka naam **`mem-os-python`** hai (npm ke `@mem-os/sdk` ke anuroop). Yah TypeScript SDK ko wrap karta hai, isliye Node.js 18+ bhi chahiye.
 
 ```bash
-pip install mem-os-sdk
-pip install "mem-os-sdk[all]"   # + LangChain/Ollama adapters
+pip install mem-os-python
+pip install "mem-os-python[all]"   # + LangChain/Ollama adapters
 ```
 
 ### Docker

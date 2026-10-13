@@ -53,11 +53,11 @@ npm install @mem-os/sdk
 
 ### Python (PyPI)
 
-PyPI 패키지 이름은 **`mem-os-sdk`**입니다(npm의 `@mem-os/sdk`에 대응). TypeScript SDK를 래핑하므로 Node.js 18+도 필요합니다.
+PyPI 패키지 이름은 **`mem-os-python`**입니다(npm의 `@mem-os/sdk`에 대응). TypeScript SDK를 래핑하므로 Node.js 18+도 필요합니다.
 
 ```bash
-pip install mem-os-sdk
-pip install "mem-os-sdk[all]"   # + LangChain/Ollama adapters
+pip install mem-os-python
+pip install "mem-os-python[all]"   # + LangChain/Ollama adapters
 ```
 
 ### Docker

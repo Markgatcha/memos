@@ -1,9 +1,9 @@
 name: Publish to PyPI
 
-# Publishes the Python package (mem-os-sdk) to PyPI whenever a GitHub
+# Publishes the Python package (mem-os-python) to PyPI whenever a GitHub
 # Release is published. Auth is a PyPI API token (PYPI_TOKEN secret),
 # because Trusted Publishing (OIDC) has no project to bind to while
-# mem-os-sdk doesn't exist on PyPI yet — the first token publish creates
+# mem-os-python doesn't exist on PyPI yet — the first token publish creates
 # the project. Afterwards you can switch to OIDC by registering a trusted
 # publisher on pypi.org (Owner Markgatcha / repo memos / workflow filename
 # publish-pypi.yml / environment pypi) and dropping the password: input.
@@ -89,6 +89,6 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           # Token auth: the trusted-publishing (OIDC) exchange fails while
-          # the mem-os-sdk project doesn't exist on PyPI yet — there is no
+          # the mem-os-python project doesn't exist on PyPI yet — there is no
           # project for the OIDC claim to bind to. A token publish creates it.
           password: ${{ secrets.PYPI_TOKEN }}

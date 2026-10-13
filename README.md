@@ -828,12 +828,12 @@ Prebuilt native `better-sqlite3` bindings for Linux, macOS, and Windows (Node 22
 ### Python (PyPI)
 
 ```bash
-pip install mem-os-sdk
+pip install mem-os-python
 
 # With optional framework adapters
-pip install "mem-os-sdk[langchain]"   # LangChain adapter
-pip install "mem-os-sdk[ollama]"      # Ollama adapter
-pip install "mem-os-sdk[all]"         # both adapters
+pip install "mem-os-python[langchain]"   # LangChain adapter
+pip install "mem-os-python[ollama]"      # Ollama adapter
+pip install "mem-os-python[all]"         # both adapters
 ```
 
 The Python package wraps the TypeScript SDK, so **Node.js >= 18 is required**

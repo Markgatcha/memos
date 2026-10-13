@@ -1,6 +1,6 @@
 """MemOS — universal, local-first, persistent memory layer for AI agents.
 
-This is the Python distribution of MemOS (PyPI: ``mem-os-sdk``). It provides:
+This is the Python distribution of MemOS (PyPI: ``mem-os-python``). It provides:
 
 - ``memos.server`` — a FastAPI HTTP server wrapping the TypeScript SDK
   (run with ``memos-server`` or ``python -m memos.server.main``)

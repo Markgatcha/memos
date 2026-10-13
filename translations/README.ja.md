@@ -53,11 +53,11 @@ npm install @mem-os/sdk
 
 ### Python（PyPI）
 
-PyPIのパッケージ名は **`mem-os-sdk`**（npmの`@mem-os/sdk`に対応）。TypeScript SDKをラップしているので、Node.js 18+も必要です。
+PyPIのパッケージ名は **`mem-os-python`**（npmの`@mem-os/sdk`に対応）。TypeScript SDKをラップしているので、Node.js 18+も必要です。
 
 ```bash
-pip install mem-os-sdk
-pip install "mem-os-sdk[all]"   # + LangChain/Ollama adapters
+pip install mem-os-python
+pip install "mem-os-python[all]"   # + LangChain/Ollama adapters
 ```
 
 ### Docker
