@@ -4,7 +4,7 @@
     "memos": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@mem-os/sdk@1.6.26", "mcp"],
+      "args": ["-y", "@mem-os/sdk@1.6.27", "mcp"],
       "cwd": "${PLUGIN_DATA}"
     }
   }

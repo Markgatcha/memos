@@ -9,7 +9,7 @@
       "name": "memos",
       "source": "./plugin",
       "description": "MemOS — local-first persistent memory for Claude Code. Store and recall durable facts across sessions without any cloud.",
-      "version": "1.6.26",
+      "version": "1.6.27",
       "keywords": ["memory", "mcp", "local-first", "sqlite"]
     }
   ]

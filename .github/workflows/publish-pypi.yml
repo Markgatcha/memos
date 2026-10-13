@@ -59,7 +59,10 @@ jobs:
       - name: Check distribution metadata
         run: |
           python -m pip install twine
-          twine check dist/*
+          # Check the actual distributions only: dist/ also holds the
+          # compiled-SDK subdirectory (dist/adapters) that the hatch bundle
+          # hook stages, and twine chokes on directories in a bare glob.
+          twine check dist/*.whl dist/*.tar.gz
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v7

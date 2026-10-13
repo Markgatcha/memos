@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "memos",
-  "version": "1.6.26",
+  "version": "1.6.27",
   "description": "Local-first persistent memory: store durable facts, recall them in any session. Zero cloud, zero telemetry, SQLite-backed.",
   "keywords": ["memory", "mcp", "local-first"],
   "author": {

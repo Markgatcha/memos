@@ -96,4 +96,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$TAG" prebuilds/* --clobber
+        run: gh release upload "$TAG" prebuilds/* --clobber -R "$GITHUB_REPOSITORY"

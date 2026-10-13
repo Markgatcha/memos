@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 # NOTE: the PyPI name is "mem-os-sdk" (matching npm's @mem-os/sdk). The
 # plain name "memos" is already taken on PyPI by an unrelated project.
 name = "mem-os-sdk"
-version = "1.6.26"
+version = "1.6.27"
 description = "Universal, local-first, persistent memory layer for AI agents, LLM apps, and chatbots."
 readme = "README.md"
 license = "MIT"
