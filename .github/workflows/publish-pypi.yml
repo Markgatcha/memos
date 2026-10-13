@@ -1,15 +1,18 @@
 name: Publish to PyPI
 
 # Publishes the Python package (mem-os-python) to PyPI whenever a GitHub
-# Release is published. Auth is a PyPI API token (PYPI_TOKEN secret),
-# because Trusted Publishing (OIDC) has no project to bind to while
-# mem-os-python doesn't exist on PyPI yet — the first token publish creates
-# the project. Afterwards you can switch to OIDC by registering a trusted
-# publisher on pypi.org (Owner Markgatcha / repo memos / workflow filename
-# publish-pypi.yml / environment pypi) and dropping the password: input.
+# Release is published. Auth uses PyPI Trusted Publishing (OIDC) — no API
+# token secret is stored in the repo.
 #
-# Also supports workflow_dispatch for one-off retries (e.g. after rotating
-# the token) without re-publishing the release.
+# PyPI-side setup (done once on pypi.org → project "mem-os-python" →
+# Publishing → Add a publisher → GitHub):
+#   - Owner:             Markgatcha
+#   - Repository name:   memos
+#   - Workflow name:     publish-pypi.yml
+#   - Environment name:  pypi
+#
+# Also supports workflow_dispatch for one-off retries without having to
+# re-publish the release.
 on:
   release:
     types: [published]
@@ -87,8 +90,7 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          # Token auth: the trusted-publishing (OIDC) exchange fails while
-          # the mem-os-python project doesn't exist on PyPI yet — there is no
-          # project for the OIDC claim to bind to. A token publish creates it.
-          password: ${{ secrets.PYPI_TOKEN }}
+        # No password input → the action uses Trusted Publishing (OIDC).
+        # The OIDC claim must match the trusted publisher registered on
+        # pypi.org (Owner Markgatcha / repo memos / workflow publish-pypi.yml
+        # / environment pypi).
