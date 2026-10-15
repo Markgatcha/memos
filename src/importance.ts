@@ -17,6 +17,14 @@
  * effective importance is recomputed whenever eviction, archival, or
  * ranking needs it, instead of being materialised back into the row.
  *
+ * NOTE (wiring status, verified 2026-10): the arithmetic here is complete
+ * and unit-tested, but no caller consumes it yet. `MemOS.archive()` still
+ * filters on the raw `importance`/`importanceBelow` field and eviction
+ * sorts on `importance` directly, so the recency-decay and access-
+ * reinforcement terms are not applied to any lifecycle decision. Wiring
+ * this module into those two call sites (or documenting them as
+ * base-importance-only) is an open item for `src/memory.ts`.
+ *
  * @module @memos/importance
  */
 
@@ -64,7 +72,19 @@ function clamp01(value: number): number {
  * Formula:
  *   decay       = decayFloor + (1 - decayFloor) · e^(−ageDays / halfLifeDays)
  *   accessBoost = min(accessCap, accessGain · log2(1 + accessCount))
- *   effective   = clamp01(importance · decay + accessBoost)
+ *   effective   = clamp01(importance · decay + accessBoost · (1 − importance) · decay)
+ *
+ * The access boost is scaled by the memory's own remaining headroom
+ * `(1 − importance) · decay` rather than added flat. A flat addition
+ * breaks the model's primary ordering: it saturates the clamp before the
+ * base importance does, so a base-0.8 memory with four accesses scored
+ * 1.0000 and outranked a base-0.9 memory with none (0.9000) — exactly
+ * backwards for a lifecycle decision that evicts the least important
+ * memory first. Scaling by the headroom keeps the term monotone in
+ * `importance` (`∂/∂i = (1 − boost) · decay ≥ 0`), monotone in recency
+ * and in access count, and inside [0, 1] without needing the clamp, so a
+ * low-importance memory can be pulled toward its own ceiling but never
+ * past a genuinely more important one.
  *
  * @param node — The memory node.
  * @param now  — Current time (Unix ms).
@@ -90,7 +110,9 @@ export function computeEffectiveImportance(
     accessCap,
     accessGain * Math.log2(1 + node.accessCount),
   );
-  return clamp01(node.importance * decay + accessBoost);
+  const base = node.importance * decay;
+  const headroom = (1 - node.importance) * decay;
+  return clamp01(base + accessBoost * headroom);
 }
 
 /**

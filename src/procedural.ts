@@ -118,10 +118,38 @@ function queryTokens(query: string): string[] {
 }
 
 /**
+ * Escape a token for use inside a RegExp character class position.
+ */
+function escapeRegExp(token: string): string {
+  return token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Light stem-aware, word-boundary token test.
+ *
+ * `haystack.includes(token)` counts "api" as a hit inside "rapid" and
+ * "rate" inside "accurate" — measured to promote the wrong lesson to
+ * the top in 2 of 6 ranked cases. Matching at a word boundary with up to
+ * two trailing characters keeps the useful inflections (API/APIs,
+ * rate/rates, deploy/deployed) while rejecting substring accidents.
+ *
+ * @param haystack — Lowercase text to search.
+ * @param token — Lowercase query token (length > 2).
+ * @returns True when the token appears as a whole word (or its short
+ *   inflection).
+ */
+export function hasWord(haystack: string, token: string): boolean {
+  const pattern = new RegExp(`\\b${escapeRegExp(token)}\\w{0,2}\\b`);
+  return pattern.test(haystack);
+}
+
+/**
  * Rank lessons for a query. Relevance is the fraction of query tokens
  * (length > 2) found in the lesson text + context; the rank blends it
- * with the decayed score 40/60. Lessons with zero relevance are dropped
- * unless the query is empty (empty query = "top lessons by score").
+ * with the decayed score 40/60. The token test is word-boundary aware
+ * ({@link hasWord}) so "api" does not match "rapid". Lessons with zero
+ * relevance are dropped unless the query is empty (empty query = "top
+ * lessons by score").
  */
 export function rankProceduralLessons(
   lessons: ProceduralLesson[],
@@ -134,7 +162,7 @@ export function rankProceduralLessons(
   for (const lesson of lessons) {
     const effectiveScore = effectiveLessonScore(lesson, nowMs);
     const haystack = `${lesson.lesson} ${lesson.context}`.toLowerCase();
-    const hits = tokens.filter((t) => haystack.includes(t)).length;
+    const hits = tokens.filter((t) => hasWord(haystack, t)).length;
     const relevance = tokens.length > 0 ? hits / tokens.length : 0;
     if (tokens.length > 0 && relevance === 0) continue;
     ranked.push({

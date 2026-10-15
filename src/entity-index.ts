@@ -52,6 +52,8 @@ export function ensureEntityIndexTable(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_entity_index_entity
       ON entity_index(entity);
+    CREATE INDEX IF NOT EXISTS idx_entity_index_node
+      ON entity_index(node_id);
   `);
 }
 
@@ -173,6 +175,16 @@ export function searchByEntities(
 }
 
 /**
+ * Nodes scanned per backfill page. The previous implementation loaded
+ * every node row (and every indexed node id) into memory up front, so a
+ * backfill over a large store spiked RSS by the whole table. Paging keeps
+ * the working set bounded at {@link BACKFILL_BATCH} rows and, on a store
+ * that is already indexed, costs a single ordered page scan with no
+ * writes at all.
+ */
+const BACKFILL_BATCH = 500;
+
+/**
  * One-time backfill for rows that predate the `entity_index` table (or
  * lost their rows out-of-band). For each node missing from the index,
  * prefers the stored `metadata.entities` — already canonicalized with the
@@ -181,42 +193,60 @@ export function searchByEntities(
  * inserts use `INSERT OR IGNORE`, so re-running is a no-op.
  */
 export function backfillEntityIndex(db: Database.Database): void {
-  const indexed = new Set<string>(
-    (
-      db.prepare("SELECT node_id FROM entity_index").all() as Array<{
-        node_id: string;
-      }>
-    ).map((row) => row.node_id),
+  // Keyset pagination on the node id (the nodes primary key): bounded
+  // memory, no cursor state, and stable across concurrent inserts (new
+  // ids sort after the cursor).
+  const page = db.prepare(
+    `SELECT id, content, metadata FROM nodes
+     WHERE id > ?
+     ORDER BY id
+     LIMIT ?`,
   );
-  const rows = db
-    .prepare("SELECT id, content, metadata FROM nodes")
-    .all() as Array<{
-    id: string;
-    content: string;
-    metadata: string;
-  }>;
-  if (rows.length === 0) return;
-  const tx = db.transaction(() => {
-    for (const row of rows) {
-      if (indexed.has(row.id)) continue;
-      let entities: readonly unknown[] | null = null;
-      try {
-        const metadata = JSON.parse(row.metadata) as {
-          entities?: unknown;
-        };
-        if (Array.isArray(metadata?.entities)) {
-          entities = metadata.entities;
-        }
-      } catch {
-        // Corrupt metadata JSON: fall through to content extraction.
+  // One prepared statement, reused for every page: the IN list is sized to
+  // the page, and the final (short) page pads by repeating its last id so
+  // the placeholder count never changes.
+  const indexedInPage = db.prepare(
+    `SELECT DISTINCT node_id FROM entity_index
+     WHERE node_id IN (${Array.from({ length: BACKFILL_BATCH }, () => "?").join(", ")})`,
+  );
+  db.transaction(() => {
+    let cursor = "";
+    for (;;) {
+      const rows = page.all(cursor, BACKFILL_BATCH) as Array<{
+        id: string;
+        content: string;
+        metadata: string;
+      }>;
+      if (rows.length === 0) return;
+      cursor = rows[rows.length - 1]!.id;
+      const params = rows.map((row) => row.id);
+      while (params.length < BACKFILL_BATCH) {
+        params.push(cursor);
       }
-      writeEntityIndexRows(
-        db,
-        row.id,
-        entities ?? extractContentEntities(row.content),
+      const present = new Set<string>(
+        (indexedInPage.all(...params) as Array<{ node_id: string }>).map(
+          (row) => row.node_id,
+        ),
       );
-      indexed.add(row.id);
+      for (const row of rows) {
+        if (present.has(row.id)) continue;
+        let entities: readonly unknown[] | null = null;
+        try {
+          const metadata = JSON.parse(row.metadata) as {
+            entities?: unknown;
+          };
+          if (Array.isArray(metadata?.entities)) {
+            entities = metadata.entities;
+          }
+        } catch {
+          // Corrupt metadata JSON: fall through to content extraction.
+        }
+        writeEntityIndexRows(
+          db,
+          row.id,
+          entities ?? extractContentEntities(row.content),
+        );
+      }
     }
-  });
-  tx();
+  })();
 }

@@ -14,12 +14,16 @@
  *   set grows beyond the documented grammar.
  *
  * Grammar (all case-insensitive, evaluated against an explicit `now`):
- * - Relative: "in 2 hours", "in 3 days", "3 days later"
- * - Day words: "today", "tonight" (= today 21:00), "tomorrow"
+ * - Relative: "in 2 hours", "in 3 days", "3 days later", "3 days ago"
+ * - Day words: "today", "tonight" (= today 21:00), "yesterday",
+ *   "tomorrow"
+ * - Periods: "this/last/next week|month|year" (resolved to the period's
+ *   start: Monday 00:00 for a week, day 1 for a month/year)
  * - Weekdays: "Monday", "on Monday", "this Thursday", "next Friday",
  *   "last Friday"
  * - Month/day: "Sept 24", "September 24th" (year-less → yearCertain=false)
- * - ISO: "2026-09-24"
+ * - ISO: "2026-09-24" and ISO datetimes "2026-09-24T10:00" /
+ *   "2026-09-24 10:00"
  * - Times: "at 3pm", "at 2:30pm", "at 15:00", "noon", "midnight"
  *   (a bare time attaches to today, rolling to tomorrow when past)
  * - Date+time adjacency merges: "tomorrow at 2pm", "at 3pm tomorrow"
@@ -35,6 +39,14 @@
  *    past occurrence.
  * 5. Day-grain results resolve to local start-of-day 00:00 (an all-day
  *    event starts when the day starts), except "tonight" → 21:00.
+ * 6. "this/last/next <period>" resolve to the START of that period:
+ *    Monday 00:00 for a week (ISO convention), day 1 at 00:00 for a
+ *    month, January 1 at 00:00 for a year. Rounding back to a boundary
+ *    is deliberate: "remind me next week" must not resolve to the
+ *    exact second the query was issued.
+ * 7. A "-ago" offset is always retrospective ("3 days ago" = now − 3
+ *    days, even for "in 3 days ago", which is never produced by a
+ *    speaker but must not crash the parser).
  *
  * @module @memos/temporal
  */
@@ -161,6 +173,8 @@ const MONTH_SRC = Object.keys(MONTHS)
   .sort((a, b) => b.length - a.length)
   .join("|");
 
+const UNIT_PATTERN = String.raw`seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?`;
+
 /**
  * Master pattern. Alternation order is longest-first within each class so
  * "September" wins over "sep", and classes are ordered so relative forms
@@ -169,16 +183,22 @@ const MONTH_SRC = Object.keys(MONTHS)
 const MASTER = new RegExp(
   [
     // "in 2 hours" / "3 days later" (relative — also usable as duration)
-    String.raw`(?<relative>in\s+(?<rval>\d+)\s+(?<runit>seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)`,
-    String.raw`(?<later>(?<lval>\d+)\s+(?<lunit>seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+later\b)`,
+    String.raw`(?<relative>in\s+(?<rval>\d+)\s+(?<runit>${UNIT_PATTERN})\b)`,
+    String.raw`(?<later>(?<lval>\d+)\s+(?<lunit>${UNIT_PATTERN})\s+later\b)`,
+    // "3 days ago" / "an hour ago" (retrospective)
+    String.raw`(?<ago>(?<aval>\d+|an?)\s+(?<aunit>${UNIT_PATTERN})\s+ago\b)`,
     // Day words
-    String.raw`(?<dayword>\b(?<dword>today|tonight|tomorrow)\b)`,
+    String.raw`(?<dayword>\b(?<dword>today|tonight|yesterday|tomorrow)\b)`,
+    // Periods: "this/last/next week|month|year"
+    String.raw`(?<period>\b(?<pprefix>this|last|next)\s+(?<punit>week|month|year)\b)`,
     // Weekdays with optional on/this/next/last
     String.raw`(?<weekday>\b(?:(?<wprefix>on|this|next|last)\s+)?(?<wday>${WEEKDAY_SRC})s?\b)`,
     // Month day: "Sept 24", "September 24th"
     String.raw`(?<monthday>\b(?<mname>${MONTH_SRC})\.?\s+(?<mday>\d{1,2})(?:st|nd|rd|th)?\b)`,
-    // ISO date
-    String.raw`(?<iso>\b(?<iyear>\d{4})-(?<imonth>\d{2})-(?<iday>\d{2})\b)`,
+    // ISO date, optionally followed by a time ("2026-09-24T10:00",
+    // "2026-09-24 10:00"). The separator is `T` or a single space so the
+    // two-word merge below still works.
+    String.raw`(?<iso>\b(?<iyear>\d{4})-(?<imonth>\d{2})-(?<iday>\d{2})(?:[T ](?<ihour>\d{1,2}):(?<imin>\d{2})(?::\d{2})?)?\b)`,
     // Times: "at 3pm", "at 2:30pm", "at 15:00", "9am" (bare time with
     // meridiem), "noon", "midnight". A bare time needs am/pm so plain
     // numbers ("room 3") never parse as times.
@@ -192,7 +212,15 @@ interface RawMatch {
   start: number;
   end: number;
   kind:
-    "relative" | "later" | "dayword" | "weekday" | "monthday" | "iso" | "time";
+    | "relative"
+    | "later"
+    | "ago"
+    | "dayword"
+    | "period"
+    | "weekday"
+    | "monthday"
+    | "iso"
+    | "time";
   groups: Record<string, string | undefined>;
 }
 
@@ -206,7 +234,9 @@ function collectMatches(text: string): RawMatch[] {
       [
         "relative",
         "later",
+        "ago",
         "dayword",
+        "period",
         "weekday",
         "monthday",
         "iso",
@@ -247,6 +277,46 @@ function addYears(d: Date, n: number): Date {
   const c = new Date(d);
   c.setFullYear(c.getFullYear() + n);
   return c;
+}
+
+/** Local Monday 00:00 of the week containing `d` (ISO convention). */
+function startOfWeek(d: Date): Date {
+  const base = startOfDay(d);
+  // getDay() is 0 for Sunday; ISO weeks start Monday, so shift by 6.
+  const sinceMonday = (d.getDay() + 6) % 7;
+  return new Date(base.getTime() - sinceMonday * MS_PER.day);
+}
+
+/**
+ * Resolve "this/last/next week|month|year" to the START of that period
+ * (documented rule 6). Never "now + N periods", which would resolve a
+ * reminder to the exact second the query was issued.
+ */
+function resolvePeriod(prefix: string, unit: string, now: Date): Date {
+  if (unit === "week") {
+    const monday = startOfWeek(now);
+    if (prefix === "last") return new Date(monday.getTime() - 7 * MS_PER.day);
+    if (prefix === "next") return new Date(monday.getTime() + 7 * MS_PER.day);
+    return monday;
+  }
+  if (unit === "month") {
+    const year = now.getFullYear();
+    const month =
+      now.getMonth() + (prefix === "last" ? -1 : prefix === "next" ? 1 : 0);
+    return new Date(year, month, 1, 0, 0, 0, 0);
+  }
+  const year =
+    now.getFullYear() + (prefix === "last" ? -1 : prefix === "next" ? 1 : 0);
+  return new Date(year, 0, 1, 0, 0, 0, 0);
+}
+
+/** Retrospective counterpart of {@link resolveRelative}: `now - value`. */
+function resolveAgo(
+  value: number,
+  unit: DurationUnit,
+  now: Date,
+): { at: Date; grain: TemporalGrain } {
+  return resolveRelative(-value, unit, now);
 }
 
 function resolveRelative(
@@ -345,6 +415,15 @@ function matchToDate(m: RawMatch, now: Date): FoldedDate | null {
       const r = resolveRelative(parseInt(g.lval ?? "0", 10), unit, now);
       return { ...r, yearCertain: true, text: m.text };
     }
+    case "ago": {
+      const unit = UNIT_ALIASES[(g.aunit ?? "").toLowerCase()];
+      if (!unit) return null;
+      const raw = (g.aval ?? "0").toLowerCase();
+      const value = raw === "a" || raw === "an" ? 1 : parseInt(raw, 10);
+      if (!(value > 0)) return null;
+      const r = resolveAgo(value, unit, now);
+      return { ...r, yearCertain: true, text: m.text };
+    }
     case "dayword": {
       const word = (g.dword ?? "").toLowerCase();
       if (word === "tonight") {
@@ -354,6 +433,15 @@ function matchToDate(m: RawMatch, now: Date): FoldedDate | null {
       }
       const at = startOfDay(now);
       if (word === "tomorrow") at.setTime(at.getTime() + MS_PER.day);
+      if (word === "yesterday") at.setTime(at.getTime() - MS_PER.day);
+      return { at, grain: "day", yearCertain: true, text: m.text };
+    }
+    case "period": {
+      const at = resolvePeriod(
+        (g.pprefix ?? "this").toLowerCase(),
+        (g.punit ?? "week").toLowerCase(),
+        now,
+      );
       return { at, grain: "day", yearCertain: true, text: m.text };
     }
     case "weekday": {
@@ -383,6 +471,21 @@ function matchToDate(m: RawMatch, now: Date): FoldedDate | null {
         0,
         0,
       );
+      // "2026-09-24T10:00" carries its own time; a bare date stays
+      // start-of-day at day grain.
+      if (g.ihour !== undefined) {
+        const hour = parseInt(g.ihour, 10);
+        const minute = parseInt(g.imin ?? "0", 10);
+        if (hour >= 0 && hour < 24 && minute >= 0 && minute < 60) {
+          at.setHours(hour, minute, 0, 0);
+          return {
+            at,
+            grain: minute === 0 ? "hour" : "minute",
+            yearCertain: true,
+            text: m.text,
+          };
+        }
+      }
       return { at, grain: "day", yearCertain: true, text: m.text };
     }
     case "time": {
@@ -415,7 +518,9 @@ function isDateKind(kind: RawMatch["kind"]): boolean {
   return (
     kind === "relative" ||
     kind === "later" ||
+    kind === "ago" ||
     kind === "dayword" ||
+    kind === "period" ||
     kind === "weekday" ||
     kind === "monthday" ||
     kind === "iso"
@@ -537,13 +642,25 @@ export function parseTemporal(text: string, now: Date): ParsedTemporal | null {
   return null;
 }
 
-const DURATION_RE =
-  /\b(?<in>in\s+)?(?<val>\d+)\s+(?<unit>seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?<later>later|from\s+now|hence)\b|\bin\s+(?<val2>\d+)\s+(?<unit2>seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/i;
+const DURATION_RE = new RegExp(
+  [
+    // "3 days later" / "3 days from now" / "3 days ago" — retrospective
+    // forms share the prospective surface vocabulary, so both directions
+    // parse and the caller decides which one to apply.
+    String.raw`\b(?<val>\d+|an?)\s+(?<unit>${UNIT_PATTERN})\s+(?<later>later|from\s+now|hence|ago)\b`,
+    // "in 2 hours"
+    String.raw`\bin\s+(?<val2>\d+)\s+(?<unit2>${UNIT_PATTERN})\b`,
+  ].join("|"),
+  "i",
+);
 
 /**
- * Parse a bare relative offset ("3 days later", "in 2 hours") as a
- * DURATION — no anchor applied. Used for event updates ("moved 3 days
+ * Parse a bare relative offset ("3 days later", "in 2 hours", "3 days
+ * ago") as a DURATION — no anchor applied, and with NO sign: the caller
+ * decides the direction. Used for event updates ("moved 3 days
  * later"), where the anchor is the event's current datetime, NOT now.
+ * An "-ago" offset is returned as an unsigned magnitude; applying it is
+ * the caller's job, and the same surface vocabulary parses either way.
  *
  * @param text — Free text possibly containing a relative offset.
  * @returns The duration, or null when no offset is found.
@@ -552,7 +669,8 @@ export function parseDuration(text: string): TemporalDuration | null {
   if (!text || typeof text !== "string") return null;
   const m = DURATION_RE.exec(text);
   if (!m || !m.groups) return null;
-  const val = parseInt(m.groups.val ?? m.groups.val2 ?? "0", 10);
+  const rawVal = (m.groups.val ?? m.groups.val2 ?? "0").toLowerCase();
+  const val = rawVal === "a" || rawVal === "an" ? 1 : parseInt(rawVal, 10);
   const unit =
     UNIT_ALIASES[(m.groups.unit ?? m.groups.unit2 ?? "").toLowerCase()];
   if (!unit || !(val > 0)) return null;

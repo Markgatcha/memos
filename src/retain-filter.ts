@@ -18,8 +18,24 @@
  * reported for debugging/telemetry. An optional custom classifier can
  * be injected via `setRetainClassifier()`.
  *
+ * The near-duplicate test is where a salience gate most easily destroys
+ * accuracy, so it is deliberately narrow: a restatement may only be
+ * collapsed into an existing memory when the new text adds no salient
+ * content the stored one lacks AND does not flip its negation polarity
+ * (see {@link isRestatement}). Token overlap alone is not enough —
+ * "…listens on port 5432 with a connection pool of 20" and "…listens on
+ * port 6543 with a connection pool of 20" share 92% of their tokens and
+ * are two different facts. Collapsing those silently deletes the update,
+ * which is the one failure mode a memory write gate must never have.
+ *
  * @module @mem-os/sdk/retain-filter
  */
+
+import {
+  classifyContentChange,
+  contentTokens,
+  hasNegationMarker,
+} from "./confidence-machine.js";
 
 /** Inputs the retain gate uses to make its decision. */
 export interface RetainInput {
@@ -106,6 +122,67 @@ export function maxTokenOverlap(
 }
 
 /**
+ * The existing memory a write would collapse into, if any.
+ *
+ * Restatements ("user prefers dark mode!" after "User prefers dark mode")
+ * must collapse; value updates must not. Overlap alone cannot tell them
+ * apart, so the overlap leader is re-checked with
+ * {@link classifyContentChange} — the same salient-token comparison the
+ * evidence state machine uses — and only counts when the new text is a
+ * `reaffirm` or `augment` of it (it asserts nothing that is absent from
+ * what is already stored) and the negation polarity has not flipped.
+ *
+ * @param content — The content proposed for storage.
+ * @param existingContent — Existing memory content in the same scope.
+ * @returns The matched existing content plus its overlap ratio, or null
+ *   when nothing qualifies as a restatement.
+ */
+export function findRestatement(
+  content: string,
+  existingContent: string[],
+): { existing: string; overlap: number } | null {
+  const tokens = contentTokens(content);
+  let best: { existing: string; overlap: number } | null = null;
+  for (const existing of existingContent.slice(0, 20)) {
+    const exTokens = contentTokens(existing);
+    if (exTokens.size === 0) continue;
+    let overlap = 0;
+    for (const t of tokens) if (exTokens.has(t)) overlap += 1;
+    const ratio = overlap / tokens.size;
+    if (ratio < DUPLICATE_OVERLAP) continue;
+    if (!best || ratio > best.overlap) best = { existing, overlap: ratio };
+  }
+  if (!best) return null;
+  const change = classifyContentChange(best.existing, content);
+  if (change !== "reaffirm" && change !== "augment") return null;
+  // Belt and braces: `classifyContentChange` already reads polarity, but
+  // a gate that can silently drop a write should never merge two texts
+  // whose negation markers differ.
+  if (hasNegationMarker(best.existing) !== hasNegationMarker(content)) {
+    return null;
+  }
+  return best;
+}
+
+/**
+ * Is `content` a restatement of something already stored, rather than
+ * new information? True only for that narrow case — a genuine value
+ * update ("moved from AWS to Fly", "port 5432" → "port 6543",
+ * "prefers dark mode" → "no longer prefers dark mode") is never a
+ * restatement, no matter how much of the sentence it reuses.
+ *
+ * @param content — The content proposed for storage.
+ * @param existingContent — Existing memory content in the same scope.
+ * @returns True when the write would add nothing to what is stored.
+ */
+export function isRestatement(
+  content: string,
+  existingContent: string[],
+): boolean {
+  return findRestatement(content, existingContent) !== null;
+}
+
+/**
  * Count distinct signal indicators in the content.
  */
 function countSignals(content: string): number {
@@ -177,7 +254,10 @@ export function scoreRetain(input: RetainInput): number {
  *   1. empty content,
  *   2. a pure acknowledgement ("ok", "thanks", "ok ok ok", …),
  *   3. a fragment with almost no alphanumeric content ("...", "k"),
- *   4. a near-duplicate of an existing same-scope memory.
+ *   4. a restatement of an existing same-scope memory — strictly
+ *      {@link isRestatement}, so a value update that reuses most of the
+ *      stored sentence ("port 5432" → "port 6543", "prefers dark mode" →
+ *      "no longer prefers dark mode") is ALWAYS retained.
  * Everything else is retained. When in doubt, keep the memory — a
  * false skip silently loses user data, while a false keep only costs a
  * little storage. `score` still reports the signal-density estimate
@@ -210,14 +290,12 @@ export function shouldRetain(input: RetainInput): RetainDecision {
     return { retain: false, score, reason: "too short" };
   }
   const existing = input.existingContent ?? [];
-  if (
-    existing.length > 0 &&
-    maxTokenOverlap(content, existing) >= DUPLICATE_OVERLAP
-  ) {
+  const restatement = findRestatement(content, existing);
+  if (restatement) {
     return {
       retain: false,
       score,
-      reason: "near-duplicate of existing memory",
+      reason: `near-duplicate of existing memory (overlap ${restatement.overlap.toFixed(2)}, restatement)`,
     };
   }
   return { retain: true, score, reason: "no noise evidence — retained" };

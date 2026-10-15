@@ -205,6 +205,19 @@ export class SemanticScreen {
    * fallback state is "not yet known" and `available` reports true;
    * the first `scoreText`/`scoreVector` call resolves it and latches
    * the outcome (see `hashFallback`).
+   *
+   * KNOWN GAP (not fixed here on purpose): a third-party
+   * `EmbeddingProvider` that does not implement `getRuntimeInfo` is
+   * reported available, and hash-space cosines from such a provider are
+   * then treated as intent scores. `ensureAnchors` catches the
+   * first-party local-hash fallback because that provider does report
+   * it, but the interface makes the callback optional, so the tier cannot
+   * distinguish "no runtime info" from "real semantic model" without
+   * probing (which would cost an embedding per write). `redteam-round2`
+   * deliberately relies on the permissive reading via its scripted 2-D
+   * provider, so tightening `available` here would break that harness.
+   * If the tier needs to harden this, the right shape is a required
+   * `getRuntimeInfo` on `EmbeddingProvider` in `src/types.ts`.
    */
   get available(): boolean {
     if (this.hashFallback) return false;

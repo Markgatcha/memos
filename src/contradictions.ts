@@ -40,7 +40,11 @@
 
 import { cosineSimilarity } from "./embeddings.js";
 import { sharesSubject } from "./confidence-machine.js";
-import { entityOverlap, extractQueryEntities } from "./entity-extraction.js";
+import {
+  canonicalizeEntities,
+  entityOverlap,
+  extractQueryEntities,
+} from "./entity-extraction.js";
 import { compareScoredMemories } from "./retrieval.js";
 import type { ContradictionRecord, MemoryNode, ScoredMemory } from "./types.js";
 
@@ -134,6 +138,13 @@ export function storedEntities(node: {
  *      content word, so a negation can only contradict a memory that is
  *      actually about the same thing.
  *
+ * The new content's entities are pushed through `canonicalizeEntities`
+ * before the overlap check because that is how the store path stamps
+ * `metadata.entities` (MemOS.store). Without it the two sides of the
+ * check spoke different dialects — "pg" on the new write never matched
+ * the stored "postgres" — and the detector silently missed every pair
+ * whose entity only matched after aliasing.
+ *
  * Pure function: no storage, no LLM. Deterministic — candidates are
  * returned in input order.
  *
@@ -147,9 +158,9 @@ export function findContradictionCandidates(
   newVector: ArrayLike<number>,
   candidates: ContradictionCandidateInput[],
 ): ContradictionCandidate[] {
-  const newEntities = extractQueryEntities(newContent).map((e) =>
-    e.toLowerCase(),
-  );
+  const newEntities = canonicalizeEntities(
+    extractQueryEntities(newContent),
+  ).map((e) => e.toLowerCase());
   const flagged: ContradictionCandidate[] = [];
   for (const candidate of candidates) {
     const similarity = cosineSimilarity(newVector, candidate.vector);
@@ -187,6 +198,26 @@ export function findContradictionCandidates(
  * promote instead of demote, so negative scores are divided by the
  * factor (more negative = ranks worse under the descending sort).
  *
+ * The factor alone is not a guarantee: fusion scores are unbounded, and
+ * a pair whose members differ by more than 1/FACTOR still ranks the
+ * stale version first (measured: a superseded node holding 0.83 of the
+ * fused score while its replacement holds 0.09). So after the factor is
+ * applied the demoted score is also pulled strictly BELOW every
+ * replacement's (one relative ulp each) — the superseded version must
+ * never outrank anything that replaced it, whatever the fused scores
+ * happen to be. Nothing outside the pair is touched, and nothing is
+ * ever removed.
+ *
+ * The same gap shows up in a supersession CHAIN ("deploy on AWS" →
+ * "moved to Fly" → "Fly, not AWS" → "Fly reminder"), where a stale node
+ * is the older member of several pairs. Demoting each node under its own
+ * replacements is not enough: a node demoted below replacement R1 can
+ * still sit above R2 when R1 was itself demoted. The pull-below pass
+ * therefore visits superseded nodes newest-first, so every replacement's
+ * own demotion is already settled when the node it replaces is compared
+ * against it — the chain resolves to a strict descending order with no
+ * dependence on the order the pairs arrive in.
+ *
  * Rules:
  *   - Never removes results. Add-only is preserved: both versions stay
  *     in the set; the newer one simply outranks the older.
@@ -196,7 +227,9 @@ export function findContradictionCandidates(
  *     persisted for future adjudication and must not reach this
  *     function (see `applyContradictionResolution` in `src/memory.ts`).
  *   - Deterministic: pairs are processed in canonical (node_a, node_b)
- *     order and the output is re-sorted with `compareScoredMemories`.
+ *     order, the pull-below pass in descending createdAt with the node
+ *     id as tiebreak, and the output is re-sorted with
+ *     `compareScoredMemories`.
  *   - Pure: inputs are not mutated — demoted results are new objects
  *     with fresh `scores` records (the input `scores` objects may be
  *     shared with other result sets).
@@ -231,36 +264,50 @@ export function resolveContradictionsAtRead(
             : 0,
   );
 
-  const demoted = new Set<string>();
-  const adjusted: ScoredMemory[] = results.map((r) => ({ ...r }));
-
+  // Supersedence edges recovered from the pairs, newest member of each
+  // pair pointing back at the node it replaces.
+  const supersededBy = new Map<string, string[]>();
   for (const pair of ordered) {
     const idxA = byId.get(pair.nodeA);
     const idxB = byId.get(pair.nodeB);
     if (idxA === undefined || idxB === undefined) continue; // only one member present
-    const a = adjusted[idxA]!;
-    const b = adjusted[idxB]!;
+    const a = results[idxA]!;
+    const b = results[idxB]!;
     // The older member loses: smaller createdAt, with the node id as a
     // deterministic tiebreak (createdAt is monotonic per MemOS instance,
     // but imports can collide on the same millisecond).
-    const olderIdx =
+    const olderIsA =
       a.node.createdAt < b.node.createdAt ||
-      (a.node.createdAt === b.node.createdAt && a.node.id < b.node.id)
-        ? idxA
-        : idxB;
-    if (demoted.has(adjusted[olderIdx]!.node.id)) continue; // already demoted via another pair
-    const target = adjusted[olderIdx]!;
-    // Sign-aware demotion: scores from the keyword leg are negative
-    // bm25 ranks, and `score * 0.5` would promote a negative score
-    // (closer to zero) instead of demoting it. Dividing a negative
-    // score by the factor pushes it further negative, i.e. ranks worse
-    // under the descending sort — a true demotion for either sign.
-    // Non-negative scores keep the exact historical behavior.
+      (a.node.createdAt === b.node.createdAt && a.node.id < b.node.id);
+    const olderId = olderIsA ? a.node.id : b.node.id;
+    const newerId = olderIsA ? b.node.id : a.node.id;
+    const list = supersededBy.get(olderId);
+    if (list) {
+      if (!list.includes(newerId)) list.push(newerId);
+    } else {
+      supersededBy.set(olderId, [newerId]);
+    }
+  }
+  if (supersededBy.size === 0) return [...results].sort(compareScoredMemories);
+
+  const adjusted: ScoredMemory[] = results.map((r) => ({ ...r }));
+
+  // Step 1 — apply the demotion factor exactly once per superseded node.
+  // Sign-aware: scores from the keyword leg are negative bm25 ranks, and
+  // `score * 0.5` would promote a negative score (closer to zero)
+  // instead of demoting it. Dividing a negative score by the factor
+  // pushes it further negative, i.e. ranks worse under the descending
+  // sort — a true demotion for either sign. Non-negative scores keep the
+  // exact historical behavior.
+  for (const id of supersededBy.keys()) {
+    const idx = byId.get(id);
+    if (idx === undefined) continue;
+    const target = adjusted[idx]!;
     const newScore =
       target.score >= 0
         ? target.score * CONTRADICTION_DEMOTION_FACTOR
         : target.score / CONTRADICTION_DEMOTION_FACTOR;
-    adjusted[olderIdx] = {
+    adjusted[idx] = {
       ...target,
       score: newScore,
       scores: {
@@ -269,10 +316,52 @@ export function resolveContradictionsAtRead(
         hybrid: newScore,
       },
     };
-    demoted.add(target.node.id);
+  }
+
+  // Step 2 — pull every superseded node strictly below each replacement.
+  // Visiting newest-superseded-first guarantees a replacement's own
+  // step-2 result is already in place, so a chain resolves all the way
+  // down instead of only one link.
+  const visit = [...supersededBy.keys()].sort((x, y) => {
+    const cx = adjusted[byId.get(x)!]!.node.createdAt;
+    const cy = adjusted[byId.get(y)!]!.node.createdAt;
+    if (cx !== cy) return cy - cx;
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
+  for (const id of visit) {
+    const idx = byId.get(id);
+    if (idx === undefined) continue;
+    let score = adjusted[idx]!.score;
+    for (const partnerId of supersededBy.get(id)!) {
+      const partnerIdx = byId.get(partnerId);
+      if (partnerIdx === undefined) continue;
+      const ceiling =
+        adjusted[partnerIdx]!.score - rankUlp(adjusted[partnerIdx]!.score);
+      if (score >= ceiling) score = ceiling;
+    }
+    if (score === adjusted[idx]!.score) continue;
+    adjusted[idx] = {
+      ...adjusted[idx]!,
+      score,
+      scores: {
+        ...(adjusted[idx]!.scores ?? {}),
+        contradiction_demoted: CONTRADICTION_DEMOTION_FACTOR,
+        hybrid: score,
+      },
+    };
   }
 
   return adjusted.sort(compareScoredMemories);
+}
+
+/**
+ * One relative ulp below `reference` — a shift small enough that it can
+ * never reorder any other candidate and large enough that the result is
+ * never an exact tie (an exact tie would hand the decision to the
+ * recency tie-break, which compares freshness rather than validity).
+ */
+function rankUlp(reference: number): number {
+  return Math.max(Math.abs(reference), Number.MIN_VALUE) * 1e-9;
 }
 
 /** Node entity-shape accepted by {@link nodeContradictionCandidates}. */

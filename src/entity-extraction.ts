@@ -128,6 +128,15 @@ function isCodeIdentifier(token: string): boolean {
   return /[_\-.]/.test(token) || /^[a-z]+[A-Z]/.test(token);
 }
 
+/**
+ * Strip non-alphanumeric characters from both ends of a token. Keeps
+ * interior separators (`_`, `-`, `.`) so dotted/kebab identifiers stay
+ * whole while sentence punctuation ("main.", "(sso)") is dropped.
+ */
+function trimEdges(token: string): string {
+  return token.replace(/^[^A-Za-z0-9]+/, "").replace(/[^A-Za-z0-9]+$/, "");
+}
+
 function isAcronym(token: string): boolean {
   return (
     token.length >= 2 && token === token.toUpperCase() && /[A-Z]/.test(token)
@@ -167,10 +176,17 @@ export function extractQueryEntities(text: string): string[] {
   }
 
   // 2. Code identifiers (snake_case / kebab-case / dotted / camelCase).
-  for (const token of text.split(/[^A-Za-z0-9_\-.]+/)) {
+  // The split keeps `.` inside tokens, so the identifier shape is tested
+  // on the RAW token ("db-primary.internal" stays whole) — which also
+  // means a sentence-final word arrives dot-suffixed ("main."). The
+  // entity itself is stored TRIMMED: an indexed entity with a trailing
+  // "." can never exact-match the query entity "main" in the
+  // entity_index leg, and "today." / "today" are the same entity.
+  for (const raw of text.split(/[^A-Za-z0-9_\-.]+/)) {
+    const token = trimEdges(raw);
     if (
       token.length >= MIN_WORD_LENGTH &&
-      isCodeIdentifier(token) &&
+      isCodeIdentifier(raw) &&
       !STOPWORDS.has(token.toLowerCase())
     ) {
       push(token);
@@ -213,6 +229,28 @@ export function extractQueryEntities(text: string): string[] {
       lastIndex = next.index! + next[0].length;
     }
     push(phrase);
+  }
+
+  // 4. Alias-gazetteer pass. `BUILTIN_ENTITY_ALIASES` already knows the
+  //    technical vocabulary the extractor should recognize ("pg",
+  //    "postgres", "k8s", "redis", …), but passes 1–3 can only reach a
+  //    surface form that is quoted, separator-bearing, or capitalized
+  //    mid-sentence. Every other shape is invisible: a lowercase
+  //    abbreviation ("pg backup retention"), a sentence-initial
+  //    proper noun ("PostgreSQL nightly backups…"), or a bare lowercase
+  //    technical noun in an all-lowercase query. Since both the stored
+  //    and the query side run this same extractor, those shapes never
+  //    meet and the entity signal dies on ~80% of real queries.
+  //
+  //    Matching the raw text against the alias surfaces at any case
+  //    closes the gap: the alias table is the curated vocabulary, and
+  //    canonicalization then collapses all of its surface forms onto one
+  //    canonical entity. Ambiguity ("go") is resolved downstream by the
+  //    entity-index leg's document-frequency ranking.
+  for (const raw of text.split(/[^A-Za-z0-9_\-.]+/)) {
+    const token = trimEdges(raw).toLowerCase();
+    if (token.length < 2) continue;
+    if (ALIAS_SURFORMS.has(token)) push(token, 2);
   }
 
   return entities;
@@ -337,6 +375,20 @@ export function canonicalizeEntities(
   }
   return out;
 }
+
+/**
+ * Every surface form recognised by the built-in alias table: the alias
+ * keys ("pg", "k8s") AND the canonical values ("postgres",
+ * "kubernetes"), so a lookup by surface form resolves to a canonical
+ * entity in either direction. Used by the alias-gazetteer pass of
+ * {@link extractQueryEntities}, which is case-insensitive by design.
+ */
+const ALIAS_SURFORMS: ReadonlySet<string> = new Set(
+  [
+    ...Object.keys(BUILTIN_ENTITY_ALIASES),
+    ...Object.values(BUILTIN_ENTITY_ALIASES),
+  ].map((form) => form.toLowerCase()),
+);
 
 function lowerKeys(
   record: Readonly<Record<string, string>>,

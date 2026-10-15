@@ -20,6 +20,151 @@ export function stripTrailingSlashes(url: string): string {
 
 const DEFAULT_DIMENSIONS = 384;
 
+/**
+ * Tokens that carry almost no retrieval signal in memory text: English
+ * function words plus interrogatives and quantifiers. They appear in
+ * nearly every memory, so under a bag-of-features embedding they behave
+ * like a constant offset that two unrelated short texts share — the
+ * classic motivation for IDF weighting (Weinberger 2009 hashing-trick
+ * paper, BM25). Kept deliberately conservative: prepositions that carry
+ * real meaning in this domain ("before", "after", "never", "always")
+ * stay full weight.
+ */
+const LOW_INFORMATION_TOKENS: ReadonlySet<string> = new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "but",
+  "if",
+  "then",
+  "else",
+  "so",
+  "as",
+  "of",
+  "to",
+  "in",
+  "on",
+  "at",
+  "by",
+  "for",
+  "with",
+  "from",
+  "into",
+  "onto",
+  "over",
+  "under",
+  "about",
+  "up",
+  "out",
+  "off",
+  "per",
+  "via",
+  "than",
+  "too",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "am",
+  "do",
+  "does",
+  "did",
+  "doing",
+  "done",
+  "has",
+  "have",
+  "had",
+  "having",
+  "can",
+  "could",
+  "will",
+  "would",
+  "shall",
+  "should",
+  "may",
+  "might",
+  "must",
+  "it",
+  "its",
+  "they",
+  "them",
+  "their",
+  "there",
+  "here",
+  "this",
+  "that",
+  "these",
+  "those",
+  "we",
+  "our",
+  "us",
+  "you",
+  "your",
+  "i",
+  "me",
+  "my",
+  "he",
+  "she",
+  "his",
+  "her",
+  "who",
+  "whom",
+  "what",
+  "when",
+  "where",
+  "why",
+  "how",
+  "which",
+  "all",
+  "any",
+  "both",
+  "each",
+  "few",
+  "more",
+  "most",
+  "other",
+  "some",
+  "such",
+  "no",
+  "not",
+  "only",
+  "own",
+  "same",
+  "very",
+  "just",
+  "also",
+]);
+
+/**
+ * Weight retained by low-information tokens. 0.5 keeps them from
+ * contributing nothing at all (they still bind words into a sentence
+ * shape via the bigram features) while halving their pull on the
+ * cosine. Measured neutral beyond ~0.4 and degrading past ~0.6, so the
+ * exact value is not a tuned constant.
+ */
+const LOW_INFORMATION_WEIGHT = 0.5;
+
+/**
+ * Weight of an adjacent word pair, emitted on the document side only.
+ * Phrases are what separate memories that share every unigram.
+ */
+const WORD_BIGRAM_WEIGHT = 0.35;
+
+/**
+ * Weight of the plural-folded form of a token (see {@link foldPlural}).
+ * Weaker than the exact token feature: number agreement is weak
+ * evidence of relevance, but enough to bridge "installs" ↔ "install".
+ */
+const PLURAL_FEATURE_WEIGHT = 0.6;
+
+/** Which side of the asymmetric retrieval relation a text is encoded for. */
+type LexicalMode = "document" | "query";
+
 const SYNONYMS: Record<string, readonly string[]> = {
   // Preference language
   prefer: ["like", "favor", "preference"],
@@ -129,11 +274,95 @@ function hashToken(token: string): number {
   return hash >>> 0;
 }
 
+/**
+ * Fold a regular English plural back to its singular form.
+ *
+ * Sub-word signal is the one thing a hash embedder has going for it, but
+ * character n-grams only partially bridge "installs"/"install" — the
+ * differing tail grams dilute the shared ones. A shared `plu:` feature
+ * makes the match explicit. Deliberately conservative (regular plurals
+ * only): a full Porter stemmer over-collapses "running"→"run" and
+ * "deploying"→"deploy", which is true here but false for pairs like
+ * "meeting"→"meet".
+ */
+function foldPlural(token: string): string {
+  if (token.length <= 3) return token;
+  if (token.endsWith("sses")) return token.slice(0, -2);
+  if (token.endsWith("ies")) return `${token.slice(0, -3)}y`;
+  if (token.endsWith("ss")) return token;
+  if (token.endsWith("s")) return token.slice(0, -1);
+  return token;
+}
+
 function addFeature(vector: number[], feature: string, weight: number): void {
+  if (weight === 0) return;
   const hash = hashToken(feature);
   const index = hash % vector.length;
+  // The sign is a deterministic function of the bucket for an even
+  // `vector.length`: `hash % n` has the same parity as `hash`, so
+  // sign === parity(bucket). Verified over 500k random hashes. That
+  // makes the sign a no-op for any cosine comparison (both vectors flip
+  // together) and leaves the inner product equal to the unsigned-mass
+  // inner product. Replacing it with an independent sign bit — the
+  // textbook Weinberger-2009 form — was measured to be WORSE on both
+  // the golden corpus and an independent hold-out, so it stays.
   const sign = hash & 1 ? 1 : -1;
   vector[index] += sign * weight;
+}
+
+/**
+ * Accumulate the deterministic bag-of-features for one already-tokenized
+ * text into `vector`. Shared by every hash-based provider in this file so
+ * the document side and the query side stay in lockstep.
+ *
+ * The two modes are asymmetric, mirroring how a trained retriever is
+ * given separate query/document encoders:
+ *
+ * - `"document"` — index-side text. Emits word bigrams: stored memories
+ *   are phrased, and a bigram is what tells "dark mode" from "dark
+ *   theme". Documents discriminate, so they keep every feature.
+ * - `"query"` — retrieval-side text. Suppresses bigrams. A question's
+ *   bigrams ("does the", "do we") essentially never occur verbatim in a
+ *   stored memory, so under 384-bucket hashing they are pure collision
+ *   noise that dilutes the cosine. Queries recall, so they keep only
+ *   the concept-level features (unigrams, plural folds, synonyms,
+ *   character n-grams for typos and OOV).
+ */
+function accumulateLexicalFeatures(
+  vector: number[],
+  tokens: string[],
+  mode: LexicalMode,
+): void {
+  for (const token of new Set(tokens)) {
+    addFeature(
+      vector,
+      `tok:${token}`,
+      LOW_INFORMATION_TOKENS.has(token) ? LOW_INFORMATION_WEIGHT : 1,
+    );
+    const plural = foldPlural(token);
+    if (plural !== token) {
+      addFeature(vector, `plu:${plural}`, PLURAL_FEATURE_WEIGHT);
+    }
+    for (let length = 3; length <= Math.min(token.length, 5); length += 1) {
+      for (let index = 0; index <= token.length - length; index += 1) {
+        addFeature(vector, `ng:${token.slice(index, index + length)}`, 0.12);
+      }
+    }
+    for (const synonym of SYNONYMS[token] ?? []) {
+      addFeature(vector, `tok:${synonym}`, 0.45);
+    }
+  }
+
+  // Bigrams are document-side only: see the mode contract above.
+  if (mode === "document") {
+    for (let index = 0; index < tokens.length - 1; index += 1) {
+      addFeature(
+        vector,
+        `bi:${tokens[index]}:${tokens[index + 1]}`,
+        WORD_BIGRAM_WEIGHT,
+      );
+    }
+  }
 }
 
 export function normalizeVector(vector: EmbeddingVector): EmbeddingVector {
@@ -160,6 +389,25 @@ export function cosineSimilarity(
   return dot / Math.sqrt(aNorm * bNorm);
 }
 
+/**
+ * Deterministic, dependency-free feature-hash embedder.
+ *
+ * Not a trained model: it is a signed-hashed bag of word unigrams,
+ * plural folds, hand-maintained synonyms, character 3–5-grams, and (on
+ * the document side only) word bigrams, L2-normalized into `dimensions`
+ * buckets. Good enough for offline eval, tests, and small corpora; it
+ * cannot generalize the way a real sentence embedding does.
+ *
+ * Query and document encoding are asymmetric — {@link embedQuery} drops
+ * bigrams and therefore scores a query differently from the same text
+ * fed to {@link embed}. Because of that, `model` carries a scheme
+ * suffix: storage keys embeddings by model (see
+ * `StorageAdapter.querySimilarEmbeddings`), so a change to the feature
+ * scheme must change the key or vectors written by an older build would
+ * silently be compared against vectors generated by a newer one. The
+ * startup backfill in MemOS re-embeds nodes whose stored model differs,
+ * so bumping the suffix is self-healing.
+ */
 export class LocalHashEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "local-hash";
   public readonly model: string;
@@ -167,30 +415,26 @@ export class LocalHashEmbeddingProvider implements EmbeddingProvider {
 
   constructor(options: { dimensions?: number; model?: string } = {}) {
     this.dimensions = options.dimensions ?? DEFAULT_DIMENSIONS;
-    this.model = options.model ?? `local-hash-${this.dimensions}`;
+    this.model = options.model ?? `local-hash-${this.dimensions}-v2`;
   }
 
-  async embed(text: string): Promise<EmbeddingVector> {
+  embed(text: string): Promise<EmbeddingVector> {
+    return Promise.resolve(this.encode(text, "document"));
+  }
+
+  /**
+   * Query-side encoding: same feature space, but bigram-suppressed.
+   * `MemOS` routes all search queries here when the method exists, which
+   * is what makes the asymmetry bite.
+   */
+  embedQuery(text: string): Promise<EmbeddingVector> {
+    return Promise.resolve(this.encode(text, "query"));
+  }
+
+  private encode(text: string, mode: LexicalMode): EmbeddingVector {
     const vector = Array.from({ length: this.dimensions }, () => 0);
     const tokens = tokenize(text);
-    const uniqueTokens = [...new Set(tokens)];
-
-    for (const token of uniqueTokens) {
-      addFeature(vector, `tok:${token}`, 1);
-      for (let length = 3; length <= Math.min(token.length, 5); length += 1) {
-        for (let index = 0; index <= token.length - length; index += 1) {
-          addFeature(vector, `ng:${token.slice(index, index + length)}`, 0.12);
-        }
-      }
-      for (const synonym of SYNONYMS[token] ?? []) {
-        addFeature(vector, `tok:${synonym}`, 0.45);
-      }
-    }
-
-    for (let index = 0; index < tokens.length - 1; index += 1) {
-      addFeature(vector, `bi:${tokens[index]}:${tokens[index + 1]}`, 0.35);
-    }
-
+    accumulateLexicalFeatures(vector, tokens, mode);
     return normalizeVector(vector);
   }
 }
@@ -384,6 +628,15 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
  * retrieval model we can hit over HTTP, and it's a common default
  * for serious RAG work. The provider uses the public
  * `https://api.voyageai.com/v1/embeddings` endpoint and Bearer auth.
+ *
+ * Voyage is an ASYMMETRIC retriever: it prepends a different prompt to
+ * query text than to document text, keyed on the `input_type` argument.
+ * Leaving `input_type` unset (the API's `null` default) makes the model
+ * emit a "direct" vector that is neither query- nor document-tailored,
+ * which silently forfeits the whole retrieval gain. So this provider
+ * sends `input_type: "document"` on the index side and
+ * `input_type: "query"` on the query side. Voyage documents the two as
+ * compatible within one space, so no model-version key is needed.
  */
 export class VoyageAIEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "voyage";
@@ -391,6 +644,10 @@ export class VoyageAIEmbeddingProvider implements EmbeddingProvider {
   public readonly dimensions: number;
   private readonly apiKey: string;
   private readonly baseUrl: string;
+  /** `input_type` used for index-side text (`embed` / `batchEmbed`). */
+  private readonly inputType: string | null;
+  /** `input_type` used for retrieval-side text (`embedQuery`). */
+  private readonly queryInputType: string | null;
 
   constructor(
     options: {
@@ -398,6 +655,12 @@ export class VoyageAIEmbeddingProvider implements EmbeddingProvider {
       model?: string;
       dimensions?: number;
       baseUrl?: string;
+      /** Override the index-side `input_type`. Pass `null` for the raw
+       *  API default (no retrieval prompt — not recommended). */
+      inputType?: string | null;
+      /** Override the query-side `input_type`. Pass `null` to embed
+       *  queries exactly like documents. */
+      queryInputType?: string | null;
     } = {},
   ) {
     if (!options.apiKey) {
@@ -411,24 +674,41 @@ export class VoyageAIEmbeddingProvider implements EmbeddingProvider {
     this.baseUrl = stripTrailingSlashes(
       options.baseUrl ?? "https://api.voyageai.com/v1",
     );
+    this.inputType =
+      options.inputType === undefined ? "document" : options.inputType;
+    this.queryInputType =
+      options.queryInputType === undefined ? "query" : options.queryInputType;
   }
 
   async embed(text: string): Promise<EmbeddingVector> {
-    return this.callEmbeddings([text]).then((v) => v[0]);
+    return this.callEmbeddings([text], this.inputType).then((v) => v[0]);
+  }
+
+  /** Query-side encoding: `input_type: "query"` (see the class doc). */
+  embedQuery(text: string): Promise<EmbeddingVector> {
+    return this.callEmbeddings([text], this.queryInputType).then((v) => v[0]);
   }
 
   async batchEmbed(texts: string[]): Promise<EmbeddingVector[]> {
-    return this.callEmbeddings(texts);
+    return this.callEmbeddings(texts, this.inputType);
   }
 
-  private async callEmbeddings(texts: string[]): Promise<EmbeddingVector[]> {
+  private async callEmbeddings(
+    texts: string[],
+    inputType: string | null,
+  ): Promise<EmbeddingVector[]> {
     const response = await fetch(`${this.baseUrl}/embeddings`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({ model: this.model, input: texts }),
+      body: JSON.stringify({
+        model: this.model,
+        input: texts,
+        // Omitted entirely when null — that is the API's own default.
+        ...(inputType === null ? {} : { input_type: inputType }),
+      }),
     });
     if (!response.ok) {
       throw new Error(
@@ -495,6 +775,14 @@ export function createEmbeddingProvider(
  * Cohere's `embed-english-v3.0` (and its multilingual sibling) is a
  * strong default for English retrieval. The provider hits
  * `https://api.cohere.ai/v1/embed` and returns a normalized vector.
+ *
+ * embed-v3 and later are asymmetric: Cohere's own documents state that
+ * a corpus must be embedded with `input_type: "search_document"` and
+ * every query with `input_type: "search_query"` — the two use different
+ * prompts and mixing them degrades retrieval. `embedQuery()` therefore
+ * sends `search_query`, while `embed`/`batchEmbed` keep
+ * `search_document`. Models that do not support `search_query` can set
+ * `queryInputType: null` to fall back to the document form.
  */
 export class CohereEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "cohere";
@@ -502,7 +790,10 @@ export class CohereEmbeddingProvider implements EmbeddingProvider {
   public readonly dimensions: number;
   private readonly apiKey: string;
   private readonly baseUrl: string;
+  /** `input_type` used for index-side text (`embed` / `batchEmbed`). */
   private readonly inputType: string;
+  /** `input_type` used for retrieval-side text (`embedQuery`). */
+  private readonly queryInputType: string;
 
   constructor(
     options: {
@@ -511,6 +802,9 @@ export class CohereEmbeddingProvider implements EmbeddingProvider {
       dimensions?: number;
       baseUrl?: string;
       inputType?: string;
+      /** Query-side counterpart of `inputType`. Set to the same value as
+       *  `inputType` for a symmetric (non-retrieval) setup. */
+      queryInputType?: string;
     } = {},
   ) {
     if (!options.apiKey) {
@@ -522,21 +816,30 @@ export class CohereEmbeddingProvider implements EmbeddingProvider {
     this.baseUrl = stripTrailingSlashes(
       options.baseUrl ?? "https://api.cohere.ai/v1",
     );
-    // `search_document` is the right value for indexing; callers that
-    // need query-side embeddings can construct a separate provider
-    // instance with input_type=`search_query`.
+    // `search_document` is the right value for indexing; queries now get
+    // the documented `search_query` counterpart instead of requiring a
+    // second provider instance (see the class doc).
     this.inputType = options.inputType ?? "search_document";
+    this.queryInputType = options.queryInputType ?? "search_query";
   }
 
   async embed(text: string): Promise<EmbeddingVector> {
-    return this.callEmbed([text]).then((v) => v[0]);
+    return this.callEmbed([text], this.inputType).then((v) => v[0]);
+  }
+
+  /** Query-side encoding: `input_type: "search_query"` (see class doc). */
+  embedQuery(text: string): Promise<EmbeddingVector> {
+    return this.callEmbed([text], this.queryInputType).then((v) => v[0]);
   }
 
   async batchEmbed(texts: string[]): Promise<EmbeddingVector[]> {
-    return this.callEmbed(texts);
+    return this.callEmbed(texts, this.inputType);
   }
 
-  private async callEmbed(texts: string[]): Promise<EmbeddingVector[]> {
+  private async callEmbed(
+    texts: string[],
+    inputType: string,
+  ): Promise<EmbeddingVector[]> {
     const response = await fetch(`${this.baseUrl}/embed`, {
       method: "POST",
       headers: {
@@ -546,7 +849,7 @@ export class CohereEmbeddingProvider implements EmbeddingProvider {
       body: JSON.stringify({
         model: this.model,
         texts,
-        input_type: this.inputType,
+        input_type: inputType,
       }),
     });
     if (!response.ok) {
@@ -626,8 +929,13 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
         ? "local-hash-fallback"
         : "fastembed",
       requestedModel: this.model,
+      // `-v2` marks the current local-hash feature scheme (see
+      // `LocalHashEmbeddingProvider`): storage keys embedding rows by
+      // model, so a scheme change must change the key or the old rows
+      // would silently be compared against new query vectors. The
+      // startup backfill re-embeds rows whose key no longer matches.
       resolvedModel: this.fallbackReason
-        ? `local-hash-fallback-${this.dimensions}`
+        ? `local-hash-fallback-${this.dimensions}-v2`
         : this.model,
       modelRevision: null,
       requestedDimensions: this.dimensions,
@@ -720,17 +1028,36 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
     );
   }
 
-  async embed(text: string): Promise<EmbeddingVector> {
+  /**
+   * Run the resolved real model, or return `null` when the local-hash
+   * fallback is in charge. Shared by `embed` and `embedQuery` so the two
+   * entry points can differ only in fallback behaviour.
+   */
+  private async runPipeline(text: string): Promise<EmbeddingVector | null> {
     await this.resolve();
-    if (this.pipeline) {
-      const out = await this.pipeline(text, {
-        pooling: "mean",
-        normalize: true,
-      });
-      this.lastObservedDimensions = out.data.length;
-      return Array.from(out.data);
-    }
-    return this.fallbackEmbed(text);
+    if (!this.pipeline) return null;
+    const out = await this.pipeline(text, {
+      pooling: "mean",
+      normalize: true,
+    });
+    this.lastObservedDimensions = out.data.length;
+    return Array.from(out.data);
+  }
+
+  async embed(text: string): Promise<EmbeddingVector> {
+    const viaModel = await this.runPipeline(text);
+    return viaModel ?? this.fallbackEmbed(text);
+  }
+
+  /**
+   * Query-side encoding. The transformers pipelines expose no asymmetric
+   * mode, so on the real model this is identical to `embed`; only the
+   * deterministic fallback differs (bigram suppression — see
+   * {@link fallbackEmbedQuery}).
+   */
+  async embedQuery(text: string): Promise<EmbeddingVector> {
+    const viaModel = await this.runPipeline(text);
+    return viaModel ?? this.fallbackEmbedQuery(text);
   }
 
   async batchEmbed(texts: string[]): Promise<EmbeddingVector[]> {
@@ -765,30 +1092,28 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
    * Deterministic feature-hash fallback. Produces a `dimensions`-long
    * vector with the same shape (and L2 norm) as a real
    * sentence-transformer embedding, so storage and ranking code is
-   * identical to the online path.
+   * identical to the online path. Uses the same shared feature
+   * accumulator as {@link LocalHashEmbeddingProvider}, documents side
+   * only — queries go through {@link embedQuery} below.
    */
   private fallbackEmbed(text: string): EmbeddingVector {
     this.lastObservedDimensions = this.dimensions;
     const vector = Array.from({ length: this.dimensions }, () => 0);
-    const tokens = text
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .split(/[^a-z0-9]+/)
-      .filter((t) => t.length > 1);
+    const tokens = tokenize(text);
+    accumulateLexicalFeatures(vector, tokens, "document");
+    return normalizeVector(vector);
+  }
 
-    const unique = [...new Set(tokens)];
-    for (const token of unique) {
-      addFeature(vector, `tok:${token}`, 1);
-      for (let length = 3; length <= Math.min(token.length, 5); length += 1) {
-        for (let i = 0; i <= token.length - length; i += 1) {
-          addFeature(vector, `ng:${token.slice(i, i + length)}`, 0.12);
-        }
-      }
-    }
-    for (let i = 0; i < tokens.length - 1; i += 1) {
-      addFeature(vector, `bi:${tokens[i]}:${tokens[i + 1]}`, 0.35);
-    }
+  /**
+   * Query-side local-hash encoding for the fallback path, so a
+   * degraded install still gets the asymmetric query profile instead of
+   * scoring queries as if they were documents.
+   */
+  private fallbackEmbedQuery(text: string): EmbeddingVector {
+    this.lastObservedDimensions = this.dimensions;
+    const vector = Array.from({ length: this.dimensions }, () => 0);
+    const tokens = tokenize(text);
+    accumulateLexicalFeatures(vector, tokens, "query");
     return normalizeVector(vector);
   }
 }

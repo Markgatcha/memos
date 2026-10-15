@@ -194,6 +194,14 @@ export interface BuildContextPackOptions {
    */
   lessons?: ProceduralLesson[];
   /**
+   * Include superseded (historically closed) memories in the pack.
+   * Default false: a row with a non-null `node.validTo` is a version a
+   * later write has already replaced, so packing it next to its live
+   * replacement burns a pack slot on numbers the agent must never act
+   * on. Set true for the old history-inclusive behaviour.
+   */
+  includeHistorical?: boolean;
+  /**
    * Fidelity level for item contents: a fixed level or `"adaptive"`
    * (the query-adaptive router picks the starting level from query
    * signals). Default `undefined` = L3 verbatim — current behavior
@@ -408,11 +416,22 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     citations = false,
     lessons,
     fidelity,
+    includeHistorical = false,
   } = opts;
 
   // Sort by descending score, node id as the final tiebreak (cache-prefix
   // stability: equal scores must not surface input-order noise).
-  const sorted = [...items].sort(compareScoredMemories);
+  const ranked = [...items].sort(compareScoredMemories);
+  // Bitemporal triage (before dedup and the token budget): a closed
+  // `validTo` means a later write already REPLACED this row, so it is
+  // history rather than the current picture. A pack is an agent's
+  // standing view of the world — a superseded version of a fact is
+  // exactly what it must not act on, and leaving it in the pool lets it
+  // take a slot (and a token budget) away from its live replacement.
+  // `includeHistorical: true` restores the old behaviour.
+  const sorted = includeHistorical
+    ? ranked
+    : ranked.filter((scored) => scored.node.validTo === null);
 
   // Fidelity level: "adaptive" routes per-query; a fixed level renders
   // every item at that level; undefined keeps the historical default of

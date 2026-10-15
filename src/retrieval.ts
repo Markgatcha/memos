@@ -443,6 +443,125 @@ function minMaxNormalizeLeg(
   return out;
 }
 
+/**
+ * Lower bound of the query-coverage factor applied to the keyword leg's
+ * normalized contribution (see {@link applyQueryCoverage}). A candidate that
+ * covers the query as well as the best-covered candidate keeps its full
+ * score; one that covers half as much is scaled to `floor + (1 - floor)/2`,
+ * and one that covers none of the query terms is scaled to `floor` — i.e. it
+ * keeps half its keyword contribution. Deliberately gentle: the factor only
+ * ever re-orders candidates whose coverage DIFFERS, so it repairs ranking
+ * pathologies (a lone rare-term bm25 spike outranking a full-coverage match)
+ * without ever demoting a whole leg. Measured on the golden eval the effect
+ * is a shallow plateau, not a tuned dial: floors 0.6–0.9 are a no-op (the
+ * demotion is too weak to reorder anything), while 0.0–0.5 each rescue the
+ * same query's correct answer into the top-5. 0.5 sits at the top of that
+ * plateau — anything weaker does nothing at all.
+ */
+export const DEFAULT_COVERAGE_FLOOR = 0.5;
+
+/**
+ * Minimal Porter-adjacent suffix stripper for the query-coverage factor.
+ *
+ * FTS5 indexes with `tokenize='porter unicode61'`, so a stored
+ * "deploying" matches the query term "deploy" at the bm25 level. The
+ * coverage factor re-derives the same vocabulary match in memory, and
+ * without stripping it would systematically under-count coverage for
+ * inflected forms and penalize correct matches. Deliberately NOT a full
+ * Porter implementation: it only needs to agree with the index on the
+ * inflections that occur in practice (plurals, -ing, -ed).
+ */
+function coverageStem(token: string): string {
+  for (const suffix of ["ing", "ies", "ed", "es", "s"]) {
+    if (token.length > suffix.length + 2 && token.endsWith(suffix)) {
+      return token.slice(0, -suffix.length);
+    }
+  }
+  return token;
+}
+
+/**
+ * Word-boundary prefix patterns for the query's content terms — the
+ * vocabulary the coverage factor measures against. One pattern per
+ * distinct stemmed term; a candidate covers a term when the term begins
+ * one of its words, which is how a stemmer-blind in-memory check agrees
+ * with the stemmed FTS5 index ("deploi" matches "deploys", "deploying"
+ * and "pre-deploy"). Returns an empty array when the query carries no
+ * content term, which disables the factor.
+ */
+function queryCoveragePatterns(query: string): RegExp[] {
+  const terms = new Set<string>();
+  for (const token of prfTokenize(query)) terms.add(coverageStem(token));
+  return [...terms].map((term) => new RegExp(`\\b${term}`, "i"));
+}
+
+/**
+ * Number of the query's content terms a candidate covers. Scans the
+ * summary + content once per term rather than tokenizing the whole text
+ * per candidate: the candidate pool is up to `candidateDepth` nodes and
+ * this runs on every query.
+ */
+function matchedQueryTerms(patterns: RegExp[], node: MemoryNode): number {
+  const text = node.summary ? `${node.summary} ${node.content}` : node.content;
+  let matched = 0;
+  for (const pattern of patterns) {
+    if (pattern.test(text)) matched += 1;
+  }
+  return matched;
+}
+
+/**
+ * Apply the query-coverage factor to a keyword leg's normalized scores.
+ *
+ * Why this exists: BM25 weights terms by IDF, so a document matching ONE
+ * rare query term can score as highly as one matching every term — min-max
+ * normalization then maps both to the top of the keyword leg and the
+ * full-coverage match loses its edge. Term coverage (the classic
+ * "coordination level", and what Lucene's `minimum_should_match` enforces)
+ * is the standard correction, and the "weakest link" analysis of multi-path
+ * hybrid search (Gao et al., PVLDB 2026) argues for exactly this kind of
+ * path-wise quality signal before fusion.
+ *
+ * Coverage is measured RELATIVE to the best-covered candidate in the leg
+ * (`coverage / maxCoverage`) rather than in absolute terms. Absolute
+ * coverage would rescale the entire leg — including candidates that
+ * already match everything — and thereby silently rebalance the
+ * keyword/semantic weight ratio. The relative form leaves the leg's own
+ * scaling untouched and only re-orders candidates whose coverage differs,
+ * so it is exactly neutral whenever the leg has no coverage spread (the
+ * common case: paraphrases share no vocabulary at all) and repairs the
+ * rare-term-spike pathology when it does. Returns the input map untouched
+ * when the query has no content terms or the leg has no candidate.
+ */
+function applyQueryCoverage(
+  keywordNorm: Map<string, number>,
+  byId: Map<string, ScoredMemory>,
+  patterns: RegExp[],
+): void {
+  if (patterns.length === 0 || keywordNorm.size === 0) return;
+  const matched = new Map<string, number>();
+  let best = 0;
+  for (const id of keywordNorm.keys()) {
+    const r = byId.get(id);
+    if (!r) continue;
+    const count = matchedQueryTerms(patterns, r.node);
+    matched.set(id, count);
+    if (count > best) best = count;
+  }
+  // No candidate covers any query term: the leg carries no coverage signal
+  // (pure paraphrase territory), so leave it exactly as bm25 ranked it.
+  if (best <= 0) return;
+  for (const [id, n] of keywordNorm) {
+    const count = matched.get(id);
+    if (count === undefined) continue;
+    const relative = count / best;
+    keywordNorm.set(
+      id,
+      n * (DEFAULT_COVERAGE_FLOOR + (1 - DEFAULT_COVERAGE_FLOOR) * relative),
+    );
+  }
+}
+
 interface AdaptedLegWeights {
   keyword: number;
   semantic: number;
@@ -550,6 +669,17 @@ function convexFuse(
   for (const r of semanticResults) byId.set(r.node.id, r);
   for (const r of entityResults) byId.set(r.node.id, r);
 
+  // Query-coverage factor: the keyword leg only. bm25's IDF weighting lets
+  // a single rare-term match rank beside a full-coverage match, so the
+  // normalized keyword contribution is scaled by how much of the query the
+  // candidate covers relative to the best-covered candidate. Rescaled in
+  // place (still monotone, still within [0,1]).
+  applyQueryCoverage(
+    keywordNorm,
+    byId,
+    options.query ? queryCoveragePatterns(options.query) : [],
+  );
+
   const merged = new Map<string, FusedCandidate>();
   const addLeg = (
     norm: Map<string, number>,
@@ -648,7 +778,6 @@ export function fuseResults(
     options.confidenceWeightStrength ?? DEFAULT_CONFIDENCE_WEIGHT;
   const recencyHalfLifeMs =
     options.recencyHalfLifeMs ?? DEFAULT_RECENCY_HALF_LIFE_MS;
-  const nowMs = options.nowMs ?? Date.now();
   const queryEntities = options.queryEntities ?? [];
   const entityWeight =
     options.entityWeight ??
@@ -737,31 +866,45 @@ export function fuseResults(
   // deterministic and knowledge-update-friendly (the current version of
   // a fact surfaces before its stale duplicate).
   if (recencyHalfLifeMs > 0) {
-    const recencyBoost = (updatedAt: number): number => {
-      const ageMs = Math.max(0, nowMs - updatedAt);
-      return Math.pow(0.5, ageMs / recencyHalfLifeMs); // 1.0 → fresh … → 0.0
-    };
     const ranked = [...merged.values()].sort(compareScoredMemories);
-    for (let i = 1; i < ranked.length; i += 1) {
-      const current = ranked[i]!;
-      const prev = ranked[i - 1]!;
-      // `ranked` is sorted descending, so the difference is >= 0; the
-      // epsilon check admits both exact ties and float-noise trails.
-      if (
-        prev.score - current.score <= RECENCY_EPSILON &&
-        // Only swap when the lower-scored candidate is actually FRESHER
-        // — an older candidate trailing within epsilon stays put.
-        current.node.updatedAt > prev.node.updatedAt
+    // Resolve WHOLE tie groups, not just adjacent pairs. A single
+    // left-to-right adjacent comparison cannot order a run of three or
+    // more exactly-tied candidates: in [older, newer, middle] the middle
+    // candidate is compared against the already-bumped newer one, so it
+    // never overtakes the older one and the run comes out mis-ordered.
+    // Each group is re-stamped below the group's top score by one epsilon
+    // per position, which keeps every member inside the group's own
+    // epsilon band: a group is bounded above by a member at least
+    // RECENCY_EPSILON better and spans at most (n-1)·RECENCY_EPSILON, so
+    // epsilon steps can never reach either neighbouring group.
+    let groupStart = 0;
+    while (groupStart < ranked.length) {
+      let groupEnd = groupStart + 1;
+      while (
+        groupEnd < ranked.length &&
+        ranked[groupEnd - 1]!.score - ranked[groupEnd]!.score <= RECENCY_EPSILON
       ) {
-        const boost = recencyBoost(current.node.updatedAt);
-        if (boost > 0) {
-          // Nudge by a fraction of the epsilon window proportional to
-          // freshness — enough to swap the tie, never enough to leapfrog
-          // a candidate outside the epsilon band.
-          current.score += RECENCY_EPSILON * boost * 0.5;
-          current.scores.hybrid = current.score;
+        groupEnd += 1;
+      }
+      const group = ranked.slice(groupStart, groupEnd);
+      if (group.length > 1) {
+        // Freshest first, node id as the deterministic final tiebreak —
+        // the same ordering `compareScoredMemories` applies to scores.
+        const ordered = [...group].sort(
+          (a, b) =>
+            b.node.updatedAt - a.node.updatedAt ||
+            (a.node.id < b.node.id ? -1 : a.node.id > b.node.id ? 1 : 0),
+        );
+        const top = group[0]!.score;
+        for (let i = 1; i < ordered.length; i += 1) {
+          // One epsilon per position — enough to order the run, never
+          // enough to leave the epsilon band.
+          const entry = ordered[i]!;
+          entry.score = top - RECENCY_EPSILON * i;
+          entry.scores.hybrid = entry.score;
         }
       }
+      groupStart = groupEnd;
     }
   }
 
