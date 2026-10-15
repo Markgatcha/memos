@@ -113,9 +113,9 @@
     "eval:retrieval:baseline": "tsx scripts/eval-retrieval.ts --write-baseline"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^2.3.0",
+    "@modelcontextprotocol/server": "^2.3.1",
     "better-sqlite3": "^13.0.3",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "@huggingface/transformers": "^4.2.0",
@@ -136,17 +136,17 @@
     "sharp": "^0.35.4"
   },
   "devDependencies": {
-    "@huggingface/transformers": "^4.3.0",
-    "@swc/core": "^1.16.13",
+    "@huggingface/transformers": "^4.3.1",
+    "@swc/core": "^1.16.18",
     "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^9.6.0",
     "@types/jest": "^30.0.0",
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.5",
     "@typescript/native": "npm:typescript@^7.0.2",
     "jest": "^30.5.2",
-    "oxlint": "^1.86.0",
-    "oxlint-tsgolint": "^7.0.2003",
-    "prettier": "^3.9.9",
+    "oxlint": "^1.88.0",
+    "oxlint-tsgolint": "^7.0.2004",
+    "prettier": "^3.9.10",
     "tsx": "^4.23.15",
     "typescript": "npm:@typescript/typescript6@^6.0.2"
   },
