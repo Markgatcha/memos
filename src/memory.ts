@@ -532,6 +532,16 @@ export class MemOS {
   private queryEmbeddingCache = new Map<string, number[]>();
   private static readonly QUERY_EMBEDDING_CACHE_MAX = 256;
   /**
+   * Bounded LRU cache of document (node) embedding vectors, keyed by
+   * `${provider.id}:${provider.model}:${text}`. Embedding is a pure
+   * function of (provider, model, text), so caching is recall-neutral
+   * and collapses the repeated inferences a store/reindex/evidence pass
+   * performs on identical text.
+   */
+  private documentEmbeddingCache = new Map<string, number[]>();
+  private static readonly DOCUMENT_EMBEDDING_CACHE_MAX = 256;
+
+  /**
    * Tier-2 semantic screen for the provenance-trust write gate (intent
    * level, fastembed embeddings — no LLM). Lazily constructed: the
    * anchor embeddings are computed on first use and cached for the
@@ -5038,6 +5048,32 @@ export class MemOS {
   }
 
   /**
+   * Embed a document (node) text through the configured provider with an
+   * in-process LRU cache. Recall-neutral by construction: embedding is
+   * deterministic in (provider id, model, text). Collapses the repeated
+   * inferences performed on identical text across store/reindex/evidence
+   * passes. Returns `null` when no provider is configured.
+   */
+  private async embedDocumentCached(text: string): Promise<number[] | null> {
+    const provider = this.embeddingProvider;
+    if (!provider) return null;
+    const key = `${provider.id}:${provider.model}:doc:${text}`;
+    const hit = this.documentEmbeddingCache.get(key);
+    if (hit) {
+      this.documentEmbeddingCache.delete(key);
+      this.documentEmbeddingCache.set(key, hit);
+      return hit;
+    }
+    const vector = await provider.embed(text);
+    this.documentEmbeddingCache.set(key, vector);
+    if (this.documentEmbeddingCache.size > MemOS.DOCUMENT_EMBEDDING_CACHE_MAX) {
+      const oldest = this.documentEmbeddingCache.keys().next();
+      if (!oldest.done) this.documentEmbeddingCache.delete(oldest.value);
+    }
+    return vector;
+  }
+
+  /**
    * Re-embed every node with the CURRENTLY configured provider, replacing
    * stale vectors in place. Required after switching embedding models:
    * vectors from different models are not comparable (semantic search
@@ -5646,7 +5682,7 @@ export class MemOS {
           this.embeddingProvider &&
           this.storage.querySimilarEmbeddings
         ) {
-          const embedding = await this.embeddingProvider.embed(fact.content);
+          const embedding = (await this.embedDocumentCached(fact.content))!;
           const similar = await this.storage.querySimilarEmbeddings(
             embedding,
             { namespace, limit: 1 },
@@ -6125,10 +6161,12 @@ export class MemOS {
   private async pairSimilarity(a: string, b: string): Promise<number> {
     if (this.embeddingProvider) {
       try {
-        const [va, vb] = await Promise.all([
-          this.embeddingProvider.embed(a),
-          this.embeddingProvider.embed(b),
+        const [vaRaw, vbRaw] = await Promise.all([
+          this.embedDocumentCached(a),
+          this.embedDocumentCached(b),
         ]);
+        const va = vaRaw!;
+        const vb = vbRaw!;
         let dot = 0;
         for (let i = 0; i < Math.min(va.length, vb.length); i += 1) {
           dot += va[i]! * vb[i]!;
@@ -6164,11 +6202,12 @@ export class MemOS {
   private async persistEmbedding(node: MemoryNode): Promise<void> {
     if (!this.embeddingProvider || !this.storage.saveEmbedding) return;
     const text = this.embeddedTextFor(node);
-    const vector = await this.embeddingProvider.embed(text);
+    const vector = await this.embedDocumentCached(text);
+    if (!vector) return;
     await this.onEmbeddingPersisted(
       node.id,
       vector,
-      this.embeddingProvider.model,
+      this.embeddingProvider!.model,
     );
   }
 
@@ -6278,7 +6317,7 @@ export class MemOS {
     if (this.config.embeddingQueue.synchronous) {
       void (async () => {
         try {
-          const vector = await this.embeddingProvider!.embed(text);
+          const vector = (await this.embedDocumentCached(text))!;
           await this.onEmbeddingPersisted(
             node.id,
             vector,

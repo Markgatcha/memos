@@ -692,6 +692,7 @@ export class SQLiteStorage implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS idx_nodes_source ON nodes(source);
       CREATE INDEX IF NOT EXISTS idx_nodes_pool ON nodes(pool);
       CREATE INDEX IF NOT EXISTS idx_nodes_harness ON nodes(harness);
+      CREATE INDEX IF NOT EXISTS idx_nodes_namespace ON nodes(namespace);
     `);
 
     // FTS5 virtual table for full-text search. The `porter unicode61`
