@@ -166,5 +166,5 @@
   "optionalDependencies": {
     "better-sqlite3-multiple-ciphers": "^13.0.3"
   },
-  "packageManager": "pnpm@12.9.1"
+  "packageManager": "pnpm@12.14.0"
 }
