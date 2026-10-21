@@ -1,0 +1,84 @@
+{
+  "model": "qwen-image-2.1-turbo-Q5_0.gguf",
+  "vae": "qwen_image_2.1_vae_bf16.safetensors",
+  "clip": "qwen3vl_8b_int8_convrot.safetensors",
+  "encoder": "TextEncodeQwenImage21",
+  "steps": 25,
+  "cfg": 1,
+  "scheduler": "euler/simple",
+  "style_tail": "abstract architectural concept art, flat layered cutout slabs of dark stone and glass, deep charcoal and obsidian palette with faint warm amber backlight glowing along the lower edges, clean geometric composition, soft volumetric depth, subtle film grain, minimalist, no text, no letters, no watermark, no people, no faces",
+  "assets": [
+    {
+      "id": "hero-layers",
+      "file": "hero-layers.png",
+      "prompt": "Wide panoramic abstract composition: strata of translucent horizontal plates stacked with slight offsets, like the cross-section of a memory core, thin amber threads of light running between the layers",
+      "negative": "text, letters, words, watermark, signature, logo, blurry, low quality, jpeg artifacts, oversaturated, neon rainbow, bright daylight, cartoon, people, faces, hands, cluttered, busy, photo-realistic product shot",
+      "seed": 1494121757,
+      "width": 1400,
+      "height": 583,
+      "generated_at": "2026-10-10T19:30:28.988631+00:00",
+      "elapsed_s": 126.7,
+      "bytes": 200687
+    },
+    {
+      "id": "hero-backdrop",
+      "file": "hero-backdrop.png",
+      "prompt": "Ultra-wide minimal abstract backdrop: dark room with a single soft amber light source behind layered vertical stone slabs, deep shadows, lots of empty negative space at the top, atmospheric haze",
+      "negative": "text, letters, words, watermark, signature, logo, blurry, low quality, jpeg artifacts, oversaturated, neon rainbow, bright daylight, cartoon, people, faces, hands, cluttered, busy, photo-realistic product shot",
+      "seed": 1350633914,
+      "width": 1600,
+      "height": 800,
+      "generated_at": "2026-10-10T19:34:09.187321+00:00",
+      "elapsed_s": 220.2,
+      "bytes": 209904
+    },
+    {
+      "id": "stack-diagram",
+      "file": "stack-diagram.png",
+      "prompt": "Three distinct architectural blocks side by side connected by thin glowing lines, each block a different height, like a diagram of a three-layer system rendered as abstract brutalist architecture, dramatic side lighting",
+      "negative": "text, letters, words, watermark, signature, logo, blurry, low quality, jpeg artifacts, oversaturated, neon rainbow, bright daylight, cartoon, people, faces, hands, cluttered, busy, photo-realistic product shot",
+      "seed": 2054836385,
+      "width": 1200,
+      "height": 600,
+      "generated_at": "2026-10-10T19:36:27.939600+00:00",
+      "elapsed_s": 138.8,
+      "bytes": 191727
+    },
+    {
+      "id": "principle-veil",
+      "file": "principle-veil.png",
+      "prompt": "Close-up abstract detail: edges of dark folded plates catching a thin amber rim light, geometric shadow play, shallow depth of field, quiet and contemplative mood, heavy vignette",
+      "negative": "text, letters, words, watermark, signature, logo, blurry, low quality, jpeg artifacts, oversaturated, neon rainbow, bright daylight, cartoon, people, faces, hands, cluttered, busy, photo-realistic product shot",
+      "seed": 414106050,
+      "width": 900,
+      "height": 900,
+      "generated_at": "2026-10-10T19:38:40.676123+00:00",
+      "elapsed_s": 132.7,
+      "bytes": 138097
+    },
+    {
+      "id": "cta-arch",
+      "file": "cta-arch.png",
+      "prompt": "A solitary monolithic archway of dark stone with warm amber light pouring through the opening, symmetrical, vast dark space around it, cinematic and monumental, minimal, empty plaza in the foreground",
+      "negative": "text, letters, words, watermark, signature, logo, blurry, low quality, jpeg artifacts, oversaturated, neon rainbow, bright daylight, cartoon, people, faces, hands, cluttered, busy, photo-realistic product shot",
+      "seed": 1626040315,
+      "width": 1200,
+      "height": 600,
+      "generated_at": "2026-10-10T19:41:05.459026+00:00",
+      "elapsed_s": 144.8,
+      "bytes": 144878
+    },
+    {
+      "id": "footer-strata",
+      "file": "footer-strata.png",
+      "prompt": "Horizontal band of dark geological strata with hairline amber seams, very dark overall, mostly shadow, quiet texture for a footer band",
+      "negative": "text, letters, words, watermark, signature, logo, blurry, low quality, jpeg artifacts, oversaturated, neon rainbow, bright daylight, cartoon, people, faces, hands, cluttered, busy, photo-realistic product shot",
+      "seed": 1938232934,
+      "width": 1600,
+      "height": 300,
+      "generated_at": "2026-10-10T19:42:56.933620+00:00",
+      "elapsed_s": 111.5,
+      "bytes": 78177
+    }
+  ]
+}

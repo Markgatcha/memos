@@ -37,6 +37,24 @@ body {
 
 /* ---------- Backgrounds ---------- */
 
+/* Generated hero backdrop: layered dark architecture with amber backlight.
+   Sits behind the dot grid at low opacity so the grid still reads as the
+   base texture. The image is already dark (mean RGB ~19,18,15), so it adds
+   warmth and depth without hurting text contrast. */
+.hero-backdrop {
+  background-image: url("/ai/hero-backdrop.png");
+  background-size: cover;
+  background-position: center;
+  opacity: 0.28;
+  mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 100%);
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    black 0%,
+    black 55%,
+    transparent 100%
+  );
+}
+
 /* Subtle dot grid, faded with a radial mask (React Bits "Squares" pattern, restrained) */
 .dot-grid {
   background-image: radial-gradient(

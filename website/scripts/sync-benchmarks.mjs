@@ -27,7 +27,7 @@ async function loadResult(file) {
 function provenance(result, file) {
   if (!result) return null;
   return {
-    source: `scripts/${file}`,
+    source: file.startsWith("docs/") ? file : `scripts/${file}`,
     timestamp: result.timestamp ?? null,
     gitSha: result.git?.sha ?? null,
     gitDirty: result.git?.dirty ?? null,
@@ -42,6 +42,23 @@ const locomo = await loadResult("bench-locomo-noapi-results.json");
 const beam = await loadResult("bench-beam-results-lfm2.5-350m.json");
 const haystack = await loadResult("bench-haystack-results.json");
 const hotpot = await loadResult("bench-hotpot-results.json");
+// The LongMemEval artifact is committed under docs/artifacts rather than
+// scripts/ so the generated-results ignore rule does not hide it.
+const longmemeval = await (async () => {
+  try {
+    return JSON.parse(
+      await readFile(
+        path.join(
+          repoRoot,
+          "docs/artifacts/longmemeval-s-full-500-retrieval.json",
+        ),
+        "utf8",
+      ),
+    );
+  } catch {
+    return null;
+  }
+})();
 
 const out = {
   generatedAt: new Date().toISOString(),
@@ -92,6 +109,24 @@ const out = {
         }
       : null,
   },
+  longmemeval: {
+    ...provenance(
+      longmemeval,
+      "docs/artifacts/longmemeval-s-full-500-retrieval.json",
+    ),
+    questions: longmemeval?.questions ?? null,
+    topK: longmemeval?.topK ?? null,
+    atK: longmemeval?.metrics?.atK
+      ? {
+          k: longmemeval.metrics.atKDepth,
+          hitRate: longmemeval.metrics.atK.hitRate,
+          evidenceRecall: longmemeval.metrics.atK.evidenceRecall,
+          allEvidenceRecall: longmemeval.metrics.atK.allEvidenceRecall,
+          mrr: longmemeval.metrics.atK.mrr,
+          ndcg: longmemeval.metrics.atK.ndcg,
+        }
+      : null,
+  },
 };
 
 const outDir = path.join(websiteDir, "data");
@@ -102,9 +137,9 @@ await writeFile(
   "utf8",
 );
 
-const parts = ["locomo", "beam", "haystack", "hotpot"].filter(
+const parts = ["locomo", "beam", "haystack", "hotpot", "longmemeval"].filter(
   (k) => out[k] && out[k].timestamp,
 );
 console.log(
-  `sync-benchmarks: wrote data/benchmarks.json (${parts.length}/4 benchmarks with results: ${parts.join(", ")})`,
+  `sync-benchmarks: wrote data/benchmarks.json (${parts.length}/5 benchmarks with results: ${parts.join(", ")})`,
 );
