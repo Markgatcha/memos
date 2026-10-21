@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Real semantic embeddings no longer silently degrade to the local-hash
+  fallback.** `@huggingface/transformers` imports `onnxruntime-common`
+  without declaring it, so the copy it resolved depended on what the
+  package manager hoisted — here `1.14.0`, dragged in by the legacy
+  `@xenova/transformers` peer. That build is CJS-only, so the import threw
+  `does not provide an export named 'Tensor'` (and, under Jest's interop,
+  produced a `Tensor` class the `onnxruntime-node` native binding rejected
+  with `Tensor.location must be a string`). The SDK swallowed both and fell
+  back to the deterministic local hash, so semantic search silently
+  returned keyword-grade results. A `packageExtensions` entry in
+  `pnpm-workspace.yaml` now pins transformers to the `onnxruntime-common`
+  version matching its own `onnxruntime-node`, and the fallback reason
+  reports the actual import failure instead of claiming the package is
+  "not installed".
+- **Flaky `dashboard` test failure (CI `Test` step).** `__tests__/tamper-log.test.ts`
+  built `MemOS` without an embeddings configuration, so it used the default
+  fastembed provider: every `store()` downloaded a ~90 MB model and ran
+  ONNX inference in a fire-and-forget promise that outlived the test file.
+  The resulting CPU load (and the `Cannot log after tests are done` noise)
+  starved the other suites until the dashboard test exceeded its 5 s
+  timeout. The tamper-log tests now use the deterministic local-hash
+  provider, like the rest of the hermetic suites.
+
 ## [1.6.27] - 2026-10-13
 
 ### Added — Image memory (vision)

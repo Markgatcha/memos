@@ -8,3 +8,17 @@ allowBuilds:
   protobufjs: false
   sharp: false
   unrs-resolver: false
+packageExtensions:
+  # @huggingface/transformers imports `onnxruntime-common` without declaring
+  # it (a phantom dependency) and pins onnxruntime-node@1.30.0. pnpm hoists
+  # whatever onnxruntime-common it sees most often — here 1.14.0, dragged in
+  # by the legacy @xenova/transformers peer — so transformers resolves the
+  # 1.14.0 CJS bundle instead of the 1.30.0 ESM build its native binding
+  # expects. The result is a broken import ("does not provide an export
+  # named 'Tensor'") or a Tensor/class mismatch at inference time
+  # ("Tensor.location must be a string"), which silently degrades the SDK
+  # to its local-hash fallback. Declaring the edge pins transformers to the
+  # onnxruntime-common version that matches its own onnxruntime-node.
+  '@huggingface/transformers@4.3.1':
+    dependencies:
+      onnxruntime-common: 1.30.0

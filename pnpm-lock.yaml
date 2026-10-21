@@ -162,6 +162,8 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+packageExtensionsChecksum: sha256-QBgkTpEkqkapQyLhV6lZZW+VpnIF95kZMSWbG6i9ZBA=
+
 importers:
 
   .:
@@ -2995,6 +2997,7 @@ snapshots:
     dependencies:
       '@huggingface/jinja': 0.5.10
       '@huggingface/tokenizers': 0.2.0
+      onnxruntime-common: 1.30.0
       onnxruntime-node: 1.30.0
       onnxruntime-web: 1.31.0-dev.20260914-8d85527a0
       sharp: 0.35.5(@types/node@26.6.5)
@@ -3884,8 +3887,7 @@ snapshots:
       - bare-abort-controller
       - react-native-b4a
 
-  bare-path@3.1.2:
-    optional: true
+  bare-path@3.1.2: {}
 
   bare-stream@2.13.4(bare-events@2.9.2):
     dependencies:
@@ -3896,12 +3898,10 @@ snapshots:
       bare-events: 2.9.2
     transitivePeerDependencies:
       - react-native-b4a
-    optional: true
 
   bare-url@2.5.5:
     dependencies:
       bare-path: 3.1.2
-    optional: true
 
   base64-js@1.5.1: {}
 
@@ -5085,7 +5085,6 @@ snapshots:
     transitivePeerDependencies:
       - bare-abort-controller
       - react-native-b4a
-    optional: true
 
   test-exclude@7.0.2:
     dependencies:

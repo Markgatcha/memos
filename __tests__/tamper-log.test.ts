@@ -22,7 +22,17 @@ import type { MemoryNode, TamperLogEntry } from "../src/types.js";
 
 async function makeMemos() {
   const storage = new SQLiteStorage(":memory:", true);
-  const memos = new MemOS({ storage, embeddingQueue: { synchronous: true } });
+  // Hermetic: the tamper log does not exercise embeddings, so use the
+  // deterministic local-hash provider. The default fastembed provider
+  // would download a ~90 MB model and run ONNX inference in a
+  // fire-and-forget background promise — work that outlives the suite
+  // and starves the CPU of every other test file (the dashboard test
+  // then blew its 5 s timeout).
+  const memos = new MemOS({
+    storage,
+    embeddings: { enabled: true, provider: "local-hash" },
+    embeddingQueue: { synchronous: true },
+  });
   await memos.init();
   return { memos, storage };
 }
@@ -373,7 +383,12 @@ describe("v1 schema migration", () => {
 
     // Opening with the current code migrates the schema…
     const storage = new SQLiteStorage(dbPath, true);
-    const memos = new MemOS({ storage, embeddingQueue: { synchronous: true } });
+    const memos = new MemOS({
+      storage,
+      // Hermetic — see makeMemos() above.
+      embeddings: { enabled: true, provider: "local-hash" },
+      embeddingQueue: { synchronous: true },
+    });
     await memos.init();
     const cols = (
       rawDb(storage).prepare(`PRAGMA table_info(tamper_log)`).all() as Array<{
