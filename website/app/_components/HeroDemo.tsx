@@ -47,9 +47,9 @@ const scenes: Scene[] = [
 
 const toneClass: Record<string, string> = {
   cmd: "text-zinc-100",
-  ok: "text-emerald-500/90",
+  ok: "text-zinc-100",
   dim: "text-zinc-500",
-  out: "text-blue-300/90",
+  out: "text-zinc-300",
 };
 
 export default function HeroDemo() {
@@ -74,7 +74,7 @@ export default function HeroDemo() {
         <span className="window-dot" />
         <span className="window-dot" />
         <span className="window-title">memory survives restarts — live demo</span>
-        <span className="ml-auto window-title text-emerald-500/70">● local</span>
+        <span className="ml-auto window-title text-zinc-100/80">● local</span>
       </div>
       <div className="p-5 font-mono text-[13px] leading-7 min-h-[172px]">
         {current.lines.map((l, i) => (

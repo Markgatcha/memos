@@ -38,7 +38,7 @@ export default function PlaygroundPage() {
             </h2>
             <p className="text-[13px] text-zinc-400 leading-relaxed">
               Semantic Folding distills verbose prose into{" "}
-              <span className="font-mono text-emerald-400">
+              <span className="font-mono text-zinc-100">
                 [ACTION:…][TARGET:…]
               </span>{" "}
               entity-dense headlinese, then keeps only the sentences that carry

@@ -88,7 +88,7 @@ export default function CompareMemory() {
               <thead>
                 <tr>
                   <th></th>
-                  <th className="!text-emerald-400/90">MemOS</th>
+                  <th className="!text-zinc-300">MemOS</th>
                   <th>Mem0</th>
                   <th>Zep</th>
                   <th>Letta</th>

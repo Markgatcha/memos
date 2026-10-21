@@ -139,7 +139,7 @@ export default function Benchmarks() {
         <PageHeader
           kicker="benchmarks"
           title="Benchmarks"
-          subtitle="Full-dataset LoCoMo, HotPotQA multi-hop, BEAM-1M at production scale, and a 10k-memory haystack — local LFM2.5 embeddings plus a two-stage cross-encoder rerank, reproducible from the repo."
+          subtitle="LongMemEval-S full 500 at K=20, full-dataset LoCoMo, HotPotQA multi-hop, BEAM-1M, and a 10k-memory haystack — local embeddings and hybrid retrieval, reproducible from the repo."
         />
 
         <Reveal className="mb-12">
@@ -163,8 +163,10 @@ export default function Benchmarks() {
                   retrieval stack
                 </div>
                 <p className="text-zinc-400">
-                  LFM2.5-Embedding-350M served by llama.cpp, plus a
-                  bge-reranker-v2-m3 two-stage cross-encoder rerank.
+                  LongMemEval-S: nomic-embed-text 768d, contextual
+                  session/date headers, 0.5/0.5 hybrid, top-20. LoCoMo:
+                  LFM2.5-Embedding-350M plus a bge-reranker-v2-m3
+                  two-stage cross-encoder.
                 </p>
               </div>
               <div>
@@ -208,7 +210,7 @@ export default function Benchmarks() {
               </thead>
               <tbody>
                 {locomoRows.map((r) => (
-                  <tr key={r.metric} className={r.highlight ? "bg-emerald-500/[0.04]" : ""}>
+                  <tr key={r.metric} className={r.highlight ? "bg-white/[0.04]" : ""}>
                     <td className={r.highlight ? "!text-zinc-100" : ""}>{r.metric}</td>
                     <td className="!text-right tabular-nums text-zinc-300">{r.at5}</td>
                     <td className="!text-right font-medium tabular-nums text-zinc-100">{r.at10}</td>
@@ -244,7 +246,7 @@ export default function Benchmarks() {
                 {longmemevalRows.map((r) => (
                   <tr
                     key={r.metric}
-                    className={r.highlight ? "bg-emerald-500/[0.04]" : ""}
+                    className={r.highlight ? "bg-white/[0.04]" : ""}
                   >
                     <td className={r.highlight ? "!text-zinc-100" : ""}>
                       {r.metric}
@@ -320,7 +322,7 @@ export default function Benchmarks() {
                 {haystackRows.map((r) => (
                   <tr key={r.size}>
                     <td>{r.size}</td>
-                    <td className="!text-right font-medium tabular-nums text-emerald-400">
+                    <td className="!text-right font-medium tabular-nums text-zinc-100">
                       {r.hit1}
                     </td>
                     <td className="!text-right tabular-nums text-zinc-300">{r.hit10}</td>
@@ -416,13 +418,13 @@ export default function Benchmarks() {
               </thead>
               <tbody>
                 {tokenRows.map((r) => (
-                  <tr key={r.format} className={r.highlight ? "bg-emerald-500/[0.04]" : ""}>
+                  <tr key={r.format} className={r.highlight ? "bg-white/[0.04]" : ""}>
                     <td className={r.highlight ? "!text-zinc-100" : ""}>{r.format}</td>
                     <td className="!text-right tabular-nums text-zinc-300">{r.tokens}</td>
                     <td
                       className={`!text-right font-medium tabular-nums ${
                         r.highlight
-                          ? "!text-emerald-400"
+                          ? "!text-zinc-100"
                           : r.savings === "—"
                             ? "text-zinc-600"
                             : "!text-zinc-300"

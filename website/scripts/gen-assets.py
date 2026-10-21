@@ -12,7 +12,6 @@ Usage:
 """
 
 import argparse
-import base64
 import json
 import os
 import random
@@ -20,7 +19,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 SERVER = os.environ.get("COMFY_URL", "http://127.0.0.1:8188")
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "public", "ai")
@@ -227,7 +226,11 @@ def download(outputs, dest):
         images = node_out.get("images") or []
         for img in images:
             params = urllib.parse.urlencode(
-                {"filename": img["filename"], "subfolder": img.get("subfolder", ""), "type": img.get("type", "output")}
+                {
+                    "filename": img["filename"],
+                    "subfolder": img.get("subfolder", ""),
+                    "type": img.get("type", "output"),
+                }
             )
             url = f"{SERVER}/api/view?{params}"
             with urllib.request.urlopen(url, timeout=120) as resp:
@@ -271,7 +274,9 @@ def main():
         dest = os.path.join(OUT_DIR, asset["file"])
         already = existing.get(asset["id"], {})
         if os.path.exists(dest) and already and not args.force:
-            print(f"[{i}/{len(ASSETS)}] {asset['id']} — cached ({os.path.getsize(dest)} bytes), skipping")
+            print(
+                f"[{i}/{len(ASSETS)}] {asset['id']} — cached ({os.path.getsize(dest)} bytes), skipping"
+            )
             results.append(already)
             continue
 
@@ -297,7 +302,7 @@ def main():
                 "seed": seed,
                 "width": asset["width"],
                 "height": asset["height"],
-                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "generated_at": datetime.now(UTC).isoformat(),
                 "elapsed_s": round(elapsed, 1),
             }
         )

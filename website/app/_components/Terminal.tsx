@@ -30,7 +30,7 @@ export default function Terminal() {
         <span className="window-dot" />
         <span className="window-dot" />
         <span className="window-title">~/agent — zsh</span>
-        <span className="ml-auto window-title text-emerald-500/70">● local</span>
+        <span className="ml-auto window-title text-zinc-100/80">● local</span>
       </div>
       <div className="p-5 font-mono text-[13px] leading-7">
         {lines.map((l, i) => (
@@ -47,7 +47,7 @@ export default function Terminal() {
             )}
             {l.check && (
               <>
-                <span className="text-emerald-500 select-none">✓ </span>
+                <span className="text-zinc-100 select-none">✓ </span>
                 <span className="text-zinc-100">{l.product}</span>
                 <span className="text-zinc-500"> {l.text}</span>
                 <span className="text-zinc-600"> {l.meta}</span>
@@ -55,8 +55,8 @@ export default function Terminal() {
             )}
             {l.done && (
               <>
-                <span className="text-emerald-500 select-none">● </span>
-                <span className="text-emerald-500/90">{l.text}</span>
+                <span className="text-zinc-100 select-none">● </span>
+                <span className="text-zinc-100">{l.text}</span>
               </>
             )}
           </div>

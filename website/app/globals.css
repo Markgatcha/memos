@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #09090b;
-  --line: rgba(255, 255, 255, 0.08);
+  --bg: #000000;
+  --line: rgba(255, 255, 255, 0.1);
 }
 
 html {
@@ -16,7 +16,7 @@ body {
 
 ::selection {
   background: rgba(255, 255, 255, 0.85);
-  color: #09090b;
+  color: #000000;
 }
 
 /* Scrollbar */
@@ -24,12 +24,12 @@ body {
   width: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: #09090b;
+  background: #000000;
 }
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: #1a1a1a;
   border-radius: 8px;
-  border: 2px solid #09090b;
+  border: 2px solid #000000;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #3f3f46;
@@ -37,29 +37,17 @@ body {
 
 /* ---------- Backgrounds ---------- */
 
-/* Generated hero backdrop: layered dark architecture with amber backlight.
-   Sits behind the dot grid at low opacity so the grid still reads as the
-   base texture. The image is already dark (mean RGB ~19,18,15), so it adds
-   warmth and depth without hurting text contrast. */
+/* Classic monochrome: no generated backdrop, no warm light. The page is
+   pure black with a restrained white dot grid and a single white glow. */
 .hero-backdrop {
-  background-image: url("/ai/hero-backdrop.png");
-  background-size: cover;
-  background-position: center;
-  opacity: 0.28;
-  mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 100%);
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    black 0%,
-    black 55%,
-    transparent 100%
-  );
+  background: none;
 }
 
 /* Subtle dot grid, faded with a radial mask (React Bits "Squares" pattern, restrained) */
 .dot-grid {
   background-image: radial-gradient(
     circle,
-    rgba(255, 255, 255, 0.09) 1px,
+    rgba(255, 255, 255, 0.1) 1px,
     transparent 1px
   );
   background-size: 22px 22px;
@@ -71,11 +59,11 @@ body {
   );
 }
 
-/* Single cool glow at the very top of the page — the only ambient color */
+/* Single white glow at the top of the page. */
 .top-glow {
   background: radial-gradient(
     ellipse 55% 40% at 50% -8%,
-    rgba(96, 165, 250, 0.09),
+    rgba(255, 255, 255, 0.055),
     transparent 70%
   );
 }
@@ -144,7 +132,7 @@ body {
 
 .card {
   position: relative;
-  background: #0c0c0e;
+  background: #050505;
   border: 1px solid var(--line);
   border-radius: 14px;
   transition:
@@ -154,7 +142,7 @@ body {
 
 .card:hover {
   border-color: rgba(255, 255, 255, 0.16);
-  background: #101013;
+  background: #0a0a0a;
 }
 
 /* Mouse-follow spotlight (React Bits SpotlightCard pattern) */
@@ -201,7 +189,7 @@ body {
 
 .btn-primary {
   background: #fafafa;
-  color: #09090b;
+  color: #000000;
 }
 
 .btn-primary:hover {
@@ -223,7 +211,7 @@ body {
 /* ---------- Terminal / code windows ---------- */
 
 .window {
-  background: #0c0c0e;
+  background: #050505;
   border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
@@ -245,7 +233,7 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 9999px;
-  background: #27272a;
+  background: #1a1a1a;
 }
 
 .window-title {

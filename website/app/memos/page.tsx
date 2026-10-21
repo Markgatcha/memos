@@ -167,7 +167,7 @@ export default function MemOSPage() {
                 <thead>
                   <tr>
                     <th></th>
-                    <th className="!text-right !text-emerald-400/90">MemOS</th>
+                    <th className="!text-right !text-zinc-300">MemOS</th>
                     <th className="!text-right">Mem0 platform</th>
                   </tr>
                 </thead>
@@ -177,7 +177,7 @@ export default function MemOSPage() {
                       <td className="text-zinc-500">{r.label}</td>
                       <td className="!text-right text-zinc-100 font-medium">
                         <span className="inline-flex items-center gap-1.5 justify-end">
-                          <Check size={13} className="text-emerald-500 shrink-0" />
+                          <Check size={13} className="text-zinc-100 shrink-0" />
                           {r.memos}
                         </span>
                       </td>

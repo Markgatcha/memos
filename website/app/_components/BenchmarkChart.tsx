@@ -54,7 +54,7 @@ export default function BenchmarkChart({ title, bars, footnote }: BenchmarkChart
               <span className="text-sm text-zinc-300">{b.label}</span>
               <span
                 className={`font-mono text-sm tabular-nums ${
-                  b.accent ? "text-emerald-400 font-medium" : "text-zinc-500"
+                  b.accent ? "text-zinc-100 font-medium" : "text-zinc-500"
                 }`}
               >
                 {b.display}
@@ -63,7 +63,7 @@ export default function BenchmarkChart({ title, bars, footnote }: BenchmarkChart
             <div className="h-2.5 rounded-full bg-zinc-800/80 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-[width] duration-1000 ease-out ${
-                  b.accent ? "bg-emerald-500/90" : "bg-zinc-600"
+                  b.accent ? "bg-zinc-100" : "bg-zinc-600"
                 }`}
                 style={{ width: visible ? `${b.value}%` : "0%" }}
               />

@@ -145,10 +145,10 @@ export default function Guardian() {
               <div>
                 <div className="flex justify-between font-mono text-[11px] text-zinc-500 mb-1.5">
                   <span>guardian-compressed</span>
-                  <span className="tabular-nums text-emerald-500/90">2,767 tok</span>
+                  <span className="tabular-nums text-zinc-100">2,767 tok</span>
                 </div>
                 <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-                  <div className="h-full w-[22%] rounded-full bg-emerald-500/80" />
+                  <div className="h-full w-[22%] rounded-full bg-zinc-100/90" />
                 </div>
               </div>
             </div>

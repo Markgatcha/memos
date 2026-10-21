@@ -41,8 +41,8 @@ function LI({ children }: { children: React.ReactNode }) {
 
 function Callout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="card p-5 md:p-6 my-8 border-emerald-500/20">
-      <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-emerald-400/90 mb-2.5">
+    <div className="card p-5 md:p-6 my-8 border-white/15">
+      <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-300 mb-2.5">
         takeaway
       </div>
       <div className="text-[14px] text-zinc-300 leading-[1.75]">{children}</div>

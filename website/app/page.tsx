@@ -50,7 +50,7 @@ export default function Home() {
       <section className="max-w-6xl mx-auto px-6 pt-20 pb-16 md:pt-28">
         <div className="text-center max-w-3xl mx-auto">
           <div className="animate-fade-up inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 font-mono text-xs text-zinc-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="w-1.5 h-1.5 rounded-full bg-zinc-100 animate-pulse" />
             open source · runs entirely on your machine
           </div>
 
@@ -150,10 +150,10 @@ export default function Home() {
               <a href="/memos" className="block h-full">
                 <div className="flex items-start justify-between gap-6">
                   <div className="max-w-sm">
-                    <div className="w-10 h-10 rounded-lg border border-white/10 bg-zinc-900 grid place-items-center text-blue-400 mb-5">
+                    <div className="w-10 h-10 rounded-lg border border-white/10 bg-zinc-900 grid place-items-center text-zinc-100 mb-5">
                       <Brain size={18} strokeWidth={1.8} />
                     </div>
-                    <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-blue-400/90 mb-2">
+                    <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-400 mb-2">
                       persistent memory
                     </div>
                     <h3 className="text-xl font-semibold text-zinc-50 mb-3">
@@ -211,10 +211,10 @@ export default function Home() {
           <Reveal className="lg:col-span-2" delay={100}>
             <SpotlightCard className="h-full p-7 block">
               <a href="/umt" className="block h-full">
-                <div className="w-10 h-10 rounded-lg border border-white/10 bg-zinc-900 grid place-items-center text-violet-400 mb-5">
+                <div className="w-10 h-10 rounded-lg border border-white/10 bg-zinc-900 grid place-items-center text-zinc-100 mb-5">
                   <Cable size={18} strokeWidth={1.8} />
                 </div>
-                <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-violet-400/90 mb-2">
+                <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-400 mb-2">
                   mcp toolkit
                 </div>
                 <h3 className="text-xl font-semibold text-zinc-50 mb-3">
@@ -233,15 +233,15 @@ export default function Home() {
                 <div className="font-mono text-xs space-y-2.5 mb-6">
                   <div className="flex justify-between">
                     <span className="text-zinc-400">ollama</span>
-                    <span className="text-emerald-500/90">connected</span>
+                    <span className="text-zinc-100">connected</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-400">stdio</span>
-                    <span className="text-emerald-500/90">ready</span>
+                    <span className="text-zinc-100">ready</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-400">http + sse</span>
-                    <span className="text-emerald-500/90">ready</span>
+                    <span className="text-zinc-100">ready</span>
                   </div>
                 </div>
                 <div className="mt-auto pt-5 border-t border-white/[0.06]">
@@ -257,10 +257,10 @@ export default function Home() {
           <Reveal className="lg:col-span-2">
             <SpotlightCard className="h-full p-7 block">
               <a href="/guardian" className="block h-full">
-                <div className="w-10 h-10 rounded-lg border border-white/10 bg-zinc-900 grid place-items-center text-emerald-400 mb-5">
+                <div className="w-10 h-10 rounded-lg border border-white/10 bg-zinc-900 grid place-items-center text-zinc-100 mb-5">
                   <Gauge size={18} strokeWidth={1.8} />
                 </div>
-                <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-emerald-400/90 mb-2">
+                <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-300 mb-2">
                   token optimization
                 </div>
                 <h3 className="text-xl font-semibold text-zinc-50 mb-3">
@@ -289,10 +289,10 @@ export default function Home() {
                   <div>
                     <div className="flex justify-between font-mono text-[11px] text-zinc-500 mb-1.5">
                       <span>compressed</span>
-                      <span className="tabular-nums text-emerald-500/90">2,767 tok</span>
+                      <span className="tabular-nums text-zinc-100">2,767 tok</span>
                     </div>
                     <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-                      <div className="h-full w-[22%] rounded-full bg-emerald-500/80" />
+                      <div className="h-full w-[22%] rounded-full bg-zinc-100/90" />
                     </div>
                   </div>
                 </div>
