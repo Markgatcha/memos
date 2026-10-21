@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — TypeScript 7.1 beta (temporary)
+
+The native TypeScript 7 compiler moves from 7.0.2 to **7.1.0-beta**
+(`@typescript/native` in the SDK, `typescript` in the website). This is a
+trial run of the beta and is expected to be reverted once 7.1 ships.
+
+- The build is ~20% faster on this repo (1.6 s vs 2.0 s for a clean
+  `tsc` over `src/`).
+- The emitted JavaScript and `.d.ts` files are **byte-identical** to the
+  7.0.2 output; only the sourcemaps differ, by the addition of an empty
+  `sourceRoot` field. The output size is unchanged — the size win of
+  TypeScript 7 is in the compiler itself (5.7 MB for the 7.1 beta versus
+  24 MB for the JavaScript `tsc`), not in the code it emits.
+- The version is pinned exactly (`7.1.0-beta`) rather than a caret range:
+  `^7.1.0-beta` resolves to a `7.1.0-dev.*` build, not the beta.
+
 ### Changed — Dependency refresh
 
 All dependency manifests are updated to their latest releases:
