@@ -144,7 +144,7 @@
     "@types/node": "^26.6.5",
     "@typescript/native": "npm:typescript@^7.0.2",
     "jest": "^30.5.2",
-    "oxlint": "^1.88.0",
+    "oxlint": "^1.89.0",
     "oxlint-tsgolint": "^7.0.2004",
     "prettier": "^3.9.10",
     "tsx": "^4.23.15",

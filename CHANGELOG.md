@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — Dependency refresh
+
+All dependency manifests are updated to their latest releases:
+
+- **JavaScript** (`package.json`, `pnpm-lock.yaml`, `package-lock.json`):
+  `oxlint` 1.88.0 → 1.89.0, plus transitive refreshes.
+- **Website** (`website/package.json`, `website/pnpm-lock.yaml`):
+  `lucide-react` 1.59.0 → 1.60.0, `postcss` 8.5.30 → 8.5.31.
+- **Python** (`pyproject.toml`, `uv.lock`): `fastapi` 0.148.0 → 0.157.0
+  (pulls `starlette` 1.9.0), plus `certifi` 2026.10.19, `httpcore2` 2.16.0,
+  `httpx2` 2.16.0, `langchain-protocol` 0.0.20.
+- **Tooling pins**: the Dockerfile and the native-deps CI matrix installed
+  `pnpm@12.8.1` while `packageManager` declares `12.14.0` — both now pin
+  `12.14.0`. The Docker image also installed `better-sqlite3@^12.11.1` for
+  the bundled SDK while the SDK itself is built against `better-sqlite3`
+  13.x; the runtime copy is now `^13.0.3` so the two match.
+
 ### Fixed
 
 - **Real semantic embeddings no longer silently degrade to the local-hash
