@@ -15,6 +15,7 @@ const pages = [
   "docs/architecture",
   "benchmarks",
   "blogs",
+  "blogs/beating-supermemory-longmemeval",
   "blogs/ai-memory-landscape-2026",
   "support",
   "compare/memos-vs-mem0",

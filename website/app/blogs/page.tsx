@@ -11,6 +11,16 @@ export const metadata: Metadata = {
 
 const posts = [
   {
+    date: "Oct 21, 2026",
+    tag: "benchmarks",
+    title:
+      "How we raised LongMemEval Recall@20 to 99.4% — and the experiments that didn't work",
+    excerpt:
+      "Supermemory's public bar is 97% Recall@20. We rebuilt the harness to measure the same K and retrieval unit, ran all 500 LongMemEval-S questions, and documented the changes that mattered — plus the chunking, OR-BM25, key-expansion and LLM-query experiments that didn't.",
+    href: "/blogs/beating-supermemory-longmemeval",
+    internal: true,
+  },
+  {
     date: "Sep 18, 2026",
     tag: "benchmarks",
     title:

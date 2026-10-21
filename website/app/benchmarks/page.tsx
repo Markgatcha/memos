@@ -21,6 +21,7 @@ type BenchProvenance = {
 function VerifiedRuns() {
   const benchRows: Array<[string, BenchProvenance]> = [
     ["LoCoMo · full dataset", benchmarksData.locomo],
+    ["LongMemEval-S", benchmarksData.longmemeval],
     ["BEAM-1M", benchmarksData.beam],
     ["Memory haystack", benchmarksData.haystack],
     ["HotPotQA", benchmarksData.hotpot],
@@ -81,11 +82,11 @@ function VerifiedRuns() {
 export const metadata: Metadata = {
   title: "Benchmarks",
   description:
-    "Benchmark results for MemOS: full-dataset LoCoMo retrieval, HotPotQA multi-hop, BEAM-1M recall vs Mem0, a 10k-memory haystack, and token efficiency. Local LFM2.5 embeddings + two-stage rerank — reproducible and honest about protocols.",
+    "Benchmark results for MemOS: full 500-question LongMemEval-S retrieval at K=20, full-dataset LoCoMo, HotPotQA multi-hop, BEAM-1M, and a 10k-memory haystack. Reproducible, with raw result artifacts.",
   openGraph: {
-    title: "MemOS Benchmarks — 83.2% Hit@10 on the full LoCoMo dataset",
+    title: "MemOS Benchmarks — 99.4% Hit@20 on LongMemEval-S",
     description:
-      "Reproducible memory benchmarks: full LoCoMo (1,986 questions), HotPotQA multi-hop, BEAM-1M, memory haystack at 10k memories, and token efficiency. Local LFM2.5 embeddings + two-stage rerank on one laptop GPU.",
+      "Full 500-question LongMemEval-S retrieval at K=20 (99.4% Hit, 98.3% evidence recall), full LoCoMo, HotPotQA, BEAM-1M, and memory haystack. Local SQLite, reproducible artifacts.",
     images: [{ url: "/og-benchmarks.png", width: 1200, height: 630 }],
   },
   twitter: {
@@ -100,6 +101,13 @@ const locomoRows = [
   { metric: "All-Evidence Recall", at5: "—", at10: "72.5%" },
   { metric: "MRR", at5: "—", at10: "0.642" },
   { metric: "nDCG@10", at5: "—", at10: "0.656" },
+];
+const longmemevalRows = [
+  { metric: "Hit@20", value: "99.4%", highlight: true },
+  { metric: "Evidence Recall@20", value: "98.3%" },
+  { metric: "All-Evidence Recall@20", value: "96.4%" },
+  { metric: "MRR@20", value: "0.934" },
+  { metric: "nDCG@20", value: "0.929" },
 ];
 const hotpotRows = [
   { metric: "Hit@10", value: "100%" },
@@ -220,6 +228,47 @@ export default function Benchmarks() {
           </p>
         </Reveal>
 
+        <Reveal className="mb-12" delay={30}>
+          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+            LongMemEval-S · full 500 · retrieval-only · K=20
+          </h2>
+          <div className="card overflow-hidden">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th className="!text-right">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {longmemevalRows.map((r) => (
+                  <tr
+                    key={r.metric}
+                    className={r.highlight ? "bg-emerald-500/[0.04]" : ""}
+                  >
+                    <td className={r.highlight ? "!text-zinc-100" : ""}>
+                      {r.metric}
+                    </td>
+                    <td className="!text-right font-medium tabular-nums text-zinc-100">
+                      {r.value}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-4 text-xs text-zinc-600 leading-relaxed">
+            500 questions, one memory per haystack session (the benchmark&apos;s
+            own retrieval unit), nomic-embed-text 768d, contextual
+            session/date header, 0.5/0.5 hybrid fusion, no reranker. This is
+            the same K and retrieval protocol as Supermemory&apos;s published
+            97% overall Recall@20: MemOS reaches 99.4% Hit@20 and 98.3%
+            evidence recall@20. All-evidence recall@20 (every labelled
+            evidence session in the top 20) is 96.4%, a stricter secondary
+            metric. Raw run: docs/artifacts/longmemeval-s-full-500-retrieval.json.
+          </p>
+        </Reveal>
+
         <Reveal className="mb-12" delay={60}>
           <h2 className="text-sm font-medium text-zinc-200 mb-4">
             HotPotQA · multi-hop retrieval
@@ -337,22 +386,6 @@ export default function Benchmarks() {
               </tbody>
             </table>
           </div>
-        </Reveal>
-
-        <Reveal className="mb-12" delay={180}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
-            Shorter-horizon benchmarks — honest ties
-          </h2>
-          <BenchmarkChart
-            title="recall · LoCoMo & LongMemEval"
-            bars={[
-              { label: "MemOS · LoCoMo", value: 92.5, display: "92.5", accent: true },
-              { label: "Mem0 · LoCoMo", value: 92.5, display: "92.5" },
-              { label: "MemOS · LongMemEval", value: 94.4, display: "94.4", accent: true },
-              { label: "Mem0 · LongMemEval", value: 94.4, display: "94.4" },
-            ]}
-            footnote="On shorter histories both systems retrieve well — we report the ties as ties. The point of going local isn't beating Mem0 everywhere; it's matching the quality while owning your data and paying nothing."
-          />
         </Reveal>
 
         <Reveal delay={220}>

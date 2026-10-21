@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { foldText } from "../../lib/guardian/folding-engine";
 
 const SAMPLE = `We need to refactor the VCM sharder module because the current implementation loads the entire knowledge graph into memory on every request. The refactor should introduce lazy loading with an LRU cache, add unit tests for the eviction path, and benchmark the change against the 10k-memory haystack fixture. Please also update the docs and bump the minor version when we ship it.`;
@@ -21,15 +21,24 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 export default function Playground() {
   const [text, setText] = useState(SAMPLE);
   const [maxTokens, setMaxTokens] = useState(120);
+  // The fold runs during render, and foldingTimeMs comes from performance.now(),
+  // which differs between the server render and the client's first render. That
+  // mismatch triggers a hydration error on every load. Fold on an effect-driven
+  // flag instead so the first client render matches the server's empty state.
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setReady(true);
+  }, []);
 
   const result = useMemo(() => {
-    if (!text.trim()) return null;
+    if (!ready || !text.trim()) return null;
     try {
       return foldText(text, { maxTokens });
     } catch {
       return null;
     }
-  }, [text, maxTokens]);
+  }, [ready, text, maxTokens]);
 
   const savedPct = result
     ? Math.max(0, Math.round((1 - result.foldedTokens / Math.max(1, result.metadata.originalTokens)) * 100))

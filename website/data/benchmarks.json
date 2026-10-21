@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T19:08:48.904Z",
+  "generatedAt": "2026-10-21T20:23:17.376Z",
   "locomo": {
     "source": "scripts/bench-locomo-noapi-results.json",
     "timestamp": "2026-09-06T22:59:45.728Z",
@@ -67,6 +67,26 @@
       "evidenceRecall": 0.963,
       "mrr": 0.9766111111111111,
       "ndcg": 0.9343906724850207
+    }
+  },
+  "longmemeval": {
+    "source": "docs/artifacts/longmemeval-s-full-500-retrieval.json",
+    "timestamp": "2026-10-21T03:43:02.020Z",
+    "gitSha": "53a681f58f831aed6a3af3bc51511d0e68af8747",
+    "gitDirty": true,
+    "os": "win32 10.0.26220",
+    "node": "v26.8.1",
+    "model": "nomic-embed-text",
+    "dataset": "longmemeval_s",
+    "questions": 500,
+    "topK": 20,
+    "atK": {
+      "k": 20,
+      "hitRate": 0.994,
+      "evidenceRecall": 0.9829666666666668,
+      "allEvidenceRecall": 0.964,
+      "mrr": 0.9343499500499498,
+      "ndcg": 0.9291409805065446
     }
   }
 }
