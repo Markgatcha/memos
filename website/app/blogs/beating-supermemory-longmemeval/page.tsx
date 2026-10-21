@@ -187,10 +187,12 @@ export default function Page() {
               <strong className="text-zinc-200">Don&apos;t let the write gate
               delete evidence.</strong> The prompt-injection screen classified
               about 150 ordinary chat sessions in the haystack as
-              instruction-like and excluded them from recall. Benchmark
-              ingestion now disables the screen for the trusted corpus. A
-              memory system that silently drops evidence is not more secure;
-              it is less correct.
+              instruction-like and excluded them from recall. The benchmark
+              harness now disables the screen for the trusted corpus. The
+              recorded 99.4% run predates that change, so it is a lower bound:
+              a clean rerun can only add candidates, not remove them. A memory
+              system that silently drops evidence is not more secure; it is
+              less correct.
             </LI>
             <LI>
               <strong className="text-zinc-200">Measure at the depth the
