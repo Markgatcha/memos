@@ -4,7 +4,11 @@
 # --- Stage 1: Build TypeScript SDK ---
 FROM node:22-slim AS ts-build
 WORKDIR /app
-COPY package.json pnpm-lock.yaml* ./
+# pnpm-workspace.yaml carries the packageExtensions (and the allowBuilds
+# list) that pnpm checks against the lockfile's packageExtensionsChecksum.
+# Without it, `install --frozen-lockfile` aborts with
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH.
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* ./
 # Install pnpm without lifecycle scripts: pnpm 12's install.js places a
 # native binary via optional deps, which is fragile in minimal images.
 # bin/pnpm.mjs runs through Node directly and needs no postinstall.
