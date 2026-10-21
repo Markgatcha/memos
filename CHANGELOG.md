@@ -23,6 +23,8 @@ All dependency manifests are updated to their latest releases:
   `12.14.0`. The Docker image also installed `better-sqlite3@^12.11.1` for
   the bundled SDK while the SDK itself is built against `better-sqlite3`
   13.x; the runtime copy is now `^13.0.3` so the two match.
+- **GitHub Actions**: `actions/download-artifact` v4 → v8 in the prebuilds
+  workflow; every other action was already on its latest major.
 
 ### Fixed
 
