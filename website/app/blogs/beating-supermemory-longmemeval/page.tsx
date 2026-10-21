@@ -309,12 +309,7 @@ export default function Page() {
             killed 500-question run does not re-embed 24k sessions.
           </P>
           <pre className="card p-5 overflow-x-auto text-[12px] leading-[1.7] text-zinc-300 font-mono mb-6">
-{`npx tsx scripts/bench-longmemeval.ts \\
-  --provider=ollama --model=nomic-embed-text --dimensions=768 \\
-  --topk=20 --retrieve-only \\
-  --keyword-weight=0.5 --semantic-weight=0.5 \\
-  --contextual --ingest-concurrency=16 \\
-  --db=/tmp/lme-full.db --out=/tmp/lme-full.json`}
+{`npx tsx scripts/bench-longmemeval.ts --provider=ollama --model=nomic-embed-text --dimensions=768 --topk=20 --retrieve-only --keyword-weight=0.5 --semantic-weight=0.5 --contextual --ingest-concurrency=16 --db=/tmp/lme-full.db --out=/tmp/lme-full.json`}
           </pre>
           <P>
             Raw result:{" "}
