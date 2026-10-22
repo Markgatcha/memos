@@ -35,6 +35,17 @@ contents — but a rebuild no longer redoes the expensive steps.
   build while adding a cross-filesystem copy penalty to the `pnpm install`
   layer. Layer caching covers the same ground.
 
+Measured on the same commit, `ubuntu-26.04`, 22-job run:
+
+| | cold (empty cache) | warm (all layers hit) |
+|---|---|---|
+| `Build Docker image` | 210 s | 48 s |
+| Docker Build job | 3.9 min | 1.3 min |
+
+The 48 s that remains is the cache import plus exporting the finished image
+into the Docker daemon so the container can actually be started; that work
+cannot be cached away.
+
 ### Changed — Formatter: Prettier → `bun fmt`
 
 The repo now formats with **Bun's built-in formatter** (`bun fmt`) instead of
