@@ -57,12 +57,16 @@ cannot be cached away.
   so it now runs on one cell (`ubuntu-26.04` + Node 26) and `lcov.info` is
   uploaded as an artifact. **Every test still runs on all nine cells** —
   only the instrumentation is deduplicated.
-- **The native-deps pnpm store cache never worked.** The cache saved
-  `~/.local/share/pnpm/store` while the container bind-mounts
-  `${{ runner.temp }}/pnpm-store`. The two paths never met, so the key
-  always restored an empty directory and all three distro containers
-  re-downloaded the full dependency tree despite `--prefer-offline` in
-  `scripts/smoke-native.sh`. The cache path now matches the mount.
+- **The native-deps pnpm store cache never worked.** It saved
+  `~/.local/share/pnpm/store`, which is not where pnpm writes inside the
+  container: to keep installs hardlink-able pnpm places the store at the root
+  of the project's filesystem, and `/repo` is a bind mount — so the store
+  actually lands at `$GITHUB_WORKSPACE/.pnpm-store` on the host. The cache
+  key therefore restored an empty directory on every run and all three distro
+  containers re-downloaded the full dependency tree despite
+  `--prefer-offline` in `scripts/smoke-native.sh`. The cache now points at
+  the real location, and a non-failing step reports the store size so an
+  ineffective cache shows up in the log instead of looking fixed.
 - **`retrieval-eval` no longer clones full history.** It passed
   `fetch-depth: 0`, but the script only shells out to `git rev-parse HEAD` to
   stamp the report's provenance, and `--check` compares recall@5 / MRR

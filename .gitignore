@@ -1,5 +1,9 @@
 # Dependencies
 node_modules/
+# pnpm keeps its store at the root of the project's filesystem when that is
+# writable (so installs can hardlink). Inside the distro CI containers that
+# root is the bind-mounted workspace.
+.pnpm-store/
 __pycache__/
 *.pyc
 *.pyo
