@@ -250,37 +250,26 @@ jobs:
             bootstrap: pacman -Sy --noconfirm nodejs npm python base-devel && npm install -g pnpm@12.14.0 --ignore-scripts
     steps:
       - uses: actions/checkout@v7
-      - name: Cache pnpm store for in-docker install
-        uses: actions/cache@v6
-        with:
-          # pnpm does not use ~/.local/share/pnpm/store here. To keep
-          # installs hardlink-able it places the store at the root of the
-          # project's filesystem — and inside the container /repo is a bind
-          # mount, so in practice the store is $GITHUB_WORKSPACE/.pnpm-store
-          # on the host. Both ~/.local/share/pnpm/store and the runner.temp
-          # bind mount captured nothing, so every run re-downloaded the whole
-          # dependency tree in all three distro containers despite
-          # `--prefer-offline` in the smoke script.
-          path: ${{ github.workspace }}/.pnpm-store
-          # v2: the v1 entries for this lockfile are empty (saved from the
-          # wrong path). A restore would hit them and never re-save, so the
-          # key has to move to invalidate them.
-          key: pnpm-store-v2-${{ hashFiles('pnpm-lock.yaml') }}
+      # Deliberately no pnpm store cache here.
+      #
+      # This job used to cache ~/.local/share/pnpm/store, but `pnpm install`
+      # runs inside the distro container while the cache saved a path on the
+      # runner, so it never hit: every run re-downloaded the full dependency
+      # tree in all three containers despite --prefer-offline in
+      # scripts/smoke-native.sh. Pointing the cache at the mounted store and
+      # re-keying still saved an empty entry, and @pnpm/store-path resolves
+      # the location itself based on hardlink topology (it lands on the pnpm
+      # home dir when the project is itself a mountpoint, as /repo is), so
+      # the exact path shifts with the mount setup.
+      #
+      # A working version needs the store pinned inside the container and
+      # confirmed with `pnpm store path`; until then this is left honest
+      # rather than shipping a step that pretends to cache.
       - name: better-sqlite3 install/build/test smoke
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
             -w /repo ${{ matrix.image }} bash -lc '${{ matrix.bootstrap }} && bash /repo/scripts/smoke-native.sh'
-      - name: Report pnpm store cache
-        # Deliberately non-failing, but loud: an ineffective cache should be
-        # visible in the log rather than looking fixed.
-        run: |
-          d="${{ github.workspace }}/.pnpm-store"
-          if [ -d "$d" ] && [ -n "$(ls -A "$d")" ]; then
-            echo "pnpm store: $(du -sh "$d" | cut -f1) at $d"
-          else
-            echo "::warning::no pnpm store at $d — the cache will not help"
-          fi
 
   # ──────────────────────────────────────────────
   # Python: Lint + Test

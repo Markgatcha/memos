@@ -57,16 +57,18 @@ cannot be cached away.
   so it now runs on one cell (`ubuntu-26.04` + Node 26) and `lcov.info` is
   uploaded as an artifact. **Every test still runs on all nine cells** —
   only the instrumentation is deduplicated.
-- **The native-deps pnpm store cache never worked.** It saved
-  `~/.local/share/pnpm/store`, which is not where pnpm writes inside the
-  container: to keep installs hardlink-able pnpm places the store at the root
-  of the project's filesystem, and `/repo` is a bind mount — so the store
-  actually lands at `$GITHUB_WORKSPACE/.pnpm-store` on the host. The cache
-  key therefore restored an empty directory on every run and all three distro
-  containers re-downloaded the full dependency tree despite
-  `--prefer-offline` in `scripts/smoke-native.sh`. The cache now points at
-  the real location, and a non-failing step reports the store size so an
-  ineffective cache shows up in the log instead of looking fixed.
+- **The native-deps pnpm store cache is removed — it never worked.** It
+  declared `~/.local/share/pnpm/store` on the *runner*, while `pnpm install`
+  runs inside the distro container, where `@pnpm/store-path` resolves the
+  location itself from hardlink topology (it lands on the pnpm home dir when
+  the project is itself a mountpoint, as `/repo` is). Mounting that path and
+  re-keying still saved an empty entry, and job logs are not reachable from
+  this environment to diagnose further, so the step is gone rather than left
+  in place pretending to cache: these three jobs keep re-downloading their
+  dependency tree, which is what they have always actually done. A working
+  version needs the store pinned inside the container and confirmed with
+  `pnpm store path`. `.pnpm-store/` is now gitignored regardless, since pnpm
+  may place it at a filesystem root.
 - **`retrieval-eval` no longer clones full history.** It passed
   `fetch-depth: 0`, but the script only shells out to `git rev-parse HEAD` to
   stamp the report's provenance, and `--check` compares recall@5 / MRR
