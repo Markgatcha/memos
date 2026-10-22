@@ -46,6 +46,28 @@ The 48 s that remains is the cache import plus exporting the finished image
 into the Docker daemon so the container can actually be started; that work
 cannot be cached away.
 
+### Changed — Faster CI: the remaining jobs
+
+- **Coverage is produced once, not nine times.** `pnpm test --ci --coverage`
+  ran on every cell of the 3 × 3 TypeScript matrix, but nothing ever read the
+  output — no artifact upload, no Codecov, no `coverageThreshold` — and the
+  instrumentation roughly doubles the work: the full suite takes **108 s
+  without `--coverage` and 222 s with it** (60 suites, 1002 tests) and writes
+  31 MB of report files. Coverage is neither OS- nor Node-version-dependent,
+  so it now runs on one cell (`ubuntu-26.04` + Node 26) and `lcov.info` is
+  uploaded as an artifact. **Every test still runs on all nine cells** —
+  only the instrumentation is deduplicated.
+- **The native-deps pnpm store cache never worked.** The cache saved
+  `~/.local/share/pnpm/store` while the container bind-mounts
+  `${{ runner.temp }}/pnpm-store`. The two paths never met, so the key
+  always restored an empty directory and all three distro containers
+  re-downloaded the full dependency tree despite `--prefer-offline` in
+  `scripts/smoke-native.sh`. The cache path now matches the mount.
+- **`retrieval-eval` no longer clones full history.** It passed
+  `fetch-depth: 0`, but the script only shells out to `git rev-parse HEAD` to
+  stamp the report's provenance, and `--check` compares recall@5 / MRR
+  against the committed baseline JSON, never against git.
+
 ### Changed — Formatter: Prettier → `bun fmt`
 
 The repo now formats with **Bun's built-in formatter** (`bun fmt`) instead of
