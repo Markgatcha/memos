@@ -74,6 +74,19 @@ cannot be cached away.
   stamp the report's provenance, and `--check` compares recall@5 / MRR
   against the committed baseline JSON, never against git.
 
+Measured across two runs of the same 22-job workflow:
+
+| | before | after |
+|---|---|---|
+| `Test` step, the 8 non-coverage cells | 54–117 s | 17–47 s |
+| `Test` steps, all 9 cells combined | 751 s | 251 s |
+| TypeScript matrix (runner-time) | 18.9 min | 12.2 min |
+| Whole workflow (runner-time) | 25.9 min | 18.9 min |
+
+Wall-clock is now dominated by Windows runner variance rather than by the
+test suite: the same `windows-latest` cell measured 94 s, 101 s and 203 s
+across three runs of identical code.
+
 ### Changed — Formatter: Prettier → `bun fmt`
 
 The repo now formats with **Bun's built-in formatter** (`bun fmt`) instead of
