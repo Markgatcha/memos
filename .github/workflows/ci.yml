@@ -270,7 +270,25 @@ jobs:
         run: pytest tests/ -v --tb=short
 
   # ──────────────────────────────────────────────
-  # Docker build
+  # Docker build. The image is verified by starting the
+  # container and polling its health endpoint.
+  #
+  # Speed comes from the GitHub Actions layer cache
+  # (type=gha): a rebuild after a source-only change
+  # reuses every unchanged layer, so the pnpm install
+  # and the pip install do not re-run.
+  #
+  # `mode=max` is required. The default `min` caches
+  # only the final stage and would discard the
+  # expensive ts-build stage, which is where the
+  # dependency install happens.
+  #
+  # `ignore-error` keeps a cache export failure (quota,
+  # or the read-only cache scope some PR events get)
+  # from failing an otherwise-good build.
+  #
+  # .dockerignore keeps the build context at ~2 MB
+  # instead of ~40 MB of benchmark fixtures.
   # ──────────────────────────────────────────────
   docker:
     name: Docker Build
@@ -278,11 +296,38 @@ jobs:
     needs: [verify-lockfile]
     steps:
       - uses: actions/checkout@v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
       - name: Build Docker image
-        run: docker build -t memos:ci .
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          tags: memos:ci
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=memos-ci
+          cache-to: type=gha,scope=memos-ci,mode=max,ignore-error=true
       - name: Verify container starts
         run: |
-          docker run -d --name memos-test -p 7400:7400 memos:ci
-          sleep 5
-          curl -f http://localhost:7400/health
-          docker stop memos-test
+          docker run -d --rm --name memos-test -p 7400:7400 memos:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:7400/health >/dev/null 2>&1; then
+              echo "container healthy after ${i}s"
+              docker stop memos-test
+              exit 0
+            fi
+            # A crashed container is removed by --rm, so inspect reports
+            # nothing. Stop waiting and surface its output instead of
+            # polling a dead port for the full timeout.
+            if [ "$(docker inspect -f '{{.State.Running}}' memos-test 2>/dev/null)" != "true" ]; then
+              echo "::error::container exited before becoming healthy"
+              docker logs memos-test || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::container did not become healthy within 60s"
+          docker logs memos-test || true
+          docker stop memos-test || true
+          exit 1

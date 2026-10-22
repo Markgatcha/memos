@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — Faster Docker CI
+
+The Docker Build job is rebuilt around Buildx and the GitHub Actions layer
+cache. The image itself is unchanged — same Dockerfile, same layers, same
+contents — but a rebuild no longer redoes the expensive steps.
+
+- **GitHub Actions layer cache** (`type=gha`, scope `memos-ci`). A rebuild
+  after a source-only change reuses every unchanged layer, so the `pnpm
+  install` and the `pip install` do not run again. `mode=max` is required:
+  the default `min` caches only the final stage and would discard the
+  `ts-build` stage, which is where the dependency install happens.
+  `ignore-error=true` keeps a cache export failure (quota, or the
+  read-only cache scope some pull-request events get) from failing an
+  otherwise-good build.
+- **`.dockerignore`** (new). The Dockerfile copies eight paths; everything
+  else was still being sent to the daemon and hashed on every build. The
+  context drops from **40 MB to 1.6 MB** in CI, and from **1.6 GB to
+  1.6 MB** for a local build once `node_modules/` and `website/` exist.
+- **Health check polls instead of `sleep 5`.** The container is probed
+  every second and the job returns as soon as `/health` answers, rather
+  than always paying a fixed 5 s. The timeout is now 60 s, and a container
+  that exits early fails immediately with its logs instead of polling a
+  dead port.
+- BuildKit cache mounts were considered and deliberately left out: they are
+  not exported by `cache-to`, so they would only help within a single
+  build while adding a cross-filesystem copy penalty to the `pnpm install`
+  layer. Layer caching covers the same ground.
+
 ### Changed — Formatter: Prettier → `bun fmt`
 
 The repo now formats with **Bun's built-in formatter** (`bun fmt`) instead of
