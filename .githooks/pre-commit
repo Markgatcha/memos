@@ -1,7 +1,9 @@
 #!/bin/sh
-# Pre-commit hook (memos): auto-format staged .ts with prettier and
+# Pre-commit hook (memos): auto-format staged .ts with bun fmt and
 # auto-fix with oxlint, then re-stage. Non-blocking — it cleans up the
 # commit but never fails it (CI is the gate for real errors).
+#
+# Requires Bun (see .bun-version) and oxlint on PATH.
 #
 # Activate once with: git config core.hooksPath .githooks
 set -e
@@ -17,9 +19,9 @@ if [ -z "$staged" ]; then
   exit 0
 fi
 
-# Auto-format with prettier (idempotent), then auto-fix with oxlint.
+# Auto-format with bun fmt (idempotent), then auto-fix with oxlint.
 # Both run only on the staged files to keep the hook fast.
-npx prettier --write $staged >/dev/null 2>&1 || true
+bun fmt $staged >/dev/null 2>&1 || true
 npx oxlint --fix $staged >/dev/null 2>&1 || true
 
 # Re-stage anything the formatters touched.

@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — Formatter: Prettier → `bun fmt`
+
+The repo now formats with **Bun's built-in formatter** (`bun fmt`) instead of
+the `prettier` package. `prettier` is removed from `devDependencies`.
+
+- **Output is unchanged.** `bun fmt` is Prettier-compatible and reads
+  `.prettierrc`; this repo has no Prettier config, so Bun's defaults apply —
+  and they match Prettier's defaults. Verified byte-for-byte against Prettier
+  3.9.10 over the repo's own sources: **233 of 240 files identical**, the 7
+  differences being minified vendor assets under
+  `scripts/dataset/locomo/static/`, which Prettier reformats and `bun fmt`
+  skips.
+- **~97× faster.** `bun fmt --check src` takes ~170 ms where
+  `prettier --check "src/**/*.ts"` took ~16.5 s on the same 61 files.
+- `format` / `format:check` now run `bun fmt src` / `bun fmt --check src`.
+  The scope is unchanged: `src/` holds 61 `.ts` files and nothing else, so
+  the old `src/**/*.ts` glob and the new directory argument select the same
+  set.
+- The pre-commit hook formats with `bun fmt` instead of `npx prettier`.
+- **Bun's version is pinned in `.bun-version`** (1.4.4) and CI installs it
+  with `oven-sh/setup-bun`. Formatting is neither OS- nor
+  Node-version-dependent, so it moved out of the Node 22/24/26 matrix into
+  its own job with a single runner.
+- `bun fmt` deliberately keeps a few inputs Prettier mangles — `font-family:
+  Font\ Awesome` would otherwise become `Font\Awesome` (a hex escape), and
+  `x |b` would become a namespace selector instead of a descendant. `bun fmt
+  --debug-check` re-parses each file after formatting and fails if the
+  meaning changed.
+
+### Changed — Dropped `oxlint-tsgolint`
+
+`oxlint-tsgolint` is removed from `devDependencies`. It was installed but
+never used: `.oxlintrc.json` sets `"typeAware": false`, and all 7 configured
+rules are syntactic. Enabling type-aware linting was measured to produce
+**zero additional findings** on this codebase at ~11× the runtime
+(1399 ms vs 126 ms over `src` + `scripts` + `__tests__`), so the dependency
+bought nothing. `oxlint` still declares it as an *optional* peer, and with
+it no longer a direct dependency pnpm does not install it at all.
+
 ### Changed — TypeScript 7.1 beta (temporary)
 
 The native TypeScript 7 compiler moves from 7.0.2 to **7.1.0-beta**

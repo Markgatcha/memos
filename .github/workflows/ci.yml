@@ -141,12 +141,30 @@ jobs:
         run: pnpm exec tsc --version
       - name: Lint
         run: pnpm lint
-      - name: Format check
-        run: pnpm format:check
       - name: Build
         run: pnpm build
       - name: Test
         run: pnpm test --ci --coverage
+
+  # ──────────────────────────────────────────────
+  # Format check: `bun fmt` replaces Prettier. It
+  # gets its own runner (one Bun install) instead of
+  # running on every cell of the TypeScript matrix,
+  # because formatting is neither OS- nor
+  # Node-version-dependent.
+  # ──────────────────────────────────────────────
+  format:
+    name: Format check
+    runs-on: ubuntu-26.04
+    needs: [verify-lockfile]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+      - name: Format check
+        run: bun fmt --check src
 
   # ──────────────────────────────────────────────
   # Native deps smoke across major Linux distro
