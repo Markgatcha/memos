@@ -2,12 +2,11 @@ import { ArrowRight, ArrowUpRight } from "lucide-react";
 import type { Metadata } from "next";
 import Reveal from "../_components/Reveal";
 import PageHeader from "../_components/PageHeader";
-import { posts } from "../../lib/posts";
 
 export const metadata: Metadata = {
   title: "Blog",
   description:
-    "Engineering notes on agent memory, benchmarks, retrieval, and local-first AI infrastructure.",
+    "Engineering posts about the AI Trio, benchmarks, and local-first AI infrastructure.",
 };
 
 const posts = [
@@ -83,44 +82,33 @@ const posts = [
 export default function Blog() {
   return (
     <main className="min-h-screen">
-      <div className="mx-auto max-w-4xl px-6 py-16 md:py-20">
+      <div className="max-w-4xl mx-auto px-6 py-16 md:py-20">
         <PageHeader
-          kicker="writing"
-          title="Engineering notes."
-          subtitle="Benchmarks, architecture, and the occasional post-mortem — written while building the local-first stack."
+          kicker="blog"
+          title="Writing"
+          subtitle="Engineering posts about the AI Trio, benchmarks, and local-first AI infrastructure."
         />
 
-        <div className="border-t border-white/[0.08]">
+        <div className="space-y-4">
           {posts.map((p, i) => (
-            <Reveal key={p.href} delay={i * 55}>
+            <Reveal key={p.title} delay={i * 70}>
               <a
                 href={p.href}
-                {...(p.internal
-                  ? {}
-                  : { target: "_blank", rel: "noopener noreferrer" })}
-                className="group grid gap-3 border-b border-white/[0.08] py-7 transition-colors hover:bg-white/[0.015] md:grid-cols-[132px_1fr_24px] md:items-start md:gap-8"
+                {...(p.internal ? {} : { target: "_blank", rel: "noopener noreferrer" })}
+                className="card p-7 block group"
               >
-                <div className="pt-1 font-mono text-[10px] tracking-[0.02em] text-zinc-500">
-                  <div>{p.date}</div>
-                  <div className="mt-1 text-zinc-500">{p.tag}</div>
+                <div className="font-mono text-[11px] tracking-[0.02em] text-zinc-500 mb-3">
+                  {p.tag} · {p.date}
                 </div>
-                <div>
-                  <h2 className="max-w-2xl text-balance text-xl font-medium leading-snug tracking-[-0.025em] text-zinc-100 transition-colors group-hover:text-white">
-                    {p.title}
-                  </h2>
-                  <p className="mt-2.5 max-w-2xl text-[13px] leading-relaxed text-zinc-500">
-                    {p.excerpt}
-                  </p>
-                  <span className="mt-4 inline-flex items-center gap-1.5 font-mono text-[10px] tracking-[0.02em] text-zinc-500 transition-colors group-hover:text-zinc-200">
-                    Read the post
-                    <ArrowRight size={12} />
-                  </span>
-                </div>
-                <ArrowUpRight
-                  size={16}
-                  aria-hidden
-                  className="hidden text-zinc-500 transition-colors group-hover:text-zinc-200 md:mt-1 md:block"
-                />
+                <h2 className="text-xl font-semibold text-zinc-50 mb-2.5 group-hover:text-white transition-colors text-balance">
+                  {p.title}
+                </h2>
+                <p className="text-sm text-zinc-400 leading-relaxed mb-5 max-w-xl">
+                  {p.excerpt}
+                </p>
+                <span className="arrow-link">
+                  Read the post {p.internal ? <ArrowRight size={14} /> : <ArrowUpRight size={14} />}
+                </span>
               </a>
             </Reveal>
           ))}

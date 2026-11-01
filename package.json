@@ -128,6 +128,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.3.1",
+    "@yarflam/potion-base-8m": "1.0.4",
     "better-sqlite3": "^13.0.3",
     "zod": "^4.6.7"
   },
@@ -160,7 +161,8 @@
     "jest": "^30.5.2",
     "oxlint": "^1.89.0",
     "tsx": "^4.23.15",
-    "typescript": "npm:@typescript/typescript6@^6.0.2"
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "unpdf": "^2.0.1"
   },
   "engines": {
     "node": ">=20.0.0"

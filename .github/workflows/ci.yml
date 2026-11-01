@@ -142,6 +142,12 @@ jobs:
         run: pnpm check:plugin
       - name: Verify version surfaces (npm, PyPI, README, plugin)
         run: pnpm check:versions
+      - name: Verify root Agent Plugin mirrors the Claude plugin
+        run: pnpm plugin:check
+      - name: Verify MCP registry manifest
+        run: pnpm check:server-json
+      - name: Verify llms.txt is current
+        run: pnpm docs:llms:check
       - name: TypeScript version
         run: pnpm exec tsc --version
       - name: Lint

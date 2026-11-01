@@ -2,15 +2,8 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "memos",
   "version": "1.6.27",
-  "description": "Local-first persistent memory for AI agents: hybrid recall across distilled memories and raw sessions, graph provenance with supersede history, and abstention when nothing is stored. Zero cloud, zero telemetry, SQLite-backed, no API key required.",
-  "keywords": [
-    "memory",
-    "mcp",
-    "local-first",
-    "hybrid-recall",
-    "knowledge-graph",
-    "provenance"
-  ],
+  "description": "Local-first persistent memory: store durable facts, recall them in any session. Zero cloud, zero telemetry, SQLite-backed.",
+  "keywords": ["memory", "mcp", "local-first"],
   "author": {
     "name": "Markgatcha"
   },

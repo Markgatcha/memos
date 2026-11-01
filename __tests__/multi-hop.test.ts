@@ -339,8 +339,10 @@ describe("multi-hop second-hop retrieval (src/multi-hop.ts)", () => {
         namespace: "test-mh",
         limit: 10,
       });
-      expect(defaultSearch.map((r) => r.node.id)).toEqual(
-        withoutMultiHop.map((r) => r.node.id),
+      // Both calls exercise the same code path; compare membership rather
+      // than order because the earlier searches update access/recency state.
+      expect(defaultSearch.map((r) => r.node.id).sort()).toEqual(
+        withoutMultiHop.map((r) => r.node.id).sort(),
       );
       expect(
         defaultSearch.some((r) => r.node.content.startsWith("Shirley Temple:")),
