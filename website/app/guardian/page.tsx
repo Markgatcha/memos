@@ -41,7 +41,7 @@ export default function Guardian() {
         />
 
         <Reveal className="mb-12">
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">Quick start</h2>
+          <h2 className="section-title">Quick start</h2>
           <div className="window">
             <div className="window-bar">
               <span className="window-dot" />
@@ -67,7 +67,7 @@ export default function Guardian() {
         </Reveal>
 
         <Reveal className="mb-12" delay={60}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             The interactive TUI
           </h2>
           <p className="text-sm text-zinc-500 mb-5">
@@ -92,10 +92,10 @@ export default function Guardian() {
         </Reveal>
 
         <Reveal className="mb-12" delay={80}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             Optimization pipeline
           </h2>
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             <div className="divide-y divide-white/[0.05]">
               {pipeline.map((p) => (
                 <div
@@ -114,7 +114,7 @@ export default function Guardian() {
         </Reveal>
 
         <Reveal className="mb-12" delay={120}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">Key features</h2>
+          <h2 className="section-title">Key features</h2>
           <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
             {features.map((f) => (
               <li key={f} className="flex items-start gap-2.5 text-sm text-zinc-400">
@@ -145,10 +145,10 @@ export default function Guardian() {
               <div>
                 <div className="flex justify-between font-mono text-[11px] text-zinc-500 mb-1.5">
                   <span>guardian-compressed</span>
-                  <span className="tabular-nums text-emerald-500/90">2,767 tok</span>
+                  <span className="tabular-nums text-zinc-100">2,767 tok</span>
                 </div>
                 <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-                  <div className="h-full w-[22%] rounded-full bg-emerald-500/80" />
+                  <div className="h-full w-[22%] rounded-full bg-zinc-100/90" />
                 </div>
               </div>
             </div>

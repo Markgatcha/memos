@@ -8,7 +8,7 @@ const SAMPLE = `We need to refactor the VCM sharder module because the current i
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className="card px-4 py-3">
-      <div className={`font-mono text-xl tabular-nums ${accent ? "text-emerald-400" : "text-zinc-100"}`}>
+      <div className={`font-mono text-xl tabular-nums ${accent ? "text-zinc-100" : "text-zinc-100"}`}>
         {value}
       </div>
       <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
@@ -73,7 +73,7 @@ export default function Playground() {
                 step={10}
                 value={maxTokens}
                 onChange={(e) => setMaxTokens(Number(e.target.value))}
-                className="w-32 accent-emerald-500"
+                className="w-32 accent-zinc-100"
               />
               <span className="text-zinc-300 tabular-nums">{maxTokens}</span>
             </label>
@@ -103,7 +103,7 @@ export default function Playground() {
             <span className="window-dot" />
             <span className="window-title">folded prompt</span>
           </div>
-          <div className="p-4 font-mono text-[13px] leading-6 whitespace-pre-wrap text-emerald-300/90 min-h-[220px]">
+          <div className="p-4 font-mono text-[13px] leading-6 whitespace-pre-wrap text-zinc-200 min-h-[220px]">
             {result ? result.foldedPrompt : "Type something to see the fold…"}
           </div>
         </div>

@@ -7,6 +7,39 @@ which doctor output to paste into a GitHub issue if you're still stuck.
 
 ---
 
+## Structured errors and crash reports
+
+Every CLI failure now prints a code, an actionable hint, the context that
+caused it, and the path to a redacted crash report:
+
+```
+MemOS error [MEMOS_DB_LOCKED]
+  database is locked
+  what to do: Another MemOS process is writing. Wait a moment, then retry...
+  context:
+    dbPath: C:\Users\you\.memos\memos.db
+  docs: https://github.com/Markgatcha/memos/blob/main/docs/troubleshooting.md
+  crash report: C:\Users\you\.memos\crash-reports\crash-...json
+  set MEMOS_DEBUG=1 for the stack trace
+```
+
+- `MEMOS_DB_OPEN` / `MEMOS_DB_LOCKED` / `MEMOS_DB_CORRUPT` / `MEMOS_DB_ENCRYPTED`
+- `MEMOS_EMBEDDING_UNAVAILABLE` / `MEMOS_EMBEDDING_FAILED`
+- `MEMOS_PROVIDER_AUTH` / `MEMOS_PROVIDER_RATE_LIMIT` / `MEMOS_PROVIDER_TIMEOUT`
+- `MEMOS_CONFIG_INVALID` / `MEMOS_INVALID_INPUT` / `MEMOS_NOT_FOUND`
+- `MEMOS_IO` / `MEMOS_MCP_TOOL_FAILED` / `MEMOS_UNKNOWN`
+
+`memos doctor` prints the latest crash report (code, message, timestamp) and
+includes it in `--json` output. Crash reports never include raw key material:
+secret-looking context keys are replaced with `[redacted]`, and messages pass
+through the same secret scrubber as logs. To inspect a report:
+
+```bash
+memos doctor --json | jq '.lastCrash'
+```
+
+Set `MEMOS_CRASH_DIR` to change the report directory.
+
 ## "Database not found" at a path you expected to work
 
 **Symptom**

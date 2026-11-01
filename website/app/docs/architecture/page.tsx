@@ -60,7 +60,7 @@ function LayerDiagram() {
         </text>
         {[
           "Python HTTP server (FastAPI)",
-          "MCP server (stdio + HTTP/SSE)",
+          "MCP server (stdio + Streamable HTTP)",
           "TypeScript SDK (direct)",
         ].map((t, i) => (
           <g key={t}>
@@ -192,14 +192,14 @@ export default function Architecture() {
         />
 
         <Reveal className="mb-14">
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">Layered architecture</h2>
+          <h2 className="section-title">Layered architecture</h2>
           <div className="card p-4 sm:p-6 overflow-x-auto">
             <LayerDiagram />
           </div>
         </Reveal>
 
         <Reveal className="mb-14" delay={60}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             Retrieval pipeline — hybrid search
           </h2>
           <p className="text-sm text-zinc-400 leading-relaxed mb-5 max-w-2xl">
@@ -207,7 +207,7 @@ export default function Architecture() {
             runs two legs in parallel against the same SQLite database, then
             fuses the rankings.
           </p>
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             <div className="divide-y divide-white/[0.05]">
               {retrievalSteps.map((s) => (
                 <div key={s.step} className="flex gap-5 px-6 py-4">
@@ -225,7 +225,7 @@ export default function Architecture() {
         </Reveal>
 
         <Reveal className="mb-14" delay={100}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             Context packs — feeding LLMs on a token budget
           </h2>
           <p className="text-sm text-zinc-400 leading-relaxed mb-5 max-w-2xl">
@@ -233,7 +233,7 @@ export default function Architecture() {
             builds a token-budgeted slice of memory for prompt injection. LLM
             Guardian consumes the envelope directly as a high-relevance shard.
           </p>
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             <div className="divide-y divide-white/[0.05]">
               {packSteps.map((s) => (
                 <div key={s.step} className="flex gap-5 px-6 py-4">
@@ -251,8 +251,8 @@ export default function Architecture() {
         </Reveal>
 
         <Reveal className="mb-14" delay={140}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">Module map</h2>
-          <div className="card overflow-hidden">
+          <h2 className="section-title">Module map</h2>
+          <div className="card overflow-x-auto">
             <table className="data-table">
               <thead>
                 <tr>

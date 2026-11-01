@@ -9,11 +9,11 @@ import StarButton from "../_components/StarButton";
 export const metadata: Metadata = {
   title: "MemOS — Persistent Memory",
   description:
-    "Universal, local-first, persistent memory layer for AI agents. Graph-native SQLite storage, temporal validity, trust scoring, and 77.6% token savings. Free and open source — no subscription, ever.",
+    "Universal, local-first, persistent memory layer for AI agents. Graph-native SQLite storage, temporal validity, trust scoring, and hybrid recall. Free and open source — no subscription, ever.",
   openGraph: {
     title: "MemOS — Persistent Memory for AI Agents",
     description:
-      "95.9% recall on BEAM-1M. 100% local. Free and open source — no subscription, ever.",
+      "99.4% LongMemEval Hit@20 on 500 questions. 100% local. Free and open source — no subscription, ever.",
     images: [{ url: "/og-memos.png", width: 1200, height: 630 }],
   },
   twitter: {
@@ -27,18 +27,41 @@ const features = [
   "Graph-native with typed edges",
   "Temporal validity (validFrom/validTo)",
   "Trust scoring & provenance tracking",
-  "Compact TOON format (77.6% token savings)",
   "Confidence score state machine",
-  "MCP adapter (stdio + HTTP+SSE)",
+  "Compact TOON context packs",
+  "MCP adapter (stdio + Streamable HTTP, 2026-07-28)",
+  "40 MCP tools · session-start overview · task triggers",
+  "Review queue for inferred memories",
+  "Source-scoped deletion with proof-of-forgetting",
   "Framework-agnostic (Ollama, LangChain, CrewAI)",
 ];
 
 const benchmarks = [
-  { name: "BEAM-1M (recall @10)", memos: "95.9%", mem0: "64.1%", win: true },
-  { name: "BEAM-1M · temporal reasoning", memos: "97.1%", mem0: "16.3%", win: true },
-  { name: "BEAM-1M · contradiction resolution", memos: "88.6%", mem0: "35.7%", win: true },
-  { name: "LoCoMo", memos: "92.5", mem0: "92.5", win: false },
-  { name: "LongMemEval", memos: "94.4", mem0: "94.4", win: false },
+  {
+    name: "LongMemEval-S · Hit@20",
+    memos: "99.4%",
+    note: "500 questions · nomic 768d · saturated",
+  },
+  {
+    name: "LoCoMo · Hit@10",
+    memos: "65.0%",
+    note: "1,986 questions · bge-small · repeatable",
+  },
+  {
+    name: "ConvoMem · Hit@10",
+    memos: "91.0%",
+    note: "387 questions · all-MiniLM",
+  },
+  {
+    name: "LoCoMo same-protocol · Hit@10",
+    memos: "65.6%",
+    note: "304 questions · vs Mem0 65.6%",
+  },
+  {
+    name: "End-to-end QA",
+    memos: "78.0%",
+    note: "50 questions · independent GLM judge",
+  },
 ];
 
 const pricingRows = [
@@ -61,7 +84,7 @@ export default function MemOSPage() {
         />
 
         <Reveal className="mb-12">
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">Quick start</h2>
+          <h2 className="section-title">Quick start</h2>
           <div className="window">
             <div className="window-bar">
               <span className="window-dot" />
@@ -83,7 +106,7 @@ export default function MemOSPage() {
         </Reveal>
 
         <Reveal className="mb-12" delay={80}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">Key features</h2>
+          <h2 className="section-title">Key features</h2>
           <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
             {features.map((f) => (
               <li key={f} className="flex items-start gap-2.5 text-sm text-zinc-400">
@@ -95,35 +118,35 @@ export default function MemOSPage() {
         </Reveal>
 
         <Reveal className="mb-12" delay={120}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             Benchmarks — long-horizon recall
           </h2>
           <BenchmarkChart
-            title="BEAM-1M · recall @10 · higher is better"
+            title="LoCoMo · adversarial recall @10 · higher is better"
             bars={[
               {
                 label: "MemOS",
-                value: 95.9,
-                display: "95.9%",
+                value: 62.0,
+                display: "62.0%",
                 accent: true,
-                note: "local SQLite + Gemma-300M embeddings · zero cloud",
+                note: "hybrid recall + trust/provenance filters",
               },
               {
                 label: "Mem0",
-                value: 64.1,
-                display: "64.1%",
-                note: "hosted platform, default settings",
+                value: 45.1,
+                display: "45.1%",
+                note: "same embedder, same protocol, infer=false",
               },
             ]}
-            footnote="On BEAM-1M — a million-token, months-long conversation history — MemOS recalls 31.8 points more than Mem0, while running entirely on your machine. On LoCoMo and LongMemEval the two are at parity, which is the point: you don't pay a quality tax for going local."
+            footnote="Same-protocol run: 304 LoCoMo questions, 2 conversations, identical embedder (nomic-embed-text), no reranker on either side. Overall Hit@10 was a 65.6%–65.6% tie; MemOS leads on adversarial memories by 16.9 points, where trust and provenance filtering matter. One slice, so treat it as a signal with caveats."
           />
-          <div className="card overflow-hidden mt-4">
+          <div className="card overflow-x-auto mt-4">
             <table className="data-table">
               <thead>
                 <tr>
                   <th>Benchmark</th>
                   <th className="!text-right">MemOS</th>
-                  <th className="!text-right">Mem0</th>
+                  <th>Protocol</th>
                 </tr>
               </thead>
               <tbody>
@@ -133,24 +156,30 @@ export default function MemOSPage() {
                     <td className="!text-right text-zinc-100 font-medium tabular-nums">
                       {b.memos}
                     </td>
-                    <td className="!text-right text-zinc-600 tabular-nums">
-                      {b.mem0}
-                    </td>
+                    <td className="text-zinc-500 text-xs">{b.note}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="mt-3 text-xs text-zinc-600 leading-relaxed">
-            Ties on LoCoMo and LongMemEval are honest ties — shorter-horizon
-            benchmarks where both systems retrieve well. The gap opens up at
-            production scale (BEAM-1M), where temporal validity and trust
-            scoring start to matter.
+            Every row traces to a committed artifact or a documented run.
+            LongMemEval retrieval is saturated at k=20 (BM25 reaches 99.6%), so
+            we do not treat it as a differentiator. The honest comparison is the
+            same-protocol LoCoMo slice, where the systems tie overall and
+            separate on adversarial cases. See{" "}
+            <a
+              href="/benchmarks#methodology"
+              className="text-zinc-400 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-200"
+            >
+              the methodology
+            </a>
+            .
           </p>
         </Reveal>
 
         <Reveal className="mb-12" delay={160}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             Free and open source — actually
           </h2>
           <div className="card p-6 md:p-7">
@@ -167,7 +196,7 @@ export default function MemOSPage() {
                 <thead>
                   <tr>
                     <th></th>
-                    <th className="!text-right !text-emerald-400/90">MemOS</th>
+                    <th className="!text-right !text-zinc-300">MemOS</th>
                     <th className="!text-right">Mem0 platform</th>
                   </tr>
                 </thead>
@@ -177,7 +206,7 @@ export default function MemOSPage() {
                       <td className="text-zinc-500">{r.label}</td>
                       <td className="!text-right text-zinc-100 font-medium">
                         <span className="inline-flex items-center gap-1.5 justify-end">
-                          <Check size={13} className="text-emerald-500 shrink-0" />
+                          <Check size={13} className="text-zinc-100 shrink-0" />
                           {r.memos}
                         </span>
                       </td>

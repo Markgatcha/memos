@@ -56,6 +56,7 @@ That's genuinely it. Store a memory, kill the process, start a new one, search â
 - **It's a graph, not a list.** New memories auto-link to related ones, so searching "theme" can surface your "dark mode" preference.
 - **It understands time.** Memories carry validity windows (`validFrom`/`validTo`), so "user lives in Berlin" can gracefully stop being true.
 - **It's cheap to feed to an LLM.** The compact TOON format cuts context tokens by ~77% versus JSON.
+- **It learns what actually helped.** Optional outcome feedback asks which memories the agent used and whether the task worked, then nudges future ranking within a bounded range. `explain()` shows exactly why anything was recalled.
 - **It's free.** MIT license, no paid tier, no "graph memory costs extra." Fork it, modify it, ship it.
 
 ## Core concepts

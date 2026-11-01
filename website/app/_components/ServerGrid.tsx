@@ -115,7 +115,7 @@ export default function ServerGrid({ servers }: ServerGridProps) {
                 className="shrink-0 w-8 h-8 grid place-items-center rounded-lg border border-white/10 text-zinc-500 hover:text-zinc-100 hover:border-white/25 transition-colors"
               >
                 {copied === s.id ? (
-                  <Check size={14} className="text-emerald-500" />
+                  <Check size={14} className="text-zinc-100" />
                 ) : (
                   <Copy size={14} />
                 )}

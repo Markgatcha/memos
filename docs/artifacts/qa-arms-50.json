@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "timestamp": "2026-11-01T07:45:00.000Z",
+  "dataset": "longmemeval_s",
+  "questions": 50,
+  "sample": "stratified",
+  "topK": 10,
+  "note": "Floor and ceiling are same-model (deepseek-v4-flash:free answerer, deepseek-v4.1-flash:free judge, 0 errors). The memory arm is the paid DeepSeek V4.1 Flash + GLM-5.3 run and is NOT the same model pair; do not subtract the rows. A same-model memory run was blocked by free-tier rate limits.",
+  "arms": {
+    "noMemory": {
+      "artifact": "docs/artifacts/qa-arms-free-no-memory-50.json",
+      "answerModel": "deepseek-v4-flash:free",
+      "judgeModel": "deepseek-v4.1-flash:free",
+      "accuracy": 0.02,
+      "ci": [0, 0.06],
+      "questions": 50,
+      "tokens": 18280,
+      "calls": 98,
+      "errors": 0,
+      "correct": 1,
+      "tokensPerCorrect": 18280
+    },
+    "memory": {
+      "artifact": "docs/artifacts/qa-glm-judge-50.json",
+      "answerModel": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "judgeModel": "GLM-5.3",
+      "accuracy": 0.78,
+      "ci": [0.66, 0.88],
+      "questions": 50,
+      "tokens": 89925,
+      "calls": 53,
+      "errors": 7,
+      "correct": 39,
+      "tokensPerCorrect": 2305.77
+    },
+    "fullContext": {
+      "artifact": "docs/artifacts/qa-arms-free-full-context-50.json",
+      "answerModel": "deepseek-v4-flash:free",
+      "judgeModel": "deepseek-v4.1-flash:free",
+      "accuracy": 0.16,
+      "ci": [0.06, 0.28],
+      "questions": 50,
+      "tokens": 2070185,
+      "calls": 100,
+      "errors": 0,
+      "correct": 8,
+      "tokensPerCorrect": 258773.13
+    }
+  }
+}

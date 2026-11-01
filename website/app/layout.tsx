@@ -1,23 +1,27 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import Navbar from "./_components/Navbar";
 import PageBackground from "./_components/PageBackground";
+import Footer from "./_components/Footer";
 
 export const metadata: Metadata = {
   title: {
     default:
-      "ContextCore — Local-First AI Trio for Memory, Tools, and Cost Control",
+      "ContextCore — Local-first AI memory, tools, and cost control",
     template: "%s — ContextCore",
   },
   description:
-    "MemOS (persistent memory), UMT (MCP toolkit), and LLM Guardian (token optimization) — 100% local, zero cloud.",
+    "MemOS (persistent memory), UMT (MCP toolkit), and LLM Guardian (token optimization) — three local-first tools. One SQLite file, zero cloud calls, no API keys required.",
   metadataBase: new URL("https://context-core.dev"),
+  applicationName: "ContextCore",
   openGraph: {
-    title: "ContextCore — Local-First AI Trio",
-    description: "Memory, tools, and cost control for AI agents. 100% local.",
+    title: "ContextCore — The local-first stack for AI agents",
+    description:
+      "Persistent memory, MCP tooling, and token-cost control. 100% local, open source, no accounts.",
     url: "https://context-core.dev",
+    siteName: "ContextCore",
     type: "website",
     images: [{ url: "/og-image.png", width: 1200, height: 630 }],
   },
@@ -27,6 +31,11 @@ export const metadata: Metadata = {
   },
 };
 
+export const viewport: Viewport = {
+  themeColor: "#050506",
+  colorScheme: "dark",
+};
+
 export default function RootLayout({
   children,
 }: {
@@ -34,10 +43,17 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
-      <body className="bg-base text-zinc-100 antialiased font-sans">
+      <body className="min-h-screen bg-canvas font-sans text-zinc-100 antialiased">
+        <noscript>
+          <style>{`.reveal{opacity:1 !important;transform:none !important}`}</style>
+        </noscript>
+        <a href="#main-content" className="skip-link">
+          Skip to content
+        </a>
         <PageBackground />
         <Navbar />
-        {children}
+        <div id="main-content" tabIndex={-1}>{children}</div>
+        <Footer />
       </body>
     </html>
   );

@@ -41,8 +41,8 @@ function LI({ children }: { children: React.ReactNode }) {
 
 function Callout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="card p-5 md:p-6 my-8 border-emerald-500/20">
-      <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-emerald-400/90 mb-2.5">
+    <div className="card p-5 md:p-6 my-8 border-white/15">
+      <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-300 mb-2.5">
         takeaway
       </div>
       <div className="text-[14px] text-zinc-300 leading-[1.75]">{children}</div>
@@ -187,10 +187,12 @@ export default function Page() {
               <strong className="text-zinc-200">Don&apos;t let the write gate
               delete evidence.</strong> The prompt-injection screen classified
               about 150 ordinary chat sessions in the haystack as
-              instruction-like and excluded them from recall. Benchmark
-              ingestion now disables the screen for the trusted corpus. A
-              memory system that silently drops evidence is not more secure;
-              it is less correct.
+              instruction-like and excluded them from recall. The benchmark
+              harness now disables the screen for the trusted corpus. The
+              recorded 99.4% run predates that change, so it is a lower bound:
+              a clean rerun can only add candidates, not remove them. A memory
+              system that silently drops evidence is not more secure; it is
+              less correct.
             </LI>
             <LI>
               <strong className="text-zinc-200">Measure at the depth the
@@ -309,12 +311,7 @@ export default function Page() {
             killed 500-question run does not re-embed 24k sessions.
           </P>
           <pre className="card p-5 overflow-x-auto text-[12px] leading-[1.7] text-zinc-300 font-mono mb-6">
-{`npx tsx scripts/bench-longmemeval.ts \\
-  --provider=ollama --model=nomic-embed-text --dimensions=768 \\
-  --topk=20 --retrieve-only \\
-  --keyword-weight=0.5 --semantic-weight=0.5 \\
-  --contextual --ingest-concurrency=16 \\
-  --db=/tmp/lme-full.db --out=/tmp/lme-full.json`}
+{`npx tsx scripts/bench-longmemeval.ts --provider=ollama --model=nomic-embed-text --dimensions=768 --topk=20 --retrieve-only --keyword-weight=0.5 --semantic-weight=0.5 --contextual --ingest-concurrency=16 --db=/tmp/lme-full.db --out=/tmp/lme-full.json`}
           </pre>
           <P>
             Raw result:{" "}

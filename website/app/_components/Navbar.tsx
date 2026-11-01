@@ -1,91 +1,144 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { Layers, Menu, X } from "lucide-react";
 import GithubIcon from "./GithubIcon";
 
 const links = [
-  { href: "/memos", label: "MemOS" },
-  { href: "/umt", label: "UMT" },
-  { href: "/guardian", label: "Guardian" },
-  { href: "/playground", label: "Playground" },
-  { href: "/benchmarks", label: "Benchmarks" },
-  { href: "/blogs", label: "Blog" },
-  { href: "/docs", label: "Docs" },
+  { href: "/memos", label: "MemOS", group: "product" },
+  { href: "/umt", label: "UMT", group: "product" },
+  { href: "/guardian", label: "Guardian", group: "product" },
+  { href: "/benchmarks", label: "Benchmarks", group: "resource" },
+  { href: "/docs", label: "Docs", group: "resource" },
+  { href: "/playground", label: "Playground", group: "resource", wide: true },
+  { href: "/blogs", label: "Blog", group: "resource" },
+];
+
+const secondary = [
   { href: "/support", label: "Support" },
+  { href: "/compare/memos-vs-mem0", label: "Compare" },
 ];
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname() || "/";
+
+  const isActive = (href: string) =>
+    pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <header className="sticky top-0 z-50 border-b border-white/[0.06] bg-base/70 backdrop-blur-xl">
-      <nav className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-        <a href="/" className="flex items-center gap-2.5 group">
-          <span className="w-7 h-7 rounded-md bg-zinc-100 text-zinc-950 grid place-items-center group-hover:bg-white transition-colors">
-            <Layers size={14} strokeWidth={2.4} />
+    <header className="sticky top-0 z-50 border-b border-white/[0.07] bg-canvas/95 backdrop-blur-xl">
+      <nav
+        aria-label="Primary"
+        className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-6"
+      >
+        <a
+          href="/"
+          className="group flex shrink-0 items-center gap-2.5"
+          aria-label="ContextCore home"
+        >
+          <span className="grid h-7 w-7 place-items-center rounded-sm bg-ink text-canvas transition-colors group-hover:bg-white">
+            <Layers size={15} strokeWidth={2.2} />
           </span>
-          <span className="font-semibold tracking-tight text-[15px] text-zinc-100">
+          <span className="text-[15px] font-medium tracking-[-0.02em] text-zinc-100">
             ContextCore
           </span>
         </a>
 
-        {/* Desktop links */}
-        <div className="hidden md:flex items-center gap-6 text-sm">
-          {links.slice(0, 6).map((l) => (
-            <a
-              key={l.href}
-              href={l.href}
-              className="text-zinc-400 hover:text-zinc-100 transition-colors"
-            >
-              {l.label}
-            </a>
-          ))}
+        <div className="hidden items-center gap-4 md:flex xl:gap-6">
+          {links.map((l) => {
+            const active = isActive(l.href);
+            return (
+              <a
+                key={l.href}
+                href={l.href}
+                aria-current={active ? "page" : undefined}
+                className={`relative py-2 text-[13px] transition-colors ${
+                  l.wide ? "hidden lg:inline" : ""
+                } ${
+                  active
+                    ? "text-zinc-100"
+                    : "text-zinc-500 hover:text-zinc-200"
+                }`}
+              >
+                {l.label}
+                {active && (
+                  <span
+                    aria-hidden
+                    className="absolute inset-x-0 -bottom-[1px] h-px bg-zinc-200"
+                  />
+                )}
+              </a>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-2">
           <a
             href="https://github.com/Markgatcha/memos"
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-secondary !px-3 !py-1.5"
+            className="btn btn-secondary hidden !px-3 !py-2 sm:inline-flex"
+            aria-label="ContextCore on GitHub"
           >
-            <GithubIcon size={15} />
-            <span className="hidden sm:inline">GitHub</span>
+            <GithubIcon size={14} />
+            <span>GitHub</span>
           </a>
-        </div>
 
-        {/* Mobile toggle */}
-        <button
-          type="button"
-          aria-label={open ? "Close menu" : "Open menu"}
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-          className="md:hidden w-9 h-9 grid place-items-center rounded-lg border border-white/10 text-zinc-300 hover:text-zinc-100 hover:border-white/20 transition-colors"
-        >
-          {open ? <X size={16} /> : <Menu size={16} />}
-        </button>
+          <button
+            type="button"
+            aria-label={open ? "Close menu" : "Open menu"}
+            aria-expanded={open}
+            aria-controls="mobile-menu"
+            onClick={() => setOpen((v) => !v)}
+            className="grid h-9 w-9 place-items-center border border-white/12 text-zinc-300 transition-colors hover:border-white/25 hover:text-white md:hidden"
+          >
+            {open ? <X size={16} /> : <Menu size={16} />}
+          </button>
+        </div>
       </nav>
 
-      {/* Mobile menu */}
       {open && (
-        <div className="md:hidden border-t border-white/[0.06] bg-base/95 backdrop-blur-xl">
-          <div className="max-w-6xl mx-auto px-6 py-4 flex flex-col gap-1">
-            {links.map((l) => (
-              <a
-                key={l.href}
-                href={l.href}
-                onClick={() => setOpen(false)}
-                className="py-2.5 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
-              >
-                {l.label}
-              </a>
-            ))}
+        <div
+          id="mobile-menu"
+          className="border-t border-white/[0.07] bg-canvas/95 backdrop-blur-xl md:hidden"
+        >
+          <div className="mx-auto flex max-w-6xl flex-col px-6 py-4">
+            <div className="mono-label pb-2 pt-1">Products</div>
+            {links
+              .filter((l) => l.group === "product")
+              .map((l) => (
+                <a
+                  key={l.href}
+                  href={l.href}
+                  onClick={() => setOpen(false)}
+                  className="border-b border-white/[0.05] py-2.5 text-sm text-zinc-300 transition-colors hover:text-white"
+                >
+                  {l.label}
+                </a>
+              ))}
+            <div className="mono-label pb-2 pt-5">Resources</div>
+            {[...links.filter((l) => l.group === "resource"), ...secondary].map(
+              (l) => (
+                <a
+                  key={l.href}
+                  href={l.href}
+                  onClick={() => setOpen(false)}
+                  className="border-b border-white/[0.05] py-2.5 text-sm text-zinc-300 transition-colors hover:text-white"
+                >
+                  {l.label}
+                </a>
+              )
+            )}
             <a
               href="https://github.com/Markgatcha/memos"
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
-              className="mt-2 btn btn-secondary w-fit !px-3 !py-1.5"
+              className="btn btn-secondary mt-5 w-fit"
             >
-              <GithubIcon size={15} />
+              <GithubIcon size={14} />
               GitHub
             </a>
           </div>

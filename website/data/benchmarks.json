@@ -1,28 +1,28 @@
 {
-  "generatedAt": "2026-10-21T20:23:17.376Z",
+  "generatedAt": "2026-11-01T09:04:07.656Z",
   "locomo": {
     "source": "scripts/bench-locomo-noapi-results.json",
-    "timestamp": "2026-09-06T22:59:45.728Z",
-    "gitSha": "a6e1af99a07ecc579a41afb45c7e787918e2592d",
+    "timestamp": "2026-10-31T03:01:12.568Z",
+    "gitSha": "5d6656875e3b80263ba831eb3a766f7c918aeaac",
     "gitDirty": true,
     "os": "win32 10.0.26220",
-    "node": "v26.7.0",
-    "model": "LFM2.5-Embedding-350M-BF16",
+    "node": "v26.12.1",
+    "model": "BAAI/bge-small-en-v1.5",
     "dataset": "locomo10",
     "questions": 1986,
     "topK": 10,
     "at5": {
-      "hitRate": 0.7825428859737639,
-      "evidenceRecall": 0.7256917750757045,
-      "mrr": 0.6350992263706698,
-      "ndcg": 0.6373709091249904
+      "hitRate": 0.5600403632694249,
+      "evidenceRecall": 0.511870469641063,
+      "mrr": 0.41937436932391614,
+      "ndcg": 0.4262121566081373
     },
     "at10": {
-      "hitRate": 0.8319878910191726,
-      "evidenceRecall": 0.7786092461453613,
-      "allEvidenceRecall": 0.7250252270433906,
-      "mrr": 0.6417994089664119,
-      "ndcg": 0.6561201798397048
+      "hitRate": 0.6503531786074672,
+      "evidenceRecall": 0.5983551727992796,
+      "allEvidenceRecall": 0.5575176589303733,
+      "mrr": 0.43107371101821207,
+      "ndcg": 0.45542958453241256
     }
   },
   "beam": {
@@ -37,7 +37,127 @@
     "benchmark": "BEAM-1M",
     "questions": 200,
     "overallRecall": 1,
-    "p50LatencyMs": null
+    "p50LatencyMs": null,
+    "topK": 15,
+    "skippedAbstention": 20,
+    "categories": {
+      "preference_following": {
+        "name": "Preference Following",
+        "recall": 1,
+        "hits": 20,
+        "total": 20,
+        "p50": 216
+      },
+      "instruction_following": {
+        "name": "Instruction Following",
+        "recall": 1,
+        "hits": 20,
+        "total": 20,
+        "p50": 173
+      },
+      "information_extraction": {
+        "name": "Information Extraction",
+        "recall": 1,
+        "hits": 20,
+        "total": 20,
+        "p50": 188
+      },
+      "knowledge_update": {
+        "name": "Knowledge Update",
+        "recall": 1,
+        "hits": 20,
+        "total": 20,
+        "p50": 189
+      },
+      "multi_session_reasoning": {
+        "name": "Multi-Session Reasoning",
+        "recall": 1,
+        "hits": 20,
+        "total": 20,
+        "p50": 496
+      },
+      "summarization": {
+        "name": "Summarization",
+        "recall": 1,
+        "hits": 20,
+        "total": 20,
+        "p50": 240
+      },
+      "temporal_reasoning": {
+        "name": "Temporal Reasoning",
+        "recall": 1,
+        "hits": 20,
+        "total": 20,
+        "p50": 208
+      },
+      "event_ordering": {
+        "name": "Event Ordering",
+        "recall": 1,
+        "hits": 20,
+        "total": 20,
+        "p50": 245
+      },
+      "abstention": {
+        "name": "Abstention",
+        "recall": 1,
+        "hits": 20,
+        "total": 20,
+        "p50": 191
+      },
+      "contradiction_resolution": {
+        "name": "Contradiction Resolution",
+        "recall": 1,
+        "hits": 20,
+        "total": 20,
+        "p50": 179
+      }
+    }
+  },
+  "toon": {
+    "source": "scripts/bench-toon-results.json",
+    "timestamp": "2026-11-01T05:57:53.727Z",
+    "gitSha": null,
+    "gitDirty": null,
+    "os": null,
+    "node": null,
+    "model": null,
+    "dataset": "toon-formats",
+    "benchmark": "toon-formats",
+    "fixtures": 20,
+    "searchResults": {
+      "json": {
+        "chars": 14311,
+        "tokens": 5559
+      },
+      "verboseToon": {
+        "chars": 6158,
+        "tokens": 1602,
+        "savingsVsJson": 71.2
+      },
+      "compactToon": {
+        "chars": 5101,
+        "tokens": 1239,
+        "savingsVsJson": 77.7,
+        "improvementVsVerboseToon": 22.7
+      }
+    },
+    "contextPack": {
+      "json": {
+        "chars": 11108,
+        "tokens": 4196
+      },
+      "verboseToon": {
+        "chars": 6088,
+        "tokens": 1584,
+        "savingsVsJson": 62.2
+      },
+      "compactToon": {
+        "chars": 5225,
+        "tokens": 1271,
+        "savingsVsJson": 69.7,
+        "improvementVsVerboseToon": 19.8
+      }
+    }
   },
   "haystack": {
     "source": "scripts/bench-haystack-results.json",
@@ -53,21 +173,117 @@
   },
   "hotpot": {
     "source": "scripts/bench-hotpot-results.json",
-    "timestamp": "2026-09-06T09:47:50.069Z",
-    "gitSha": "00afdb496c0376e58b232c5cb439ef218f05ac64",
+    "timestamp": "2026-10-24T21:32:57.802Z",
+    "gitSha": "5d6656875e3b80263ba831eb3a766f7c918aeaac",
     "gitDirty": true,
     "os": "win32 10.0.26220",
-    "node": "v26.7.0",
-    "model": "LFM2.5-Embedding-350M-BF16",
+    "node": "v26.8.1",
+    "model": "local-hash-384",
     "dataset": "hotpotqa-distractor-500",
     "questions": 500,
     "topK": 10,
     "at10": {
-      "hitRate": 1,
-      "evidenceRecall": 0.963,
-      "mrr": 0.9766111111111111,
-      "ndcg": 0.9343906724850207
+      "hitRate": 0.996,
+      "evidenceRecall": 0.967,
+      "mrr": 0.8819499999999997,
+      "ndcg": 0.8134123344509097
     }
+  },
+  "convomem": {
+    "source": "docs/artifacts/convomem-525-retrieval.json",
+    "timestamp": "2026-10-21T22:38:40.556Z",
+    "gitSha": "5d6656875e3b80263ba831eb3a766f7c918aeaac",
+    "gitDirty": true,
+    "os": "win32 10.0.26220",
+    "node": "v26.8.1",
+    "model": "all-minilm",
+    "dataset": "convomem-sample",
+    "questions": 387,
+    "topK": 10,
+    "at5": {
+      "hitRate": 0.8165374677002584,
+      "evidenceRecall": 0.7919896640826873,
+      "allEvidenceRecall": 0.7674418604651163,
+      "mrr": 0.6410852713178297
+    },
+    "at10": {
+      "hitRate": 0.9095607235142119,
+      "evidenceRecall": 0.8940568475452196,
+      "allEvidenceRecall": 0.8785529715762274,
+      "mrr": 0.6535642508510724
+    }
+  },
+  "qa": {
+    "source": "docs/artifacts/qa-glm-judge-50.json",
+    "timestamp": "2026-10-31T22:55:14.719Z",
+    "gitSha": "5d6656875e3b80263ba831eb3a766f7c918aeaac",
+    "gitDirty": true,
+    "os": "win32 10.0.26220",
+    "node": "v26.12.1",
+    "model": "local-hash-384",
+    "dataset": "longmemeval_s",
+    "questions": 50,
+    "answerModel": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    "judgeModel": "GLM-5.3",
+    "overall": 0.78,
+    "overallCI": [
+      0.66,
+      0.88
+    ],
+    "perCategory": {
+      "knowledge-update": {
+        "point": 0.8571428571428571,
+        "low": 0.5714285714285714,
+        "high": 1,
+        "n": 7,
+        "iterations": 1000,
+        "alpha": 0.05
+      },
+      "multi-session": {
+        "point": 0.5714285714285714,
+        "low": 0.2857142857142857,
+        "high": 0.7857142857142857,
+        "n": 14,
+        "iterations": 1000,
+        "alpha": 0.05
+      },
+      "single-session-assistant": {
+        "point": 1,
+        "low": 1,
+        "high": 1,
+        "n": 5,
+        "iterations": 1000,
+        "alpha": 0.05
+      },
+      "single-session-preference": {
+        "point": 0,
+        "low": 0,
+        "high": 0,
+        "n": 3,
+        "iterations": 1000,
+        "alpha": 0.05
+      },
+      "single-session-user": {
+        "point": 0.8571428571428571,
+        "low": 0.5714285714285714,
+        "high": 1,
+        "n": 7,
+        "iterations": 1000,
+        "alpha": 0.05
+      },
+      "temporal-reasoning": {
+        "point": 1,
+        "low": 1,
+        "high": 1,
+        "n": 14,
+        "iterations": 1000,
+        "alpha": 0.05
+      }
+    },
+    "tokens": 89925,
+    "calls": 53,
+    "correctAnswers": 39,
+    "tokensPerCorrectAnswer": 2305.769230769231
   },
   "longmemeval": {
     "source": "docs/artifacts/longmemeval-s-full-500-retrieval.json",
@@ -87,6 +303,126 @@
       "allEvidenceRecall": 0.964,
       "mrr": 0.9343499500499498,
       "ndcg": 0.9291409805065446
+    }
+  },
+  "spans": {
+    "source": "docs/artifacts/locomo-span-aggregation.json",
+    "timestamp": "2026-11-01T06:51:36.384Z",
+    "questions": 1986,
+    "method": "Post-hoc re-scoring of the recorded top-10 lists. Spans merge adjacent retrieved turns; interior fills gaps inside a span; neighbour-N expands each retrieved turn by N turns in the same session. No re-retrieval.",
+    "arms": {
+      "baseline": {
+        "hitRate": 0.649,
+        "evidenceRecall": 0.4956,
+        "allEvidenceRecall": 0.5584,
+        "precision": 0.0702,
+        "avgRetrieved": 10
+      },
+      "spansOnly": {
+        "hitRate": 0.3011,
+        "evidenceRecall": 0.2259,
+        "allEvidenceRecall": 0.2362,
+        "precision": 0.0583,
+        "avgRetrieved": 5.4955
+      },
+      "interiorFill": {
+        "hitRate": 0.649,
+        "evidenceRecall": 0.4956,
+        "allEvidenceRecall": 0.5584,
+        "precision": 0.0702,
+        "avgRetrieved": 10
+      },
+      "neighbour1": {
+        "hitRate": 0.7865,
+        "evidenceRecall": 0.6227,
+        "allEvidenceRecall": 0.6939,
+        "precision": 0.0452,
+        "avgRetrieved": 19.5081
+      },
+      "neighbour2": {
+        "hitRate": 0.8207,
+        "evidenceRecall": 0.6618,
+        "allEvidenceRecall": 0.7281,
+        "precision": 0.0341,
+        "avgRetrieved": 27.5433
+      },
+      "neighbour1Top1": {
+        "hitRate": 0.7044,
+        "evidenceRecall": 0.5407,
+        "allEvidenceRecall": 0.6108,
+        "precision": 0.0716,
+        "avgRetrieved": 10.7019
+      },
+      "neighbour1Top3": {
+        "hitRate": 0.7336,
+        "evidenceRecall": 0.5684,
+        "allEvidenceRecall": 0.643,
+        "precision": 0.0679,
+        "avgRetrieved": 11.8691
+      },
+      "neighbour1Top5": {
+        "hitRate": 0.7497,
+        "evidenceRecall": 0.5865,
+        "allEvidenceRecall": 0.6601,
+        "precision": 0.0617,
+        "avgRetrieved": 13.4627
+      }
+    }
+  },
+  "qaArms": {
+    "source": "docs/artifacts/qa-arms-50.json",
+    "timestamp": "2026-11-01T07:45:00.000Z",
+    "note": "Floor and ceiling are same-model (deepseek-v4-flash:free answerer, deepseek-v4.1-flash:free judge, 0 errors). The memory arm is the paid DeepSeek V4.1 Flash + GLM-5.3 run and is NOT the same model pair; do not subtract the rows. A same-model memory run was blocked by free-tier rate limits.",
+    "questions": 50,
+    "arms": {
+      "noMemory": {
+        "artifact": "docs/artifacts/qa-arms-free-no-memory-50.json",
+        "answerModel": "deepseek-v4-flash:free",
+        "judgeModel": "deepseek-v4.1-flash:free",
+        "accuracy": 0.02,
+        "ci": [
+          0,
+          0.06
+        ],
+        "questions": 50,
+        "tokens": 18280,
+        "calls": 98,
+        "errors": 0,
+        "correct": 1,
+        "tokensPerCorrect": 18280
+      },
+      "memory": {
+        "artifact": "docs/artifacts/qa-glm-judge-50.json",
+        "answerModel": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+        "judgeModel": "GLM-5.3",
+        "accuracy": 0.78,
+        "ci": [
+          0.66,
+          0.88
+        ],
+        "questions": 50,
+        "tokens": 89925,
+        "calls": 53,
+        "errors": 7,
+        "correct": 39,
+        "tokensPerCorrect": 2305.77
+      },
+      "fullContext": {
+        "artifact": "docs/artifacts/qa-arms-free-full-context-50.json",
+        "answerModel": "deepseek-v4-flash:free",
+        "judgeModel": "deepseek-v4.1-flash:free",
+        "accuracy": 0.16,
+        "ci": [
+          0.06,
+          0.28
+        ],
+        "questions": 50,
+        "tokens": 2070185,
+        "calls": 100,
+        "errors": 0,
+        "correct": 8,
+        "tokensPerCorrect": 258773.13
+      }
     }
   }
 }

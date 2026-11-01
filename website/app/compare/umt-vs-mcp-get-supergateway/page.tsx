@@ -76,7 +76,7 @@ export default function CompareMcp() {
         />
 
         <Reveal className="mb-12">
-          <div className="card overflow-hidden overflow-x-auto">
+          <div className="card overflow-x-auto overflow-x-auto">
             <table className="data-table min-w-[720px]">
               <thead>
                 <tr>
@@ -101,7 +101,7 @@ export default function CompareMcp() {
         </Reveal>
 
         <Reveal className="mb-12" delay={80}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             When to pick what
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

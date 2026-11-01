@@ -103,16 +103,16 @@ export function VArrow({
 type Tone = "zinc" | "amber" | "emerald" | "ghost";
 
 const TONES: Record<Tone, { fill: string; stroke: string; text: string }> = {
-  zinc: { fill: "#141417", stroke: "rgba(255,255,255,0.12)", text: "#d4d4d8" },
+  zinc: { fill: "#0a0a0a", stroke: "rgba(255,255,255,0.18)", text: "#fafafa" },
   amber: {
-    fill: "rgba(251,191,36,0.07)",
-    stroke: "rgba(251,191,36,0.45)",
-    text: "#fcd34d",
+    fill: "rgba(255,255,255,0.06)",
+    stroke: "rgba(255,255,255,0.45)",
+    text: "#fafafa",
   },
   emerald: {
-    fill: "rgba(16,185,129,0.08)",
-    stroke: "rgba(16,185,129,0.45)",
-    text: "#6ee7b7",
+    fill: "rgba(255,255,255,0.08)",
+    stroke: "rgba(255,255,255,0.55)",
+    text: "#ffffff",
   },
   ghost: {
     fill: "rgba(255,255,255,0.02)",

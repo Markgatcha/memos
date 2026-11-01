@@ -4,10 +4,19 @@ Adapters bridge MemOS with AI frameworks. They handle memory retrieval (injectin
 
 ## Available adapters
 
-| Adapter | File | Framework | Language |
-|---------|------|-----------|----------|
+| Adapter | Import | Framework | Language |
+|---------|--------|-----------|----------|
+| OpenAI | `@mem-os/sdk/openai` | OpenAI Chat Completions | TypeScript |
+| Anthropic | `@mem-os/sdk/anthropic` | Anthropic Messages | TypeScript |
+| Vercel AI SDK | `@mem-os/sdk/vercel` | Vercel AI SDK v5+ (`ai`) | TypeScript |
 | Ollama | `adapters/ollama.py` | Ollama | Python |
 | LangChain | `adapters/langchain.py` | LangChain | Python |
+| CrewAI | `adapters/crewai.py` | CrewAI | Python |
+
+The TypeScript adapters have **no hard dependency** on their framework —
+they emit structurally compatible tool/message shapes, so you only install
+the framework you actually call. The Python adapters talk to a running
+MemOS HTTP server rather than the Node SDK.
 
 ## Ollama adapter
 
@@ -109,6 +118,80 @@ memory = MemOSMemory(
     min_message_length=15,
     return_messages=True,  # Return BaseMessage objects or strings
 )
+```
+
+## Vercel AI SDK adapter
+
+Memory tools and context injection for the [Vercel AI SDK](https://ai-sdk.dev)
+(`ai` package, v5+). Exposes MemOS as AI SDK tools plus a system-prompt
+context builder.
+
+### Installation
+
+```bash
+npm install @mem-os/sdk ai
+```
+
+### Usage
+
+```ts
+import { generateText } from "ai";
+import { openai } from "@ai-sdk/openai";
+import { createVercelMemory } from "@mem-os/sdk/vercel";
+
+const { plugin } = await createVercelMemory({ dbPath: "./my-app.db" });
+
+const { text } = await generateText({
+  model: openai("gpt-4o"),
+  tools: plugin.tools,
+  prompt: "What theme do I prefer?",
+});
+```
+
+`plugin.tools` exposes three tools, already in AI SDK 5 shape
+(`description` / `inputSchema` / `execute` — v4's `parameters` is gone):
+
+| Tool | What it does |
+|------|--------------|
+| `search_memories` | Recall relevant facts and preferences before answering |
+| `store_memory` | Persist a durable fact the model decided to keep |
+| `forget_memory` | Delete a memory by id |
+
+Schemas are real Zod schemas (`zod` is already a MemOS dependency), so the
+SDK validates model-generated arguments before `execute` runs — a malformed
+tool call is rejected rather than reaching your memory store.
+
+### Injecting context instead of tools
+
+Some prompts are better served by context than by tool calls. Build a
+system-prompt block with `getMemoryContext`, which optionally extracts and
+stores facts from the conversation first:
+
+```ts
+const context = await plugin.getMemoryContext(messages);
+const { text } = await generateText({
+  model: openai("gpt-4o"),
+  system: context ? `${context}\n\nYou are a helpful assistant.` : undefined,
+  messages,
+});
+```
+
+It returns `""` when nothing relevant was found, so it is safe to
+concatenate unconditionally.
+
+### Configuration
+
+```ts
+const { plugin } = await createVercelMemory({
+  dbPath: "./my-app.db",
+  plugin: {
+    maxContextMemories: 5,   // memories injected / returned per search
+    autoExtractFacts: true,  // extract facts from conversations automatically
+    minConfidence: 0.6,      // minimum confidence for an extracted fact
+    minMessageLength: 15,    // ignore very short messages when extracting
+    namespace: "default",    // namespace to store/search in
+  },
+});
 ```
 
 ## Building a custom adapter

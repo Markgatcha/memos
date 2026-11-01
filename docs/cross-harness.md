@@ -105,6 +105,22 @@ The merge is a faithful row-level import, **not** a re-write:
   keep their read-time demotion — exactly as if the memories had been
   written locally.
 
+## Handoff briefs
+
+Merging databases is the batch path. The interactive path is a handoff brief:
+
+```bash
+memos handoff "finish the auth refactor" --to codex --token-budget 1200
+```
+
+`MemOS.handoff()` composes the durable profile, a token-budgeted context pack
+with `[mem:hex]` citations, procedural lessons, scheduled reminders, memory
+health, and per-harness attribution. The default output is Markdown; `--json`
+returns the structured brief (schema `memos.handoff.v1`). The Claude Code
+`SessionStart` hook uses the same call, with a fallback to `summarize` for
+older pinned SDK releases. A handoff is read-only: it never merges, mutates, or
+deletes anything.
+
 ## Honest limitations
 
 - **Merge is SQLite → SQLite.** Both sides must be MemOS `.db` files.

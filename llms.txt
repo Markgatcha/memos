@@ -1,39 +1,57 @@
 # MemOS
 
-> MemOS is a universal, local-first, persistent memory layer for AI agents and LLMs. It gives any LLM a memory that survives restarts — graph-native SQLite storage, temporal validity, trust scoring, and a compact format that cuts context tokens by ~78%. 100% local, no cloud, no API keys, MIT licensed, free forever.
+> Local-first, persistent memory layer for AI agents. SQLite on your own
+> machine, no cloud and no API keys. TypeScript SDK, Python server, MCP
+> tools, document ingestion, and reproducible retrieval benchmarks.
 
-MemOS is part of the AI Trio: [Universal MCP Toolkit](https://github.com/Markgatcha/universal-mcp-toolkit) (MCP transport + tools), MemOS (memory + persistence), and [LLM Guardian](https://github.com/Markgatcha/llm-guardian) (token-cost optimization).
+Use this file to choose the right page. Every link is the canonical docs
+page; the repository has runnable examples under `examples/` and benchmark
+methodology under `benchmarks/README.md`.
 
-## Install
+## Documentation
 
-- TypeScript/Node.js: `npm install @mem-os/sdk`
-- Python (PyPI): `pip install mem-os-sdk` (requires Node.js 18+ at runtime)
-- Docker: `git clone https://github.com/Markgatcha/memos.git && cd memos && docker compose up -d`
-- Start the HTTP server: `memos-server` → http://localhost:7400
+- [Home](https://memos.readthedocs.io/en/latest/index/): **The memory layer your AI agent has been missing.**
+- [Installation](https://memos.readthedocs.io/en/latest/installation/): Let's get MemOS running on your machine. Pick your path below — every one of them ends with the same thing: a memory layer that works entirely offline.
+- [Ingest your notes in 60 seconds](https://memos.readthedocs.io/en/latest/quickstart-ingest/): This is the shortest path from a folder of notes to a memory you can search. No account, no API key, no cloud.
+- [Document Ingestion](https://memos.readthedocs.io/en/latest/ingestion/): Point MemOS at a folder and it remembers what is in it. Markdown, text, CSV, JSON, YAML, HTML and PDF are supported. No cloud, no upload, no API key.
+- [Preferences](https://memos.readthedocs.io/en/latest/preferences/): Facts are easy to retrieve: the question names the thing, so keyword and embedding search both find it. Preferences are not. "What would I enjoy this weekend?" shares no words w...
+- [Troubleshooting](https://memos.readthedocs.io/en/latest/troubleshooting/): Symptom → diagnose → fix for the failure modes MemOS users actually hit. Run **`memos doctor`** first — it's the one-command health check for the store, embedding config, and en...
+- [Memory Operations Guide](https://memos.readthedocs.io/en/latest/memory-guide/): Everything you can do with a running MemOS store beyond the basic store/search loop. Every command below works through the TypeScript SDK, the CLI, and the MCP server unless noted.
+- [API Reference](https://memos.readthedocs.io/en/latest/api-reference/): Complete reference for the MemOS TypeScript SDK and Python HTTP API.
+- [Adapters](https://memos.readthedocs.io/en/latest/adapters/): Adapters bridge MemOS with AI frameworks. They handle memory retrieval (injecting context before a model call) and memory storage (extracting facts from conversations).
+- [Benchmarks](https://memos.readthedocs.io/en/latest/benchmark-comparison/): This document is a **head-to-head snapshot**, not a marketing piece. We cite published numbers from each vendor's own evaluation papers and tag every row with the methodology th...
+- [Benchmark Results (plain English)](https://memos.readthedocs.io/en/latest/benchmark-results/): No judge model. No "vibes" scoring. These numbers ask one question: **when you ask MemOS about something from the past, does it actually return the right memory?**
+- [Accuracy Roadmap](https://memos.readthedocs.io/en/latest/accuracy-roadmap/): This page separates **shipped accuracy work** from **runs that still need an external model, dataset, or submission**. The goal is to make every number in the README reproducibl...
+- [Benchmark Quality](https://memos.readthedocs.io/en/latest/benchmark-quality/): This is a **synthetic regression harness**, not a leaderboard number. It measures that retrieval quality does not regress between builds, on a small fixed dataset that ships in...
+- [Benchmarking Guide](https://memos.readthedocs.io/en/latest/benchmarking/): MemOS should only publish benchmark claims that can be reproduced from a clean checkout. The most useful comparison is not raw model quality; it is whether a memory layer can st...
+- [AI Trio Contracts](https://memos.readthedocs.io/en/latest/ai-trio-contracts/): MemOS is the local memory layer in the AI Trio. It should retrieve and score context, preserve provenance, and expose compact read-only context packs before any agent mutates me...
+- [Fidelity Levels](https://memos.readthedocs.io/en/latest/fidelity-levels/): Every memory exists at four fidelity levels. The retriever picks the **cheapest level that satisfies the query** instead of always returning verbatim text — the single biggest t...
+- [Temporal Events & Reminders](https://memos.readthedocs.io/en/latest/temporal-events/): MemOS extracts **scheduled events** from plain utterances, lets any harness reschedule or cancel them in natural language, and surfaces **due reminders** — all **deterministical...
+- [Recall Inspector, Feedback & Health](https://memos.readthedocs.io/en/latest/recall-inspector/): Three related surfaces for answering questions that ordinary retrieval cannot:
+- [Cross-Harness Memory Sync](https://memos.readthedocs.io/en/latest/cross-harness/): MemOS ships as a plugin for many agent harnesses (Claude Code, Cline, Codex, Gemini CLI, OpenClaw, …), but the memory itself was never tied to any of them. This feature makes th...
+- [Integrations](https://memos.readthedocs.io/en/latest/integrations/): MemOS ships as a **plain stdio MCP server** — the one integration surface that Claude Code, Cursor, Windsurf, Cline, OpenCode, Codex CLI, Gemini CLI, and every other MCP-capable...
+- [UMT × MemOS shared config](https://memos.readthedocs.io/en/latest/umt-integration/): The Universal MCP Toolkit and MemOS agree on one configuration surface: the environment. Nothing is copied into a second settings file, and no secret is written in plaintext by...
+- [LLM Guardian integration](https://memos.readthedocs.io/en/latest/guardian-integration/): LLM Guardian sits between an app and the model. MemOS can supply a token-budgeted context pack that Guardian injects as a system shard. Guardian can optionally fold that pack be...
+- [Memory Explorer (MCP App)](https://memos.readthedocs.io/en/latest/mcp-apps-explorer/): An interactive memory-graph explorer served as a `ui://` resource (`ui://memos/explorer`) under MCP Apps (ratified January 2026). It renders the MemOS entity/memory graph as a s...
+- [MCP Compatibility](https://memos.readthedocs.io/en/latest/mcp-compatibility/): MemOS speaks the Model Context Protocol over **stdio** and **Streamable HTTP**. This document states which revisions we support, how we test them, and when we remove old ones.
+- [Remote MCP and OAuth](https://memos.readthedocs.io/en/latest/remote-mcp/): MemOS ships **local-only by default**. There is no hosted MemOS endpoint and no account. The optional Streamable HTTP transport exists so you can self-host it for a team or a re...
+- [Beta channel](https://memos.readthedocs.io/en/latest/beta-updates/): Run the latest verified code — not just the latest npm publish. The beta channel tracks every **fully-successful main commit**: a commit counts only when the latest runs of the...
+- [Local Dashboard](https://memos.readthedocs.io/en/latest/dashboard/): A browser-based UI for your MemOS memory store. No MCP Apps host required — just run `memos dashboard` and a local web server starts serving an interactive dashboard.
+- [MemOS feature roadmap — demand, gaps, and plugin integration](https://memos.readthedocs.io/en/latest/feature-roadmap-2026/): Demand signals came from: competing memory-layer READMEs and docs (supermemory, mem0, Zep, Letta), third-party comparison write-ups (Mnemoverse Q3 2026, Vectorize, EverMind, Med...
+- [MemOS vs Supermemory](https://memos.readthedocs.io/en/latest/memos-vs-supermemory/): This is a technical comparison, not a marketing sheet. Where a number comes from a vendor's own evaluation, it says so. Where two numbers cannot be compared, it says that too —...
+- [Provenance Trust](https://memos.readthedocs.io/en/latest/provenance-trust/): **The write-gate that keeps poisoned content out of your agent's recall — no cloud, no LLM on the hot path.**
+- [Session Hooks](https://memos.readthedocs.io/en/latest/session-hooks/): Automatically extract durable facts when a coding session ends. MemOS provides session-end hooks for Claude Code and OpenCode that run `memos session-hook`, parse the session tr...
+- [Encrypted Sync](https://memos.readthedocs.io/en/latest/sync/): Sync memories between machines using encrypted bundle files. The bundle is encrypted with AES-256-GCM before it touches disk — your cloud drive, USB stick, or email never sees p...
+- [Tamper-evident mutation log](https://memos.readthedocs.io/en/latest/tamper-log/): Every memory mutation — `store`, `import`, `update`, `forget` — appends one entry to an append-only, hash-chained log stored in the `tamper_log` table of the same database. Each...
 
-## Docs
+## Repository resources
 
-- [Home / Overview](https://github.com/Markgatcha/memos/blob/main/docs/index.md): core concepts — memory nodes, typed edges, the graph, SQLite storage
-- [Installation](https://github.com/Markgatcha/memos/blob/main/docs/installation.md): step-by-step setup for npm, Python, and Docker, with troubleshooting
-- [API Reference](https://github.com/Markgatcha/memos/blob/main/docs/api-reference.md): every SDK method — store, search, summarize, link, getGraph, getNeighbours
-- [Adapters](https://github.com/Markgatcha/memos/blob/main/docs/adapters.md): Ollama, LangChain, and custom adapter integrations
-- [Benchmarks](https://github.com/Markgatcha/memos/blob/main/docs/benchmark-comparison.md): BEAM-1M recall 95.9% vs Mem0 64.1%; LoCoMo and LongMemEval parity
-- [Benchmark Quality](https://github.com/Markgatcha/memos/blob/main/docs/benchmark-quality.md): methodology and context-pack format spec
-- [AI Trio Contracts](https://github.com/Markgatcha/memos/blob/main/docs/ai-trio-contracts.md): how MemOS, UMT, and LLM Guardian compose
+- [Benchmark methodology](https://github.com/Markgatcha/memos/blob/main/benchmarks/README.md): retrieval-only results and metric definitions
+- [Benchmark results, plain English](https://github.com/Markgatcha/memos/blob/main/docs/benchmark-results.md): the three numbers that matter and what they do not say
+- [Next improvements](https://github.com/Markgatcha/memos/blob/main/ROADMAP-NEXT.md): audited backlog with evidence
+- [Examples](https://github.com/Markgatcha/memos/tree/main/examples): runnable TypeScript usage
 
-## Key facts
+## Optional
 
-- Storage: SQLite (WAL mode, FTS5) at `~/.memos/memos.db` — configurable via `MEMOS_DB_PATH`
-- Server: HTTP API on port 7400 (`MEMOS_PORT` to change), health at `/health`, docs at `/docs`
-- Embeddings: local (Gemma-300M) by default — no API key required
-- MCP: built-in adapter, stdio only (`npx -y @mem-os/sdk mcp`), speaks the 2026-07-28 protocol revision with legacy 2025-era fallback
-- Memory features: temporal validity (validFrom/validTo), trust scoring, provenance, confidence state machine, compact TOON format (77.7% token savings vs JSON)
-- License: MIT — free to use, modify, and ship; no paid tier
-
-## Website & community
-
-- Website: https://context-core.dev/memos/
-- GitHub: https://github.com/Markgatcha/memos
-- npm: https://www.npmjs.com/package/@mem-os/sdk
-- Discord: https://discord.gg/DyQGgPuueu
-- Twitter/X: https://x.com/Context_Core
+- [Changelog](https://github.com/Markgatcha/memos/blob/main/CHANGELOG.md)
+- [Source](https://github.com/Markgatcha/memos)

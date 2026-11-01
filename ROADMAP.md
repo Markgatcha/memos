@@ -2,6 +2,8 @@
 
 Public milestone plan. Each phase has a clear scope, success criteria, and a target timeline based on community adoption.
 
+> Looking for the current, evidence-based backlog? See [`ROADMAP-NEXT.md`](ROADMAP-NEXT.md) (36 concrete improvements, audited 2026-10-31) and [`ROADMAP-NEXT-2.md`](ROADMAP-NEXT-2.md) (32 more, 2026-11-01).
+
 ---
 
 ## Phase 1 — Core Engine (v0.1) ✅ Released
@@ -27,7 +29,7 @@ Public milestone plan. Each phase has a clear scope, success criteria, and a tar
 
 - `npm install @mem-os/sdk` + 3 lines of code = working memory
 - `pip install mem-os-sdk` + `memos-server` = HTTP server running
-- All tests passing across Node 22/24/26 and Python 3.11-3.14
+- All tests passing across Node 22/24/26 and Python 3.11-3.15
 - Zero external dependencies for core functionality
 
 ---

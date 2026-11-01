@@ -1,0 +1,314 @@
+{
+  "generatedAt": "2026-11-01T08:52:23.906Z",
+  "source": "CHANGELOG.md",
+  "releases": [
+    {
+      "version": "1.6.26",
+      "date": "2026-06-17",
+      "sections": [
+        {
+          "title": "Changes",
+          "items": [
+            "Stable v1.6.26 release. Adds the background embedding queue, HTTP+SSE MCP transport, three new embedding providers, memory consolidation, the CLI REPL, cross-OS perf hardening, AI Trio context packs, MCP 2025-06-18 compliance, and a retrieval-quality benchmark."
+          ]
+        },
+        {
+          "title": "Added",
+          "items": [
+            "Background embedding queue — EmbeddingQueue in src/embedding-queue.ts. Bounded concurrency, exponential backoff retries, backpressure on maxQueueSize, lifecycle events, per-job status. store() and update() now return immediately instead of blocking on remote embedding APIs.",
+            "Public queue API — memos.flushEmbeddings(), memos.embeddingStatus(), and memos.embeddingStatus(nodeId). CLI mirrors: memos flush-embeddings and memos embedding-status.",
+            "New queue events — embedding:queued, embedding:started, embedding:complete, embedding:failed, embedding:retry. Existing listeners continue to work.",
+            "memos.contextPack() SDK method — implements the ai.trio.memos.context-pack.v1 contract documented in docs/ai-trio-contracts.md. Sorted by descending relevance, plain-text content, trust/source/tags/updatedAt preserved per item, score reproducible for the same query + provider + model + database.",
+            "MCP 2025-06-18 — protocolVersion bumped from 2024-11-05 to 2025-06-18. serverInfo.version now read from package.json at startup so the wire value is never stale.",
+            "MCP tool additions — memos_context_pack, memos_flush_embeddings, memos_embedding_status. The 2025-06-18 notifications/cancelled handler is now wired (no-op for now, but spec-compliant).",
+            "MCP bug fix — memos_store was silently dropping metadata, importance, and summary. All three are now preserved end-to-end.",
+            "REST endpoints — POST /api/mem/context-pack, GET /api/mem/embedding-status, POST /api/mem/flush-embeddings.",
+            "MCP server card — GET /.well-known/mcp-server.json returns the discovery document the @universal-mcp-toolkit/core runtime and other MCP-aware hosts expect.",
+            "CLI — memos context-pack <query> [--budget N] [--namespace NS] [--json] for inspecting AI Trio context packs from the shell.",
+            "Storage adapter contract — peekNode?(id) and evictLeastImportant?() on StorageAdapter. SQLite implements both; custom adapters can opt in.",
+            "Hermes-style retain pre-filter (src/retain-filter.ts) — scores candidate memories on length (MIN_LENGTH=15), signal density, action/preference verbs, and novelty against existing content; skips anything below RETAIN_THRESHOLD (0.3) before the write. Exports scoreRetain(), shouldRetain(), decideRetain(), setRetainClassifier(), plus RetainInput / RetainDecision types. store() honors an opt-in filterRetain: true on CreateMemoryInput and throws a typed MemorySkippedError when the gate drops the memory, so callers can distinguish a skip from a real failure. Mirrors the same technique llm-guardian uses on its read path — the AI Trio now applies consistent quality gating on both ends."
+          ]
+        },
+        {
+          "title": "Changed",
+          "items": [
+            "SQLite embedding vectors are stored as compact binary blobs with legacy JSON-vector read compatibility for older local databases.",
+            "Search and semantic search now share namespace, tag, type, importance, limit, and offset filters consistently.",
+            "Embedding backfill now skips fresh persisted vectors on restart and only refreshes when model metadata or node freshness requires it.",
+            "OpenAI-compatible embedding endpoints no longer require fake API keys, so local runtimes such as LM Studio can be used directly.",
+            "Tooling was refreshed to current stable npm dependencies, including Jest 30, TypeScript 6, ESLint 10 flat config, and better-sqlite3 12, with Windows-compatible lint/test commands.",
+            "The Python REST bridge now uses request-id demuxing and writes its generated bridge script into temp storage instead of source or package directories.",
+            "Per-user bridge script dir — the inline Node bridge no longer lives at the shared /tmp/memos-bridge/; it's now /tmp/memos-bridge-<user>/, so multi-user hosts don't stomp on each other.",
+            "REST version pulled from package.json — app.version, /health, and /.well-known/mcp-server.json all read the live package.json (with MEMOS_VERSION env override) instead of a hardcoded 1.5.0."
+          ]
+        },
+        {
+          "title": "Performance",
+          "items": [
+            "Eviction is now a single SQL statement — evictLeastImportant() does SELECT id … ORDER BY importance ASC, last_accessed ASC, created_at ASC LIMIT 1 and DELETE in one shot. The old code loaded the full table into memory and sorted it on every eviction.",
+            "peekNode for non-retrieval reads — tag/untag/setTTL/clearTTL no longer hit the side-effecting getNode (which wrote access stats on every read). Skips the read-modify-write write amplification that distorted LRU eviction.",
+            "autoLink bag cache — bag-of-words tokenization is memoized per MemoryNode in a WeakMap. Every existing node's tokens are computed once, not on every store() call.",
+            "Inlined cosine in autoLink — the small-over-large intersection loop avoids an unnecessary Math.sqrt per candidate."
+          ]
+        },
+        {
+          "title": "Fixed",
+          "items": [
+            "REST update calls now bridge correctly to the TypeScript MemOS engine.",
+            "TTL updates now synchronize storage and the in-memory graph.",
+            "Manual link creation now rolls back in-memory graph state if SQLite persistence fails.",
+            "Metadata filters are implemented for SQLite keyword, structured, and embedding queries.",
+            "CrewAI MemOSTool now initializes correctly when MemOSMemory() constructs its backing tool.",
+            "tag / untag no longer bump access_count — the side-effecting read was distorting LRU eviction whenever a memory was re-tagged.",
+            "Temporal boundary in historical-memory exclusion — the default/exclude-historical SQL filter used valid_to >= now, so a memory superseded in the same millisecond as the search (validTo === now) was wrongly kept. The FTS and structured paths now use strict valid_to > now. validAt point-in-time queries intentionally keep the inclusive >= boundary. Fixes the flaky temporal-trust cases (full suite now 255/255)."
+          ]
+        },
+        {
+          "title": "Added (continued)",
+          "items": [
+            "Memory consolidation (\"dreaming\") — memos.dedupe(), memos.archive(), memos.summarizeCluster(), and memos.consolidate() as a single entry point. All accept dryRun for safe previewing. Greedy single-linkage clustering over embeddings; archived memories move to the archived namespace (not deleted) and can be restored. Emits a new event: consolidation:complete.",
+            "HTTP+SSE MCP transport — startMcpHttpServer(memos, options) plus memos mcp --http [--port N] [--host H]. Two endpoints: GET /mcp/sse opens the stream and advertises POST /mcp/messages. Same wire protocol as @universal-mcp-toolkit/core and web-based MCP hosts.",
+            "Three new embedding providers — VoyageAIEmbeddingProvider (voyage-3, 1024-d), CohereEmbeddingProvider (embed-english-v3.0, 1024-d), and FastEmbedEmbeddingProvider (BAAI/bge-small-en-v1.5, 384-d). The FastEmbed provider lazy-loads @xenova/transformers and falls back to a deterministic local hash if the package is not installed. All three are wired through createEmbeddingProvider({ provider: \"voyage\" | \"cohere\" | \"fastembed\" }).",
+            "Interactive CLI shell — memos repl drops into a read-eval-print loop with store, search, semantic, context-pack, flush-embeddings, embedding-status, graph, link, tag, untag, help, exit. Same MemOS instance, no subprocess overhead.",
+            "Retrieval-quality benchmark — npx tsx scripts/bench-quality.ts (also npm run bench:quality). Synthetic LoCoMo-shape dataset: 30 conversation memories, 20 ground-truth queries, recall@5/10 and MRR per category. Writes JSON to scripts/bench-quality-results.json and a markdown report to docs/benchmark-quality.md.",
+            "Comparison doc — docs/benchmark-comparison.md puts MemOS's local-hash baseline next to published Zep/Graphiti/Mem0 numbers, with an honest explanation of methodology differences.",
+            "Tag join table — node_tags(node_id, tag) replaces the JSON-LIKE scan on every tag query. Auto-migrated on next init(). Reverses a long-standing O(n) bottleneck into O(log n) B-tree lookups.",
+            "Access-count debounce — SQLiteStorage.getNode() now buffers access stats in memory and flushes once every 500 ms (or on close()). Removes the read-modify-write write amplification that distorted LRU eviction under read-heavy workloads.",
+            "Cross-OS SQLite pragmas — synchronous = NORMAL, cache_size = 32 MiB, temp_store = MEMORY, mmap_size = 256 MiB. Big wins on macOS and Windows where fsync is slow.",
+            ".gitattributes — locks down LF for source, CRLF for Windows scripts. Drops the LF will be replaced by CRLF noise from git status.",
+            "Optional peer type shim — src/xenova-transformers.d.ts lets tsc --noEmit succeed without @xenova/transformers installed."
+          ]
+        },
+        {
+          "title": "Changed",
+          "items": [
+            "StorageAdapter interface extended with peekNode?(), evictLeastImportant?(), getAllEmbeddings?(), setNodeNamespace?(). SQLite implements all four; custom adapters can opt in.",
+            "EmbeddingProviderKind union extended with \"voyage\" | \"cohere\" | \"fastembed\".",
+            "MemOSEvent extended with consolidation:complete and queue lifecycle events (embedding:queued, embedding:started, embedding:complete, embedding:failed, embedding:retry).",
+            "The CLI argument parser now scans for the first non-flag positional, so memos --db x store \"y\" and memos store \"y\" --db x both work.",
+            "store() now accepts filterRetain: true on CreateMemoryInput to run the Hermes-style retain gate; a skipped memory throws the new exported MemorySkippedError. Plain store() is unchanged.",
+            "src/index.ts now also exports MemorySkippedError, scoreRetain, shouldRetain, decideRetain, setRetainClassifier, RetainInput, and RetainDecision.",
+            "package.json — expanded npm-discovery keywords (11→20) and added sideEffects: false + publishConfig for cleaner npm search ranking and better treeshaking by bundlers."
+          ]
+        },
+        {
+          "title": "Performance",
+          "items": [
+            "evict() is now a single SQL SELECT id … ORDER BY importance, last_accessed, created_at LIMIT 1 + DELETE. Falls back to the in-memory path for custom adapters that don't implement evictLeastImportant().",
+            "Tag-filtered queries now use an EXISTS (SELECT 1 FROM node_tags …) subquery against the B-tree index. The FTS5 JOIN order is flipped (FROM nodes n INNER JOIN nodes_fts fts) so the correlated subquery resolves correctly.",
+            "The EmbeddingQueue returns immediately from store() and update(), eliminating remote-embedding round-trips from the write critical path."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "date": "2026-05-28",
+      "sections": [
+        {
+          "title": "Added",
+          "items": [
+            "#### New Features",
+            "Import Command — Restore memories from JSON files or Markdown/Obsidian directories",
+            "memos.importMemories({ source, format }) SDK method",
+            "memos import <source> [--format json|markdown|obsidian] CLI command",
+            "POST /api/mem/import REST endpoint",
+            "Auto-detects format from file extension",
+            "Supports YAML frontmatter parsing for Markdown files",
+            "Recreates wikilink edges during Obsidian import",
+            "CrewAI Adapter — Persistent memory for CrewAI agents and crews",
+            "MemOSTool class with store/search/retrieve/forget/summarize actions",
+            "MemOSMemory class with save(), search(), get_context() methods",
+            "Compatible with CrewAI agent memory=True parameter",
+            "Added crewai optional dependency to pyproject.toml",
+            "WebSocket API — Real-time memory event streaming",
+            "ws://localhost:7400/ws endpoint for live event broadcast",
+            "Events: node:created, node:updated, node:deleted, edge:created, edge:deleted, link:auto, eviction, ttl:expired",
+            "JSON-RPC notification format for event delivery",
+            "Ping/pong keepalive support",
+            "ConnectionManager for multi-client broadcasting",
+            "Expanded Test Coverage — Grew from 47 to 110 tests",
+            "SQLiteStorage layer: CRUD, queries, TTL, FTS5, batch operations",
+            "Import from JSON and Markdown with edge cases",
+            "LRU eviction with configurable limits",
+            "Auto-linking with threshold configuration",
+            "Context injection depth and maxChars limits",
+            "Graph operations: clusters, neighbours, edges",
+            "Event system: multiple listeners, off/remove",
+            "MCP adapter schema validation",
+            "#### Stability Fixes",
+            "FTS5 Query Escaping — User queries with special characters (quotes, parentheses) no longer throw SQL errors",
+            "Batch Clear Operation — memos.clear() now uses a single DELETE statement instead of N individual deletes",
+            "Stop Words Optimization — Moved to module scope to avoid recreating 97-element Set on every call"
+          ]
+        },
+        {
+          "title": "Fixed",
+          "items": [
+            "#### Critical Bugs",
+            "updateNode side-effect — Previously incremented access_count on every update because it called getNode() internally. Now uses a direct read without side effects.",
+            "retrieve() false events — Previously emitted node:updated on every read operation. Reads no longer trigger update events.",
+            "MCP store() type safety — Fixed content field being passed in opts where it shouldn't be. Now correctly typed as Omit<CreateMemoryInput, \"content\">.",
+            "WebSocket disconnect crash — ConnectionManager.disconnect() no longer throws ValueError if connection was already removed by broadcast cleanup.",
+            "#### Performance Fixes",
+            "BFS traversal O(n²) → O(n) — findClusters() and injectContext() now use index-based queue traversal instead of Array.shift() which is O(n) per call on V8.",
+            "Stop words deduplication — Consolidated duplicate stop words lists (40 words in memory.ts, 97 words in graph.ts) into a single canonical list at module scope.",
+            "#### Edge Cases",
+            "FTS5 special character handling — Queries containing \", (, ), AND, OR, NOT, NEAR, : are now properly escaped for literal search",
+            "Empty graph operations — All graph methods now handle empty state gracefully",
+            "TTL sweep race condition — Improved consistency between storage sweep and in-memory graph removal"
+          ]
+        },
+        {
+          "title": "Changed",
+          "items": [
+            "Version bumped from 1.5.0-beta.1 to 1.5.0 (stable)",
+            "PyPI package renamed from memos (taken) to mem-os-sdk (matches npm scope)",
+            "StorageAdapter interface extended with deleteAllNodes() method",
+            "clear() now uses batch delete instead of per-node deletion",
+            "README updated with import, CrewAI adapter, WebSocket docs, and cross-platform install options",
+            "All version strings updated to 1.5.0 across npm, PyPI, CLI, MCP, and server"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "1.5.0-beta.1",
+      "date": "2026-03-24",
+      "sections": [
+        {
+          "title": "Added",
+          "items": [
+            "#### Stable Features",
+            "Memory TTL / Expiration (STABLE-1)",
+            "Optional ttl field (seconds) on memory creation",
+            "expires_at stored as Unix timestamp in SQLite",
+            "Background sweep every 60 seconds, deletes expired nodes and orphaned edges",
+            "memos.setTTL(id, seconds) and memos.clearTTL(id) SDK methods",
+            "--ttl <seconds> flag on memos store CLI command",
+            "PATCH /api/mem/{id}/ttl and DELETE /api/mem/{id}/ttl REST endpoints",
+            "Python memos-server backup and memos-server restore CLI subcommands",
+            "Migration-safe column addition (checks column existence before ALTER TABLE)",
+            "Custom Memory Tags (STABLE-2)",
+            "tags field (string array) on MemoryNode, stored as JSON in SQLite",
+            "memos.tag(id, tags), memos.untag(id, tags), memos.listByTag(tag) SDK methods",
+            "Tags filter on search() and retrieve() with AND logic",
+            "memos tag <id> <tag1> [tag2...], memos untag, memos list --tag <tag> CLI commands",
+            "POST /api/mem/{id}/tags, DELETE /api/mem/{id}/tags/{tag}, GET /api/mem/tags/{tag} REST endpoints",
+            "Export Command (STABLE-3)",
+            "memos export CLI command with --format json|markdown|obsidian",
+            "--output <dir> and --tag <tag> flags",
+            "JSON: single array file; Markdown: one .md per memory with YAML frontmatter",
+            "Obsidian format: linked memories become [[wikilinks]]",
+            "memos.export(options) SDK method",
+            "GET /api/mem/export?format=... REST endpoint (returns zip for markdown/obsidian)",
+            "Backup and Restore (STABLE-4)",
+            "memos backup [--output <path>] copies DB with manifest.json",
+            "memos restore <path> validates manifest, replaces DB",
+            "Manifest includes: timestamp, version, nodeCount, edgeCount, dbSizeBytes",
+            "Python memos-server backup and memos-server restore CLI subcommands",
+            "Cross-platform path handling via Node path module",
+            "Performance Benchmark (STABLE-5)",
+            "scripts/bench.ts ESM TypeScript benchmark script",
+            "Tests insert 1K / 10K / 100K nodes with inline lorem-ipsum content",
+            "Measures p50/p95/p99 latency for: store, retrieveById, FTS5 search, getNeighbours",
+            "Outputs table to stdout and writes scripts/bench-results.json",
+            "tsx added to devDependencies; npm run bench script",
+            "CHANGELOG (STABLE-6)",
+            "This changelog file following Keep a Changelog 1.1.0",
+            "MCP Adapter (STABLE-7)",
+            "memos mcp starts a stdio MCP server backed by the configured local SQLite database",
+            "Exposes memos_store, memos_search, memos_retrieve, memos_forget, memos_graph, and memos_context",
+            "Exported as @mem-os/sdk/mcp for programmatic hosts",
+            "Designed for direct use from universal-mcp-toolkit and other MCP-compatible clients",
+            "#### Experimental Features",
+            "All experimental features gated behind experimental config object:",
+            "Semantic Search (EXPERIMENTAL-1)",
+            "memos.semanticSearch(query, limit, threshold) — bag-of-words similarity search",
+            "Enable with experimental: { semanticSearch: true }",
+            "RPC: semanticSearch in bridge",
+            "Graph Visualization (EXPERIMENTAL-2)",
+            "memos.graphViz() — returns DOT-format graph string",
+            "Enable with experimental: { graphViz: true }",
+            "RPC: graphViz in bridge",
+            "Namespaces (EXPERIMENTAL-3)",
+            "namespace field on MemoryNode for logical grouping",
+            "memos.listNamespaces(), memos.namespaceCount(ns) SDK methods",
+            "Namespace filter on search()",
+            "Enable with experimental: { namespaces: true }",
+            "Context Injection (EXPERIMENTAL-4)",
+            "memos.injectContext(id, depth, maxChars) — walks graph to gather related context",
+            "Enable with experimental: { contextInjection: true }",
+            "RPC: injectContext in bridge"
+          ]
+        },
+        {
+          "title": "Changed",
+          "items": [
+            "MemoryNode interface extended with tags, expiresAt, namespace fields",
+            "CreateMemoryInput extended with ttl, tags, namespace options",
+            "SearchFilter extended with tags and namespace filters",
+            "StorageAdapter interface extended with setTTL, clearTTL, sweepExpired, queryNodesByTag",
+            "MemOSConfig extended with sweepInterval and experimental options",
+            "MemOSEvent union extended with ttl:expired",
+            "CLI help text updated with all new commands",
+            "Python server version bumped to 1.5.0-beta.1",
+            "Node.js bridge script extended with all new RPC methods"
+          ]
+        },
+        {
+          "title": "Fixed",
+          "items": [
+            "SQLite migration now uses PRAGMA table_info check instead of IF NOT EXISTS on ALTER TABLE (SQLite limitation)",
+            "Directory creation in SQLiteStorage uses path.dirname for cross-platform compatibility"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.1",
+      "date": "2026-03-23",
+      "sections": [
+        {
+          "title": "Fixed",
+          "items": [
+            "Minor bug fixes and documentation updates",
+            "Improved error messages for missing Node.js dependency"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "date": "2026-03-22",
+      "sections": [
+        {
+          "title": "Added",
+          "items": [
+            "TypeScript SDK with MemOS class (store, retrieve, search, forget, summarize, link)",
+            "Graph-based memory model with typed nodes, edges, and metadata",
+            "SQLite storage backend with WAL mode and FTS5 full-text search",
+            "Auto-linking via bag-of-words text similarity",
+            "Extractive summarisation (fully local, no API calls)",
+            "LRU eviction with configurable maxMemories",
+            "Event system (node:created, node:updated, node:deleted, edge:created, edge:deleted, link:auto, eviction)",
+            "Custom storage adapter interface (StorageAdapter)",
+            "Python HTTP server (FastAPI) on port 7400 with full REST API",
+            "CLI tool (memos command): store, retrieve, search, forget, graph, summarize, serve",
+            "Ollama adapter (Python)",
+            "LangChain adapter (Python)",
+            "Docker Compose deployment",
+            "GitHub Actions CI (lint + test + typecheck)",
+            "README, LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY docs",
+            "[Unreleased]: https://github.com/Markgatcha/memos/compare/v1.6.26...HEAD",
+            "[1.6.26]: https://github.com/Markgatcha/memos/compare/v1.5.0...v1.6.26",
+            "[1.5.0]: https://github.com/Markgatcha/memos/compare/v1.5.0-beta.1...v1.5.0",
+            "[1.5.0-beta.1]: https://github.com/Markgatcha/memos/compare/v0.1.1...v1.5.0-beta.1",
+            "[0.1.1]: https://github.com/Markgatcha/memos/compare/v0.1.0...v0.1.1",
+            "[0.1.0]: https://github.com/Markgatcha/memos/releases/tag/v0.1.0"
+          ]
+        }
+      ]
+    }
+  ]
+}

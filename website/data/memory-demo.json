@@ -1,0 +1,416 @@
+{
+  "generatedAt": "2026-11-01T06:36:43.964Z",
+  "engine": "MemOS 1.6.27 · default local embeddings",
+  "note": "Preset query results and packs were recorded from the real SDK. Arbitrary queries typed in the browser use a local lexical scorer, not the SDK.",
+  "memories": [
+    {
+      "id": "3a416ff3-0d57-46f1-9809-80dd02b2129b",
+      "content": "User prefers the Solarized Dark theme in VS Code and the terminal.",
+      "type": "preference",
+      "tags": [
+        "editor",
+        "theme",
+        "ui"
+      ],
+      "source": "user_input",
+      "trustScore": 0.95
+    },
+    {
+      "id": "cecb3b1d-6db0-4b21-adbe-653f50fff8d2",
+      "content": "The team deploys on Fridays at 14:00 UTC, never after 16:00.",
+      "type": "fact",
+      "tags": [
+        "deploy",
+        "team",
+        "process"
+      ],
+      "source": "user_input",
+      "trustScore": 0.9
+    },
+    {
+      "id": "6bb7c196-4788-4734-b0ba-1b9312299340",
+      "content": "Deploys run through GitHub Actions and require a green CI run plus one approval.",
+      "type": "context",
+      "tags": [
+        "deploy",
+        "ci",
+        "github"
+      ],
+      "source": "tool_output",
+      "trustScore": 0.82
+    },
+    {
+      "id": "8d23cfca-0899-4e55-bfef-b978e0e45911",
+      "content": "Rollback is `kubectl rollout undo deployment/api` in the production cluster.",
+      "type": "fact",
+      "tags": [
+        "deploy",
+        "rollback",
+        "kubernetes"
+      ],
+      "source": "external_data",
+      "trustScore": 0.78
+    },
+    {
+      "id": "96caf745-75a1-4fa3-992f-6f75e18437e7",
+      "content": "The platform team owns the API gateway and the deploy pipeline.",
+      "type": "relationship",
+      "tags": [
+        "team",
+        "platform",
+        "ownership"
+      ],
+      "source": "user_input",
+      "trustScore": 0.88
+    },
+    {
+      "id": "fab8e612-845a-42bc-adb8-48a02129f0bd",
+      "content": "Priya leads the platform team and reviews production changes on Thursdays.",
+      "type": "entity",
+      "tags": [
+        "team",
+        "platform",
+        "people"
+      ],
+      "source": "user_input",
+      "trustScore": 0.86
+    },
+    {
+      "id": "d0f796ff-5fdb-4f6d-921e-d8c2ff060503",
+      "content": "Project Atlas uses pnpm workspaces and a single SQLite file per service.",
+      "type": "fact",
+      "tags": [
+        "atlas",
+        "tooling",
+        "sqlite"
+      ],
+      "source": "user_input",
+      "trustScore": 0.92
+    },
+    {
+      "id": "495ec657-87b0-4cae-9a39-7b15cf15abb9",
+      "content": "User is allergic to shellfish and avoids oyster sauce.",
+      "type": "preference",
+      "tags": [
+        "food",
+        "allergy",
+        "health"
+      ],
+      "source": "user_input",
+      "trustScore": 1
+    },
+    {
+      "id": "4f71eb26-c8e7-485c-a01b-1ed6ffe3f9ec",
+      "content": "The staging database is reset every Monday at 03:00 UTC.",
+      "type": "fact",
+      "tags": [
+        "staging",
+        "database",
+        "schedule"
+      ],
+      "source": "agent_inferred",
+      "trustScore": 0.66
+    },
+    {
+      "id": "aca64398-a1bc-4efa-bb71-e846423d54b1",
+      "content": "Incident 2026-10-14: the API gateway ran out of file descriptors after a config reload.",
+      "type": "context",
+      "tags": [
+        "incident",
+        "gateway",
+        "postmortem"
+      ],
+      "source": "external_data",
+      "trustScore": 0.74
+    },
+    {
+      "id": "c829216b-5d79-40d6-ad88-955680ad8f06",
+      "content": "User prefers concise answers with code first and explanation second.",
+      "type": "preference",
+      "tags": [
+        "communication",
+        "style"
+      ],
+      "source": "user_input",
+      "trustScore": 0.93
+    },
+    {
+      "id": "83128563-9fc9-4e67-b8a4-bdcdc9c7a575",
+      "content": "The design review happens on Wednesdays and needs a Figma link in the agenda.",
+      "type": "context",
+      "tags": [
+        "design",
+        "meeting",
+        "process"
+      ],
+      "source": "user_input",
+      "trustScore": 0.8
+    }
+  ],
+  "queries": [
+    {
+      "query": "What theme does the user prefer?",
+      "results": [
+        {
+          "id": "3a416ff3-0d57-46f1-9809-80dd02b2129b",
+          "score": 0.786
+        },
+        {
+          "id": "c829216b-5d79-40d6-ad88-955680ad8f06",
+          "score": 0.123
+        },
+        {
+          "id": "83128563-9fc9-4e67-b8a4-bdcdc9c7a575",
+          "score": 0.031
+        },
+        {
+          "id": "fab8e612-845a-42bc-adb8-48a02129f0bd",
+          "score": 0.02
+        },
+        {
+          "id": "d0f796ff-5fdb-4f6d-921e-d8c2ff060503",
+          "score": 0.017
+        }
+      ],
+      "pack": {
+        "items": [
+          {
+            "id": "3a416ff3-0d57-46f1-9809-80dd02b2129b",
+            "content": "User prefers the Solarized Dark theme in VS Code and the terminal.",
+            "citation": "[mem:3a416ff3]",
+            "tokens": 15
+          },
+          {
+            "id": "83128563-9fc9-4e67-b8a4-bdcdc9c7a575",
+            "content": "The design review happens on Wednesdays and needs a Figma link in the agenda.",
+            "citation": "[mem:83128563]",
+            "tokens": 17
+          },
+          {
+            "id": "fab8e612-845a-42bc-adb8-48a02129f0bd",
+            "content": "Priya leads the platform team and reviews production changes on Thursdays.",
+            "citation": "[mem:fab8e612]",
+            "tokens": 16
+          },
+          {
+            "id": "d0f796ff-5fdb-4f6d-921e-d8c2ff060503",
+            "content": "Project Atlas uses pnpm workspaces and a single SQLite file per service.",
+            "citation": "[mem:d0f796ff]",
+            "tokens": 15
+          },
+          {
+            "id": "495ec657-87b0-4cae-9a39-7b15cf15abb9",
+            "content": "User is allergic to shellfish and avoids oyster sauce.",
+            "citation": "[mem:495ec657]",
+            "tokens": 12
+          },
+          {
+            "id": "4f71eb26-c8e7-485c-a01b-1ed6ffe3f9ec",
+            "content": "The staging database is reset every Monday at 03:00 UTC.",
+            "citation": "[mem:4f71eb26]",
+            "tokens": 13
+          },
+          {
+            "id": "aca64398-a1bc-4efa-bb71-e846423d54b1",
+            "content": "Incident 2026-10-14: the API gateway ran out of file descriptors after a config reload.",
+            "citation": "[mem:aca64398]",
+            "tokens": 20
+          },
+          {
+            "id": "6bb7c196-4788-4734-b0ba-1b9312299340",
+            "content": "Deploys run through GitHub Actions and require a green CI run plus one approval.",
+            "citation": "[mem:6bb7c196]",
+            "tokens": 15
+          },
+          {
+            "id": "cecb3b1d-6db0-4b21-adbe-653f50fff8d2",
+            "content": "The team deploys on Fridays at 14:00 UTC, never after 16:00.",
+            "citation": "[mem:cecb3b1d]",
+            "tokens": 17
+          },
+          {
+            "id": "c829216b-5d79-40d6-ad88-955680ad8f06",
+            "content": "User prefers concise answers with code first and explanation second.",
+            "citation": "[mem:c829216b]",
+            "tokens": 13
+          }
+        ],
+        "totalTokens": 1967,
+        "tokensSaved": 0,
+        "markdown": "## Memory context\n\n- User prefers the Solarized Dark theme in VS Code and the terminal. [mem:3a416ff3]\n- The design review happens on Wednesdays and needs a Figma link in the agenda. [mem:83128563]\n- Priya leads the platform team and reviews production changes on Thursdays. [mem:fab8e612]\n- Project Atlas uses pnpm workspaces and a single SQLite file per service. [mem:d0f796ff]\n- User is allergic to shellfish and avoids oyster sauce. [mem:495ec657]\n- The staging database is reset every Monday at 03:00 UTC. [mem:4f71eb26]\n- Incident 2026-10-14: the API gateway ran out of file descriptors after a config reload. [mem:aca64398]\n- Deploys run through GitHub Actions and require a green CI run plus one approval. [mem:6bb7c196]\n- The team deploys on Fridays at 14:00 UTC, never after 16:00. [mem:cecb3b1d]\n- User prefers concise answers with code first and explanation second. [mem:c829216b]"
+      }
+    },
+    {
+      "query": "How do we deploy and roll back?",
+      "results": [
+        {
+          "id": "96caf745-75a1-4fa3-992f-6f75e18437e7",
+          "score": 0.701
+        },
+        {
+          "id": "cecb3b1d-6db0-4b21-adbe-653f50fff8d2",
+          "score": 0.273
+        },
+        {
+          "id": "8d23cfca-0899-4e55-bfef-b978e0e45911",
+          "score": 0.127
+        },
+        {
+          "id": "6bb7c196-4788-4734-b0ba-1b9312299340",
+          "score": 0.099
+        },
+        {
+          "id": "4f71eb26-c8e7-485c-a01b-1ed6ffe3f9ec",
+          "score": 0.049
+        }
+      ],
+      "pack": {
+        "items": [
+          {
+            "id": "96caf745-75a1-4fa3-992f-6f75e18437e7",
+            "content": "The platform team owns the API gateway and the deploy pipeline.",
+            "citation": "[mem:96caf745]",
+            "tokens": 12
+          },
+          {
+            "id": "8d23cfca-0899-4e55-bfef-b978e0e45911",
+            "content": "Rollback is `kubectl rollout undo deployment/api` in the production cluster.",
+            "citation": "[mem:8d23cfca]",
+            "tokens": 16
+          },
+          {
+            "id": "6bb7c196-4788-4734-b0ba-1b9312299340",
+            "content": "Deploys run through GitHub Actions and require a green CI run plus one approval.",
+            "citation": "[mem:6bb7c196]",
+            "tokens": 15
+          },
+          {
+            "id": "4f71eb26-c8e7-485c-a01b-1ed6ffe3f9ec",
+            "content": "The staging database is reset every Monday at 03:00 UTC.",
+            "citation": "[mem:4f71eb26]",
+            "tokens": 13
+          },
+          {
+            "id": "d0f796ff-5fdb-4f6d-921e-d8c2ff060503",
+            "content": "Project Atlas uses pnpm workspaces and a single SQLite file per service.",
+            "citation": "[mem:d0f796ff]",
+            "tokens": 15
+          },
+          {
+            "id": "aca64398-a1bc-4efa-bb71-e846423d54b1",
+            "content": "Incident 2026-10-14: the API gateway ran out of file descriptors after a config reload.",
+            "citation": "[mem:aca64398]",
+            "tokens": 20
+          },
+          {
+            "id": "3a416ff3-0d57-46f1-9809-80dd02b2129b",
+            "content": "User prefers the Solarized Dark theme in VS Code and the terminal.",
+            "citation": "[mem:3a416ff3]",
+            "tokens": 15
+          },
+          {
+            "id": "c829216b-5d79-40d6-ad88-955680ad8f06",
+            "content": "User prefers concise answers with code first and explanation second.",
+            "citation": "[mem:c829216b]",
+            "tokens": 13
+          },
+          {
+            "id": "83128563-9fc9-4e67-b8a4-bdcdc9c7a575",
+            "content": "The design review happens on Wednesdays and needs a Figma link in the agenda.",
+            "citation": "[mem:83128563]",
+            "tokens": 17
+          },
+          {
+            "id": "fab8e612-845a-42bc-adb8-48a02129f0bd",
+            "content": "Priya leads the platform team and reviews production changes on Thursdays.",
+            "citation": "[mem:fab8e612]",
+            "tokens": 16
+          },
+          {
+            "id": "cecb3b1d-6db0-4b21-adbe-653f50fff8d2",
+            "content": "The team deploys on Fridays at 14:00 UTC, never after 16:00.",
+            "citation": "[mem:cecb3b1d]",
+            "tokens": 17
+          }
+        ],
+        "totalTokens": 2180,
+        "tokensSaved": 0,
+        "markdown": "## Memory context\n\n- The platform team owns the API gateway and the deploy pipeline. [mem:96caf745]\n- Rollback is `kubectl rollout undo deployment/api` in the production cluster. [mem:8d23cfca]\n- Deploys run through GitHub Actions and require a green CI run plus one approval. [mem:6bb7c196]\n- The staging database is reset every Monday at 03:00 UTC. [mem:4f71eb26]\n- Project Atlas uses pnpm workspaces and a single SQLite file per service. [mem:d0f796ff]\n- Incident 2026-10-14: the API gateway ran out of file descriptors after a config reload. [mem:aca64398]\n- User prefers the Solarized Dark theme in VS Code and the terminal. [mem:3a416ff3]\n- User prefers concise answers with code first and explanation second. [mem:c829216b]\n- The design review happens on Wednesdays and needs a Figma link in the agenda. [mem:83128563]\n- Priya leads the platform team and reviews production changes on Thursdays. [mem:fab8e612]\n- The team deploys on Fridays at 14:00 UTC, never after 16:00. [mem:cecb3b1d]"
+      }
+    },
+    {
+      "query": "Who owns the platform and gateway?",
+      "results": [
+        {
+          "id": "96caf745-75a1-4fa3-992f-6f75e18437e7",
+          "score": 0.761
+        },
+        {
+          "id": "fab8e612-845a-42bc-adb8-48a02129f0bd",
+          "score": 0.047
+        },
+        {
+          "id": "d0f796ff-5fdb-4f6d-921e-d8c2ff060503",
+          "score": 0.038
+        },
+        {
+          "id": "aca64398-a1bc-4efa-bb71-e846423d54b1",
+          "score": 0.037
+        },
+        {
+          "id": "6bb7c196-4788-4734-b0ba-1b9312299340",
+          "score": 0.024
+        }
+      ],
+      "pack": {
+        "items": [
+          {
+            "id": "96caf745-75a1-4fa3-992f-6f75e18437e7",
+            "content": "The platform team owns the API gateway and the deploy pipeline.",
+            "citation": "[mem:96caf745]",
+            "tokens": 12
+          },
+          {
+            "id": "d0f796ff-5fdb-4f6d-921e-d8c2ff060503",
+            "content": "Project Atlas uses pnpm workspaces and a single SQLite file per service.",
+            "citation": "[mem:d0f796ff]",
+            "tokens": 15
+          },
+          {
+            "id": "aca64398-a1bc-4efa-bb71-e846423d54b1",
+            "content": "Incident 2026-10-14: the API gateway ran out of file descriptors after a config reload.",
+            "citation": "[mem:aca64398]",
+            "tokens": 20
+          },
+          {
+            "id": "6bb7c196-4788-4734-b0ba-1b9312299340",
+            "content": "Deploys run through GitHub Actions and require a green CI run plus one approval.",
+            "citation": "[mem:6bb7c196]",
+            "tokens": 15
+          },
+          {
+            "id": "3a416ff3-0d57-46f1-9809-80dd02b2129b",
+            "content": "User prefers the Solarized Dark theme in VS Code and the terminal.",
+            "citation": "[mem:3a416ff3]",
+            "tokens": 15
+          },
+          {
+            "id": "8d23cfca-0899-4e55-bfef-b978e0e45911",
+            "content": "Rollback is `kubectl rollout undo deployment/api` in the production cluster.",
+            "citation": "[mem:8d23cfca]",
+            "tokens": 16
+          },
+          {
+            "id": "fab8e612-845a-42bc-adb8-48a02129f0bd",
+            "content": "Priya leads the platform team and reviews production changes on Thursdays.",
+            "citation": "[mem:fab8e612]",
+            "tokens": 16
+          }
+        ],
+        "totalTokens": 1405,
+        "tokensSaved": 0,
+        "markdown": "## Memory context\n\n- The platform team owns the API gateway and the deploy pipeline. [mem:96caf745]\n- Project Atlas uses pnpm workspaces and a single SQLite file per service. [mem:d0f796ff]\n- Incident 2026-10-14: the API gateway ran out of file descriptors after a config reload. [mem:aca64398]\n- Deploys run through GitHub Actions and require a green CI run plus one approval. [mem:6bb7c196]\n- User prefers the Solarized Dark theme in VS Code and the terminal. [mem:3a416ff3]\n- Rollback is `kubectl rollout undo deployment/api` in the production cluster. [mem:8d23cfca]\n- Priya leads the platform team and reviews production changes on Thursdays. [mem:fab8e612]"
+      }
+    }
+  ]
+}

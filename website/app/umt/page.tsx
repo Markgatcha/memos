@@ -73,7 +73,7 @@ export default function UMT() {
         />
 
         <Reveal className="mb-12">
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">Quick start</h2>
+          <h2 className="section-title">Quick start</h2>
           <div className="window">
             <div className="window-bar">
               <span className="window-dot" />
@@ -101,7 +101,7 @@ export default function UMT() {
         </Reveal>
 
         <Reveal className="mb-12" delay={80}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">Key features</h2>
+          <h2 className="section-title">Key features</h2>
           <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
             {features.map((f) => (
               <li key={f} className="flex items-start gap-2.5 text-sm text-zinc-400">

@@ -31,14 +31,33 @@ export default function PlaygroundPage() {
           <Playground />
         </Reveal>
 
+        <Reveal className="mb-12" delay={40}>
+          <div className="card flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="mono-label mb-2">also try</div>
+              <h2 className="text-lg font-medium tracking-[-0.01em] text-zinc-100">
+                The memory playground
+              </h2>
+              <p className="mt-1 max-w-xl text-[13px] leading-relaxed text-zinc-400">
+                Store memories, restart the session, and recall them with
+                citations. Preset results are recorded from the real MemOS SDK.
+              </p>
+            </div>
+            <Link href="/playground/memory" className="btn btn-secondary shrink-0">
+              Open memory demo
+              <ArrowRight size={15} />
+            </Link>
+          </div>
+        </Reveal>
+
         <Reveal className="mb-12" delay={60}>
           <div className="card p-6 md:p-7">
-            <h2 className="text-sm font-medium text-zinc-200 mb-3">
+            <h2 className="section-title">
               What just happened
             </h2>
             <p className="text-[13px] text-zinc-400 leading-relaxed">
               Semantic Folding distills verbose prose into{" "}
-              <span className="font-mono text-emerald-400">
+              <span className="font-mono text-zinc-100">
                 [ACTION:…][TARGET:…]
               </span>{" "}
               entity-dense headlinese, then keeps only the sentences that carry

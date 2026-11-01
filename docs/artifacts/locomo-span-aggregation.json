@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "timestamp": "2026-11-01T06:51:36.384Z",
+  "source": {
+    "retrievalArtifact": "scripts/bench-locomo-noapi-results.json",
+    "retrievalTimestamp": "2026-10-31T03:01:12.568Z",
+    "dataset": "scripts/dataset/locomo/data/locomo10.json",
+    "questions": 1986
+  },
+  "method": "Post-hoc re-scoring of the recorded top-10 lists. Spans merge adjacent retrieved turns; interior fills gaps inside a span; neighbour-N expands each retrieved turn by N turns in the same session. No re-retrieval.",
+  "arms": {
+    "baseline": {
+      "hitRate": 0.649,
+      "evidenceRecall": 0.4956,
+      "allEvidenceRecall": 0.5584,
+      "precision": 0.0702,
+      "avgRetrieved": 10
+    },
+    "spansOnly": {
+      "hitRate": 0.3011,
+      "evidenceRecall": 0.2259,
+      "allEvidenceRecall": 0.2362,
+      "precision": 0.0583,
+      "avgRetrieved": 5.4955
+    },
+    "interiorFill": {
+      "hitRate": 0.649,
+      "evidenceRecall": 0.4956,
+      "allEvidenceRecall": 0.5584,
+      "precision": 0.0702,
+      "avgRetrieved": 10
+    },
+    "neighbour1": {
+      "hitRate": 0.7865,
+      "evidenceRecall": 0.6227,
+      "allEvidenceRecall": 0.6939,
+      "precision": 0.0452,
+      "avgRetrieved": 19.5081
+    },
+    "neighbour2": {
+      "hitRate": 0.8207,
+      "evidenceRecall": 0.6618,
+      "allEvidenceRecall": 0.7281,
+      "precision": 0.0341,
+      "avgRetrieved": 27.5433
+    },
+    "neighbour1Top1": {
+      "hitRate": 0.7044,
+      "evidenceRecall": 0.5407,
+      "allEvidenceRecall": 0.6108,
+      "precision": 0.0716,
+      "avgRetrieved": 10.7019
+    },
+    "neighbour1Top3": {
+      "hitRate": 0.7336,
+      "evidenceRecall": 0.5684,
+      "allEvidenceRecall": 0.643,
+      "precision": 0.0679,
+      "avgRetrieved": 11.8691
+    },
+    "neighbour1Top5": {
+      "hitRate": 0.7497,
+      "evidenceRecall": 0.5865,
+      "allEvidenceRecall": 0.6601,
+      "precision": 0.0617,
+      "avgRetrieved": 13.4627
+    }
+  },
+  "note": "Expansion changes precision and the size of the injected set; compare hit-rate gains against the extra turns. Baseline is the checked-in bge-small run."
+}

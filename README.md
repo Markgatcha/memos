@@ -32,7 +32,11 @@
   <a href="https://x.com/Context_Core"><strong>Twitter/X</strong></a>
 </p>
 
-> **Release status:** The GitHub source is the canonical, always-current build (v1.6.26). The npm package (`@mem-os/sdk`) is updated on each tagged release but may briefly lag the source. The Python package currently installs [from source](#from-source). For the latest features, install from source.
+> **New here?** [Ingest your notes in 60 seconds](docs/quickstart-ingest.md) — install, point at a folder, search it.
+
+> **Installing?** [Agent-readable install contract](llms-install.md) · [MCP compatibility policy](docs/mcp-compatibility.md) · [per-harness snippets](https://context-core.dev/docs/install)
+
+> **Release status:** The GitHub source is the canonical, always-current build (v1.6.27). The npm package (`@mem-os/sdk`) and PyPI package (`mem-os-python`) are updated on each tagged release but may briefly lag the source. For unreleased changes, install from source.
 
 ---
 
@@ -108,6 +112,8 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 | LangChain adapter | ✅ |
 | CrewAI adapter | ✅ |
 | Import from JSON/Markdown/Obsidian | ✅ |
+| Document ingestion (Markdown/HTML/PDF, incremental + watch) | ✅ |
+| Preference capture (`capturePreferences`, `searchPreferences`) | ✅ |
 | Export to JSON/Markdown/Obsidian | ✅ |
 | Memory TTL / Expiration | ✅ |
 | Custom memory tags | ✅ |
@@ -118,13 +124,17 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 | Event system (node:created, eviction, ...) | ✅ |
 | Custom storage adapter interface | ✅ |
 | Backup and restore | ✅ |
-| MCP adapter (stdio) | ✅ |
+| MCP adapter (stdio + Streamable HTTP) | ✅ |
 | Performance benchmarks | ✅ |
 | Background embedding queue | ✅ v1.6.26 |
 | AI Trio context pack (LLM Guardian compat) | ✅ v1.6.26 |
 | MCP 2026-07-28 protocol | ✅ v1.6.26 |
 | Memory consolidation ("dreaming") | ✅ v1.6.26 |
 | Voyage / Cohere / FastEmbed providers | ✅ v1.6.26 |
+| Zero-native-dependency default embeddings (Model2Vec) | ✅ Unreleased |
+| ANN vector index (`sqlite-vec`, optional) | ✅ Unreleased |
+| Structured error codes + crash reports | ✅ Unreleased |
+| LongMemEval-V2 adapter (`lme-v2/`) | ✅ Unreleased |
 | Interactive TUI (`memos browse`) | ✅ |
 | Retrieval-quality benchmark | ✅ v1.6.26 |
 | Tag index (node_tags join table) | ✅ v1.6.26 |
@@ -156,15 +166,47 @@ Every LLM forgets everything the moment a conversation ends. Frameworks like Lan
 | Claude Code plugin (auto-recall + auto-consolidation hooks) | ✅ |
 | Retrieval regression eval in CI | ✅ |
 | Image memory — captions + CLIP pixel search (`memos image`, `memos_image_*`) | ✅ v1.6.27 |
+| One-call user profile (`memos_profile`, `memos profile`) | ✅ v1.6.27 |
+| Preset factories (`MemOS.chatbot()` / `.codingAgent()` / `.researchBot()`) | ✅ v1.6.27 |
+| MMR diversification (`search({ mmr })`, `retrieval.mmr`) | ✅ v1.6.27 |
+| Recall inspector (`memos.explain`, `memos_explain`, `memos explain`) | ✅ v1.6.27 |
+| Outcome-conditioned ranking (`recordRecallFeedback`, `memos_feedback`) | ✅ v1.6.27 |
+| Memory health report (`memos.health`, `memos_health`, `memos health`) | ✅ v1.6.27 |
+| 30-second persistence demo (`memos demo`) | ✅ Unreleased |
+| Cross-harness handoff brief (`memos.handoff`, `memos handoff`) | ✅ Unreleased |
+| Auditable memory report + deletion certificates (`memos audit`) | ✅ Unreleased |
+| In-product retrieval eval (`memos eval`) | ✅ Unreleased |
+| Procedure promotion from successful recalls (`memos promote`) | ✅ Unreleased |
+| Model-aware embedding prefixes (Nomic / E5 / BGE / EmbeddingGemma) | ✅ Unreleased |
 | Multi-user isolation | 🔜 v3.0 |
 | Plugin system for custom backends | 🔜 v3.0 |
 | Admin dashboard | 🔜 v4.0 |
 
 ---
 
+## Benchmarks
+
+Retrieval benchmarks that need no reader model and no LLM judge, scored by
+evidence IDs on the public datasets:
+
+| Benchmark | Metric | MemOS |
+| --- | --- | --- |
+| LongMemEval-S (100 q stratified) | Hit@20 | **100%** (evidence recall 99%) |
+| ConvoMem (525 q sample) | Hit@10 | 89.4% |
+| LoCoMo (1,986 q) | Hit@10 | 64.1% |
+| LoCoMo (1,536 q, cats 1–4) | Hit@10 | 62.7% |
+
+End-to-end (answer + judge, same model): **78%** on a 50-question LongMemEval-S
+sample. Self-judged, so not comparable to vendor gpt-4o numbers.
+
+Commands, per-category breakdowns, and caveats live in
+[`benchmarks/README.md`](benchmarks/README.md). LongMemEval-S is the benchmark
+Supermemory headlines (97% Recall@20 with aggregation); ConvoMem and LoCoMo are
+the other two in their MemoryBench suite.
+
 ## Embedding-backed search
 
-MemOS still works with zero setup through local keyword search and graph similarity. Configure an `embeddings` provider and it will persist embedding vectors and merge semantic similarity with SQLite FTS keyword results — no experimental flag needed.
+A bare `new MemOS()` now has **real semantic search with zero setup**: the default provider is Model2Vec's `potion-base-8M`, a 256-d static embedding table that runs in pure JavaScript — no ONNX, no native addons, no install scripts, no model download at runtime. It merges semantic similarity with SQLite FTS keyword results. For higher accuracy, configure Ollama (`nomic-embed-text`), FastEmbed, or an API provider; every provider persists vectors and uses the same hybrid pipeline.
 
 ```ts
 import { MemOS } from "@mem-os/sdk";
@@ -202,6 +244,33 @@ const memos = new MemOS({
 ```
 
 CLI and server deployments can use `MEMOS_EMBEDDING_PROVIDER`, `MEMOS_EMBEDDING_MODEL`, `MEMOS_EMBEDDING_BASE_URL`, `MEMOS_EMBEDDING_API_KEY`, and `MEMOS_EMBEDDINGS=false` to control embedding behavior. `MEMOS_EMBEDDING_API_KEY` is optional for local no-key endpoints.
+
+### Model-aware task prefixes
+
+Asymmetric retrieval models expect an instruction on the query side, the
+document side, or both. MemOS resolves the right pair from the model name:
+Nomic (`search_query:` / `search_document:`), E5 (`query:` / `passage:`), BGE
+(query instruction), and EmbeddingGemma (`task: search result | query:` /
+`title: none | text:`). Explicit `queryPrefix` / `documentPrefix` values always
+win. The prefix is stored with each vector, so switching models or prefixes
+cannot silently mix incomparable vector spaces; run
+`memos reindex-embeddings --purge-stale` after a change.
+
+### ANN vector index
+
+For large stores, enable the optional `sqlite-vec` extension:
+
+```ts
+const memos = new MemOS({
+  storageOptions: { semanticScan: "ann" },
+});
+```
+
+MemOS creates one `vec0` table per model/prefix/dimension, backfills it from
+existing embeddings on first use, updates it on every embedding write, and
+removes rows on delete. If `sqlite-vec` is unavailable, ANN mode degrades to
+the exact scan and `memos doctor` reports why. `"auto"` remains the no-extension
+choice: exact up to 20k candidate vectors, bounded prefilter above.
 
 ### GPU embeddings
 
@@ -284,9 +353,30 @@ The `model` you configure in MemOS must match the model the server loads — Mem
 npm install -g @mem-os/sdk   # or: pnpm add -g @mem-os/sdk
 
 memos init                   # interactive setup (database path, embeddings)
+memos demo                   # 30-second proof: store, recall, restart, recall
 memos store "User prefers dark mode"
 memos search "dark mode"
 # → User prefers dark mode
+```
+
+`memos demo` uses a temporary database, closes the process, reopens the same
+file, and proves the memory survived — then deletes the temporary store.
+
+### Continue on another harness
+
+```bash
+# Build a compact, citable "continue here" brief for another agent
+memos handoff "finish the auth refactor" --to codex --token-budget 1200
+
+# Audit what the memory layer knows, where it came from, and what it forgot
+memos audit
+
+# Measure retrieval on your own store (not a public benchmark)
+memos eval --limit 20 --k 5
+
+# Review repeated successful recall patterns before promoting them to lessons
+memos promote            # dry run
+memos promote --apply
 ```
 
 Kill the terminal, come back tomorrow — the memory is still there.
@@ -467,7 +557,19 @@ Use a specific local database:
 npx -y @mem-os/sdk mcp --db ~/.memos/memos.db
 ```
 
-The MCP adapter provides **21 tools** covering the full capability surface — store/search/retrieve/forget, link, graph + neighbour context, `memos_context_pack` (token-budgeted slice for prompt injection), temporal search, validity/supersede/revert, trust, quarantine release, fact extraction, diagnostics, reindex, consolidate, usage, history, and reminders. It is intentionally local-first: the server reads and writes the SQLite database you point it at and does not require cloud credentials.
+Streamable HTTP is also supported, for hosted clients or several harnesses
+sharing one process:
+
+```bash
+npx -y @mem-os/sdk mcp --http --port=8788
+# endpoint: http://127.0.0.1:8788/mcp
+```
+
+It binds loopback by default and performs no authentication, because this
+server can read and write your entire memory store. If you pass `--host` to
+bind beyond `127.0.0.1`, put it behind a reverse proxy that authenticates.
+
+The MCP adapter has **40 tools** available, but only the **12-tool core set** is exposed by default: `memos_store`, `memos_ingest`, `memos_search`, `memos_profile`, `memos_retrieve`, `memos_forget`, `memos_context_pack`, `memos_explain`, `memos_feedback`, `memos_health`, `memos_overview`, and `memos_handoff`. This keeps tool schemas from consuming the context window before the user speaks. Set `MEMOS_MCP_TOOLS=all` to expose the full surface (link, graph, temporal search, validity/supersede/revert, trust, quarantine, fact extraction, diagnostics, reindex, consolidate, history, reminders, audit, eval, promotion, image tools, trigger, brief, review, source deletion, knowledge pages), or pass a comma-separated list to select exactly what you need. `MEMOS_MCP_TOOLS=none` keeps resources/prompts but hides every tool. The server reads and writes the SQLite database you point it at and does not require cloud credentials.
 
 #### Plugin for Claude Code (and every other harness)
 
@@ -482,7 +584,9 @@ Or install as a plugin (bundles the MCP server + `/memos` and `/recall` commands
 /plugin install memos@memos-marketplace
 ```
 
-Same one-line MCP registration works in Cursor, Windsurf, Cline, OpenCode, Codex CLI, Gemini CLI and anything else that speaks MCP — see [docs/integrations.md](docs/integrations.md) for the per-harness table.
+Same one-line MCP registration works in Cursor, Windsurf, Cline, OpenCode, Codex CLI, Gemini CLI and anything else that speaks MCP - see [docs/integrations.md](docs/integrations.md) for the per-harness table.
+
+Workflow connectors: [Dify](integrations/dify/) imports the OpenAPI schema, and [n8n](integrations/n8n/) imports a ready-made store-and-recall workflow. Both talk to the same HTTP API.
 
 ### WebSocket API
 
@@ -504,6 +608,157 @@ ws.onmessage = (event) => {
 ---
 
 ## Advanced usage
+
+### One-call user profile
+
+The stable "who am I talking to" block plus recent activity, ready to
+inject at session start. Cached (30s default) and invalidated by any
+write — `memos_profile` is also an MCP tool, and `memos profile`
+prints it from the CLI.
+
+```ts
+const { static: who, dynamic: recent } = await memos.profile();
+// static: durable preferences/entities/facts, ranked by trust
+// dynamic: recent activity inside the 7-day window
+
+const scoped = await memos.profile({ query: "deploy", scope: { user: "alice" } });
+```
+
+### Preset factories
+
+Tuned starting points for the three shapes of agent most people build:
+
+```ts
+const bot = MemOS.chatbot({ dbPath: "./bot.db" });      // conversational
+const coder = MemOS.codingAgent();                       // code-native, bigger store
+const researcher = MemOS.researchBot();                  // bulk ingest, novelty-biased recall
+// or: new MemOS({ preset: "chatbot", dbPath: "./bot.db" })
+```
+
+Presets set the store bound, embedding-queue width, and precision
+knobs (relevance gate + MMR). They never touch fusion weights — those
+are tuned per embedding model (see
+[docs/benchmark-comparison.md](docs/benchmark-comparison.md)).
+
+### Measured retrieval
+
+Retrieval-only, deterministic evidence-ID matching (no LLM judge):
+
+| Benchmark | Score | Conditions |
+|---|---|---|
+| LongMemEval-S, full 500 | **99.4% Hit@20 · 97.8% all-evidence@20** | one node per session, nomic-embed-text, contextual header, 0.5/0.5, no reranker |
+| LoCoMo convs 0-1 | 79.8% Hit@10 · 75.9% evidence recall@10 (best of 3; mean 78.4 / 74.3) | 304 questions, same embedder, previous-turn context |
+| ConvoMem (387 scored / 525 sampled) | 91.0% Hit@10 · 89.4% evidence recall@10 · 87.9% all-evidence | message evidence, all-minilm, contextual header |
+| HotPotQA distractor | 100% Hit@10 · 96.3% evidence recall@10 | 500 validation questions |
+
+Supermemory's published LongMemEval-S headline is **97% Recall@20 with
+aggregation**; the full-set run above is at the same K and session
+granularity. Mean-vs-best and all-evidence caveats, per-category rows and
+the exact commands live in
+[docs/benchmark-comparison.md](docs/benchmark-comparison.md); the raw
+LongMemEval and ConvoMem results are committed under `docs/artifacts/`.
+
+Measured over three consecutive runs on the same corpus, all-evidence@20 is
+stable at 97.8% (retrieval is deterministic given fixed vectors; the earlier
+99.2% figure came from a benchmark-harness post-pass, not from the shipped
+retrieval path, and has been retracted). Hit@20 is 99.4%.
+
+Setup cost is embedding-bound (103 min for 23,882 sessions), but retrieval
+is not: a namespace-index fix plus session-expansion-off defaults cut full
+LongMemEval retrieval from ~21 min to 1,299 s on the recorded pre-prewarm
+artifact, and **207 s (p50 464 ms/query)** on the current one. Both figures
+are measured `durationMs`, not estimates: the earlier "~1 min" claim here was
+never reproducible from a recorded run. `--fast-ingest` skips
+benchmark-irrelevant write pipeline work (1,071 s -> 786 s on the
+100-question sample, same metrics). `--db=` resumes without re-embedding, so
+ablations are cheap once the corpus is built. ConvoMem is the third
+MemoryBench dataset and ships with its own download/harness scripts.
+
+### LongMemEval-V2
+
+`lme-v2/` contains a complete LongMemEval-V2 memory backend: a single-file
+Python `Memory` class plus a persistent Node bridge. It ingests trajectory
+notes, per-state event evidence, procedure steps, and gotcha signals; queries
+return token-budgeted context packs with citations and screenshot items. The
+directory also includes preflight checks, a runner that mirrors the official
+reader/judge setup, and leaderboard packaging helpers. See
+[`lme-v2/README.md`](lme-v2/README.md) and
+[`lme-v2/SUBMISSION_CHECKLIST.md`](lme-v2/SUBMISSION_CHECKLIST.md).
+
+### MMR diversification — precision, not recall
+
+A top-10 of ten paraphrased memories has hit@10 = 1 and precision@10 =
+0.1 — recall metrics celebrate while your context window is 90% noise.
+MMR re-selects the head so each slot earns its place:
+
+```ts
+const results = await memos.search({ query: "deploy", mmr: 0.6 });
+// mmr: true | false | λ (0 = max novelty, 1 = pure relevance)
+```
+
+Token-Jaccard similarity — no embedding call, deterministic, works on
+the keyword-only path. Runs after the relevance gate, so it can only
+reorder survivors. Instance default: `retrieval: { mmr: { enabled: true, lambda: 0.5 } }`.
+
+### Recall inspector — "why did I recall this?"
+
+`explain()` returns the candidates **before** the relevance gate, with the
+per-leg evidence (keyword, semantic, entity, graph, rerank, provenance),
+lifecycle status, supersede chain, and outcome utility. Pass `memoryId` to
+diagnose a memory that should have matched but did not: it reports which
+static check excluded it (namespace, pool, historical, expired, quarantined,
+missing/mismatched embedding, or zero lexical overlap).
+
+```ts
+const report = await memos.explain({
+  query: "where does the user live",
+  memoryId: oldAddressId, // optional focus
+});
+console.log(report.gate);       // { enabled, abstained, trimmed, dropped }
+console.log(report.candidates); // ranked evidence
+console.log(report.focus?.reasons);
+```
+
+### Outcome-conditioned ranking — learn what actually helped
+
+Every other retrieval signal is a prediction. This one is evidence: tell
+MemOS which memories the agent actually used and whether the task worked.
+Successful uses get a bounded promotion, failed uses a bounded demotion, and
+observational **uplift** compares outcomes when a memory was used against
+outcomes when it was not.
+
+```ts
+const hits = await memos.search("how do I deploy?");
+await memos.recordRecallFeedback({
+  query: "how do I deploy?",
+  used: [hits[0].node.id],
+  outcome: "success",
+});
+
+const utility = memos.recallUtility(hits[0].node.id);
+// { utility: 0.67, uplift: 0.42, usedBatches: 1, unusedBatches: 4, ... }
+```
+
+Tune with `retrieval: { outcomeFeedback: { weight: 0.2, minObservations: 2 } }`.
+It is a no-op until feedback exists, so existing ranking is unchanged. Pass
+`search({ query, outcomeFeedback: false })` to ablate it.
+
+### Memory health — hygiene plus usefulness
+
+`health()` combines contradiction pressure, TTL backlog, low-confidence
+share, quarantine count, and the useful-recall rate into one graded report
+with actionable findings.
+
+```ts
+const report = await memos.health();
+// { score: 88, grade: "B", metrics: {...}, findings: [...] }
+```
+
+CLI equivalents: `memos explain "<query>" --id <memoryId>`,
+`memos feedback --query "<query>" --used <ids> --outcome success`, and
+`memos health`. MCP tools: `memos_explain`, `memos_feedback`, `memos_health`.
+See [docs/recall-inspector.md](docs/recall-inspector.md) for the score
+semantics and caveats.
 
 ### Temporal validity
 
@@ -828,12 +1083,12 @@ Prebuilt native `better-sqlite3` bindings for Linux, macOS, and Windows (Node 22
 ### Python (PyPI)
 
 ```bash
-pip install mem-os-sdk
+pip install mem-os-python
 
 # With optional framework adapters
-pip install "mem-os-sdk[langchain]"   # LangChain adapter
-pip install "mem-os-sdk[ollama]"      # Ollama adapter
-pip install "mem-os-sdk[all]"         # both adapters
+pip install "mem-os-python[langchain]"   # LangChain adapter
+pip install "mem-os-python[ollama]"      # Ollama adapter
+pip install "mem-os-python[all]"         # both adapters
 ```
 
 The Python package wraps the TypeScript SDK, so **Node.js >= 18 is required**
@@ -951,9 +1206,9 @@ MemOS is the **memory layer** of the local-first AI stack. It forms an **AI Trio
 | **Trust & provenance** | ✅ `source`, `trustScore`, trust-weighted search | ❌ Not available |
 | **Memory consolidation** | ✅ `dedupe()`, `archive()`, `summarizeCluster()` | ❌ ADD-only (no UPDATE/DELETE) |
 | **Fact extraction** | ✅ Local rule-based (`extractFacts()`) | ✅ LLM-based (requires API calls) |
-| **MCP native** | ✅ stdio (2026-07-28 spec) | ❌ |
+| **MCP native** | ✅ stdio + Streamable HTTP (2026-07-28 spec) | ❌ |
 | **Graph edges** | ✅ First-class (`derived_from`, `temporal_precedes`, etc.) | ✅ Entity linking (Apr 2026) |
-| **Embedding providers** | ✅ 6 (local-hash, Ollama, OpenAI, Voyage, Cohere, FastEmbed) | ✅ OpenAI, Qwen |
+| **Embedding providers** | ✅ 7 (Model2Vec default, local-hash, Ollama, OpenAI, Voyage, Cohere, FastEmbed) | ✅ OpenAI, Qwen |
 | **Background queue** | ✅ Bounded concurrency, retry, backpressure | ❌ |
 | **CLI** | ✅ Interactive TUI + 40+ commands | ✅ Basic add/search |
 | **Privacy** | ✅ 100% local, zero network calls | ❌ Cloud calls by default |

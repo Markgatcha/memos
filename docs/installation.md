@@ -86,20 +86,20 @@ Run it again. And again. The memory is still there every time — it's in `~/.me
 
 ## Option 2 — Python (PyPI)
 
-The Python package lives on PyPI as **`mem-os-sdk`** (matching npm's `@mem-os/sdk`). It wraps the TypeScript SDK, so you'll also need Node.js 18+ on your PATH.
+The Python package lives on PyPI as **`mem-os-python`** (the import name is still `memos`). It wraps the TypeScript SDK, so you'll also need Node.js 18+ and npm on your PATH. On first server start it stages `better-sqlite3` and the default Model2Vec embedding package into `~/.memos/runtime/js`; no API key is required.
 
 **Step 1. Install from PyPI**
 
 ```bash
-pip install mem-os-sdk
+pip install mem-os-python
 ```
 
 Want the framework adapters too? Grab them in one go:
 
 ```bash
-pip install "mem-os-sdk[langchain]"   # LangChain adapter
-pip install "mem-os-sdk[ollama]"      # Ollama adapter
-pip install "mem-os-sdk[all]"         # both of the above
+pip install "mem-os-python[langchain]"   # LangChain adapter
+pip install "mem-os-python[ollama]"      # Ollama adapter
+pip install "mem-os-python[all]"         # both of the above
 ```
 
 Prefer living on the bleeding edge? Install from source instead:
@@ -116,6 +116,15 @@ pip install -e ".[all]"
 ```bash
 memos-server
 # → Listening on http://localhost:7400
+
+The server binds `127.0.0.1` by default. Set `MEMOS_HOST=0.0.0.0` to expose it, and set `MEMOS_API_KEY` so clients must send `Authorization: Bearer <key>`:
+
+```bash
+MEMOS_API_KEY=change-me memos-server
+curl -H "Authorization: Bearer change-me" http://localhost:7400/api/mem/count
+```
+
+`/health` stays public for probes.
 ```
 
 **Step 3. Store and recall**

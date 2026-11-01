@@ -144,6 +144,63 @@ Tune the knobs in the SDK via `ConsolidateOptions`. LLM-assisted note
 distillation is available through the `summarizeClusterLlm` config hook —
 give it a local 0.6B–4B model for fully-offline runbook notes.
 
+## Time-aware retrieval
+
+Semantic similarity answers "what is this about". People also ask "what
+happened around then", and those are different questions. Two opt-in
+re-rankers cover the gap; neither changes what the retriever found, only
+the order it is returned in.
+
+### Relative-time anchoring
+
+When a query carries a relative expression — "10 days ago", "two weeks
+ago", "in the past month" — memories dated inside that window are promoted
+above memories outside it. Order is preserved within each group, so a
+weaker-but-relevant memory does not leapfrog a stronger one.
+
+```ts
+const hits = await memos.search({
+  query: "what kitchen appliance did I buy 10 days ago?",
+  limit: 20,
+  relativeTimeBoost: true, // default: on when the query has an expression
+});
+```
+
+Resolution is relative to `validAt` when set (replaying history), otherwise
+to now. Parsing lives in `src/relative-time.ts`; the ranking step is
+`applyRelativeTimeAnchor` in `src/temporal-rerank.ts`.
+
+> Why not just filter by date? On LongMemEval, relative-offset windows cover
+> 10%–77% of a conversation corpus depending on the unit. "Everything in the
+> window" is close to a random pick, so the window re-orders — it never
+> replaces — the semantic ranking.
+
+### Chronological neighbour expansion
+
+A conversation is a timeline. The answer to "what did we decide in that
+session" is often in the turn just before or after the one that matched.
+
+```ts
+const hits = await memos.search({
+  query: "what did we settle on for the billing migration?",
+  limit: 20,
+  sessionNeighbours: { radius: 2 }, // or `true` for the default
+});
+```
+
+Each promoted memory takes the lowest-ranked slot and is scored below the
+hit that produced it. Two rules make this safe:
+
+- **Only memories the query already matched are expanded.** A neighbour of
+  an unrelated memory is not a neighbour of the answer; scanning the corpus
+  for temporal adjacency measurably *lowered* LongMemEval all-evidence
+  recall (97.8% → 97.0%) by evicting sessions that had legitimately matched.
+- **The budget is `ceil(limit / 5)`** — the retriever keeps at least 80% of
+  the window. Tune with `maxInjected`.
+
+Implementation: `expandToTemporalNeighbours` in `src/temporal-rerank.ts`,
+tests in `__tests__/temporal-rerank.test.ts`.
+
 ---
 
 ## Version timeline (audit)

@@ -15,9 +15,19 @@ const sections = [
     links: [
       { label: "MemOS Overview & Quick Start", href: "/memos", internal: true },
       {
+        label: "Install per harness",
+        href: "/docs/install",
+        internal: true,
+      },
+      {
         label: "Architecture Guide",
         href: "/docs/architecture",
         internal: true,
+      },
+      {
+        label: "MCP compatibility policy",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/mcp-compatibility.md",
+        internal: false,
       },
       {
         label: "API Reference (GitHub README)",
@@ -66,6 +76,21 @@ const sections = [
       {
         label: "UMT Integration Contract",
         href: "https://github.com/Markgatcha/universal-mcp-toolkit/blob/main/docs/integration-contract.md",
+        internal: false,
+      },
+      {
+        label: "UMT × MemOS shared config",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/umt-integration.md",
+        internal: false,
+      },
+      {
+        label: "Guardian folded memory packs",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/guardian-integration.md",
+        internal: false,
+      },
+      {
+        label: "Remote MCP and OAuth",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/remote-mcp.md",
         internal: false,
       },
       {

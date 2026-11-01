@@ -45,7 +45,6 @@ export default function StarButton({
       target="_blank"
       rel="noopener noreferrer"
       className={`btn btn-secondary ${className}`}
-      aria-label={`${label} ${repo} on GitHub`}
     >
       <GithubIcon size={15} />
       <span>{label}</span>

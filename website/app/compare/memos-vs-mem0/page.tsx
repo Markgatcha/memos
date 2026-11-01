@@ -83,12 +83,12 @@ export default function CompareMemory() {
         />
 
         <Reveal className="mb-12">
-          <div className="card overflow-hidden overflow-x-auto">
+          <div className="card overflow-x-auto overflow-x-auto">
             <table className="data-table min-w-[760px]">
               <thead>
                 <tr>
                   <th></th>
-                  <th className="!text-emerald-400/90">MemOS</th>
+                  <th className="!text-zinc-300">MemOS</th>
                   <th>Mem0</th>
                   <th>Zep</th>
                   <th>Letta</th>
@@ -116,7 +116,7 @@ export default function CompareMemory() {
         </Reveal>
 
         <Reveal className="mb-12" delay={80}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             When to pick what
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -30,7 +30,7 @@ export default function Support() {
         />
 
         <Reveal className="mb-12">
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             <div className="flex items-center gap-2.5 px-6 py-4 border-b border-white/[0.06]">
               <MessageSquare size={15} className="text-zinc-500" />
               <span className="text-sm font-medium text-zinc-100">Discord</span>
@@ -62,7 +62,7 @@ export default function Support() {
         </Reveal>
 
         <Reveal className="mb-12" delay={80}>
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             <div className="flex items-center gap-2.5 px-6 py-4 border-b border-white/[0.06]">
               <XIcon size={15} />
               <span className="text-sm font-medium text-zinc-100">Twitter / X</span>

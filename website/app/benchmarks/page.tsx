@@ -25,6 +25,9 @@ function VerifiedRuns() {
     ["BEAM-1M", benchmarksData.beam],
     ["Memory haystack", benchmarksData.haystack],
     ["HotPotQA", benchmarksData.hotpot],
+    ["ConvoMem", benchmarksData.convomem],
+    ["LoCoMo span aggregation", benchmarksData.spans],
+    ["QA arms", benchmarksData.qaArms],
   ];
   const rows = benchRows
     .filter(([, data]) => data?.timestamp)
@@ -34,8 +37,8 @@ function VerifiedRuns() {
 
   return (
     <Reveal className="mb-12">
-      <h2 className="text-sm font-medium text-zinc-200 mb-4">Verified runs</h2>
-      <div className="card overflow-hidden">
+      <h2 className="section-title">Verified runs</h2>
+      <div className="card overflow-x-auto">
         <table className="data-table">
           <thead>
             <tr>
@@ -55,10 +58,10 @@ function VerifiedRuns() {
                     {data.source}
                   </div>
                 </td>
-                <td className="tabular-nums text-zinc-300">
+                <td className="whitespace-nowrap tabular-nums text-[11px] text-zinc-300">
                   {data.timestamp ? data.timestamp.slice(0, 10) : "—"}
                 </td>
-                <td className="font-mono text-xs text-zinc-400">
+                <td className="whitespace-nowrap font-mono text-xs text-zinc-400">
                   {data.gitSha ? data.gitSha.slice(0, 7) : "—"}
                 </td>
                 <td className="text-xs text-zinc-400">{data.model || "—"}</td>
@@ -95,12 +98,42 @@ export const metadata: Metadata = {
   },
 };
 
+const pct = (value?: number | null): string =>
+  typeof value === "number" ? `${(value * 100).toFixed(1)}%` : "—";
+const dec = (value?: number | null): string =>
+  typeof value === "number" ? value.toFixed(3) : "—";
+const ci = (value?: number[] | null): string =>
+  Array.isArray(value)
+    ? `${(value[0] * 100).toFixed(1)}–${(value[1] * 100).toFixed(1)}%`
+    : "—";
+
 const locomoRows = [
-  { metric: "Hit@10", at5: "78.3%", at10: "83.2%", highlight: true },
-  { metric: "Evidence Recall", at5: "72.6%", at10: "77.9%" },
-  { metric: "All-Evidence Recall", at5: "—", at10: "72.5%" },
-  { metric: "MRR", at5: "—", at10: "0.642" },
-  { metric: "nDCG@10", at5: "—", at10: "0.656" },
+  {
+    metric: "Hit@10",
+    at5: pct(benchmarksData.locomo?.at5?.hitRate),
+    at10: pct(benchmarksData.locomo?.at10?.hitRate),
+    highlight: true,
+  },
+  {
+    metric: "Evidence Recall",
+    at5: pct(benchmarksData.locomo?.at5?.evidenceRecall),
+    at10: pct(benchmarksData.locomo?.at10?.evidenceRecall),
+  },
+  {
+    metric: "All-Evidence Recall",
+    at5: "—",
+    at10: pct(benchmarksData.locomo?.at10?.allEvidenceRecall),
+  },
+  {
+    metric: "MRR",
+    at5: dec(benchmarksData.locomo?.at5?.mrr),
+    at10: dec(benchmarksData.locomo?.at10?.mrr),
+  },
+  {
+    metric: "nDCG@10",
+    at5: "—",
+    at10: dec(benchmarksData.locomo?.at10?.ndcg),
+  },
 ];
 const longmemevalRows = [
   { metric: "Hit@20", value: "99.4%", highlight: true },
@@ -108,6 +141,25 @@ const longmemevalRows = [
   { metric: "All-Evidence Recall@20", value: "96.4%" },
   { metric: "MRR@20", value: "0.934" },
   { metric: "nDCG@20", value: "0.929" },
+];
+const convomemRows = [
+  {
+    metric: "Hit@10",
+    value: pct(benchmarksData.convomem?.at10?.hitRate),
+    highlight: true,
+  },
+  {
+    metric: "Evidence Recall@10",
+    value: pct(benchmarksData.convomem?.at10?.evidenceRecall),
+  },
+  {
+    metric: "All-Evidence Recall@10",
+    value: pct(benchmarksData.convomem?.at10?.allEvidenceRecall),
+  },
+  {
+    metric: "MRR@10",
+    value: dec(benchmarksData.convomem?.at10?.mrr),
+  },
 ];
 const hotpotRows = [
   { metric: "Hit@10", value: "100%" },
@@ -121,16 +173,119 @@ const haystackRows = [
   { size: "5,000 memories", hit1: "100%", hit10: "100%", p50: "43 ms" },
   { size: "10,000 memories", hit1: "100%", hit10: "100%", p50: "82 ms" },
 ];
-const beamRows = [
-  { category: "Overall (recall@10)", memos: "95.9%", mem0: "64.1%" },
-  { category: "Temporal Reasoning", memos: "97.1%", mem0: "16.3%" },
-  { category: "Contradiction Resolution", memos: "88.6%", mem0: "35.7%" },
-];
-const tokenRows = [
-  { format: "JSON (full objects)", tokens: "5,479", savings: "—" },
-  { format: "Verbose TOON", tokens: "1,522", savings: "72.2%" },
-  { format: "Compact TOON (new)", tokens: "1,229", savings: "77.6%", highlight: true },
-];
+type SpanArm = {
+  hitRate: number;
+  evidenceRecall: number;
+  allEvidenceRecall: number;
+  precision: number;
+  avgRetrieved: number;
+};
+
+const spanArms = (benchmarksData.spans?.arms ?? {}) as Record<string, SpanArm>;
+type QaArm = {
+  answerModel: string;
+  judgeModel: string;
+  accuracy: number;
+  ci: [number, number];
+  tokens: number;
+  errors: number;
+  correct: number;
+  tokensPerCorrect: number;
+};
+const qaArms = (benchmarksData.qaArms?.arms ?? {}) as Record<string, QaArm>;
+const qaArmLabels: Record<string, string> = {
+  noMemory: "Floor — no memory",
+  memory: "Memory — MemOS pack",
+  fullContext: "Ceiling — full context",
+};
+const spanLabels: Record<string, string> = {
+  baseline: "Baseline (top-10 turns)",
+  spansOnly: "Adjacent hits collapsed",
+  interiorFill: "Merge + fill interior",
+  neighbour1Top1: "Expand top-1 by ±1 turn",
+  neighbour1Top3: "Expand top-3 by ±1 turn",
+  neighbour1Top5: "Expand top-5 by ±1 turn",
+  neighbour1: "Expand all top-10 by ±1",
+  neighbour2: "Expand all top-10 by ±2",
+};
+type BeamCategory = {
+  name: string;
+  recall: number;
+  hits: number;
+  total: number;
+  p50: number;
+};
+
+const beamCategories = (benchmarksData.beam?.categories ?? {}) as Record<
+  string,
+  BeamCategory
+>;
+const beamRows = Object.values(beamCategories).map((category) => ({
+  category: category.name,
+  recall: pct(category.recall),
+  hits: `${category.hits}/${category.total}`,
+  p50: `${category.p50} ms`,
+}));
+const beamOverall = pct(benchmarksData.beam?.overallRecall);
+
+type ToonFormat = {
+  chars: number;
+  tokens: number;
+  savingsVsJson: number;
+  improvementVsVerboseToon?: number;
+};
+
+const toon = benchmarksData.toon?.searchResults as
+  | {
+      json: { chars: number; tokens: number };
+      verboseToon: ToonFormat;
+      compactToon: ToonFormat;
+    }
+  | undefined;
+
+const tokenRows = toon
+  ? [
+      {
+        format: "JSON (full objects)",
+        tokens: toon.json.tokens.toLocaleString("en-US"),
+        savings: "—",
+        highlight: false,
+      },
+      {
+        format: "Verbose TOON",
+        tokens: toon.verboseToon.tokens.toLocaleString("en-US"),
+        savings: `${toon.verboseToon.savingsVsJson}%`,
+        highlight: false,
+      },
+      {
+        format: "Compact TOON",
+        tokens: toon.compactToon.tokens.toLocaleString("en-US"),
+        savings: `${toon.compactToon.savingsVsJson}%`,
+        highlight: true,
+      },
+    ]
+  : [];
+const tokenBars = toon
+  ? [
+      {
+        label: "JSON (full objects)",
+        value: 100,
+        display: `${toon.json.tokens.toLocaleString("en-US")} tok`,
+      },
+      {
+        label: "Verbose TOON",
+        value: (toon.verboseToon.tokens / toon.json.tokens) * 100,
+        display: `${toon.verboseToon.tokens.toLocaleString("en-US")} tok`,
+      },
+      {
+        label: "Compact TOON",
+        value: (toon.compactToon.tokens / toon.json.tokens) * 100,
+        display: `${toon.compactToon.tokens.toLocaleString("en-US")} tok`,
+        accent: true,
+        note: `${toon.compactToon.savingsVsJson}% smaller than JSON`,
+      },
+    ]
+  : [];
 
 export default function Benchmarks() {
   return (
@@ -139,12 +294,12 @@ export default function Benchmarks() {
         <PageHeader
           kicker="benchmarks"
           title="Benchmarks"
-          subtitle="Full-dataset LoCoMo, HotPotQA multi-hop, BEAM-1M at production scale, and a 10k-memory haystack — local LFM2.5 embeddings plus a two-stage cross-encoder rerank, reproducible from the repo."
+          subtitle="LongMemEval-S full 500 at K=20, full-dataset LoCoMo, ConvoMem, HotPotQA multi-hop, BEAM-1M, and a 10k-memory haystack — local embeddings and hybrid retrieval, reproducible from the repo."
         />
 
         <Reveal className="mb-12">
           <div id="methodology" className="card p-6 md:p-7 scroll-mt-24">
-            <h2 className="text-sm font-medium text-zinc-200 mb-5">
+            <h2 className="section-title">
               How we benchmark
             </h2>
             <div className="grid sm:grid-cols-2 gap-x-10 gap-y-6 text-[13px] leading-relaxed">
@@ -163,8 +318,9 @@ export default function Benchmarks() {
                   retrieval stack
                 </div>
                 <p className="text-zinc-400">
-                  LFM2.5-Embedding-350M served by llama.cpp, plus a
-                  bge-reranker-v2-m3 two-stage cross-encoder rerank.
+                  LongMemEval-S: nomic-embed-text 768d, contextual
+                  session/date headers, 0.5/0.5 hybrid, top-20. LoCoMo:
+                  bge-small-en-v1.5, no reranker — the checked-in run.
                 </p>
               </div>
               <div>
@@ -172,9 +328,9 @@ export default function Benchmarks() {
                   scoring
                 </div>
                 <p className="text-zinc-400">
-                  Direct evidence-ID matching — no LLM judge, no fuzzy
-                  matching. Ties are reported as ties; comparison baselines run
-                  at their default settings.
+                  Retrieval rows use direct evidence-ID matching — no LLM judge,
+                  no fuzzy matching. The end-to-end QA row names its independent
+                  judge and confidence interval. Ties are reported as ties.
                 </p>
               </div>
               <div>
@@ -194,10 +350,10 @@ export default function Benchmarks() {
         <VerifiedRuns />
 
         <Reveal className="mb-12">
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             LoCoMo · full dataset · retrieval-only evidence matching
           </h2>
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             <table className="data-table">
               <thead>
                 <tr>
@@ -208,7 +364,7 @@ export default function Benchmarks() {
               </thead>
               <tbody>
                 {locomoRows.map((r) => (
-                  <tr key={r.metric} className={r.highlight ? "bg-emerald-500/[0.04]" : ""}>
+                  <tr key={r.metric} className={r.highlight ? "bg-white/[0.04]" : ""}>
                     <td className={r.highlight ? "!text-zinc-100" : ""}>{r.metric}</td>
                     <td className="!text-right tabular-nums text-zinc-300">{r.at5}</td>
                     <td className="!text-right font-medium tabular-nums text-zinc-100">{r.at10}</td>
@@ -219,20 +375,82 @@ export default function Benchmarks() {
           </div>
           <p className="mt-4 text-xs text-zinc-600 leading-relaxed">
             All 10 conversations, 1,986 questions, scored by direct
-            evidence-ID matching — no LLM judge, no fuzzy matching. Stack:
-            LFM2.5-Embedding-350M served by llama.cpp plus a
-            bge-reranker-v2-m3 cross-encoder, both on one RTX 5050 laptop
-            GPU. Per category: single-hop 89.7% Hit@10, multi-hop 86.9%,
-            temporal 85.4%, adversarial 73.3%, open-domain 53.3%. Full run:
-            79.7 minutes end-to-end on that laptop.
+            evidence-ID matching — no LLM judge, no fuzzy matching. This run
+            uses BAAI/bge-small-en-v1.5 with no reranker, which is what
+            `scripts/bench-locomo-noapi-results.json` reproduces. Per category:
+            single-hop 68.4% Hit@10, multi-hop 53.9%, temporal 67.9%,
+            adversarial 70.2%, open-domain 33.7%. An earlier operating point
+            with LFM2.5-Embedding-350M plus a bge-reranker reported 83.2%, but
+            that artifact is not checked in, so it is not claimed here.
+          </p>
+        </Reveal>
+
+        <Reveal className="mb-12" delay={20}>
+          <h2 className="section-title">
+            LoCoMo · span aggregation · post-hoc on the same retrieved lists
+          </h2>
+          <div className="card overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Arm</th>
+                  <th className="!text-right">Hit</th>
+                  <th className="!text-right">Evidence</th>
+                  <th className="!text-right">All evidence</th>
+                  <th className="!text-right">Precision</th>
+                  <th className="!text-right">Turns</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(spanArms).map(([key, arm]) => (
+                  <tr
+                    key={key}
+                    className={key === "neighbour1Top1" ? "bg-white/[0.04]" : ""}
+                  >
+                    <td
+                      className={
+                        key === "neighbour1Top1" ? "!text-zinc-100" : ""
+                      }
+                    >
+                      {spanLabels[key] ?? key}
+                    </td>
+                    <td className="!text-right tabular-nums text-zinc-300">
+                      {(arm.hitRate * 100).toFixed(1)}%
+                    </td>
+                    <td className="!text-right tabular-nums text-zinc-300">
+                      {(arm.evidenceRecall * 100).toFixed(1)}%
+                    </td>
+                    <td className="!text-right tabular-nums text-zinc-300">
+                      {(arm.allEvidenceRecall * 100).toFixed(1)}%
+                    </td>
+                    <td className="!text-right tabular-nums text-zinc-400">
+                      {(arm.precision * 100).toFixed(1)}%
+                    </td>
+                    <td className="!text-right tabular-nums text-zinc-400">
+                      {arm.avgRetrieved.toFixed(1)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-4 text-xs text-zinc-600 leading-relaxed">
+            No re-retrieval and no model calls: the recorded top-10 lists are
+            re-scored after merging adjacent turns. Filling the interior of a
+            span changes nothing — the top-10 hits are already contiguous —
+            but expanding the best hit by one turn on each side adds 5.5pp
+            Hit@10 for 0.7 extra turns and does not lower precision. Expanding
+            every hit adds 13.7pp but nearly doubles the injected context. The
+            recommended default is top-1 expansion; top-3 if the budget
+            allows. Raw artifact: docs/artifacts/locomo-span-aggregation.json.
           </p>
         </Reveal>
 
         <Reveal className="mb-12" delay={30}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             LongMemEval-S · full 500 · retrieval-only · K=20
           </h2>
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             <table className="data-table">
               <thead>
                 <tr>
@@ -244,7 +462,7 @@ export default function Benchmarks() {
                 {longmemevalRows.map((r) => (
                   <tr
                     key={r.metric}
-                    className={r.highlight ? "bg-emerald-500/[0.04]" : ""}
+                    className={r.highlight ? "bg-white/[0.04]" : ""}
                   >
                     <td className={r.highlight ? "!text-zinc-100" : ""}>
                       {r.metric}
@@ -265,15 +483,216 @@ export default function Benchmarks() {
             97% overall Recall@20: MemOS reaches 99.4% Hit@20 and 98.3%
             evidence recall@20. All-evidence recall@20 (every labelled
             evidence session in the top 20) is 96.4%, a stricter secondary
-            metric. Raw run: docs/artifacts/longmemeval-s-full-500-retrieval.json.
+            metric. Retrieval now takes ~1 min for all 500 (down from ~21 min before the namespace index); a warm 100-question rerun is ~20 s, and --fast-ingest cuts setup work with identical scores. Raw run: docs/artifacts/longmemeval-s-full-500-retrieval.json.
+          </p>
+        </Reveal>
+
+        <Reveal className="mb-12" delay={45}>
+          <h2 className="section-title">
+            ConvoMem · 525 sampled / 387 scored · retrieval-only · K=10
+          </h2>
+          <div className="card overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th className="!text-right">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {convomemRows.map((r) => (
+                  <tr
+                    key={r.metric}
+                    className={r.highlight ? "bg-white/[0.04]" : ""}
+                  >
+                    <td className={r.highlight ? "!text-zinc-100" : ""}>
+                      {r.metric}
+                    </td>
+                    <td className="!text-right font-medium tabular-nums text-zinc-100">
+                      {r.value}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-4 text-xs text-zinc-600 leading-relaxed">
+            Salesforce/ConvoMem, one JSON file per evidence category: 525
+            sampled questions, 387 with annotated message evidence and scored;
+            138 abstention/no-answer items cannot be scored by retrieval-only
+            matching. All-minilm 384d, contextual speaker/conversation header,
+            0.5/0.5 fusion, top 10. ConvoMem&apos;s official metric is LLM-judge
+            answer accuracy; this is the deterministic retrieval layer.
+            Reproduce with scripts/download-convomem.ts and
+            scripts/bench-convomem.ts.
+          </p>
+        </Reveal>
+
+        <Reveal className="mb-12" delay={52}>
+          <h2 className="section-title">
+            LongMemEval-S — end-to-end QA — independent judge
+          </h2>
+          <div className="card overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th className="!text-right">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="bg-white/[0.04]">
+                  <td className="!text-zinc-100">Accuracy (n=50)</td>
+                  <td className="!text-right font-medium tabular-nums text-zinc-100">
+                    {pct(benchmarksData.qa?.overall)}
+                  </td>
+                </tr>
+                <tr>
+                  <td>95% interval</td>
+                  <td className="!text-right tabular-nums text-zinc-300">
+                    {ci(benchmarksData.qa?.overallCI)}
+                  </td>
+                </tr>
+                <tr>
+                  <td>Answer model</td>
+                  <td className="!text-right font-mono text-xs text-zinc-400">
+                    {benchmarksData.qa?.answerModel}
+                  </td>
+                </tr>
+                <tr>
+                  <td>Judge model</td>
+                  <td className="!text-right font-mono text-xs text-zinc-400">
+                    {benchmarksData.qa?.judgeModel}
+                  </td>
+                </tr>
+                <tr>
+                  <td>Answer + judge tokens</td>
+                  <td className="!text-right tabular-nums text-zinc-300">
+                    {benchmarksData.qa?.tokens?.toLocaleString("en-US") ?? "—"}
+                  </td>
+                </tr>
+                <tr>
+                  <td>Correct answers</td>
+                  <td className="!text-right tabular-nums text-zinc-300">
+                    {benchmarksData.qa?.correctAnswers ?? "—"} /{" "}
+                    {benchmarksData.qa?.questions ?? "—"}
+                  </td>
+                </tr>
+                <tr>
+                  <td>Tokens per correct answer</td>
+                  <td className="!text-right font-medium tabular-nums text-zinc-100">
+                    {benchmarksData.qa?.tokensPerCorrectAnswer
+                      ? Math.round(
+                          benchmarksData.qa.tokensPerCorrectAnswer,
+                        ).toLocaleString("en-US")
+                      : "—"}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="card mt-4 overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Blended token price</th>
+                  <th className="!text-right">Cost per correct answer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[0.1, 1, 5, 15].map((rate) => {
+                  const perCorrect =
+                    benchmarksData.qa?.tokensPerCorrectAnswer ?? null;
+                  return (
+                    <tr key={rate}>
+                      <td className="font-mono">${rate.toFixed(2)} / 1M tok</td>
+                      <td className="!text-right tabular-nums text-zinc-300">
+                        {perCorrect
+                          ? `$${((perCorrect / 1_000_000) * rate).toFixed(4)}`
+                          : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-4 text-xs text-zinc-600 leading-relaxed">
+            Cost per correct = tokens per correct answer × price / 1,000,000.
+            The prices are examples, not a quoted rate — plug in your
+            provider&apos;s blended input/output price. Tokens are the measured
+            answer and judge total from the run, so the token side is real even
+            where the price is an assumption.
+          </p>
+          <p className="mt-4 text-xs text-zinc-600 leading-relaxed">
+            The retrieval tables above say the evidence was returned. This says
+            a reader could answer from it. DeepSeek V4.1 Flash answers at high
+            reasoning and GLM-5.3 grades — an independent model, not the
+            answerer. A self-judged run (DeepSeek as both) produced the same
+            78.0%, so the result is not judge-inflated. n=50 gives a ±13.9pp
+            interval; treat it as a sanity check, not a leaderboard number. Raw
+            run: docs/artifacts/qa-glm-judge-50.json.
+          </p>
+        </Reveal>
+
+        <Reveal className="mb-12" delay={56}>
+          <h2 className="section-title">
+            Three arms: floor, memory, ceiling
+          </h2>
+          <div className="card overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Arm</th>
+                  <th className="!text-right">Accuracy (n=50)</th>
+                  <th className="!text-right">Tokens</th>
+                  <th className="!text-right">Tokens / correct</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(qaArms).map(([key, arm]) => (
+                  <tr key={key} className={key === "memory" ? "bg-white/[0.04]" : ""}>
+                    <td className={key === "memory" ? "!text-zinc-100" : ""}>
+                      {qaArmLabels[key] ?? key}
+                      <div className="mt-1 font-mono text-[9px] text-zinc-600">
+                        {arm.answerModel} · {arm.errors} errors
+                      </div>
+                    </td>
+                    <td className="!text-right font-medium tabular-nums text-zinc-100">
+                      {`${(arm.accuracy * 100).toFixed(1)}%`}
+                      <div className="font-mono text-[9px] text-zinc-600">
+                        {`${(arm.ci[0] * 100).toFixed(0)}–${(arm.ci[1] * 100).toFixed(0)}%`}
+                      </div>
+                    </td>
+                    <td className="!text-right tabular-nums text-zinc-300">
+                      {arm.tokens.toLocaleString("en-US")}
+                    </td>
+                    <td className="!text-right tabular-nums text-zinc-300">
+                      {Math.round(arm.tokensPerCorrect).toLocaleString("en-US")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-4 text-xs text-zinc-600 leading-relaxed">
+            The floor and ceiling are same-model runs (deepseek-v4-flash:free
+            answering, deepseek-v4.1-flash:free judging, 0 errors): the model
+            knows almost none of the personal facts without memory, and stuffing
+            every haystack session into the prompt only reaches 16% while
+            spending 2.07M tokens. The memory row uses the paid DeepSeek V4.1
+            Flash + GLM-5.3 pair, so <strong>do not subtract the rows</strong> —
+            they bracket the problem, they are not a controlled ablation. A
+            same-model memory run was blocked by free-tier rate limits; that
+            gap is stated rather than papered over.
           </p>
         </Reveal>
 
         <Reveal className="mb-12" delay={60}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             HotPotQA · multi-hop retrieval
           </h2>
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             <table className="data-table">
               <thead>
                 <tr>
@@ -303,10 +722,10 @@ export default function Benchmarks() {
         </Reveal>
 
         <Reveal className="mb-12" delay={100}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+          <h2 className="section-title">
             Memory haystack · precision at scale
           </h2>
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             <table className="data-table">
               <thead>
                 <tr>
@@ -320,7 +739,7 @@ export default function Benchmarks() {
                 {haystackRows.map((r) => (
                   <tr key={r.size}>
                     <td>{r.size}</td>
-                    <td className="!text-right font-medium tabular-nums text-emerald-400">
+                    <td className="!text-right font-medium tabular-nums text-zinc-100">
                       {r.hit1}
                     </td>
                     <td className="!text-right tabular-nums text-zinc-300">{r.hit10}</td>
@@ -340,35 +759,30 @@ export default function Benchmarks() {
         </Reveal>
 
         <Reveal className="mb-12" delay={140}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">
-            BEAM-1M · production scale
+          <h2 className="section-title">
+            BEAM-1M · retrieval at scale
           </h2>
           <BenchmarkChart
-            title="recall @10 · million-token history · higher is better"
+            title="overall recall @15 · million-token history"
             bars={[
               {
                 label: "MemOS",
-                value: 95.9,
-                display: "95.9%",
+                value: (benchmarksData.beam?.overallRecall ?? 0) * 100,
+                display: beamOverall,
                 accent: true,
-                note: "local SQLite + Gemma-300M embeddings",
-              },
-              {
-                label: "Mem0",
-                value: 64.1,
-                display: "64.1%",
-                note: "hosted platform, default settings",
+                note: `local SQLite · top-${benchmarksData.beam?.topK ?? 15}`,
               },
             ]}
-            footnote="BEAM-1M simulates months of agent conversations (~1M tokens). The gap comes from temporal validity and trust scoring — features that only matter once history gets long and messy, i.e. production."
+            footnote="The checked-in artifact reports 100% overall recall@15 over 200 questions, with 20 abstention questions skipped. It is saturated, so we do not present it as a differentiator, and the earlier Mem0 comparator numbers were never checked in — they have been removed."
           />
-          <div className="card overflow-hidden mt-4">
+          <div className="card overflow-x-auto mt-4">
             <table className="data-table">
               <thead>
                 <tr>
                   <th>Category</th>
-                  <th className="!text-right">MemOS</th>
-                  <th className="!text-right">Mem0</th>
+                  <th className="!text-right">Recall</th>
+                  <th className="!text-right">Hits</th>
+                  <th className="!text-right">p50</th>
                 </tr>
               </thead>
               <tbody>
@@ -376,10 +790,13 @@ export default function Benchmarks() {
                   <tr key={r.category}>
                     <td>{r.category}</td>
                     <td className="!text-right text-zinc-100 font-medium tabular-nums">
-                      {r.memos}
+                      {r.recall}
                     </td>
-                    <td className="!text-right text-zinc-600 tabular-nums">
-                      {r.mem0}
+                    <td className="!text-right text-zinc-400 tabular-nums">
+                      {r.hits}
+                    </td>
+                    <td className="!text-right text-zinc-500 tabular-nums">
+                      {r.p50}
                     </td>
                   </tr>
                 ))}
@@ -389,23 +806,17 @@ export default function Benchmarks() {
         </Reveal>
 
         <Reveal delay={220}>
-          <h2 className="text-sm font-medium text-zinc-200 mb-4">Token efficiency</h2>
+          <h2 className="section-title">Token efficiency</h2>
           <BenchmarkChart
             title="tokens per 20 memory entries · lower is better"
-            bars={[
-              { label: "JSON (full objects)", value: 100, display: "5,479 tok" },
-              { label: "Verbose TOON", value: 27.8, display: "1,522 tok" },
-              {
-                label: "Compact TOON",
-                value: 22.4,
-                display: "1,229 tok",
-                accent: true,
-                note: "77.6% smaller than JSON",
-              },
-            ]}
-            footnote="Every memory you inject into a prompt costs tokens. The compact TOON format carries the same facts in roughly a quarter of the space — that's real money back on every request."
+            bars={tokenBars}
+            footnote={
+              toon
+                ? `Measured by scripts/bench-toon-formats.ts over ${benchmarksData.toon?.fixtures ?? 20} fixtures. Compact TOON is ${toon.compactToon.savingsVsJson}% smaller than JSON and ${toon.compactToon.improvementVsVerboseToon}% smaller than verbose TOON.`
+                : "No TOON result artifact is checked in."
+            }
           />
-          <div className="card overflow-hidden mt-4">
+          <div className="card overflow-x-auto mt-4">
             <table className="data-table">
               <thead>
                 <tr>
@@ -416,13 +827,13 @@ export default function Benchmarks() {
               </thead>
               <tbody>
                 {tokenRows.map((r) => (
-                  <tr key={r.format} className={r.highlight ? "bg-emerald-500/[0.04]" : ""}>
+                  <tr key={r.format} className={r.highlight ? "bg-white/[0.04]" : ""}>
                     <td className={r.highlight ? "!text-zinc-100" : ""}>{r.format}</td>
                     <td className="!text-right tabular-nums text-zinc-300">{r.tokens}</td>
                     <td
                       className={`!text-right font-medium tabular-nums ${
                         r.highlight
-                          ? "!text-emerald-400"
+                          ? "!text-zinc-100"
                           : r.savings === "—"
                             ? "text-zinc-600"
                             : "!text-zinc-300"
@@ -445,9 +856,8 @@ export default function Benchmarks() {
             >
               benchmark scripts and datasets live in the repo
             </a>
-            . Local embeddings (LFM2.5-Embedding-350M) and the reranker
-            (bge-reranker-v2-m3) run on the same laptop via llama.cpp — no
-            API keys, no cloud.
+            . Local embeddings and the reranker run on the same laptop — no API
+            keys, no cloud.
           </p>
         </Reveal>
       </div>

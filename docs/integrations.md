@@ -2,8 +2,8 @@
 
 MemOS ships as a **plain stdio MCP server** — the one integration surface
 that Claude Code, Cursor, Windsurf, Cline, OpenCode, Codex CLI, Gemini CLI,
-and every other MCP-capable harness already speak. One command, all 21
-tools, all data in local SQLite.
+and every other MCP-capable harness already speak. One command, all 40
+tools (12 in the default core set), all data in local SQLite.
 
 ```
 npx -y @mem-os/sdk mcp
@@ -23,6 +23,13 @@ enabled. Registration is one line everywhere:
 | **Codex CLI** | `memos connect codex --write` → appends to `~/.codex/config.toml` |
 | **Gemini CLI** | `memos connect gemini --write` → writes `~/.gemini/settings.json` |
 | **Anything else** | `memos connect generic` — prints the `mcpServers` JSON shape |
+
+Workflow platforms use the HTTP API instead of MCP:
+
+| Platform | Connector |
+|---|---|
+| **Dify** | Import [`integrations/dify/memos-openapi.yaml`](../integrations/dify/memos-openapi.yaml) as a custom tool |
+| **n8n** | Import [`integrations/n8n/memos-workflow.json`](../integrations/n8n/memos-workflow.json) |
 
 `memos connect <target>` always *prints* the exact config first; add
 `--write` to write the file (add `--force` to overwrite). A custom store
