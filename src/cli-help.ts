@@ -349,8 +349,9 @@ with pointers to the Troubleshooting Playbook.`,
   connect: `memos connect <target> [--write] [--json]
 
 Register the MemOS MCP server with a coding harness: claude-code, cursor,
-windsurf, cline, opencode, codex, gemini, or generic. --write saves the
-config to the harness.`,
+windsurf, cline, opencode, codex, gemini, hermes, kilo, pi, openclaw, zed,
+goose, or generic. --write saves the config where the harness uses a
+dedicated file; YAML/merged configs are printed for you to paste.`,
   "reindex-embeddings": `memos reindex-embeddings [--purge-stale]
 
 Re-embed all memories with the configured provider. --purge-stale deletes

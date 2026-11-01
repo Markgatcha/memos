@@ -592,6 +592,7 @@ function connectTarget(
   opts: { dbPath?: string; toolNames?: string[] },
 ): ConnectTarget | null {
   const entry = mcpServerEntry(opts.dbPath);
+  const entryEnv = (entry as { env?: Record<string, string> }).env;
   const jsonEntry = JSON.stringify({ mcpServers: { memos: entry } }, null, 2);
   switch (target) {
     case "claude-code":
@@ -718,6 +719,137 @@ function connectTarget(
         fileContents: jsonEntry + "\n",
       };
     }
+    case "hermes": {
+      const env = entryEnv
+        ? `    env:\n${Object.entries(entryEnv)
+            .map(([k, v]) => `      ${k}: "${v}"`)
+            .join("\n")}\n`
+        : "";
+      return {
+        instructions: [
+          "Hermes Agent (Nous Research) - add to ~/.hermes/config.yaml:",
+          "mcp_servers:",
+          "  memos:",
+          '    command: "npx"',
+          '    args: ["-y", "@mem-os/sdk", "mcp"]',
+          env.trimEnd(),
+          "    protocol: auto",
+          "    trust: full",
+          "",
+          "MCP ships with the standard Hermes install. Restart the agent,",
+          "then verify with /mcp or `hermes mcp list`.",
+          "",
+          "Portable package route: Hermes also installs Agent Plugins 1.0.0",
+          "packages. This repo's root plugin.json + mcp.json already match that",
+          "format: `hermes plugins install Markgatcha/memos --no-enable`,",
+          "then enable `memos` in ~/.hermes/config.yaml.",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
+    case "kilo":
+    case "kilo-code":
+    case "kilocode": {
+      const kiloEntry = {
+        type: "local",
+        command: MCP_COMMAND,
+        ...(entryEnv ? { environment: entryEnv } : {}),
+        enabled: true,
+      };
+      const contents = JSON.stringify({ mcp: { memos: kiloEntry } }, null, 2);
+      return {
+        instructions: [
+          "Kilo Code - add to kilo.json (project) or ~/.config/kilo/kilo.json:",
+          contents,
+          "",
+          "Or: memos connect kilo --write  (writes ./kilo.json)",
+          "Kilo uses `mcp` (not mcpServers), a command array, and",
+          "`environment` for env vars. Open Settings -> MCP Servers to verify.",
+        ].join("\n"),
+        configPath: "kilo.json",
+        fileContents: contents + "\n",
+      };
+    }
+    case "pi": {
+      return {
+        instructions: [
+          "Pi - add to ~/.pi/agent/mcp.json (global) or .pi/mcp.json (project):",
+          jsonEntry,
+          "",
+          "Or: memos connect pi --write",
+          "Pi reads mcpServers entries with command/args/env. Type `mcp` under",
+          "`pi config` to confirm the built-in MCP extension is enabled.",
+        ].join("\n"),
+        configPath: join(homeDir(), ".pi", "agent", "mcp.json"),
+        fileContents: jsonEntry + "\n",
+      };
+    }
+    case "openclaw": {
+      const openclawEntry = {
+        mcp: {
+          servers: {
+            memos: {
+              command: MCP_COMMAND[0],
+              args: MCP_COMMAND.slice(1),
+              ...(entryEnv ? { env: entryEnv } : {}),
+              enabled: true,
+            },
+          },
+        },
+      };
+      return {
+        instructions: [
+          "OpenClaw - merge into ~/.openclaw/openclaw.json:",
+          JSON.stringify(openclawEntry, null, 2),
+          "",
+          "MCP servers live under mcp.servers. Keep credentials in the",
+          "environment, not in the JSON. Verify with:",
+          "  openclaw mcp doctor memos --probe",
+          "",
+          "OpenClaw also loads Agent Plugins 1.0.0 bundles (plugin.json +",
+          "mcp.json), which this repo root already provides.",
+        ].join("\n"),
+      };
+    }
+    case "zed": {
+      const zedEntry = {
+        context_servers: {
+          memos: {
+            source: "custom",
+            command: MCP_COMMAND[0],
+            args: MCP_COMMAND.slice(1),
+            ...(entryEnv ? { env: entryEnv } : {}),
+          },
+        },
+      };
+      return {
+        instructions: [
+          "Zed - merge into ~/.config/zed/settings.json:",
+          JSON.stringify(zedEntry, null, 2),
+          "",
+          "Zed calls MCP servers `context_servers` and keeps them in the same",
+          "settings file as the editor. Open Settings -> AI -> MCP Servers and",
+          "watch for a green status dot.",
+        ].join("\n"),
+      };
+    }
+    case "goose": {
+      return {
+        instructions: [
+          "goose - add to ~/.config/goose/config.yaml:",
+          "extensions:",
+          "  memos:",
+          "    type: stdio",
+          '    cmd: "npx"',
+          '    args: ["-y", "@mem-os/sdk", "mcp"]',
+          "    enabled: true",
+          "    timeout: 300",
+          "",
+          "Restart goose and check `goose configure` -> Extensions.",
+        ].join("\n"),
+      };
+    }
     case "generic":
     case "any":
     case "mcp": {
@@ -747,7 +879,7 @@ function connectTarget(
     default:
       console.error(
         "Unknown target. Supported: claude-code, cursor, windsurf, cline, " +
-          "opencode, codex, gemini, generic.",
+          "opencode, codex, gemini, hermes, kilo, pi, openclaw, zed, goose, generic.",
       );
       return null;
   }
@@ -3791,14 +3923,24 @@ async function main(): Promise<void> {
         if (!result) break;
         if (!write) {
           console.log(result.instructions);
-          console.log(
-            "\nRe-run with --write to write the config file directly " +
-              "(add --force to overwrite an existing file).",
-          );
+          if (result.configPath) {
+            console.log(
+              "\nRe-run with --write to write the config file directly " +
+                "(add --force to overwrite an existing file).",
+            );
+          } else {
+            console.log(
+              "\nThis harness merges MCP servers into an existing config; " +
+                "paste the block above rather than replacing the file.",
+            );
+          }
           break;
         }
         if (!result.configPath) {
           console.log(result.instructions);
+          console.log(
+            "\nNo safe whole-file write for this harness. Paste the block above.",
+          );
           break;
         }
         if (existsSyncSafe(result.configPath) && !force) {

@@ -120,6 +120,10 @@
     "download:convomem": "tsx scripts/download-convomem.ts",
     "docs:llms": "node scripts/gen-llms-txt.mjs",
     "docs:llms:check": "node scripts/gen-llms-txt.mjs --check",
+    "docs:coverage": "node scripts/docs-coverage.mjs",
+    "docs:reference": "tsx scripts/gen-docs-reference.ts",
+    "plugin:sync": "node scripts/sync-agent-plugin.mjs",
+    "plugin:check": "node scripts/sync-agent-plugin.mjs --check",
     "check:server-json": "node scripts/check-server-json.mjs"
   },
   "dependencies": {

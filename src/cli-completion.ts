@@ -192,6 +192,12 @@ const POSITIONAL_VALUES: Record<string, string[]> = {
     "opencode",
     "codex",
     "gemini",
+    "hermes",
+    "kilo",
+    "pi",
+    "openclaw",
+    "zed",
+    "goose",
     "generic",
   ],
 };

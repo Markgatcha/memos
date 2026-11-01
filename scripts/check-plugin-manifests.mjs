@@ -18,8 +18,10 @@ const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 
 const manifests = [
   "plugin/plugin.json",
+  "plugin.json",
   "plugin/.claude-plugin/plugin.json",
   "plugin/mcp.json",
+  "mcp.json",
   "plugin/.mcp.json",
   "plugin/hooks/hooks.json",
   ".claude-plugin/marketplace.json",
@@ -47,9 +49,11 @@ for (const relative of manifests) {
 }
 
 const plugin = readJson("plugin/plugin.json");
+const rootPlugin = readJson("plugin.json");
 const claudePlugin = readJson("plugin/.claude-plugin/plugin.json");
 const marketplace = readJson(".claude-plugin/marketplace.json");
 const mcp = readJson("plugin/mcp.json");
+const rootMcp = readJson("mcp.json");
 const claudeMcp = readJson("plugin/.mcp.json");
 const cursorPlugin = readJson(".cursor-plugin/plugin.json");
 const cursorMcp = readJson(".cursor-plugin/mcp.json");
@@ -57,6 +61,7 @@ const geminiExtension = readJson("gemini-extension.json");
 
 for (const [label, value] of [
   ["plugin/plugin.json", plugin?.version],
+  ["plugin.json", rootPlugin?.version],
   ["plugin/.claude-plugin/plugin.json", claudePlugin?.version],
   [
     ".claude-plugin/marketplace.json",
@@ -72,6 +77,7 @@ for (const [label, value] of [
 
 for (const [label, manifest] of [
   ["plugin/mcp.json", mcp],
+  ["mcp.json", rootMcp],
   ["plugin/.mcp.json", claudeMcp],
   [".cursor-plugin/mcp.json", cursorMcp],
   ["gemini-extension.json", geminiExtension],

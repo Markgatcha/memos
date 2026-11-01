@@ -29,6 +29,16 @@ describe("plugin hook manifests", () => {
     expect(commands.join(" ")).toContain("auto-capture.mjs");
   });
 
+  test("root Agent Plugin mirrors the Claude plugin", () => {
+    expect(read("plugin.json")).toBe(read("plugin/plugin.json"));
+    expect(read("mcp.json")).toBe(read("plugin/mcp.json"));
+    for (const skill of ["memos-memory", "memos-maintenance"]) {
+      expect(read(`skills/${skill}/SKILL.md`)).toBe(
+        read(`plugin/skills/${skill}/SKILL.md`),
+      );
+    }
+  });
+
   test("plugin, marketplace, and MCP pins agree with package.json", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
     const plugin = JSON.parse(read("plugin/plugin.json")) as {
