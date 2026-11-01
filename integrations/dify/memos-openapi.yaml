@@ -1,0 +1,135 @@
+openapi: 3.0.3
+info:
+  title: MemOS
+  version: 1.6.27
+  description: Local-first persistent memory over the MemOS HTTP API.
+servers:
+  - url: http://127.0.0.1:7400/api/mem
+    description: Local MemOS server
+security:
+  - bearerAuth: []
+paths:
+  /store:
+    post:
+      operationId: memos_store
+      summary: Store a memory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: Durable fact, preference, or decision.
+                type:
+                  type: string
+                  enum: [fact, preference, context, relationship, entity, custom]
+                  default: fact
+                tags:
+                  type: array
+                  items: { type: string }
+                metadata:
+                  type: object
+                  additionalProperties: true
+                importance:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+      responses:
+        "200":
+          description: Stored memory
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /search:
+    post:
+      operationId: memos_search
+      summary: Search memories
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                query:
+                  type: string
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+                  default: 5
+                tags:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Ranked memories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+  /context-pack:
+    post:
+      operationId: memos_context_pack
+      summary: Build a token-budgeted context pack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                token_budget:
+                  type: integer
+                  minimum: 128
+                  maximum: 1000000
+                  default: 1200
+                namespace:
+                  type: string
+                format:
+                  type: string
+                  enum: [json, toon, toon-compact]
+                  default: json
+      responses:
+        "200":
+          description: Context pack with citations
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /overview:
+    get:
+      operationId: memos_overview
+      summary: What the store knows
+      parameters:
+        - name: namespace
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Counts, namespaces, tags, freshness, trust
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: MEMOS_API_KEY. Omit if the server runs without auth.

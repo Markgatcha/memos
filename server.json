@@ -1,0 +1,50 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.markgatcha/memos",
+  "title": "MemOS",
+  "description": "Local-first memory for AI agents: hybrid recall, provenance, document ingestion, context packs.",
+  "version": "1.6.27",
+  "websiteUrl": "https://context-core.dev/memos",
+  "repository": {
+    "url": "https://github.com/Markgatcha/memos",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@mem-os/sdk",
+      "version": "1.6.27",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "valueHint": "command"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "MEMOS_DB_PATH",
+          "description": "SQLite file location. Defaults to ~/.memos/memos.db.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MEMOS_NAMESPACE",
+          "description": "Namespace for reads and writes. Defaults to default.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MEMOS_API_KEY",
+          "description": "Bearer token for the optional Streamable HTTP transport. Not needed for stdio.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

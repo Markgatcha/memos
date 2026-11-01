@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "memos",
+  "displayName": "MemOS Memory",
+  "version": "1.6.27",
+  "description": "Local-first persistent memory for Cursor: hybrid recall, provenance, document ingestion. SQLite on your machine, no cloud and no API key.",
+  "keywords": [
+    "memory",
+    "mcp",
+    "local-first",
+    "sqlite",
+    "hybrid-recall"
+  ],
+  "author": {
+    "name": "Markgatcha"
+  },
+  "homepage": "https://github.com/Markgatcha/memos",
+  "repository": "https://github.com/Markgatcha/memos",
+  "license": "MIT"
+}
