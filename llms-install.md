@@ -41,7 +41,8 @@ The repository root is also an Agent Plugins 1.0.0 package: `plugin.json`,
 hermes plugins install Markgatcha/memos --no-enable
 # then enable `memos` in ~/.hermes/config.yaml
 
-openclaw plugins install Markgatcha/memos
+# OpenClaw: add the repo root to plugins.load.paths, or install the
+# Agent Plugins bundle through its plugin loader.
 ```
 
 The skills are read-only and namespaced by the host. The MCP server is the
