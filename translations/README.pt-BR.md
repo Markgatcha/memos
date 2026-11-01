@@ -53,11 +53,11 @@ npm install @mem-os/sdk
 
 ### Python (PyPI)
 
-O pacote no PyPI se chama **`mem-os-sdk`** (igual ao `@mem-os/sdk` no npm). Ele encapsula o SDK TypeScript, então você também precisa do Node.js 18+.
+O pacote no PyPI se chama **`mem-os-python`** (igual ao `@mem-os/sdk` no npm). Ele encapsula o SDK TypeScript, então você também precisa do Node.js 18+.
 
 ```bash
-pip install mem-os-sdk
-pip install "mem-os-sdk[all]"   # + LangChain/Ollama adapters
+pip install mem-os-python
+pip install "mem-os-python[all]"   # + LangChain/Ollama adapters
 ```
 
 ### Docker

@@ -40,18 +40,8 @@
 }
 
 :root {
-  --bg: #10140f;
-  --panel: #151a14;
-  --panel-raised: #1a2018;
-  --line: rgba(239, 230, 211, 0.16);
-  --line-soft: rgba(239, 230, 211, 0.09);
-  --ink: #efe6d3;
-  --muted: #b9b1a0;
-  --quiet: #918a7b;
-  --faint: #6f6657;
-  --accent: #cf7b52;
-  --accent-soft: rgba(207, 123, 82, 0.14);
-  --green: #8fae91;
+  --bg: #000000;
+  --line: rgba(255, 255, 255, 0.1);
 }
 
 html {
@@ -74,43 +64,20 @@ body {
 }
 
 ::selection {
-  background: var(--accent);
-  color: #17120e;
-}
-
-:where(a, button, input, textarea, select, summary):focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 3px;
-  border-radius: 1px;
-}
-
-.skip-link {
-  position: fixed;
-  top: -4rem;
-  left: 1rem;
-  z-index: 100;
-  padding: 0.6rem 0.9rem;
-  background: var(--ink);
-  color: var(--bg);
-  font-family: var(--font-mono), monospace;
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
-  transition: top 0.15s ease;
-}
-
-.skip-link:focus {
-  top: 1rem;
+  background: rgba(255, 255, 255, 0.85);
+  color: #000000;
 }
 
 ::-webkit-scrollbar {
   width: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg);
+  background: #000000;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a3026;
-  border: 2px solid var(--bg);
+  background: #1a1a1a;
+  border-radius: 8px;
+  border: 2px solid #000000;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #41483b;
@@ -118,20 +85,34 @@ body {
 
 /* ---------- Backgrounds ---------- */
 
-/* Kept as a no-op hook for pages that still reference the old shell. */
-.dot-grid,
-.top-glow {
-  display: none;
+/* Classic monochrome: no generated backdrop, no warm light. The page is
+   pure black with a restrained white dot grid and a single white glow. */
+.hero-backdrop {
+  background: none;
 }
 
-/* A single vertical margin rule, like a notebook. */
-.margin-rule {
-  background: linear-gradient(
-    to right,
-    transparent calc(50% - 1px),
-    rgba(239, 230, 211, 0.045) calc(50% - 1px),
-    rgba(239, 230, 211, 0.045) 50%,
-    transparent 50%
+/* Subtle dot grid, faded with a radial mask (React Bits "Squares" pattern, restrained) */
+.dot-grid {
+  background-image: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.1) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(
+    ellipse 70% 60% at 50% 0%,
+    black 30%,
+    transparent 75%
+  );
+}
+
+/* Single white glow at the top of the page. */
+.top-glow {
+  background: radial-gradient(
+    ellipse 55% 40% at 50% -8%,
+    rgba(255, 255, 255, 0.055),
+    transparent 70%
   );
 }
 
@@ -193,7 +174,7 @@ body {
 
 .card {
   position: relative;
-  background: var(--panel);
+  background: #050505;
   border: 1px solid var(--line);
   border-radius: 0;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
@@ -201,7 +182,8 @@ body {
 }
 
 .card:hover {
-  border-color: rgba(239, 230, 211, 0.26);
+  border-color: rgba(255, 255, 255, 0.16);
+  background: #0a0a0a;
 }
 
 /* Retired effect: kept so old markup does not break. */
@@ -236,9 +218,8 @@ body {
 }
 
 .btn-primary {
-  background: var(--accent);
-  color: #17120e;
-  border: 1px solid var(--accent);
+  background: #fafafa;
+  color: #000000;
 }
 
 .btn-primary:hover {
@@ -260,7 +241,7 @@ body {
 /* ---------- Terminal / code windows ---------- */
 
 .window {
-  background: #12160f;
+  background: #050505;
   border: 1px solid var(--line);
   border-radius: 0;
   overflow: hidden;
@@ -277,10 +258,10 @@ body {
 }
 
 .window-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 0;
-  background: #3a4034;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: #1a1a1a;
 }
 
 .window-title {

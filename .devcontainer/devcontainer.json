@@ -1,0 +1,19 @@
+{
+  "name": "memos",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "26"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.15"
+    },
+    "ghcr.io/devcontainers/features/common-utils:2": {}
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get upgrade -y && npm install -g pnpm@latest && pnpm install && uv sync",
+  "customizations": {
+    "vscode": {
+      "extensions": []
+    }
+  }
+}

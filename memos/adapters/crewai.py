@@ -6,7 +6,7 @@ Drop it into any CrewAI crew to give all agents persistent, graph-based
 memory with zero configuration.
 
 Installation:
-    pip install mem-os-sdk crewai
+    pip install mem-os-python crewai
 
 Usage:
     from memos.adapters.crewai import MemOSMemory

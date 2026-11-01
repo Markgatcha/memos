@@ -4,11 +4,15 @@
 # --- Stage 1: Build TypeScript SDK ---
 FROM node:22-slim AS ts-build
 WORKDIR /app
-COPY package.json pnpm-lock.yaml* ./
+# pnpm-workspace.yaml carries the packageExtensions (and the allowBuilds
+# list) that pnpm checks against the lockfile's packageExtensionsChecksum.
+# Without it, `install --frozen-lockfile` aborts with
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH.
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* ./
 # Install pnpm without lifecycle scripts: pnpm 12's install.js places a
 # native binary via optional deps, which is fragile in minimal images.
 # bin/pnpm.mjs runs through Node directly and needs no postinstall.
-RUN npm install -g pnpm@12.8.1 --ignore-scripts \
+RUN npm install -g pnpm@12.14.0 --ignore-scripts \
     && node "$(npm root -g)/pnpm/bin/pnpm.mjs" install --frozen-lockfile --ignore-scripts
 COPY tsconfig.json ./
 COPY src/ ./src/
@@ -47,7 +51,9 @@ COPY --from=ts-build /app/dist ./memos/_js
 COPY --from=ts-build /app/package.json ./
 # Native Node deps for the bundled SDK (better-sqlite3 cannot live in a wheel)
 # pnpm was installed with --ignore-scripts, so run it via node directly.
-RUN node /usr/local/lib/node_modules/pnpm/bin/pnpm.mjs add better-sqlite3@^12.11.1 --ignore-scripts
+# The version must match the SDK's own dependency (package.json) — the
+# compiled dist is built against that API and loads this module at runtime.
+RUN node /usr/local/lib/node_modules/pnpm/bin/pnpm.mjs add better-sqlite3@^13.0.3 --ignore-scripts
 
 # Data volume
 VOLUME /root/.memos

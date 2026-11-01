@@ -7,613 +7,188 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added — round-2 agent surfaces
-
-- **Overview and trigger.** `MemOS.overview()` answers "what does this store
-  know" (namespaces, types, tags, freshness, trust) without listing contents;
-  `GET /api/mem/overview` and `memos_overview`. `MemOS.trigger()` ranks
-  procedural lessons for an upcoming task and explains each match; `POST
-  /api/mem/trigger` and `memos_trigger`.
-- **Review queue.** `store(..., { review: true })` holds inferred memories out
-  of recall until `reviewApprove()` / `reviewReject()`; `memos_review` exposes
-  list/approve/reject, and `MemOSConfig.review.autoApproveTags` skips the queue
-  for trusted tags.
-- **Source-scoped deletion.** `forgetSource()` deletes every memory from a
-  file, URL, import id, harness, or source value, writes hash-chained
-  tombstones, and returns proof-of-forgetting certificates.
-  `deletionStatus()` reports present/deleted/unknown. HTTP and MCP parity:
-  `POST /api/mem/forget-source`, `GET /api/mem/deletion-status/{id}`,
-  `memos_forget_source`, `memos_deletion_status`.
-- **Briefs and knowledge pages.** `brief(subject)` returns open/closed items
-  and a rewrite policy; `memos_brief` and `POST /api/mem/brief`. Pages are
-  named queries plus pinned memories, re-rendered on every read with
-  `[mem:...]` citations (`savePage`/`readPage`/`listPages`/`deletePage`,
-  `memos_page`).
-- **Dreaming.** `memos dream` runs consolidation with a report (merged,
-  superseded, archived, conflicts) and `--schedule hourly|daily|weekly`.
-- **AI SDK middleware.** `memosRecallMiddleware()` injects a memory pack before
-  each model call, and the adapter gains an `ingest_documents` tool.
-- **MCP surface.** 40 tools, 12 in the default core set. New: overview,
-  trigger, brief, review, page, forget-source, deletion-status.
-
-
-### Added — default runtime, ANN, diagnostics, LME-V2
-
-- **Zero-native-dependency default embeddings.** `new MemOS()` now uses
-  Model2Vec `potion-base-8M` (256-d, pure JavaScript, ~30 MB static table)
-  instead of a FastEmbed provider that silently degraded to the hash. Ollama,
-  FastEmbed, Voyage, Cohere, OpenAI-compatible, and local-hash remain
-  selectable. `memos init` recommends Model2Vec and explains the accuracy
-  tradeoff.
-- **Working FastEmbed loader.** The transformers runtime is loaded through
-  `createRequire` (its ESM entry fails on Node 26 with an
-  `onnxruntime-common` named-export error); ONNX inference failures now fall
-  back gracefully instead of crashing the process.
-- **True ANN backend.** `semanticScan: "ann"` uses the optional `sqlite-vec`
-  extension with per-model/prefix `vec0` tables, backfill, write updates,
-  delete hooks, and exact fallback when the extension is unavailable.
-- **Structured errors and crash reports.** `MemOSError` codes
-  (`MEMOS_DB_LOCKED`, `MEMOS_PROVIDER_AUTH`, ...), actionable hints, redacted
-  context, `MEMOS_DEBUG=1` stacks, `~/.memos/crash-reports/*.json`, and
-  `memos doctor` surfacing the latest report. JSON failures return an
-  `errorPayload`.
-- **LongMemEval-V2 adapter.** `lme-v2/` contains a single-file Python `Memory`
-  backend + persistent Node bridge, official-normalizer support, trajectory
-  note/procedure/gotcha/event pools, token-budgeted context packs, screenshot
-  evidence, preflight checks, runner, and leaderboard packaging helpers.
-- **MCP tools for the new surfaces.** `memos_handoff`, `memos_audit`,
-  `memos_eval`, and `memos_promote`; `memos_handoff` replaces `memos_usage` in
-  the 10-tool core set, and the full surface is now 32 tools.
-
-### Added — smoothness, accuracy, and audit surfaces
-
-- **`memos demo`** — stores three memories in a temporary database, searches,
-  closes the process, reopens the same file, and proves persistence, then
-  cleans up. `memos init` now reports embedding health with a concrete fix.
-- **`memos handoff "<task>"` / `MemOS.handoff()`** — composes the user profile,
-  a token-budgeted context pack, procedural lessons, reminders, memory health,
-  and harness attribution into a citable Markdown/JSON handoff brief. The
-  Claude Code `SessionStart` hook now uses it instead of `summarize`.
-- **`memos audit` / `MemOS.auditReport()`** — one read-only artifact covering
-  hash-chain verification, provenance/source inventory, the quarantine
-  register, deletion certificates, semantic-search health, and recommendations.
-  `--expect-tip` verifies an externally recorded checkpoint.
-- **`memos eval`** — in-product retrieval evaluation. Self mode samples recent
-  memories and checks whether fragments still retrieve them; corpus mode runs a
-  labelled JSON file and reports Hit@K, MRR, latency, and tokens per hit.
-- **`memos promote` / `MemOS.promoteProcedures()`** — reviews repeated
-  successful recall patterns (from `memos feedback`) as procedure candidates;
-  dry-run by default, `--apply` writes the lessons and skips duplicates.
-- **Model-aware embedding prefixes** — Nomic, E5, BGE, and EmbeddingGemma get
-  their recommended query/document instructions automatically; explicit config
-  wins. Vectors now persist the document prefix, so mixed vector spaces are
-  impossible. Contextual headers are on by default for semantic providers
-  (`contextual: false` / `MEMOS_CONTEXTUAL=0` disables them).
-- **MCP core profile** — 10 daily-loop tools are exposed by default instead of
-  all 28; `MEMOS_MCP_TOOLS=all` restores the full surface, a comma list selects
-  tools, and `none` hides them. This cuts the per-session tool-schema tax.
-- **Pack rerank opt-in** — `contextPack({ rerank: true })` or
-  `experimental.rerank` reranks the narrow head before budget trimming.
-
-### Changed — packaging and release hygiene
-
-- npm `files` is now an allowlist (`dist`, README, LICENSE, UPGRADING). The
-  published tarball drops from 12.8 MB / 38.6 MB unpacked to ~1 MB / ~3.2 MB,
-  and benchmark datasets are no longer redistributed.
-- PyPI documentation and `pyproject.toml` now use the real distribution name,
-  `mem-os-python` (the import package remains `memos`).
-- Added `check:pack` (size/dirty-file gate), `check:versions` (npm/PyPI/README/
-  plugin version parity), and `check:plugin-manifests` (duplicate-key-aware
-  manifest validation). CI runs all three.
-- Fixed `plugin/hooks/hooks.json`: `UserPromptSubmit` was declared twice, so
-  JSON parsing kept `auto-capture.mjs` and silently dropped the per-prompt
-  recall hook.
-
-### Added — recall inspector, outcome-conditioned ranking, memory health
-
-Three surfaces that close the loop between retrieval and results:
-
-- **`memos.explain(query, { memoryId? })`** / `memos_explain` / `memos explain`:
-  ranked candidates with per-leg evidence (`keyword`, `semanticRaw`, `entity`,
-  `graph`, `ppr`, `session`, `rerank`, `provenance`, `outcomeUtility`, ...),
-  lifecycle status, supersede chain, outcome utility, and the relevance-gate
-  verdict. Passing `memoryId` explains why one memory was *not* retrieved
-  (namespace, pool, lifecycle, embedding model mismatch, lexical overlap).
-- **`memos.recordRecallFeedback({ query, used, outcome })`** /
-  `memos_feedback` / `memos feedback`: records which memories an agent actually
-  used and whether the task succeeded. Successful uses get a bounded promotion
-  and failed uses a bounded demotion (`retrieval.outcomeFeedback.weight`,
-  default ±20%). `recallUtility(id).uplift` compares used vs unused batches
-  observationally. Persisted in `recall_batches` + `recall_feedback`; loaded
-  once at `init()`; deleted with `forget()`; ablatable per query with
-  `search({ outcomeFeedback: false })`.
-- **`memos.health()`** / `memos_health` / `memos health`: graded hygiene report
-  covering unresolved contradictions, TTL backlog, low-confidence share,
-  quarantine count, and useful-recall rate, with actionable findings.
-
-CLI help, shell completion, MCP annotations, static tool metadata, API
-reference, and a new `docs/recall-inspector.md` are updated. MCP surface grows
-from 25 to 28 tools.
-
-### Fixed — historical memories leaked through the semantic leg
-
-`querySimilarEmbeddings` did not apply the temporal predicate that the keyword
-and structured paths already applied, so a superseded memory disappeared from
-FTS but could still surface through its embedding. The semantic scan now
-honours `validAt` / `includeHistorical` exactly like `queryNodes`, including
-the `valid_to > now` boundary for a supersession in the same millisecond.
-
-### Added — contextual retrieval on the document side (+10.9pp LoCoMo Hit@10)
-
-`store({ context })` already prepended a line to the embedded text, but nothing
-used it for conversation data. The benchmark harness now writes the session
-header (`session · date · speaker`) and the **previous turn** as context, and
-the SDK can derive the header automatically:
-
-- **`embeddings.contextual: true`** (or `MEMOS_CONTEXTUAL=1`) builds
-  `[session_2 · 7 May 2023 · Caroline]` from `metadata.sessionId` /
-  `timestamp` / `speaker` and embeds it with the node. The stored content and
-  the FTS index stay verbatim, and the header is never returned in results or
-  packs. Suppressed automatically on the deterministic `local-hash` fallback,
-  where header tokens dilute lexical matching (68.0% → 65.5% Hit@10 on one
-  conversation). Requires `reindexEmbeddings()` after switching it on.
-- **Previous-turn context.** A conversational answer rarely repeats the
-  question's wording ("What are your summer plans?" → "Researching adoption
-  agencies"). Passing the previous turn in `context` bridges that gap in the
-  vector. This is the single largest accuracy win measured so far.
-
-LoCoMo retrieval-only, conversations 0-1, 304 questions, `nomic-embed-text`
-768d, top-10, no reranker, 0.5/0.5 fusion (same seed on every leg):
-
-| Pipeline | Hit@10 | EvRec@10 | AllEv@10 | MRR | nDCG@10 |
-|---|---|---|---|---|---|
-| baseline (before this round) | 69.2% | 64.2% | 59.6% | 0.429 | 0.469 |
-| + chronological session neighbours | 72.2% | 67.3% | 62.9% | 0.457 | 0.499 |
-| + contextual header + previous turn | **79.8%** (mean 78.4) | **75.9%** (mean 74.3) | **71.9%** (mean 70.4) | **0.476** | **0.534** |
-
-Three consecutive runs measured 78.1 / 77.2 / 79.8 Hit@10; the table
-shows the best, with the 3-run mean in parentheses. The earlier 80.1 was
-one run at the high end of that spread. At the shipped 0.8/0.2 default the
-same stack moves Hit@10 63.6% → 69.9%, all-evidence 54.3% → 61.6%. Full 10-conversation set (1,982 questions, no
-reranker): Hit@10 **73.5%**, evidence recall **67.7%**, all-evidence **63.0%**,
-nDCG **0.500** in 281 s end-to-end. Artifacts and the exact commands are in
-`docs/benchmark-comparison.md` § "Contextual retrieval".
-
-`memos_store` (MCP) now exposes `context` and a free-form `metadata` object —
-both were accepted internally but missing from the published tool schema, so
-Claude Code and Hermes clients could not use them.
-
-### Performance — 2.5x faster benchmark, O(1) writes, bounded memory
-
-- **Pipelined benchmark ingestion.** The harness now stores turns with a
-  bounded `--ingest-concurrency` (default 16) and explicit `now` timestamps,
-  so chronology is preserved while the embedding queue sees full batches.
-  LoCoMo convs 0-1: end-to-end **80.6 s → 32.2 s**, ingestion **57.7 s →
-  17.0 s** (3.4x). `--ingest-concurrency=1` restores the sequential path.
-- **Write-time contradiction scan is opt-out.** It performs a full vector scan
-  per write; benchmark setup and bulk imports can pass
-  `contradictionScan: false` (`--contradiction-scan` re-enables it in the
-  harness). This was the difference between 30 s and 17 s of ingestion.
-- **Temporal event extraction is opt-out for bulk imports.** `store()` runs
-  an event-update search before every write to resolve "moved to…"/"cancelled"
-  style updates. Historical logs do not need new reminders, so
-  `eventUpdate: false` skips it. On the LongMemEval harness this cut a
-  44-session question from ~22 s to under 1 s and the 100-question setup from
-  17.6 min to 10.4 min.
-- **O(1) mutation logging.** `logMutation` re-read the entire tamper log on
-  every write just to learn the new sequence number. It now uses the entry
-  returned by `appendTamperEntry`. The in-memory time-travel snapshot array is
-  also capped (`MAX_IN_MEMORY_SNAPSHOTS = 2000`) instead of growing forever.
-  Local-hash benchmark ingestion: 6.85 s → 3.66 s for 419 turns.
-- **Session-window cache.** Neighbour expansion re-queried the same session on
-  every search. Windows are cached (namespace + session + historical flag,
-  max 64) and cleared by `invalidateSearchCache` on any write, so a read-heavy
-  agent stops paying one metadata query per seed per query.
-
-### Changed — TypeScript 7.1 beta for the dev toolchain
-
-`@typescript/native` (the `tsc` binary) is now pinned to `typescript@7.1.0-beta`.
-Type-checking this repo drops from **~950 ms to ~466 ms** (2.0x) on the same
-machine, with the full 76-suite test run and `tsc` emit unchanged. The new
-7.1 compiler API entry points (`typescript/sync`, `typescript/ast`, …) are not
-needed by a runtime library; the win here is build speed. No runtime dependency
-was added, and the version is exact, so CI is deterministic. (`typescript`
-itself remains the 6.x bridge for `tsc6`.)
-
-### Plugins — the gains reach Claude Code and Hermes
-
-- Shared `plugin/skills/memos-memory/SKILL.md` now teaches contextual storage:
-  pass `context` (topic/date/previous turn) and `metadata.sessionId` /
-  `timestamp` / `speaker` to `memos_store`. Both harnesses load the same skill
-  file, so the guidance applies to Claude Code and Hermes identically.
-- Both MCP manifests set `MEMOS_CONTEXTUAL=1`, so the session header is added
-  automatically even when the agent only sends metadata.
-- The Claude Code auto-capture hook now passes `--context` with the project
-  folder and session id when it stores an explicit "remember this".
-- `scripts/check-hermes-plugin.py` was crashing on Hermes' newer diagnostic
-  shape (`scope`, not `component`) and silently required `ruamel.yaml`; both
-  fixed, with a clear hint to run it under Hermes' venv. Verified against the
-  real `load_agent_plugin` loader: 2 skills discovered, 0 diagnostics.
-- Plugin manifests bumped to **1.6.27** (`check:plugin` passes).
-
-### Negative results (kept out of the defaults)
-
-Measured on the same 2-conversation protocol, with the contextual stack on:
-
-| Knob | Hit@10 | AllEv@10 | Verdict |
-|---|---|---|---|
-| PRF query expansion (`--query-expansion`) | 73.2% | 63.9% | worse than 74.5 / 65.2 |
-| MMR (`--mmr --mmr-lambda=0.7`) | 72.8% | 63.2% | worse, and p50 191 ms |
-| session-diversity demotion (0.9 penalty) | 76.8% | 67.2% | worse than 78.1 / 70.2 |
-
-The implementation of session diversity was removed rather than shipped as
-dead config. These remain opt-in experiments in the harness.
-
-### Added — LongMemEval at the vendor's reporting depth (Recall@20)
-
-Supermemory's published 97% is **Recall@20 with aggregation** on
-LongMemEval-S. The harness only printed @5/@10, so the repo had no
-like-for-like number. It now computes metrics at an arbitrary K and
-records `metrics.atK` / `perCategoryAtK`.
-
-Protocol: one memory per haystack session (the same retrieval unit the
-vendor uses), `nomic-embed-text` 768d, contextual session/date header,
-0.5/0.5 fusion, no reranker, K=20. Screening sample (100/500):
-
-| Retrieval | Hit@20 | EvRec@20 | AllEv@20 | MRR | nDCG@20 |
-|---|---|---|---|---|---|
-| BM25 only, OR terms | 100.0% | 96.8% | 93.0% | 0.872 | 0.881 |
-| Hybrid AUTO | **100.0%** | **97.6%** | **94.0%** | 0.901 | 0.898 |
-| Hybrid OR | 100.0% | 97.1% | 93.0% | **0.914** | **0.908** |
-
-**Full 500-question set, hybrid AUTO: 99.4% Hit@20, 98.3% evidence
-recall@20, 96.4% all-evidence@20, MRR 0.934, nDCG 0.929.** That is +2.4pp
-hit and +1.3pp evidence recall over Supermemory's published 97% overall
-Recall@20, at the same K and session granularity. Per category (our
-Hit / evidence recall): knowledge-update 100/100, single-session-user
-98.6/98.6, single-session-assistant 100/100, single-session-preference
-96.7/96.7, temporal 99.2/97.2, multi-session 100/97.9. The vendor's
-published rows are 100 / 97 / 100 / 95 / 95 / 96 respectively.
-
-The residual all-evidence misses are multi-session and temporal cases
-where one of 2-6 evidence sessions lands just outside the cut — a
-multi-hop synthesis limit, not a single-fact retrieval failure. The full
-run is resumable (`--db=`); its raw result JSON is committed at
-`docs/artifacts/longmemeval-s-full-500-retrieval.json`.
-
-Harness capabilities added for this: `--no-embeddings` (lexical ceiling),
-`--db=` (resume without re-embedding), `--session-chunk-messages=`
-(chunked ingestion that aggregates back to sessions), `--key-expansion`
-(deterministic fact-sentence summary), `--llm-query-expansion` (LLM
-decomposes a question into sub-queries, fused by RRF), and
-`--ingest-concurrency`.
-
-### Performance — namespace index + sparse semantic candidate selection
-
-Two changes cut the LongMemEval harness from hours to minutes:
-
-- **`idx_nodes_namespace`**. The semantic leg built a join over every
-  embedding row and filtered `nodes.namespace` afterwards; on a 24k-node
-  store that was ~2.5 s per query. The index (created after the namespace
-  migration, so fresh DBs work) plus a two-step namespaced id-select
-  (namespace → node ids → those embeddings) drops the scan to **~6 ms**
-  and a full search to **~80 ms**.
-- **Session expansion is off for session-granular runs.** LongMemEval
-  stores one node per session, so injecting neighboring sessions is pure
-  overhead; `bench-longmemeval` now defaults it off (`--session-expansion`
-  re-enables it for chunked ingestion).
-
-Full-set retrieval: **21 min -> ~1 min**. The 100-question hybrid run
-repeats in ~16-20 s once ingested. --fast-ingest (importRecord, no
-summary/entity/write pipeline) cut 100-question ingestion from 1,071 s to
-786 s with the same **100% Hit@20 / 99.3% evidence recall / 98.0%
-all-evidence**. The harness also supports --model=all-minilm
---dimensions=384 for a smaller-embedder screening run.
-
-### Added — ConvoMem, the third MemoryBench dataset
-
-`scripts/download-convomem.ts` + `scripts/bench-convomem.ts` add the
-Salesforce/ConvoMem dataset (the third benchmark in Supermemory's
-MemoryBench). Retrieval-only message-evidence scoring on a 525-question
-sample (387 scored; 138 abstention items have no evidence message),
-24,696 messages, with `all-minilm`:
-
-**91.0% Hit@10 · 89.4% evidence recall · 87.9% all-evidence · MRR 0.654.**
-
-Per category: user 100, assistant 98.9, abstention 100, changing 89.6,
-preference 74.7, implicit connections 72.2 (Hit@10). ConvoMem's official
-metric is LLM-judge accuracy; this is the deterministic retrieval layer.
-Commands and caveats are in `docs/benchmark-comparison.md`. `--answer`
-optionally runs the MiniMax M3.1 answer/judge path (5-question smoke: 80%,
-9 calls, 5,721 tokens, 0 errors; not a published accuracy claim).
-
-### Added — MiniMax M3.1 as the benchmark answerer/agent
-
-The end-to-end path now runs against **MiniMax-M3.1-Flash** (free tier)
-through OpenRouter / the OpenCode CLI. A smoke run answered and judged
-LongMemEval questions with 29,834 tokens across 3 calls and 0 errors;
-the answer/judge model ids and token usage are written into the results
-file via `scripts/lib/bench-llm.ts`. The model is free, accepts a 1M
-context window (the full retrieved context fits), and the same client
-works for LoCoMo. Note: 2-question accuracy is noise; use the 100/500
-runs for anything citable. The OpenCode npm CLI below 1.19.3 does not
-list M3.1; 1.19.3 does. The `opencode` free key in the local auth store
-was expired, so the working route is OpenRouter's
-`minimax/minimax-m3.1-flash:free`.
-
-### Fixed — the red macOS / Node 24 CI job
-
-The last `main` CI run (39273425850) had exactly one failing job:
-`TypeScript (macos-14, Node 24)` → Test. Build, lint and every other
-matrix leg passed. Three timing assumptions were responsible, and all
-three were tests, not the library:
-
-- `ebbinghaus-reinforcement.test.ts` slept 3 × 400 ms inside one test
-  (plus stores and searches) and tripped Jest's 5 s timeout on the
-  slower macOS runner. The sleeps were cosmetic — the test already
-  calls `flushAccessCounts()` explicitly — so they are now a 10 ms
-  yield to the fire-and-forget bump.
-- `embedding-integration.test.ts` asserted `store()` returned in
-  <60 ms against a 50 ms provider delay: 10 ms of slack for JIT and
-  module warm-up. It now uses a 300 ms provider delay and asserts
-  `< delay`, which proves the same non-blocking property without a
-  wall-clock race.
-- `bench-common.test.ts` proved fallback detection with a Hub model
-  name, so the test needed a network round-trip (and occasionally
-  blew the 5 s timeout when suites ran in parallel). A nonexistent
-  local model path rejects immediately and offline, with the same
-  "pipeline construction failed" fallback.
-
-Also re-ran Prettier over `src/**/*.ts`; `pnpm format:check` passes
-again (six files from the unreleased work were unformatted, which
-would have failed CI independently).
-
-### Fixed — session expansion was injecting the conversation TAIL, not neighbours
-
-Session-neighbour expansion (on by default) used to fetch a seed's session
-siblings in storage order (newest first) and inject up to ten of them at a
-flat `0.85^k` decay. On any conversation longer than ten turns that meant the
-injected block was the *end* of the session — so the answer sitting one turn
-next to the matched query was exactly what fell off the `top-k` edge. The
-mechanism was adding noise and calling it context.
-
-Expansion now orders the session by `createdAt` and injects only the seed's
-chronological ±1 / ±2 neighbours (nearest first, `0.9x` / `0.75x` the seed
-score, six injections max). It is still deterministic and model-free; it just
-injects the turns a conversational answer actually lives in.
-
-Measured on LoCoMo retrieval-only (conversations 0-1, 304 questions,
-`nomic-embed-text` 768d via Ollama, top-10, no reranker):
-
-| Config | Metric | Before | After | Δ |
-|---|---|---|---|---|
-| 0.5 / 0.5 | Hit@10 | 69.2% | **72.2%** | +3.0pp |
-| 0.5 / 0.5 | Evidence recall@10 | 64.2% | **67.3%** | +3.1pp |
-| 0.5 / 0.5 | All-evidence recall@10 | 59.6% | **62.9%** | +3.3pp |
-| 0.5 / 0.5 | MRR | 0.429 | **0.457** | +0.028 |
-| 0.5 / 0.5 | nDCG@10 | 0.469 | **0.499** | +0.030 |
-| 0.8 / 0.2 | Hit@10 | 63.6% | **66.9%** | +3.3pp |
-| 0.8 / 0.2 | All-evidence recall@10 | 54.3% | **58.3%** | +4.0pp |
-| 0.8 / 0.2 | nDCG@10 | 0.452 | **0.476** | +0.024 |
-
-Single-hop is where it lands: Hit@10 64.0% → 71.1% at 0.5/0.5 (+7.1pp),
-because "what did X say" answers are adjacent to the turn that matched.
-Multi-hop all-evidence 2.3% → 7.0%. Temporal gave back two questions
-(90.5% → 87.3%, 2 of 63) — the old tail-dump occasionally happened to
-include a date further away; the net across every category is positive.
-Reproduce with the command in `docs/benchmark-comparison.md`
-§ "Session-neighbour expansion: ordering fix".
-`__tests__/search-upgrades.test.ts` pins the ordering with a nine-turn
-session where only the ±1/±2 neighbours may appear.
-
-### Measured — EmbeddingGemma-2 text-only vs EmbeddingGemma-300M (2026-10-11)
-
-The EmbeddingGemma-2 text stack (Q8, ~310 MB — the official ggml-org
-conversion splits vision/audio into `mmproj-*.gguf`, so the main GGUF
-is the 270M text-only model) was run through the identical LoCoMo
-convs 0-1 protocol as the 300M baseline:
-
-| Metric @10 | EmbeddingGemma-300M | EmbeddingGemma-2 (text) | Δ |
-|---|---|---|---|
-| Hit | 66.9% | 62.9% | −4.0pp |
-| Evidence recall | 61.5% | 58.4% | −3.1pp |
-| Precision | 6.9% | 6.5% | −0.4pp |
-| nDCG | 0.475 | 0.452 | −0.023 |
-| Ingestion | 46s | 97s | 2.1× slower |
-
-The deficit concentrates in multi_hop (55.8 → 41.9 hit@10). Google's
-"+14%" is on **MTEB Code**, a code-retrieval suite — not conversational
-memory recall, where "retains accuracy" is the actual claim. The
-**default recommended embedder stays EmbeddingGemma-300M**; the right
-next experiment for eg2 is a code-index benchmark (MTEB-Code-style or
-the repo's cross-repo bench), not LoCoMo. Full table, per-category
-breakdown, and serve/bench commands: `docs/benchmark-comparison.md`
-§ "EmbeddingGemma-2 — measured, and NOT better on this slice".
-
-Two facts recorded there for whoever re-runs this: the GGUFs declare
-`pooling_type = 1` = **MEAN** (llama.cpp's enum; matches Google's
-`pooling_mode: mean` — no override needed; an earlier draft of the doc
-claimed CLS, retracted), and **`gemma-embedding2` requires llama.cpp
-newer than b11433** — the rolling master builds (`b11559`) load it,
-v0.6.0 and the local `llama-cpp-latest` do not.
-
-### Added — same-protocol vendor benchmark harness (`scripts/bench-vendors.ts`)
-
-The field's published memory scores are not comparable: every vendor
-runs their own embedder, their own judge, their own scoring. This
-harness runs MemOS **and third-party memory SDKs** through the
-identical LoCoMo retrieval-only protocol — same utterances, same
-evidence IDs, same deterministic scoring, the only variable is the
-engine.
-
-```bash
-# MemOS vs Mem0, both on the same embedder:
-npx tsx scripts/bench-vendors.ts --engines=memos,mem0 --convs=2 \
-  --provider=ollama --model=nomic-embed-text --base-url=http://127.0.0.1:11434 \
-  --vendor-embedder=ollama --vendor-model=nomic-embed-text
-```
-
-Fairness rules enforced by the harness:
-
-- **raw ingestion on both sides** — Mem0 runs with `infer=False` (its
-  LLM fact extractor stays off), so a vendor is measured on retrieval,
-  not its write-time extractor;
-- **one embedder or a loud warning** — the embedding stack each engine
-  used is recorded per engine; a mismatch raises a comparability
-  warning in the report AND the JSON;
-- **skip, don't crash** — a vendor whose SDK or server is missing is
-  reported SKIPPED with the reason and the run continues.
-
-The Mem0 leg runs through `scripts/vendor-bridges/mem0_bridge.py`
-(JSON-lines stdio; dia_id sidecar mapping; chroma-local vector store by
-default, qdrant-path with `--vendor-store=qdrant`; `pip install mem0ai`
-required). `createBenchMemos()` was extracted into
-`scripts/lib/bench-common.ts` (together with the LoCoMo dataset types,
-which must NOT be imported from `bench-locomo-noapi.ts` — that module
-runs `main()` on import) so both harnesses build byte-identical MemOS
-configurations.
-
-mem0 2.2.1 traps the bridge handles (documented in
-`docs/benchmark-comparison.md`): the pydantic config key is
-**`embedder`**, not `embeddings` (a wrong key is silently ignored and
-falls back to mem0's OpenAI default); the "ollama" embedder needs the
-`ollama` pip package (missing → silent fallback to the OpenAI client);
-`search()` rejects top-level `user_id` (must be `filters={"user_id":
-...}`); and mem0 2.x runs an **LLM decision step during `add()` even
-with `infer=False`**, so the vendor leg needs a local LLM slot —
-`--vendor-llm-url` points it at llama.cpp (minicpm5 works; see the
-benchmark doc for the reproduce block). The bridge also scrubs
-`OPENAI_*`/`ANTHROPIC_*` env vars so a local gateway cannot hijack that
-slot.
-
-### Measured — first same-protocol run: MemOS vs Mem0 (2026-10-11)
-
-LoCoMo convs 0-1, 304 questions, top-10, identical protocol (raw
-ingestion both sides, same `nomic-embed-text` embedder, evidence-ID
-scoring). Headline @10 is a **statistical tie** — hit 65.6% both,
-evidence recall 60.6 vs 61.2, precision 6.9 vs 7.0 — but the
-per-category split is the story: **MemOS +16.9pp on adversarial**
-(62.0 vs 45.1 — the trust/quarantine machinery earning its keep),
-mem0 ahead on single_hop (67.5 vs 59.6) and open_domain (63.6 vs 54.5,
-n=11, noise). MRR/nDCG favor MemOS. Full table + caveats: see
-`docs/benchmark-comparison.md` § "First same-protocol run". The honest
-next step is the full 10-conversation matrix on Kaggle Phase A.
-
-### Added — one-call user profile (`memos.profile()`, `memos_profile`, `memos profile`)
-
-The "who am I talking to" block, in one call. `profile()` returns a
-maintained slice of the store — `static` (durable preferences, entities
-and facts, ranked by trust → importance → recency) plus `dynamic`
-(recent activity inside a recency window) — cached for
-`profile.cacheTtlMs` (default 30s) and cleared by any write.
-
-```ts
-const { static: who, dynamic: recent } = await memos.profile();
-await memos.profile({ query: "deploy", scope: { user: "alice" } });
-```
-
-Surfaces: TS SDK `memos.profile(opts?)`, MCP tool `memos_profile`
-(input `query`/`max_static`/`max_dynamic`/`recent_days`/`namespace`/`scope`),
-CLI `memos profile` (with `--json`). Defaults come from
-`MemOSConfig.profile` (`maxStatic` 25 / `maxDynamic` 10 / `recentDays` 7).
-
-### Added — preset factories (`MemOS.chatbot()`, `.codingAgent()`, `.researchBot()`)
-
-Named, embedder-independent config bundles: `MemOS.chatbot({ dbPath })`
-or `new MemOS({ preset: "chatbot" })`. Presets set the store bound, the
-embedding-queue width, and the measured precision knobs (relevance
-gate + MMR — see below); caller fields override the bundle, and
-`retrieval` / `embeddingQueue` merge key-by-key. The bundles are
-exported as `MEMOS_PRESET_CONFIGS` for programmatic use.
-
-### Added — MMR diversification (`applyMmr`, `filter.mmr`, `retrieval.mmr`)
-
-Maximal Marginal Relevance re-selects the retrieval head so
-near-duplicate memories stop crowding out distinct evidence: a top-10
-of ten paraphrases has hit@10 = 1 and precision@10 = 0.1 — the recall
-metrics celebrate while the context window is 90% noise.
-
-```ts
-const results = await memos.search({ query: "deploy", mmr: 0.6 });
-```
-
-Similarity is token-Jaccard over summary + content — deterministic, no
-embedding call, so it also works on the keyword-only path. Off by
-default (`retrieval.mmr = { enabled: true, lambda: 0.5 }`), runs after
-the relevance gate so it can never resurrect a trimmed candidate, and
-the top result is always kept. Bench ablation:
-`--gate`, `--relevance-ratio=`, `--abstain-similarity=`, `--mmr`,
-`--mmr-lambda=`, and `--out=` (keep experiments off the committed
-baseline artifact) are now shared by every benchmark script.
-
-### Measured — EmbeddingGemma-300M beats LFM2.5-350M at 46% of the file size
-
-Same protocol (LoCoMo convs 0-1, 302 questions, retrieval-only evidence-ID
-matching, 0.5/0.5 fusion, candidate depth 100, no reranker, asymmetric
-prefixes applied on both stacks), local GPU:
-
-| Metric @10 | LFM2.5-350M-BF16 (711 MB) | EmbeddingGemma-300M-Q8 (328 MB) | Δ |
-|---|---|---|---|
-| Hit | 57.9% | **66.9%** | +8.9pp |
-| Evidence recall | 54.0% | **61.5%** | +7.5pp |
-| All-evidence recall | 50.7% | **56.6%** | +6.0pp |
-| Precision | 5.9% | **6.9%** | +1.0pp |
-| MRR | 0.398 | **0.447** | +0.049 |
-| nDCG | 0.421 | **0.475** | +0.054 |
-
-Reproduce:
-
-```bash
-llama-server -m embeddinggemma-300m-q8_0.gguf --embedding --ctx-size 4096 \
-  -b 4096 -ub 2048 --parallel 4 -ngl 99 -fa on --embd-normalize 2 \
-  --port 8080 --host 127.0.0.1
-npx tsx scripts/bench-locomo-noapi.ts --convs=2 --topk=10 \
-  --provider=openai-compatible --base-url=http://127.0.0.1:8080/v1 \
-  --model=embeddinggemma-300m-q8_0 --dimensions=768 \
-  '--query-prefix=task: search result | query: ' \
-  '--document-prefix=title: none | text: ' \
-  --keyword-weight=0.5 --semantic-weight=0.5 --candidate-depth=100
-```
-
-The smaller Gemma model is also the better one on this corpus — the
-published headline numbers are a floor, not a ceiling. Run the new
-stack on the full 10-conversation set (Kaggle Phase A) before changing
-the README table.
-
-### Measured — what actually moves precision@10 (LoCoMo convs 0-1, 302 questions)
-
-Recorded here because the result was NOT what the roadmap predicted —
-all runs below use the SAME protocol (0.5/0.5 fusion, candidate depth
-100, no reranker, asymmetric prefixes applied):
-
-| Config (EmbeddingGemma-300M-Q8) | Hit@10 | EvRec@10 | Prec@10 |
-|---|---|---|---|
-| fused only | 66.9% | 61.5% | 6.9% |
-| + MMR (λ 0.5) | 66.6% | 61.4% | 6.9% |
-| + semantic dedup | 67.5% | 62.1% | 7.0% |
-| + relevance gate (ratio 0.25) | 67.9% | 62.1% | 7.1% |
-
-Post-hoc re-ranking of an already-fused list does not move precision on
-this corpus — the fused score distribution is too flat for the tail
-trimmer to bite, and with a small embedder everything is semantically
-near-equidistant, so MMR trades evidence for paraphrases. Dedup and the
-gate are small positives. **The precision lever is upstream of the
-gate: the cross-encoder reranker (+12.9pp Hit@10 in the convs 0-1
-ablation) and ingestion grooming (grouping, dedup).** An early draft of
-this entry compared prefix-applied and prefix-less runs (the trailing
-space of `--query-prefix=` was lost to shell word-splitting — use a
-bash array, not a string); the table above is the corrected, single-
-protocol data. `docs/benchmark-comparison.md` records the full matrix
-and the implication for F4 ("treat reranking as a first-class stage
-rather than an option").
-
-### Changed — MCP tool surface: 25 tools (was 24)
-
-`memos_profile` joins after `memos_search` (read-only annotations).
-The annotations/protocol tests assert the count and order as a
-contract, so they were updated in the same commit.
-
-### Added — image memory (vision)
+### Changed — Faster Docker CI
+
+The Docker Build job is rebuilt around Buildx and the GitHub Actions layer
+cache. The image itself is unchanged — same Dockerfile, same layers, same
+contents — but a rebuild no longer redoes the expensive steps.
+
+- **GitHub Actions layer cache** (`type=gha`, scope `memos-ci`). A rebuild
+  after a source-only change reuses every unchanged layer, so the `pnpm
+  install` and the `pip install` do not run again. `mode=max` is required:
+  the default `min` caches only the final stage and would discard the
+  `ts-build` stage, which is where the dependency install happens.
+  `ignore-error=true` keeps a cache export failure (quota, or the
+  read-only cache scope some pull-request events get) from failing an
+  otherwise-good build.
+- **`.dockerignore`** (new). The Dockerfile copies eight paths; everything
+  else was still being sent to the daemon and hashed on every build. The
+  context drops from **40 MB to 1.6 MB** in CI, and from **1.6 GB to
+  1.6 MB** for a local build once `node_modules/` and `website/` exist.
+- **Health check polls instead of `sleep 5`.** The container is probed
+  every second and the job returns as soon as `/health` answers, rather
+  than always paying a fixed 5 s. The timeout is now 60 s, and a container
+  that exits early fails immediately with its logs instead of polling a
+  dead port.
+- BuildKit cache mounts were considered and deliberately left out: they are
+  not exported by `cache-to`, so they would only help within a single
+  build while adding a cross-filesystem copy penalty to the `pnpm install`
+  layer. Layer caching covers the same ground.
+
+Measured on the same commit, `ubuntu-26.04`, 22-job run:
+
+| | cold (empty cache) | warm (all layers hit) |
+|---|---|---|
+| `Build Docker image` | 210 s | 48 s |
+| Docker Build job | 3.9 min | 1.3 min |
+
+The 48 s that remains is the cache import plus exporting the finished image
+into the Docker daemon so the container can actually be started; that work
+cannot be cached away.
+
+### Changed — Faster CI: the remaining jobs
+
+- **Coverage is produced once, not nine times.** `pnpm test --ci --coverage`
+  ran on every cell of the 3 × 3 TypeScript matrix, but nothing ever read the
+  output — no artifact upload, no Codecov, no `coverageThreshold` — and the
+  instrumentation roughly doubles the work: the full suite takes **108 s
+  without `--coverage` and 222 s with it** (60 suites, 1002 tests) and writes
+  31 MB of report files. Coverage is neither OS- nor Node-version-dependent,
+  so it now runs on one cell (`ubuntu-26.04` + Node 26) and `lcov.info` is
+  uploaded as an artifact. **Every test still runs on all nine cells** —
+  only the instrumentation is deduplicated.
+- **The native-deps pnpm store cache is removed — it never worked.** It
+  declared `~/.local/share/pnpm/store` on the *runner*, while `pnpm install`
+  runs inside the distro container, where `@pnpm/store-path` resolves the
+  location itself from hardlink topology (it lands on the pnpm home dir when
+  the project is itself a mountpoint, as `/repo` is). Mounting that path and
+  re-keying still saved an empty entry, and job logs are not reachable from
+  this environment to diagnose further, so the step is gone rather than left
+  in place pretending to cache: these three jobs keep re-downloading their
+  dependency tree, which is what they have always actually done. A working
+  version needs the store pinned inside the container and confirmed with
+  `pnpm store path`. `.pnpm-store/` is now gitignored regardless, since pnpm
+  may place it at a filesystem root.
+- **`retrieval-eval` no longer clones full history.** It passed
+  `fetch-depth: 0`, but the script only shells out to `git rev-parse HEAD` to
+  stamp the report's provenance, and `--check` compares recall@5 / MRR
+  against the committed baseline JSON, never against git.
+
+Measured across two runs of the same 22-job workflow:
+
+| | before | after |
+|---|---|---|
+| `Test` step, the 8 non-coverage cells | 54–117 s | 17–47 s |
+| `Test` steps, all 9 cells combined | 751 s | 251 s |
+| TypeScript matrix (runner-time) | 18.9 min | 12.2 min |
+| Whole workflow (runner-time) | 25.9 min | 18.9 min |
+
+Wall-clock is now dominated by Windows runner variance rather than by the
+test suite: the same `windows-latest` cell measured 94 s, 101 s and 203 s
+across three runs of identical code.
+
+### Changed — Formatter: Prettier → `bun fmt`
+
+The repo now formats with **Bun's built-in formatter** (`bun fmt`) instead of
+the `prettier` package. `prettier` is removed from `devDependencies`.
+
+- **Output is unchanged.** `bun fmt` is Prettier-compatible and reads
+  `.prettierrc`; this repo has no Prettier config, so Bun's defaults apply —
+  and they match Prettier's defaults. Verified byte-for-byte against Prettier
+  3.9.10 over the repo's own sources: **233 of 240 files identical**, the 7
+  differences being minified vendor assets under
+  `scripts/dataset/locomo/static/`, which Prettier reformats and `bun fmt`
+  skips.
+- **~97× faster.** `bun fmt --check src` takes ~170 ms where
+  `prettier --check "src/**/*.ts"` took ~16.5 s on the same 61 files.
+- `format` / `format:check` now run `bun fmt src` / `bun fmt --check src`.
+  The scope is unchanged: `src/` holds 61 `.ts` files and nothing else, so
+  the old `src/**/*.ts` glob and the new directory argument select the same
+  set.
+- The pre-commit hook formats with `bun fmt` instead of `npx prettier`.
+- **Bun's version is pinned in `.bun-version`** (1.4.4) and CI installs it
+  with `oven-sh/setup-bun`. Formatting is neither OS- nor
+  Node-version-dependent, so it moved out of the Node 22/24/26 matrix into
+  its own job with a single runner.
+- `bun fmt` deliberately keeps a few inputs Prettier mangles — `font-family:
+  Font\ Awesome` would otherwise become `Font\Awesome` (a hex escape), and
+  `x |b` would become a namespace selector instead of a descendant. `bun fmt
+  --debug-check` re-parses each file after formatting and fails if the
+  meaning changed.
+
+### Changed — Dropped `oxlint-tsgolint`
+
+`oxlint-tsgolint` is removed from `devDependencies`. It was installed but
+never used: `.oxlintrc.json` sets `"typeAware": false`, and all 7 configured
+rules are syntactic. Enabling type-aware linting was measured to produce
+**zero additional findings** on this codebase at ~11× the runtime
+(1399 ms vs 126 ms over `src` + `scripts` + `__tests__`), so the dependency
+bought nothing. `oxlint` still declares it as an *optional* peer, and with
+it no longer a direct dependency pnpm does not install it at all.
+
+### Changed — TypeScript 7.1 beta (temporary)
+
+The native TypeScript 7 compiler moves from 7.0.2 to **7.1.0-beta**
+(`@typescript/native` in the SDK, `typescript` in the website). This is a
+trial run of the beta and is expected to be reverted once 7.1 ships.
+
+- The build is ~20% faster on this repo (1.6 s vs 2.0 s for a clean
+  `tsc` over `src/`).
+- The emitted JavaScript and `.d.ts` files are **byte-identical** to the
+  7.0.2 output; only the sourcemaps differ, by the addition of an empty
+  `sourceRoot` field. The output size is unchanged — the size win of
+  TypeScript 7 is in the compiler itself (5.7 MB for the 7.1 beta versus
+  24 MB for the JavaScript `tsc`), not in the code it emits.
+- The version is pinned exactly (`7.1.0-beta`) rather than a caret range:
+  `^7.1.0-beta` resolves to a `7.1.0-dev.*` build, not the beta.
+
+### Changed — Dependency refresh
+
+All dependency manifests are updated to their latest releases:
+
+- **JavaScript** (`package.json`, `pnpm-lock.yaml`, `package-lock.json`):
+  `oxlint` 1.88.0 → 1.89.0, plus transitive refreshes.
+- **Website** (`website/package.json`, `website/pnpm-lock.yaml`):
+  `lucide-react` 1.59.0 → 1.60.0, `postcss` 8.5.30 → 8.5.31.
+- **Python** (`pyproject.toml`, `uv.lock`): `fastapi` 0.148.0 → 0.157.0
+  (pulls `starlette` 1.9.0), plus `certifi` 2026.10.19, `httpcore2` 2.16.0,
+  `httpx2` 2.16.0, `langchain-protocol` 0.0.20.
+- **Tooling pins**: the Dockerfile and the native-deps CI matrix installed
+  `pnpm@12.8.1` while `packageManager` declares `12.14.0` — both now pin
+  `12.14.0`. The Docker image also installed `better-sqlite3@^12.11.1` for
+  the bundled SDK while the SDK itself is built against `better-sqlite3`
+  13.x; the runtime copy is now `^13.0.3` so the two match.
+- **GitHub Actions**: `actions/download-artifact` v4 → v8 in the prebuilds
+  workflow; every other action was already on its latest major.
+
+### Fixed
+
+- **Real semantic embeddings no longer silently degrade to the local-hash
+  fallback.** `@huggingface/transformers` imports `onnxruntime-common`
+  without declaring it, so the copy it resolved depended on what the
+  package manager hoisted — here `1.14.0`, dragged in by the legacy
+  `@xenova/transformers` peer. That build is CJS-only, so the import threw
+  `does not provide an export named 'Tensor'` (and, under Jest's interop,
+  produced a `Tensor` class the `onnxruntime-node` native binding rejected
+  with `Tensor.location must be a string`). The SDK swallowed both and fell
+  back to the deterministic local hash, so semantic search silently
+  returned keyword-grade results. A `packageExtensions` entry in
+  `pnpm-workspace.yaml` now pins transformers to the `onnxruntime-common`
+  version matching its own `onnxruntime-node`, and the fallback reason
+  reports the actual import failure instead of claiming the package is
+  "not installed".
+- **Flaky `dashboard` test failure (CI `Test` step).** `__tests__/tamper-log.test.ts`
+  built `MemOS` without an embeddings configuration, so it used the default
+  fastembed provider: every `store()` downloaded a ~90 MB model and ran
+  ONNX inference in a fire-and-forget promise that outlived the test file.
+  The resulting CPU load (and the `Cannot log after tests are done` noise)
+  starved the other suites until the dashboard test exceeded its 5 s
+  timeout. The tamper-log tests now use the deterministic local-hash
+  provider, like the rest of the hermetic suites.
+
+## [1.6.27] - 2026-10-13
+
+### Added — Image memory (vision)
 
 Images are now first-class memories. An image memory is an **ordinary
 memory node** whose `content` is a caption, plus the bytes in a
@@ -1125,6 +700,10 @@ dead on exactly the installs that opted into it
 - **Dependabot ignore rules** — added `ignore` entry for `better-sqlite3` major version bumps (v13 has breaking native-build changes). `oxlint-tsgolint` is now updated to latest (7.0.2001).
 - **Debian (trixie, latest stable) added to the native-deps matrix** — alongside Fedora, Arch, and openSUSE, so the SQLite native build is exercised on Debian's current stable release.
 
+### Changed — packaging
+
+- **PyPI distribution name** — `mem-os-sdk` could not be created: PyPI's confusable-name check flags it as too similar to the pre-existing `memos-sdk` project (the comparison is punctuation-insensitive, so `mem-os-sdk` and `memos-sdk` read as the same name). The first PyPI release therefore ships as **`mem-os-python`** (`pip install mem-os-python`). The npm distribution stays `@mem-os/sdk` and the Python import name stays `memos`.
+
 ## [1.6.26] - 2026-06-17
 
 Stable v1.6.26 release. Adds the background embedding queue, HTTP+SSE MCP transport, three new embedding providers, memory consolidation, the CLI REPL, cross-OS perf hardening, AI Trio context packs, MCP 2025-06-18 compliance, and a retrieval-quality benchmark.
@@ -1397,7 +976,8 @@ All experimental features gated behind `experimental` config object:
 - GitHub Actions CI (lint + test + typecheck)
 - README, LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY docs
 
-[Unreleased]: https://github.com/Markgatcha/memos/compare/v1.6.26...HEAD
+[Unreleased]: https://github.com/Markgatcha/memos/compare/v1.6.27...HEAD
+[1.6.27]: https://github.com/Markgatcha/memos/compare/v1.6.26...v1.6.27
 [1.6.26]: https://github.com/Markgatcha/memos/compare/v1.5.0...v1.6.26
 [1.5.0]: https://github.com/Markgatcha/memos/compare/v1.5.0-beta.1...v1.5.0
 [1.5.0-beta.1]: https://github.com/Markgatcha/memos/compare/v0.1.1...v1.5.0-beta.1

@@ -44,6 +44,35 @@ describe("FastEmbedEmbeddingProvider", () => {
     expect(p.dimensions).toBe(768);
   });
 
+  test("@huggingface/transformers imports cleanly in a plain ESM process", () => {
+    // Regression test for a broken transitive resolution.
+    //
+    // @huggingface/transformers does `import { Tensor } from
+    // "onnxruntime-common"` without declaring it, so the version it
+    // resolves depends on what the package manager hoists. When the
+    // hoisted copy is an older CJS-only build (1.14.0, pulled in by the
+    // legacy @xenova/transformers peer) the import throws
+    // "does not provide an export named 'Tensor'" — and the SDK silently
+    // degraded to its local-hash fallback instead of loading the model.
+    //
+    // A plain `node --input-type=module` process is used on purpose: it
+    // is the environment where the failure is visible. Jest's own module
+    // interop papers over the missing named export.
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        "await import('@huggingface/transformers'); console.log('imported');",
+      ],
+      { encoding: "utf8", timeout: 120_000 },
+    );
+
+    expect(result.stderr).not.toMatch(/onnxruntime-common/);
+    expect(result.stdout.trim()).toBe("imported");
+    expect(result.status).toBe(0);
+  }, 180_000);
+
   test("real pipeline: embed/batchEmbed are normalized, 384-d, deterministic", () => {
     // Spawned process: the onnxruntime backend builds tensors in Node's
     // own realm, and jest's VM realm has a different Float32Array

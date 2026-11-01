@@ -53,11 +53,11 @@ npm install @mem-os/sdk
 
 ### Python（PyPI）
 
-PyPI 上的包名为 **`mem-os-sdk`**（与 npm 的 `@mem-os/sdk` 对应）。它封装了 TypeScript SDK，因此还需要 Node.js 18+。
+PyPI 上的包名为 **`mem-os-python`**（与 npm 的 `@mem-os/sdk` 对应）。它封装了 TypeScript SDK，因此还需要 Node.js 18+。
 
 ```bash
-pip install mem-os-sdk
-pip install "mem-os-sdk[all]"   # + LangChain/Ollama adapters
+pip install mem-os-python
+pip install "mem-os-python[all]"   # + LangChain/Ollama adapters
 ```
 
 ### Docker

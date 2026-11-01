@@ -32,7 +32,7 @@
  * @module @memos/vision/clip
  */
 
-import { normalizeVector } from "../embeddings.js";
+import { describeError, normalizeVector } from "../embeddings.js";
 import type { EmbedImageProvider, EmbeddingVector } from "../types.js";
 
 /** Default CLIP model — ViT-B/32, 512-d image space. */
@@ -131,24 +131,48 @@ export class ClipEmbeddingProvider implements EmbedImageProvider {
     if (this.resolveAttempted) return;
     this.resolveAttempted = true;
     try {
+      // A package that is installed but fails to load (broken transitive
+      // resolution, a native module that will not build) must not be
+      // reported as "not installed" — the real cause is what the operator
+      // needs to see.
       const mod = (await import("@huggingface/transformers" as string).catch(
-        () => null,
+        (err: unknown) => ({ error: err }),
       )) as {
         pipeline: (task: string, model: string) => Promise<unknown>;
         RawImage?: { read(input: unknown): Promise<RawImageLike> };
+        error?: unknown;
       } | null;
       const legacyMod = mod
         ? null
         : ((await import("@xenova/transformers" as string).catch(
-            () => null,
+            (err: unknown) => ({ error: err }),
           )) as {
             pipeline: (task: string, model: string) => Promise<unknown>;
             RawImage?: { read(input: unknown): Promise<RawImageLike> };
+            error?: unknown;
           } | null);
-      const resolved = mod ?? legacyMod;
-      if (!resolved || typeof resolved.pipeline !== "function") {
+      const resolved =
+        mod && typeof mod.pipeline === "function"
+          ? mod
+          : legacyMod && typeof legacyMod.pipeline === "function"
+            ? legacyMod
+            : null;
+      if (!resolved) {
+        const failures: string[] = [];
+        if (mod && "error" in mod) {
+          failures.push(
+            `@huggingface/transformers failed to load: ${describeError(mod.error)}`,
+          );
+        }
+        if (legacyMod && "error" in legacyMod) {
+          failures.push(
+            `@xenova/transformers failed to load: ${describeError(legacyMod.error)}`,
+          );
+        }
         this.failureReason =
-          "neither @huggingface/transformers nor @xenova/transformers is installed";
+          failures.length > 0
+            ? failures.join("; ")
+            : "neither @huggingface/transformers nor @xenova/transformers is installed";
         return;
       }
       const pipeline = await resolved.pipeline(

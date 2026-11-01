@@ -161,6 +161,13 @@ const convomemRows = [
     value: dec(benchmarksData.convomem?.at10?.mrr),
   },
 ];
+const longmemevalRows = [
+  { metric: "Hit@20", value: "99.4%", highlight: true },
+  { metric: "Evidence Recall@20", value: "98.3%" },
+  { metric: "All-Evidence Recall@20", value: "96.4%" },
+  { metric: "MRR@20", value: "0.934" },
+  { metric: "nDCG@20", value: "0.929" },
+];
 const hotpotRows = [
   { metric: "Hit@10", value: "100%" },
   { metric: "Evidence Recall@10", value: "96.3%" },
@@ -294,7 +301,7 @@ export default function Benchmarks() {
         <PageHeader
           kicker="benchmarks"
           title="Benchmarks"
-          subtitle="LongMemEval-S full 500 at K=20, full-dataset LoCoMo, ConvoMem, HotPotQA multi-hop, BEAM-1M, and a 10k-memory haystack — local embeddings and hybrid retrieval, reproducible from the repo."
+          subtitle="LongMemEval-S full 500 at K=20, full-dataset LoCoMo, HotPotQA multi-hop, BEAM-1M, and a 10k-memory haystack — local embeddings and hybrid retrieval, reproducible from the repo."
         />
 
         <Reveal className="mb-12">
@@ -320,7 +327,8 @@ export default function Benchmarks() {
                 <p className="text-zinc-400">
                   LongMemEval-S: nomic-embed-text 768d, contextual
                   session/date headers, 0.5/0.5 hybrid, top-20. LoCoMo:
-                  bge-small-en-v1.5, no reranker — the checked-in run.
+                  LFM2.5-Embedding-350M plus a bge-reranker-v2-m3
+                  two-stage cross-encoder.
                 </p>
               </div>
               <div>
@@ -685,6 +693,47 @@ export default function Benchmarks() {
             they bracket the problem, they are not a controlled ablation. A
             same-model memory run was blocked by free-tier rate limits; that
             gap is stated rather than papered over.
+          </p>
+        </Reveal>
+
+        <Reveal className="mb-12" delay={30}>
+          <h2 className="text-sm font-medium text-zinc-200 mb-4">
+            LongMemEval-S · full 500 · retrieval-only · K=20
+          </h2>
+          <div className="card overflow-hidden">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th className="!text-right">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {longmemevalRows.map((r) => (
+                  <tr
+                    key={r.metric}
+                    className={r.highlight ? "bg-white/[0.04]" : ""}
+                  >
+                    <td className={r.highlight ? "!text-zinc-100" : ""}>
+                      {r.metric}
+                    </td>
+                    <td className="!text-right font-medium tabular-nums text-zinc-100">
+                      {r.value}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-4 text-xs text-zinc-600 leading-relaxed">
+            500 questions, one memory per haystack session (the benchmark&apos;s
+            own retrieval unit), nomic-embed-text 768d, contextual
+            session/date header, 0.5/0.5 hybrid fusion, no reranker. This is
+            the same K and retrieval protocol as Supermemory&apos;s published
+            97% overall Recall@20: MemOS reaches 99.4% Hit@20 and 98.3%
+            evidence recall@20. All-evidence recall@20 (every labelled
+            evidence session in the top 20) is 96.4%, a stricter secondary
+            metric. Raw run: docs/artifacts/longmemeval-s-full-500-retrieval.json.
           </p>
         </Reveal>
 

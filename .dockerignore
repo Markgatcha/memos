@@ -1,0 +1,78 @@
+# Docker build context.
+#
+# The Dockerfile copies exactly eight paths:
+#   package.json  pnpm-lock.yaml  pnpm-workspace.yaml  tsconfig.json
+#   src/          memos/           pyproject.toml
+#
+# Everything else is dead weight that the daemon still has to receive and
+# hash on every build: ~40 MB of benchmark fixtures in CI, and 1.6 GB once
+# node_modules/ and website/ exist locally.
+#
+# Only exclude paths the Dockerfile does not COPY. Anything under src/,
+# memos/, or the named manifests must survive.
+
+# Dependencies and build output — rebuilt inside the image.
+node_modules
+**/node_modules
+dist
+**/dist
+.venv
+**/.venv
+
+# The website is a separate project with its own lockfile and is never in
+# the image. It is the second-largest directory in the repo.
+website
+
+# Benchmark datasets, fixtures and scripts — not in the image.
+scripts
+__tests__
+tests
+examples
+plugin
+.claude-plugin
+
+# Docs, assets and translations — not in the image.
+docs
+assets
+translations
+# Root-level Markdown (the pattern does not cross directories, so this
+# leaves src/ and memos/ untouched — neither contains a .md file).
+*.md
+
+# Python build artifacts.
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Version control, CI and local tooling.
+.git
+.gitattributes
+.gitignore
+.github
+.githooks
+.devcontainer
+
+# Manifests and lockfiles the image does not use. package-lock.json is a
+# leftover from the npm era; uv.lock is for the Python package, which the
+# image installs from source files rather than as a built wheel.
+package-lock.json
+uv.lock
+hatch_build.py
+
+# Local tool configuration.
+.npmrc
+.nvmrc
+.bun-version
+.oxlintrc.json
+jest.config.js
+tsconfig.scripts.json
+
+# Editor and OS noise.
+.DS_Store
+Thumbs.db
+*.swp
+.idea
+.vscode

@@ -173,7 +173,7 @@ Before submitting your adapter PR, make sure:
 
 ### TypeScript
 
-- Oxlint + Prettier (configured in repo) — Oxlint is used instead of ESLint for speed while `typescript-eslint` / ESLint gain TypeScript 7+ support (temporary, planned back-swap at TS 7.1).
+- Oxlint + `bun fmt` (configured in repo) — Oxlint is used instead of ESLint for speed while `typescript-eslint` / ESLint gain TypeScript 7+ support (temporary, planned back-swap at TS 7.1). Formatting uses Bun's built-in Prettier-compatible formatter (`bun fmt`), not the Prettier package. Bun's version is pinned in `.bun-version`.
 - `npm run lint` and `npm run format:check` must pass
 - Use JSDoc for all public functions
 - Prefer `const` over `let`

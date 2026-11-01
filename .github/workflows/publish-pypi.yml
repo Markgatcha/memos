@@ -1,20 +1,22 @@
 name: Publish to PyPI
 
 # Publishes the Python package (mem-os-python) to PyPI whenever a GitHub
-# Release is published. Uses PyPI Trusted Publishing (OIDC) — no API
+# Release is published. Auth uses PyPI Trusted Publishing (OIDC) — no API
 # token secret is stored in the repo.
 #
-# One-time setup (done in the PyPI UI, see README "Publishing" section):
-#   1. On pypi.org, create the project "mem-os-python" (or a pending publisher)
-#   2. Add a "trusted publisher":
-#        - PyPI project:      mem-os-python
-#        - Owner:             Markgatcha
-#        - Repository:        memos
-#        - Workflow filename: publish-pypi.yml
-#        - Environment:       pypi
+# PyPI-side setup (done once on pypi.org → project "mem-os-python" →
+# Publishing → Add a publisher → GitHub):
+#   - Owner:             Markgatcha
+#   - Repository name:   memos
+#   - Workflow name:     publish-pypi.yml
+#   - Environment name:  pypi
+#
+# Also supports workflow_dispatch for one-off retries without having to
+# re-publish the release.
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,7 +29,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -59,7 +61,10 @@ jobs:
       - name: Check distribution metadata
         run: |
           python -m pip install twine
-          twine check dist/*
+          # Check the actual distributions only: dist/ also holds the
+          # compiled-SDK subdirectory (dist/adapters) that the hatch bundle
+          # hook stages, and twine chokes on directories in a bare glob.
+          twine check dist/*.whl dist/*.tar.gz
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v7
@@ -85,3 +90,7 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        # No password input → the action uses Trusted Publishing (OIDC).
+        # The OIDC claim must match the trusted publisher registered on
+        # pypi.org (Owner Markgatcha / repo memos / workflow publish-pypi.yml
+        # / environment pypi).

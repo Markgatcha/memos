@@ -86,7 +86,7 @@ Run it again. And again. The memory is still there every time — it's in `~/.me
 
 ## Option 2 — Python (PyPI)
 
-The Python package lives on PyPI as **`mem-os-python`** (the import name is still `memos`). It wraps the TypeScript SDK, so you'll also need Node.js 18+ and npm on your PATH. On first server start it stages `better-sqlite3` and the default Model2Vec embedding package into `~/.memos/runtime/js`; no API key is required.
+The Python package lives on PyPI as **`mem-os-python`** (the npm distribution is `@mem-os/sdk`). It wraps the TypeScript SDK, so you'll also need Node.js 18+ on your PATH.
 
 **Step 1. Install from PyPI**
 

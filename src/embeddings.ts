@@ -756,6 +756,24 @@ export class CohereEmbeddingProvider implements EmbeddingProvider {
  */
 let warnedEmbeddingFallback = false;
 
+/**
+ * Render an import failure as a short, single-line reason.
+ *
+ * The fallback warning is the only thing the user sees when the optional
+ * peer dependency is installed but broken, so the message has to name the
+ * actual cause (a bad transitive resolution, a native module that will not
+ * build) instead of just saying "not installed".
+ */
+export function describeError(err: unknown): string {
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : String(err);
+  return message.split("\n")[0]!.slice(0, 200);
+}
+
 export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "fastembed";
   public readonly model: string;
@@ -837,35 +855,55 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
     if (this.resolved) return;
     this.resolved = true;
     try {
-      const loadErrors: string[] = [];
-      const load = (
-        name: string,
-      ): {
-        pipeline?: (task: string, model: string) => Promise<unknown>;
-      } | null => {
-        try {
-          return nodeRequire(name) as {
-            pipeline?: (task: string, model: string) => Promise<unknown>;
-          };
-        } catch (err) {
-          loadErrors.push(
-            `${name}: ${err instanceof Error ? err.message : String(err)}`,
+      // Both packages are optional peer deps — users opt in by installing
+      // one of them. We use dynamic imports so they're only paid for when
+      // installed. Types are declared in `src/xenova-transformers.d.ts`.
+      //
+      // The import error is kept, not swallowed: a package that IS
+      // installed but fails to load (broken transitive resolution, a
+      // native module that will not build) must not be reported as
+      // "not installed" — that hides the real cause and leaves the
+      // user with a degraded search and no way to fix it.
+      const mod = (await import("@huggingface/transformers" as string).catch(
+        (err: unknown) => ({ error: err }),
+      )) as {
+        pipeline: (task: string, model: string) => Promise<unknown>;
+        error?: unknown;
+      } | null;
+      const legacyMod = mod
+        ? null
+        : ((await import("@xenova/transformers" as string).catch(
+            (err: unknown) => ({ error: err }),
+          )) as {
+            pipeline: (task: string, model: string) => Promise<unknown>;
+            error?: unknown;
+          } | null);
+      const resolved =
+        mod && "pipeline" in mod
+          ? mod
+          : legacyMod && "pipeline" in legacyMod
+            ? legacyMod
+            : null;
+      if (!resolved) {
+        // Neither optional peer dep is usable — record WHY so
+        // `getRuntimeInfo()` can report the fallback, then fall through
+        // to the local hash. (The early return here previously skipped
+        // the missing-package reason entirely — the silent-fallback bug.)
+        const failures: string[] = [];
+        if (mod && "error" in mod) {
+          failures.push(
+            `@huggingface/transformers failed to load: ${describeError(mod.error)}`,
           );
-          return null;
         }
-      };
-      const mod = load("@huggingface/transformers");
-      const legacyMod = mod?.pipeline ? null : load("@xenova/transformers");
-      const resolved = mod?.pipeline
-        ? mod
-        : legacyMod?.pipeline
-          ? legacyMod
-          : null;
-      if (!resolved?.pipeline) {
+        if (legacyMod && "error" in legacyMod) {
+          failures.push(
+            `@xenova/transformers failed to load: ${describeError(legacyMod.error)}`,
+          );
+        }
         this.fallbackReason =
-          loadErrors.length > 0
-            ? `embedding runtime could not load (${loadErrors.join("; ").slice(0, 300)})`
-            : "no embedding runtime installed";
+          failures.length > 0
+            ? failures.join("; ")
+            : "neither @huggingface/transformers nor @xenova/transformers is installed";
         this.warnFallbackOnce();
         return;
       }

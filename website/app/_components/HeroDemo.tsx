@@ -22,11 +22,12 @@ const memories = [
   },
 ];
 
-const recalled = [
-  { id: "848", text: "dark mode in editors and terminals", score: "0.92" },
-  { id: "812", text: "package manager: pnpm", score: "0.81" },
-  { id: "847", text: "deploy window: Friday 14:00 UTC", score: "0.77" },
-];
+const toneClass: Record<string, string> = {
+  cmd: "text-zinc-100",
+  ok: "text-zinc-100",
+  dim: "text-zinc-500",
+  out: "text-zinc-300",
+};
 
 /**
  * The hero artifact: a paper index of what the agent knows, with the
@@ -35,11 +36,50 @@ const recalled = [
  */
 export default function HeroDemo() {
   return (
-    <div className="border border-white/[0.16] bg-[#12160f] text-left">
-      <div className="flex items-center justify-between gap-3 border-b border-white/[0.12] px-4 py-2.5">
-        <span className="mono-label">memory index</span>
-        <span className="font-mono text-[10px] text-zinc-500">
-          847 cards · local
+    <div className="window max-w-2xl mx-auto text-left">
+      <div className="window-bar">
+        <span className="window-dot" />
+        <span className="window-dot" />
+        <span className="window-dot" />
+        <span className="window-title">memory survives restarts — live demo</span>
+        <span className="ml-auto window-title text-zinc-100/80">● local</span>
+      </div>
+      <div className="p-5 font-mono text-[13px] leading-7 min-h-[172px]">
+        {current.lines.map((l, i) => (
+          <div
+            key={`${cycle}-${scene}-${i}`}
+            className="term-line whitespace-pre-wrap"
+            style={{ animationDelay: `${0.15 + i * 0.55}s` }}
+          >
+            {l.tone === "cmd" ? (
+              <>
+                <span className="text-zinc-600 select-none">$ </span>
+                <span className={toneClass[l.tone]}>{l.text.slice(2)}</span>
+              </>
+            ) : (
+              <span className={toneClass[l.tone]}>{l.text}</span>
+            )}
+          </div>
+        ))}
+        <div
+          className="term-line"
+          style={{ animationDelay: `${0.15 + current.lines.length * 0.55}s` }}
+        >
+          <span className="text-zinc-600 select-none">$ </span>
+          <span className="term-caret" />
+        </div>
+      </div>
+      <div className="px-5 pb-4 flex items-center gap-2">
+        {scenes.map((_, i) => (
+          <span
+            key={i}
+            className={`h-1 rounded-full transition-all duration-300 ${
+              i === scene ? "w-6 bg-zinc-400" : "w-1.5 bg-zinc-700"
+            }`}
+          />
+        ))}
+        <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-600">
+          loops forever · no cloud
         </span>
       </div>
 
