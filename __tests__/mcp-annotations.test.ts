@@ -26,10 +26,22 @@ const HINT_KEYS = [
   "openWorldHint",
 ] as const;
 
+// These suites assert the full 28-tool surface. The default MCP profile is
+// the 10-tool core set (MEMOS_MCP_TOOLS=standard); tests that need every tool
+// opt into the full profile explicitly.
+const PREVIOUS_MCP_TOOLS = process.env.MEMOS_MCP_TOOLS;
+beforeAll(() => {
+  process.env.MEMOS_MCP_TOOLS = "all";
+});
+afterAll(() => {
+  if (PREVIOUS_MCP_TOOLS === undefined) delete process.env.MEMOS_MCP_TOOLS;
+  else process.env.MEMOS_MCP_TOOLS = PREVIOUS_MCP_TOOLS;
+});
+
 describe("getMcpTools() annotations", () => {
-  test("all 24 tools carry all four annotation hints", () => {
+  test("all 40 tools carry all four annotation hints", () => {
     const tools = getMcpTools();
-    expect(tools).toHaveLength(24);
+    expect(tools).toHaveLength(40);
     const failures: string[] = [];
     for (const tool of tools) {
       if (!tool.annotations || typeof tool.annotations !== "object") {
@@ -112,9 +124,14 @@ describe("getMcpTools() annotations", () => {
     const names = getMcpTools().map((t) => t.name);
     expect(names).toEqual([
       "memos_store",
+      "memos_ingest",
       "memos_search",
+      "memos_profile",
       "memos_retrieve",
       "memos_forget",
+      "memos_forget_source",
+      "memos_deletion_status",
+      "memos_review",
       "memos_link",
       "memos_quarantine_release",
       "memos_graph",
@@ -135,6 +152,17 @@ describe("getMcpTools() annotations", () => {
       "memos_image_add",
       "memos_image_recall",
       "memos_image_search",
+      "memos_explain",
+      "memos_feedback",
+      "memos_health",
+      "memos_overview",
+      "memos_handoff",
+      "memos_audit",
+      "memos_eval",
+      "memos_promote",
+      "memos_trigger",
+      "memos_brief",
+      "memos_page",
     ]);
   });
 });
@@ -199,7 +227,7 @@ describe("tools/list wire annotations", () => {
     const result = response.result as {
       tools: Array<{ name: string; annotations?: Record<string, unknown> }>;
     };
-    expect(result.tools).toHaveLength(24);
+    expect(result.tools).toHaveLength(40);
     const byName = new Map(getMcpTools().map((t) => [t.name, t.annotations]));
     const failures: string[] = [];
     for (const tool of result.tools) {

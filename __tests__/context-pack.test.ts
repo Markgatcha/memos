@@ -649,3 +649,36 @@ describe("Query-before-and-after evidence (TOON)", () => {
     expect(parseToonCompact(packToToonCompact(pack))).toHaveLength(0);
   });
 });
+
+describe("contextPack tag partition", () => {
+  test("restricts candidates to nodes carrying every requested tag", async () => {
+    const provider = new FixedProvider();
+    const vector: [number, number, number, number] = [1, 0, 0, 0];
+    provider.vectors.set("reddit moderation queue", vector);
+    provider.vectors.set("magento checkout totals", vector);
+    provider.vectors.set("how do I open the queue", vector);
+    const memos = makeMemos(provider);
+    await memos.init();
+    try {
+      await memos.store("reddit moderation queue", {
+        tags: ["env:webarena-reddit"],
+      });
+      await memos.store("magento checkout totals", {
+        tags: ["env:webarena-cms"],
+      });
+
+      const pack = (await memos.contextPack({
+        query: "how do I open the queue",
+        tokenBudget: 2000,
+        tags: ["env:webarena-reddit"],
+      })) as ContextPack;
+
+      expect(pack.items.length).toBeGreaterThan(0);
+      expect(pack.items.map((item) => item.content)).toEqual([
+        "reddit moderation queue",
+      ]);
+    } finally {
+      await memos.close();
+    }
+  });
+});

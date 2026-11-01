@@ -1,11 +1,11 @@
 {
-  "startedAt": "2026-09-06T00:15:10.205Z",
-  "finishedAt": "2026-09-06T00:15:10.594Z",
-  "durationMs": 389,
+  "startedAt": "2026-09-16T21:02:09.086Z",
+  "finishedAt": "2026-09-16T21:02:09.127Z",
+  "durationMs": 41,
   "provider": {
-    "id": "openai-compatible",
-    "model": "LFM2.5-Embedding-350M-BF16",
-    "dimensions": 1024
+    "id": "local-hash",
+    "model": "local-hash-384",
+    "dimensions": 384
   },
   "dataset": {
     "nodes": 30,
@@ -14,22 +14,22 @@
   "metrics": {
     "recallAt5": 1,
     "recallAt10": 1,
-    "mrr": 0.9342105263157895,
+    "mrr": 0.868421052631579,
     "perCategory": {
       "factual": {
         "queries": 11,
         "recallAt10": 1,
-        "mrr": 0.9545454545454546
+        "mrr": 0.8636363636363636
       },
       "preference": {
         "queries": 5,
         "recallAt10": 1,
-        "mrr": 0.85
+        "mrr": 0.9
       },
       "temporal": {
         "queries": 2,
         "recallAt10": 1,
-        "mrr": 1
+        "mrr": 0.75
       },
       "entity": {
         "queries": 1,
@@ -43,10 +43,10 @@
         "evidenceRecall": 0.9473684210526315,
         "evidenceRecallMicro": 0.9333333333333333,
         "allEvidenceRecall": 0.8947368421052632,
-        "precision": 0.4929824561403509,
-        "precisionMicro": 0.39436619718309857,
-        "mrr": 0.9342105263157895,
-        "ndcg": 0.9047283645009451,
+        "precision": 0.29473684210526324,
+        "precisionMicro": 0.29473684210526313,
+        "mrr": 0.868421052631579,
+        "ndcg": 0.8569937569331787,
         "questionCount": 19
       },
       "at10": {
@@ -54,10 +54,10 @@
         "evidenceRecall": 0.9473684210526315,
         "evidenceRecallMicro": 0.9333333333333333,
         "allEvidenceRecall": 0.8947368421052632,
-        "precision": 0.4476817042606516,
-        "precisionMicro": 0.26666666666666666,
-        "mrr": 0.9342105263157895,
-        "ndcg": 0.9047283645009451,
+        "precision": 0.1517543859649123,
+        "precisionMicro": 0.15053763440860216,
+        "mrr": 0.868421052631579,
+        "ndcg": 0.8569937569331787,
         "questionCount": 19
       },
       "perCategory": {
@@ -66,7 +66,7 @@
           "hitAt10": 1,
           "evidenceRecallAt10": 1,
           "allEvidenceRecallAt10": 1,
-          "precisionAt10": 0.5,
+          "precisionAt10": 0.2222222222222222,
           "mrr": 1,
           "ndcgAt10": 1
         },
@@ -75,27 +75,27 @@
           "hitAt10": 1,
           "evidenceRecallAt10": 0.9090909090909091,
           "allEvidenceRecallAt10": 0.8181818181818182,
-          "precisionAt10": 0.5766233766233766,
-          "mrr": 0.9545454545454546,
-          "ndcgAt10": 0.8944946889360341
+          "precisionAt10": 0.15000000000000002,
+          "mrr": 0.8636363636363636,
+          "ndcgAt10": 0.8273910077672082
         },
         "preference": {
           "questionCount": 5,
           "hitAt10": 1,
           "evidenceRecallAt10": 1,
           "allEvidenceRecallAt10": 1,
-          "precisionAt10": 0.17928571428571427,
-          "mrr": 0.85,
-          "ndcgAt10": 0.8700794694443161
+          "precisionAt10": 0.1422222222222222,
+          "mrr": 0.9,
+          "ndcgAt10": 0.9101301085439291
         },
         "temporal": {
           "questionCount": 2,
           "hitAt10": 1,
           "evidenceRecallAt10": 1,
           "allEvidenceRecallAt10": 1,
-          "precisionAt10": 0.3833333333333333,
-          "mrr": 1,
-          "ndcgAt10": 1
+          "precisionAt10": 0.15000000000000002,
+          "mrr": 0.75,
+          "ndcgAt10": 0.8154648767857288
         }
       },
       "latency": {
@@ -107,12 +107,12 @@
   },
   "metadata": {
     "schemaVersion": 2,
-    "timestamp": "2026-09-06T00:15:10.594Z",
+    "timestamp": "2026-09-16T21:02:09.127Z",
     "git": {
-      "sha": "00afdb496c0376e58b232c5cb439ef218f05ac64",
+      "sha": "5b660153372f9beb47d76fc117d1d51eab557245",
       "dirty": true
     },
-    "nodeVersion": "v26.7.0",
+    "nodeVersion": "v26.8.1",
     "os": {
       "platform": "win32",
       "release": "10.0.26220"
@@ -123,23 +123,20 @@
       "sha256": "file-not-found"
     },
     "embedding": {
-      "requestedProvider": "openai-compatible",
-      "resolvedProvider": "openai-compatible",
-      "requestedModel": "LFM2.5-Embedding-350M-BF16",
-      "resolvedModel": "LFM2.5-Embedding-350M-BF16",
+      "requestedProvider": "local-hash",
+      "resolvedProvider": "local-hash",
+      "requestedModel": "local-hash-384",
+      "resolvedModel": "local-hash-384",
       "modelRevision": null,
-      "requestedDimensions": 1024,
+      "requestedDimensions": 384,
       "observedDimensions": null,
       "fallbackActive": false,
       "fallbackReason": null,
-      "providerKind": "openai-compatible",
-      "queryPrefix": "query: ",
-      "documentPrefix": "document: "
+      "providerKind": "local-hash",
+      "queryPrefix": "",
+      "documentPrefix": ""
     },
-    "retrieval": {
-      "sessionExpansion": false,
-      "graphExpansion": false
-    }
+    "retrieval": {}
   },
   "perQuery": [
     {
@@ -147,15 +144,15 @@
       "category": "factual",
       "retrievedIds": [
         "n-1",
-        "n-9",
-        "n-26",
-        "n-2",
         "n-23",
-        "n-19",
-        "n-3",
-        "n-11",
         "n-5",
-        "n-21"
+        "n-7",
+        "n-8",
+        "n-13",
+        "n-11",
+        "n-27",
+        "n-29",
+        "n-24"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -170,13 +167,13 @@
       "retrievedIds": [
         "n-2",
         "n-11",
-        "n-1",
         "n-13",
+        "n-1",
         "n-24",
-        "n-26",
-        "n-5",
         "n-27",
+        "n-5",
         "n-8",
+        "n-26",
         "n-3"
       ],
       "hitAt5": true,
@@ -190,10 +187,15 @@
       "query": "tell me about Pixel the corgi",
       "category": "entity",
       "retrievedIds": [
-        "n-4",
         "n-3",
+        "n-4",
+        "n-22",
+        "n-16",
+        "n-7",
+        "n-14",
         "n-19",
-        "n-28"
+        "n-8",
+        "n-13"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -209,13 +211,13 @@
       "retrievedIds": [
         "n-5",
         "n-11",
+        "n-13",
         "n-1",
         "n-24",
-        "n-13",
-        "n-26",
         "n-27",
+        "n-8",
+        "n-26",
         "n-2",
-        "n-3",
         "n-9"
       ],
       "hitAt5": true,
@@ -230,20 +232,20 @@
       "query": "when did the user start at their company",
       "category": "temporal",
       "retrievedIds": [
-        "n-7",
         "n-6",
+        "n-7",
         "n-11",
+        "n-13",
         "n-1",
         "n-24",
         "n-5",
-        "n-13",
+        "n-27",
         "n-26",
-        "n-2",
-        "n-3"
+        "n-2"
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 1,
+      "reciprocalRank": 0.5,
       "expectedRelevant": [
         "n-7"
       ]
@@ -254,11 +256,14 @@
       "retrievedIds": [
         "n-8",
         "n-9",
-        "n-16",
-        "n-10",
-        "n-2",
         "n-25",
-        "n-13"
+        "n-13",
+        "n-30",
+        "n-26",
+        "n-21",
+        "n-19",
+        "n-16",
+        "n-10"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -274,11 +279,14 @@
       "retrievedIds": [
         "n-10",
         "n-9",
-        "n-8",
-        "n-30",
-        "n-18",
-        "n-21",
-        "n-6"
+        "n-11",
+        "n-27",
+        "n-2",
+        "n-6",
+        "n-29",
+        "n-28",
+        "n-26",
+        "n-25"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -292,8 +300,15 @@
       "category": "factual",
       "retrievedIds": [
         "n-12",
-        "n-30",
-        "n-11"
+        "n-11",
+        "n-27",
+        "n-9",
+        "n-14",
+        "n-19",
+        "n-1",
+        "n-16",
+        "n-7",
+        "n-17"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -310,10 +325,13 @@
         "n-14",
         "n-8",
         "n-13",
-        "n-2",
+        "n-10",
+        "n-19",
+        "n-9",
+        "n-4",
+        "n-1",
         "n-16",
-        "n-25",
-        "n-6"
+        "n-15"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -327,11 +345,20 @@
       "query": "exercise routine",
       "category": "factual",
       "retrievedIds": [
-        "n-15"
+        "n-10",
+        "n-15",
+        "n-16",
+        "n-2",
+        "n-21",
+        "n-26",
+        "n-9",
+        "n-24",
+        "n-1",
+        "n-8"
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 1,
+      "reciprocalRank": 0.5,
       "expectedRelevant": [
         "n-15"
       ]
@@ -342,14 +369,14 @@
       "retrievedIds": [
         "n-16",
         "n-2",
-        "n-23",
+        "n-4",
         "n-8",
         "n-21",
-        "n-17",
-        "n-14",
-        "n-18",
-        "n-30",
-        "n-9"
+        "n-6",
+        "n-13",
+        "n-7",
+        "n-26",
+        "n-23"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -364,7 +391,14 @@
       "retrievedIds": [
         "n-17",
         "n-18",
-        "n-7"
+        "n-16",
+        "n-22",
+        "n-20",
+        "n-30",
+        "n-21",
+        "n-15",
+        "n-12",
+        "n-26"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -379,7 +413,15 @@
       "category": "factual",
       "retrievedIds": [
         "n-19",
-        "n-5"
+        "n-12",
+        "n-20",
+        "n-5",
+        "n-25",
+        "n-8",
+        "n-6",
+        "n-16",
+        "n-2",
+        "n-11"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -394,17 +436,18 @@
       "category": "preference",
       "retrievedIds": [
         "n-8",
-        "n-2",
-        "n-16",
         "n-21",
-        "n-9",
+        "n-2",
+        "n-4",
+        "n-16",
         "n-15",
-        "n-24",
-        "n-26"
+        "n-10",
+        "n-25",
+        "n-17"
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 0.25,
+      "reciprocalRank": 0.5,
       "expectedRelevant": [
         "n-21"
       ]
@@ -415,7 +458,14 @@
       "retrievedIds": [
         "n-1",
         "n-23",
-        "n-22"
+        "n-11",
+        "n-24",
+        "n-26",
+        "n-7",
+        "n-18",
+        "n-17",
+        "n-5",
+        "n-6"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -430,7 +480,15 @@
       "category": "factual",
       "retrievedIds": [
         "n-24",
-        "n-25"
+        "n-25",
+        "n-11",
+        "n-27",
+        "n-16",
+        "n-12",
+        "n-7",
+        "n-5",
+        "n-2",
+        "n-14"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -444,11 +502,20 @@
       "query": "allergies and health restrictions",
       "category": "factual",
       "retrievedIds": [
-        "n-26"
+        "n-10",
+        "n-26",
+        "n-18",
+        "n-30",
+        "n-25",
+        "n-21",
+        "n-8",
+        "n-27",
+        "n-24",
+        "n-17"
       ],
       "hitAt5": true,
       "hitAt10": true,
-      "reciprocalRank": 1,
+      "reciprocalRank": 0.5,
       "expectedRelevant": [
         "n-26"
       ]
@@ -458,8 +525,13 @@
       "category": "factual",
       "retrievedIds": [
         "n-27",
+        "n-11",
         "n-28",
-        "n-12"
+        "n-12",
+        "n-13",
+        "n-8",
+        "n-15",
+        "n-23"
       ],
       "hitAt5": true,
       "hitAt10": true,
@@ -475,8 +547,14 @@
       "retrievedIds": [
         "n-30",
         "n-29",
+        "n-25",
+        "n-27",
+        "n-8",
+        "n-17",
+        "n-15",
+        "n-9",
         "n-10",
-        "n-12"
+        "n-11"
       ],
       "hitAt5": true,
       "hitAt10": true,

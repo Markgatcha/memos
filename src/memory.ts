@@ -26,6 +26,27 @@ import {
   rankProceduralLessons,
 } from "./procedural.js";
 import {
+  DEFAULT_OUTCOME_WEIGHT,
+  addOutcomeToStat,
+  buildMemoryUtility,
+  emptyRecallStat,
+  meanOutcome,
+  memoriesWithFeedback as countMemoriesWithFeedback,
+  normaliseWeight,
+  outcomeMultiplier,
+  utilityFromStat,
+} from "./feedback.js";
+import {
+  ageDays,
+  describeRankingEvidence,
+  describeStatus,
+  describeUtility,
+  healthGrade,
+  lastAccessedDays,
+  memoryStatus,
+  sortFindings,
+} from "./inspector.js";
+import {
   citationToken,
   formatCitationResolution,
   parseCitationToken,
@@ -33,6 +54,8 @@ import {
 } from "./citations.js";
 import { createEmbeddingProvider, cosineSimilarity } from "./embeddings.js";
 import { EmbeddingQueue } from "./embedding-queue.js";
+import { ingestPath, type IngestOptions, type IngestResult } from "./ingest.js";
+import { extractPreferences } from "./preferences.js";
 import {
   buildContextPack,
   derivePackCandidateDepth,
@@ -44,9 +67,11 @@ import {
 } from "./context-pack.js";
 import type { ContextPack } from "./context-pack.js";
 import {
+  applyMmr,
   applyRelevanceGate,
   compareScoredMemories,
   DEFAULT_ABSTAIN_SIMILARITY,
+  DEFAULT_MMR_LAMBDA,
   DEFAULT_RELEVANCE_RATIO,
   fuseResults,
   harvestPrfTerms,
@@ -74,10 +99,26 @@ import {
   canonicalizeEntities,
   extractQueryEntities,
 } from "./entity-extraction.js";
+import {
+  buildNamespaceSubjectIndex,
+  expandMultiHop,
+  extractBridgeEntities,
+  type NamespaceSubjectIndex,
+} from "./multi-hop.js";
 import { extractTriples, triplesMatch } from "./triple-extraction.js";
 import { recallStrength, EBBINGHAUS_WEIGHT } from "./ebbinghaus.js";
 import { createDeletionCertificate } from "./proof-of-forgetting.js";
 import type { DeletionCertificate } from "./proof-of-forgetting.js";
+import {
+  deletePageDef,
+  getPageDef,
+  listPageDefs,
+  renderPage,
+  savePageDef,
+  type KnowledgePage,
+  type KnowledgePageDef,
+  type PageSource,
+} from "./knowledge-pages.js";
 import { replayAt } from "./time-travel.js";
 import type { NodeSnapshot } from "./time-travel.js";
 import {
@@ -106,6 +147,7 @@ import type { TamperLogEntry, TamperOp } from "./types.js";
 import type {
   RelevanceGateConfig,
   RelevanceGateResult,
+  MultiHopOptions,
   MemoryNode,
   MemoryEdge,
   MemoryPool,
@@ -130,9 +172,17 @@ import type {
   ContextPackCompressionOptions,
   ContextPackWireFormat,
   EmbeddingProvider,
+  EmbeddingHealth,
   EmbeddingRuntimeInfo,
   MemoryType,
   MemorySource,
+  ProfileConfig,
+  ProfileOptions,
+  MemoryProfile,
+  MemoryOverview,
+  OverviewOptions,
+  TriggerOptions,
+  TriggerResult,
   EmbeddingNodeStatus,
   EmbeddingNodeStatusInfo,
   EmbeddingQueueStatus,
@@ -167,6 +217,21 @@ import type {
   HarnessCount,
   HarnessMergeOptions,
   HarnessMergeResult,
+  RecallBatchOutcome,
+  RecallFeedbackInput,
+  RecallFeedbackResult,
+  RecallFeedbackStat,
+  RecallOutcome,
+  MemoryUtility,
+  ExplainOptions,
+  ExplainResult,
+  ExplainCandidate,
+  ExplainFocus,
+  ExplainCheck,
+  ExplainScoreComponents,
+  MemoryHealth,
+  MemoryHealthFinding,
+  MemoryHealthMetrics,
 } from "./types.js";
 import { DEFAULT_TRUST_SCORES } from "./types.js";
 import {
@@ -189,10 +254,34 @@ import {
   detectEvent,
   detectEventUpdate,
   isScheduledEventNode,
+  listReminders,
   type EventMetadata,
   type EventUpdate,
 } from "./event-memory.js";
+import {
+  buildHandoffBrief,
+  type HandoffBrief,
+  type HandoffOptions,
+  type HandoffPack,
+} from "./handoff.js";
+import {
+  buildAuditReport,
+  type AuditOptions,
+  type AuditReport,
+} from "./compliance.js";
+import { asMemOSError } from "./errors.js";
+import {
+  deriveProcedureCandidates,
+  type ProcedureCandidate,
+  type PromotionOptions,
+} from "./procedure-promotion.js";
 import { addDuration } from "./temporal.js";
+import { parseRelativeAgo } from "./relative-time.js";
+import {
+  applyRelativeTimeAnchor,
+  expandToTemporalNeighbours,
+  memoryInstant,
+} from "./temporal-rerank.js";
 import {
   QUARANTINE_RELEASED_METADATA_KEY,
   LOW_TRUST_TIERS,
@@ -249,6 +338,15 @@ import type {
  * land far above this floor for any real embedder.
  */
 const SEMANTIC_FUSION_THRESHOLD = 0.05;
+
+/**
+ * Cap on the in-memory time-travel snapshot ring. Snapshots are full node
+ * copies collected on every mutation; without a bound, a long-running
+ * agent grows this array forever. 2k versions is plenty to answer "what
+ * did I believe yesterday" without becoming the largest object in the
+ * process.
+ */
+const MAX_IN_MEMORY_SNAPSHOTS = 2_000;
 
 /**
  * In-memory mirror of `SQLiteStorage.buildNamespaceCondition`
@@ -338,6 +436,104 @@ export class MemorySkippedError extends Error {
     this.name = "MemorySkippedError";
     this.score = score;
   }
+}
+
+/** Names of the built-in {@link MemOS} preset configurations. */
+export type MemOSPresetName = "chatbot" | "codingAgent" | "researchBot";
+
+/**
+ * Named configuration bundles for {@link MemOS.chatbot},
+ * {@link MemOS.codingAgent} and {@link MemOS.researchBot}.
+ *
+ * Every knob here is embedder-INDEPENDENT (nothing overrides fusion
+ * weights, which are tuned per embedding model — see
+ * `docs/benchmark-comparison.md`). Precision knobs (relevance gate,
+ * MMR) follow the measured guidance: the gate trims the noise tail
+ * and MMR keeps paraphrases from crowding out distinct evidence.
+ */
+export const MEMOS_PRESET_CONFIGS: Record<
+  MemOSPresetName,
+  Required<
+    Pick<
+      MemOSConfig,
+      "maxMemories" | "retrieval" | "embeddingQueue" | "sweepInterval"
+    >
+  >
+> = {
+  chatbot: {
+    maxMemories: 10_000,
+    retrieval: {
+      relevanceGate: {
+        enabled: true,
+        ratio: 0.25,
+        abstainSimilarity: 0.35,
+        minResults: 3,
+      },
+      mmr: { enabled: true, lambda: 0.5 },
+    },
+    embeddingQueue: { concurrency: 2, batchSize: 8 },
+    sweepInterval: 60,
+  },
+  codingAgent: {
+    maxMemories: 25_000,
+    retrieval: {
+      relevanceGate: {
+        enabled: true,
+        ratio: 0.2,
+        abstainSimilarity: 0.3,
+        minResults: 5,
+      },
+      mmr: { enabled: true, lambda: 0.6 },
+    },
+    embeddingQueue: { concurrency: 4, batchSize: 16 },
+    sweepInterval: 120,
+  },
+  researchBot: {
+    maxMemories: 50_000,
+    retrieval: {
+      relevanceGate: {
+        enabled: true,
+        ratio: 0.15,
+        abstainSimilarity: 0.3,
+        minResults: 1,
+      },
+      mmr: { enabled: true, lambda: 0.7 },
+    },
+    embeddingQueue: { concurrency: 8, batchSize: 32 },
+    sweepInterval: 300,
+  },
+};
+
+/**
+ * Apply a preset config under caller overrides (shallow merge, except
+ * `retrieval` which merges key-by-key so `preset retrieval.mmr` and a
+ * caller's `retrieval.fusion` can coexist).
+ */
+function withPreset(
+  preset: MemOSPresetName,
+  overrides: MemOSConfig,
+): MemOSConfig {
+  const base = MEMOS_PRESET_CONFIGS[preset];
+  return {
+    ...base,
+    ...overrides,
+    ...(overrides.retrieval || base.retrieval
+      ? {
+          retrieval: {
+            ...base.retrieval,
+            ...overrides.retrieval,
+          },
+        }
+      : {}),
+    ...(overrides.embeddingQueue || base.embeddingQueue
+      ? {
+          embeddingQueue: {
+            ...base.embeddingQueue,
+            ...overrides.embeddingQueue,
+          },
+        }
+      : {}),
+  };
 }
 
 /**
@@ -479,6 +675,80 @@ function stringArray(value: unknown): string[] | undefined {
     : undefined;
 }
 
+/** Options for {@link MemOS.forgetSource}. */
+export interface ForgetSourceOptions {
+  /** Restrict deletion to one namespace. */
+  namespace?: string;
+  /**
+   * Metadata field to match. Defaults to any of `sourcePath`, `sourceId`,
+   * `url`, `source`, or the node's harness.
+   */
+  field?: string;
+  /** Treat the value as a path/URL prefix (delete a whole source tree). */
+  prefix?: boolean;
+  /** Report what would be deleted without deleting. */
+  dryRun?: boolean;
+}
+
+/** Result of {@link MemOS.forgetSource}. */
+export interface ForgetSourceResult {
+  source: string;
+  field: string | null;
+  prefix: boolean;
+  dryRun: boolean;
+  /** Nodes that matched the source selector. */
+  matched: number;
+  /** Nodes actually deleted (0 on a dry run). */
+  deleted: number;
+  nodeIds: string[];
+  /** One proof-of-forgetting certificate per deleted node. */
+  certificates: DeletionCertificate[];
+}
+
+/** Result of {@link MemOS.deletionStatus}. */
+export interface DeletionStatusResult {
+  nodeId: string;
+  /** `present` when the node exists, `deleted` when a forget proof exists. */
+  status: "present" | "deleted" | "unknown";
+  certificate: DeletionCertificate | null;
+}
+
+/** Options for {@link MemOS.brief}. */
+export interface BriefOptions {
+  /** Person, project, or topic the brief is about. */
+  subject: string;
+  namespace?: string;
+  /** Maximum items to consider. Default 40. */
+  limit?: number;
+  /** Include resolved items in the response (never in `open`). */
+  includeClosed?: boolean;
+}
+
+/** One item in a per-subject memory brief. */
+export interface BriefItem {
+  id: string;
+  content: string;
+  type: string;
+  tags: string[];
+  trustScore: number;
+  /** Why the item was classified open or closed. */
+  reason: string;
+}
+
+/** Result of {@link MemOS.brief}. */
+export interface MemoryBrief {
+  subject: string;
+  generatedAt: number;
+  open: BriefItem[];
+  closed: BriefItem[];
+  /** How this brief should be refreshed and injected. */
+  policy: {
+    rewrite: "on-read";
+    dropClosedFromPrompt: true;
+    note: string;
+  };
+}
+
 /**
  * Core MemOS instance. This is the primary entry point for all
  * memory operations.
@@ -495,6 +765,47 @@ function stringArray(value: unknown): string[] | undefined {
  * ```
  */
 export class MemOS {
+  // -----------------------------------------------------------------------
+  // Preset factories
+  // -----------------------------------------------------------------------
+
+  /**
+   * Conversational-agent preset: a chat buddy with a bounded store,
+   * the relevance gate on (trim the noise tail, abstain when the store
+   * has nothing to say) and MMR on so one topic can't monopolize the
+   * recall window.
+   *
+   * ```ts
+   * const memos = MemOS.chatbot({ dbPath: "./bot.db" });
+   * await memos.init();
+   * ```
+   */
+  static chatbot(overrides: MemOSConfig = {}): MemOS {
+    return new MemOS(withPreset("chatbot", overrides));
+  }
+
+  /**
+   * Coding-agent preset: a bigger store (codebases generate a lot of
+   * memory), a stricter relevance floor and MMR biased toward
+   * relevance (0.6) — code recall punishes paraphrases harder than it
+   * rewards variety.
+   */
+  static codingAgent(overrides: MemOSConfig = {}): MemOS {
+    return new MemOS(withPreset("codingAgent", overrides));
+  }
+
+  /**
+   * Research-agent preset: bulk ingestion (wide embedding queue), the
+   * lightest relevance trim and the most novelty-biased MMR (0.7) —
+   * research answers span many distinct sources, so paraphrase
+   * crowding is the failure mode to avoid.
+   */
+  static researchBot(overrides: MemOSConfig = {}): MemOS {
+    return new MemOS(withPreset("researchBot", overrides));
+  }
+
+  /** Construct with an explicit preset name: `new MemOS({ preset: "chatbot" })`. */
+
   private graph: GraphEngine;
   private storage: StorageAdapter;
   /** In-memory snapshots for time-travel (experimental). */
@@ -507,6 +818,7 @@ export class MemOS {
       | "entityAliases"
       | "summarizeClusterLlm"
       | "cipherKey"
+      | "preset"
     >
   > & {
     storage?: StorageAdapter;
@@ -514,9 +826,11 @@ export class MemOS {
     enrichMemory?: MemOSConfig["enrichMemory"];
     summarizeClusterLlm?: MemOSConfig["summarizeClusterLlm"];
     cipherKey: string;
+    preset?: MemOSPresetName;
   };
   private experimental: ExperimentalConfig;
   private embeddingProvider: EmbeddingProvider | null = null;
+  private embeddingProbed = false;
   /**
    * In-process LRU cache of query embedding vectors, keyed by
    * `${provider.id}:${provider.model}:${query}`.
@@ -530,6 +844,14 @@ export class MemOS {
    * long-lived processes cannot grow it without limit.
    */
   private queryEmbeddingCache = new Map<string, number[]>();
+  /**
+   * Bound on `queryEmbeddingCache` entries. Configurable because the cost
+   * asymmetry is large: one extra embedding is a network/ONNX call
+   * (tens of ms), one extra cache entry is ~3 KB (768-d) — so a sweep
+   * over a few hundred distinct questions wants a bound comfortably above
+   * its query count, while a long-lived agent wants a small one.
+   */
+  private queryEmbeddingCacheMax = 256;
   private static readonly QUERY_EMBEDDING_CACHE_MAX = 256;
   /**
    * Tier-2 semantic screen for the provenance-trust write gate (intent
@@ -560,6 +882,49 @@ export class MemOS {
   > = new Map();
   private searchCacheMaxEntries = 128;
   private searchCacheTtlMs = 5_000;
+  /**
+   * Outcome-conditioned recall state, loaded once at `init()` and updated
+   * by `recordRecallFeedback()`. Kept in memory so the ranking modulator
+   * stays synchronous and a query never issues a feedback-table read.
+   *
+   * `recallBatches` is the source of truth for uplift and health metrics;
+   * `recallStats` is its per-memory aggregate index. Adapters without
+   * persistence keep these in process memory only.
+   */
+  private recallBatches: Map<string, RecallBatchOutcome> = new Map();
+  private recallStats: Map<string, RecallFeedbackStat> = new Map();
+  /**
+   * Session windows for neighbour expansion, keyed by namespace +
+   * session key/value + historical flag. Neighbour expansion used to run
+   * one metadata query per seed on EVERY search; on a read-heavy workload
+   * (agents recall constantly and write rarely) that was the largest
+   * avoidable slice of search latency. Any write clears it, so a cached
+   * window can never be stale.
+   */
+  private sessionSiblingCache = new Map<string, MemoryNode[]>();
+  private sessionSiblingCacheMaxEntries = 64;
+  /**
+   * Per-namespace subject index cache for second-hop entity-bridge
+   * retrieval (`src/multi-hop.ts`). Built lazily on first multi-hop
+   * search in a namespace and cleared on any mutation in
+   * `invalidateSearchCache()`.
+   */
+  private subjectIndexCache = new Map<string, NamespaceSubjectIndex>();
+  /**
+   * LRU cache for `profile()` results. A profile is a maintained,
+   * query-independent slice of the store, so recomputing it on every
+   * system-prompt build is exactly the cost the one-call API exists to
+   * avoid. Key: scope + sizes + recency window + optional bias query.
+   * Cleared on every mutation (see `invalidateSearchCache`).
+   */
+  private profileCache: Map<
+    string,
+    { profile: MemoryProfile; expiry: number }
+  > = new Map();
+  private profileCacheMaxEntries = 32;
+  private profileCacheTtlMs = 30_000;
+  /** One-call profile defaults from config (`MemOSConfig.profile`). */
+  private profileConfig: ProfileConfig;
   /**
    * Vision (image memory) runtime state. All three fields stay inert
    * until `vision.enabled` is set, so a bare `new MemOS()` pays nothing
@@ -616,13 +981,16 @@ export class MemOS {
    * — a logging failure is swallowed so the write path always wins.
    */
   private async logMutation(op: TamperOp, node: MemoryNode): Promise<void> {
-    await appendTamperEntry(this.storage, op, node);
-    // Time-travel: capture snapshot of full node state.
-    // Note: in-memory only for now; persistence is TODO.
-    const entries = this.storage.readTamperLog
-      ? await this.storage.readTamperLog()
-      : [];
-    const seq = entries.length > 0 ? entries[entries.length - 1].seq : 0;
+    const entry = await appendTamperEntry(this.storage, op, node);
+    // Time-travel: capture a snapshot of the full node state. In-memory and
+    // bounded - an unbounded array of every node version is a leak, not a
+    // feature. The seq comes straight from the just-appended entry; reading
+    // the whole tamper log here made every write O(log size).
+    const seq =
+      entry?.seq ?? this.snapshots[this.snapshots.length - 1]?.seq ?? 0;
+    if (this.snapshots.length >= MAX_IN_MEMORY_SNAPSHOTS) {
+      this.snapshots.shift();
+    }
     this.snapshots.push({
       seq,
       ts: Date.now(),
@@ -654,9 +1022,17 @@ export class MemOS {
    */
   private usage: {
     packsBuilt: number;
+    packItems: number;
     packTokens: number;
     naiveBaselineTokens: number;
-  } = { packsBuilt: 0, packTokens: 0, naiveBaselineTokens: 0 };
+    byFormat: Record<string, number>;
+  } = {
+    packsBuilt: 0,
+    packItems: 0,
+    packTokens: 0,
+    naiveBaselineTokens: 0,
+    byFormat: {},
+  };
 
   /**
    * Create a new MemOS instance.
@@ -664,40 +1040,51 @@ export class MemOS {
    * @param config — Configuration options. All fields are optional.
    */
   constructor(config: MemOSConfig = {}) {
+    // A `preset` name applies its bundle FIRST, then the caller's
+    // explicit fields override it (same merge as the static factories).
+    const resolved = config.preset ? withPreset(config.preset, config) : config;
+    const { preset: _preset, ...rest } = resolved;
     this.config = {
-      dbPath: config.dbPath ?? defaultDbPath(),
-      wal: config.wal ?? true,
-      maxMemories: config.maxMemories ?? 0,
-      autoLinkThreshold: config.autoLinkThreshold ?? 0.3,
-      storage: config.storage,
-      sweepInterval: config.sweepInterval ?? 60,
-      experimental: config.experimental ?? {},
+      dbPath: rest.dbPath ?? defaultDbPath(),
+      wal: rest.wal ?? true,
+      maxMemories: rest.maxMemories ?? 0,
+      autoLinkThreshold: rest.autoLinkThreshold ?? 0.3,
+      storage: rest.storage,
+      sweepInterval: rest.sweepInterval ?? 60,
+      experimental: rest.experimental ?? {},
       // Effective-importance tuning (recency decay + access reinforcement).
       // Defaults live in `DEFAULT_IMPORTANCE_CONFIG` (src/importance.ts).
-      importance: config.importance ?? {},
+      importance: rest.importance ?? {},
       // Half-life for the optional hybrid-search recency boost
       // (only consulted when `experimental.recencyBoost` is enabled).
-      recencyHalfLifeDays: config.recencyHalfLifeDays ?? 14,
-      embeddings: config.embeddings ?? {},
-      embeddingQueue: config.embeddingQueue ?? {},
-      fusion: config.fusion ?? {},
+      recencyHalfLifeDays: rest.recencyHalfLifeDays ?? 14,
+      embeddings: rest.embeddings ?? {},
+      embeddingQueue: rest.embeddingQueue ?? {},
+      fusion: rest.fusion ?? {},
       // Relevance-gate tuning (abstention + tail trimming). Off unless
       // `relevanceGate.enabled` — see `RelevanceGateConfig`.
-      retrieval: config.retrieval ?? {},
-      entityAliases: config.entityAliases,
-      enrichMemory: config.enrichMemory,
-      summarizeClusterLlm: config.summarizeClusterLlm,
+      retrieval: rest.retrieval ?? {},
+      // One-call `profile()` defaults. Empty object = documented
+      // defaults (25 static / 10 dynamic / 7-day window / 30s cache).
+      profile: rest.profile ?? {},
+      // Review queue for inferred writes (opt-in per write).
+      review: rest.review ?? {},
+      preset: _preset,
+      entityAliases: rest.entityAliases,
+      enrichMemory: rest.enrichMemory,
+      summarizeClusterLlm: rest.summarizeClusterLlm,
       // Encryption at rest: explicit config wins, MEMOS_KEY env is the
       // ops-friendly fallback. Empty string disables.
-      cipherKey: config.cipherKey ?? process.env.MEMOS_KEY ?? "",
-      storageOptions: config.storageOptions ?? {},
+      cipherKey: rest.cipherKey ?? process.env.MEMOS_KEY ?? "",
+      storageOptions: rest.storageOptions ?? {},
       // Vision (image memory). Disabled by default: a bare `new MemOS()`
       // changes nothing — the new vector table is empty and no new API
       // surface is wired until this is set.
-      vision: config.vision ?? { enabled: false },
+      vision: rest.vision ?? { enabled: false },
     };
 
     this.experimental = this.config.experimental;
+    this.profileConfig = this.config.profile ?? {};
     // Embeddings are ON by default: a plain `new MemOS()` gets real local
     // semantic search via fastembed (which degrades loudly to a local hash
     // when the optional transformers dep isn't installed). The deprecated
@@ -733,7 +1120,14 @@ export class MemOS {
   async init(): Promise<void> {
     if (this.initialised) return;
 
-    await this.storage.init();
+    try {
+      await this.storage.init();
+    } catch (err) {
+      throw asMemOSError(err, "MEMOS_DB_OPEN", {
+        dbPath: this.config.dbPath,
+        storage: this.storage.constructor?.name ?? "custom",
+      });
+    }
 
     // Hydrate graph from storage
     const snapshot = await this.storage.getGraph();
@@ -756,6 +1150,39 @@ export class MemOS {
 
     // Start TTL sweep
     this.startSweep();
+
+    // Hydrate outcome-conditioned recall state once. Feedback volume is
+    // explicit and small; keeping it in memory lets ranking stay sync.
+    if (this.storage.getRecallBatches) {
+      try {
+        const batches = await this.storage.getRecallBatches();
+        this.recallBatches.clear();
+        this.recallStats.clear();
+        for (const batch of batches) {
+          this.recallBatches.set(batch.id, batch);
+          for (const memoryId of batch.memoryIds) {
+            const stat =
+              this.recallStats.get(memoryId) ?? emptyRecallStat(memoryId);
+            this.recallStats.set(
+              memoryId,
+              addOutcomeToStat(stat, batch.outcome, batch.weight, batch.ts),
+            );
+          }
+        }
+      } catch {
+        // A feedback-table failure must never prevent the store from
+        // opening; ranking simply behaves as if no feedback exists.
+        this.recallBatches.clear();
+        this.recallStats.clear();
+      }
+    }
+
+    if (this.config.embeddingQueue?.queryCacheEntries !== undefined) {
+      this.queryEmbeddingCacheMax = Math.max(
+        1,
+        this.config.embeddingQueue.queryCacheEntries,
+      );
+    }
 
     if (this.embeddingProvider && this.storage.saveEmbedding) {
       // Spin up the background queue, then schedule the backfill.
@@ -815,6 +1242,22 @@ export class MemOS {
   }
 
   /**
+   * Friendly alias for {@link store}: "remember this". Identical
+   * semantics, identical return value — exists so quickstarts read
+   * like English.
+   *
+   * ```ts
+   * await memos.remember("User prefers dark mode", { type: "preference" });
+   * ```
+   */
+  async remember(
+    content: string,
+    opts: Omit<CreateMemoryInput, "content"> = {},
+  ): Promise<{ node: MemoryNode; links: MemoryEdge[] }> {
+    return this.store(content, opts);
+  }
+
+  /**
    * Import a record with its original identity (ID and timestamps).
    *
    * Used by encrypted sync restore (`src/sync.ts`). Unlike `store()`,
@@ -842,6 +1285,8 @@ export class MemOS {
     validFrom?: number | null;
     validTo?: number | null;
     harness?: string;
+    /** See {@link CreateMemoryInput.contradictionScan}. */
+    contradictionScan?: boolean;
   }): Promise<MemoryNode> {
     this.assertInit();
     const source: MemorySource = record.source ?? "external_data";
@@ -880,7 +1325,9 @@ export class MemOS {
     this.graph.addNode(node);
     this.scheduleEmbedding(node);
     this.invalidateSearchCache();
-    this.contradictionScanPending.add(node.id);
+    if (record.contradictionScan !== false) {
+      this.contradictionScanPending.add(node.id);
+    }
     this.emit("node:created", node);
     return node;
   }
@@ -948,7 +1395,11 @@ export class MemOS {
     // Skipped when the caller manages the event lifecycle directly
     // (`opts.metadata.event` preset, e.g. `memos remind`) or on the
     // replacement write itself (`skipEventUpdate`).
-    if (!skipEventUpdate && opts.metadata?.event === undefined) {
+    if (
+      !skipEventUpdate &&
+      opts.eventUpdate !== false &&
+      opts.metadata?.event === undefined
+    ) {
       const handled = await this.applyEventUpdate(
         content,
         new Date(now),
@@ -1081,6 +1532,23 @@ export class MemOS {
     }
     if (context) metadata.context = context;
 
+    // Review queue: inferred memories can be held out of recall until a
+    // human approves them. Reuses the quarantine flag so every existing
+    // recall path excludes the row; approval clears it.
+    if (opts.review === true) {
+      const autoApprove = (this.config.review.autoApproveTags ?? []).some(
+        (tag) => tags.includes(tag),
+      );
+      metadata.reviewStatus = autoApprove ? "approved" : "pending";
+      if (autoApprove) {
+        metadata.reviewDecidedAt = now;
+      } else if (!quarantined) {
+        quarantined = true;
+        quarantinedAt = now;
+        quarantineReason = "review:pending";
+      }
+    }
+
     // Evidence state machine (opt-in via `evidenceLearning`, default
     // OFF — append-always remains the default write semantics, matching
     // the dedupe()/consolidate() contract where near-duplicates are
@@ -1164,9 +1632,12 @@ export class MemOS {
     // Register the node for the write-time contradiction scan: once its
     // embedding is persisted, `onEmbeddingPersisted` runs the bounded
     // neighbor scan and records candidate pairs (see
-    // `detectContradictionsForNode`). Fail-soft — detection never blocks
-    // the write path.
-    this.contradictionScanPending.add(node.id);
+    // `detectContradictionsForNode`). Fail-soft - detection never blocks
+    // the write path. Bulk writers opt out (`contradictionScan: false`)
+    // because the scan is a full vector scan per write.
+    if (opts.contradictionScan !== false) {
+      this.contradictionScanPending.add(node.id);
+    }
 
     // Provenance for the evidence state machine: when the contradicted
     // outcome already superseded an old version above, record the pair
@@ -1987,6 +2458,18 @@ export class MemOS {
       filter.includeSharedScope = scopeFilter.includeSharedScope;
     }
 
+    // Rotation locality: a single-namespace query is about to touch only
+    // that namespace's vectors, so drop every other namespace's copies
+    // first (see `pruneVectorCacheForNamespace`). This is what makes a
+    // sweep over N namespaces stay warm instead of thrashing the LRU.
+    // Cheap when warm (one Map walk over namespaced keys).
+    if (
+      filter.namespace !== undefined &&
+      this.storage.pruneVectorCacheForNamespace
+    ) {
+      this.storage.pruneVectorCacheForNamespace(filter.namespace);
+    }
+
     // Check the search cache. Only cache text queries (not structured-only
     // queries without a `query` field, since those are cheap).
     if (filter.query) {
@@ -2052,6 +2535,376 @@ export class MemOS {
       !!this.config.vision?.clip?.enabled &&
       !!this.storage.querySimilarImages
     );
+  }
+
+  // -----------------------------------------------------------------------
+  // One-call user profile
+  // -----------------------------------------------------------------------
+
+  /**
+   * One-call user profile: the stable "who am I talking to" block
+   * (`static`: durable preferences, entities, facts) plus what happened
+   * lately (`dynamic`: recent activity), ready to drop into a system
+   * prompt. Cached for `profile.cacheTtlMs` (default 30s) and cleared
+   * by any write — the 50ms claim of a profile API is a caching claim.
+   *
+   * The static half is ranked by trust → importance → recency, so a
+   * user-verified preference outranks an imported guess. Pass `query`
+   * to bias the static half toward a topic (scope-tuned profiles).
+   *
+   * ```ts
+   * const { static: who, dynamic: recent } = await memos.profile();
+   * // → { static: [{ content: "User prefers dark mode", ... }],
+   * //     dynamic: [{ content: "User asked about the deploy", ... }] }
+   * ```
+   */
+  async profile(opts: ProfileOptions = {}): Promise<MemoryProfile> {
+    this.assertInit();
+    await this.flushEmbeddings();
+
+    const cfg = this.profileConfig;
+    const maxStatic = Math.max(
+      0,
+      Math.floor(opts.maxStatic ?? cfg.maxStatic ?? 25),
+    );
+    const maxDynamic = Math.max(
+      0,
+      Math.floor(opts.maxDynamic ?? cfg.maxDynamic ?? 10),
+    );
+    const recentDays = Math.max(0, opts.recentDays ?? cfg.recentDays ?? 7);
+    const includeQuarantined = opts.includeQuarantined === true;
+    const scopeFilter = this.resolveScopeFilter({
+      namespace: opts.namespace,
+      scope: opts.scope,
+      scopeMatch: opts.scopeMatch,
+    });
+
+    const cacheKey = stableStringify({
+      namespace: scopeFilter.namespace,
+      namespaces: scopeFilter.namespaces,
+      namespacePrefix: scopeFilter.namespacePrefix,
+      includeSharedScope: scopeFilter.includeSharedScope,
+      maxStatic,
+      maxDynamic,
+      recentDays,
+      query: opts.query ?? "",
+      includeQuarantined,
+    });
+    const now = Date.now();
+    if (!opts.refresh) {
+      const hit = this.profileCache.get(cacheKey);
+      if (hit && hit.expiry > now) return { ...hit.profile, cached: true };
+      if (hit) this.profileCache.delete(cacheKey);
+    }
+
+    // Candidate nodes under the same scope semantics `search()` uses,
+    // minus the rows default recall excludes.
+    const nodes = this.graph.getAllNodes().filter((n) => {
+      if (!includeQuarantined && n.quarantined) return false;
+      if (n.validTo !== null && n.validTo <= now) return false;
+      return this.nodeInProfileScope(n, scopeFilter);
+    });
+
+    // ── Static half: durable facts ─────────────────────────────────────
+    const staticTypes: ReadonlySet<MemoryType> = new Set([
+      "preference",
+      "entity",
+      "fact",
+    ]);
+    const rankStatic = (a: MemoryNode, b: MemoryNode): number =>
+      b.trustScore - a.trustScore ||
+      b.importance - a.importance ||
+      b.updatedAt - a.updatedAt ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+    const picked: MemoryNode[] = [];
+    const seen = new Set<string>();
+    const push = (node: MemoryNode): void => {
+      if (picked.length >= maxStatic) return;
+      if (seen.has(node.id)) return;
+      seen.add(node.id);
+      picked.push(node);
+    };
+
+    // Optional query bias: semantically relevant memories lead the
+    // static half, then pinned durable facts fill the rest.
+    if (opts.query) {
+      const hits = await this.search({
+        query: opts.query,
+        limit: Math.max(maxStatic * 2, maxStatic),
+        ...scopeFilter,
+        ...(includeQuarantined ? { includeQuarantined: true } : {}),
+      });
+      for (const hit of hits) push(hit.node);
+    }
+    const pinnedAll = nodes
+      .filter((n) => staticTypes.has(n.type))
+      .sort(rankStatic);
+    for (const node of pinnedAll) {
+      if (picked.length >= maxStatic) break;
+      push(node);
+    }
+    const staticNodes = picked.slice(0, maxStatic);
+
+    // ── Dynamic half: recent activity ──────────────────────────────────
+    // recentDays <= 0 means "no dynamic half" — an explicit opt-out,
+    // and the only way to make the window boundary deterministic
+    // (an inclusive `>= now` would depend on same-millisecond timing).
+    const dynamicCandidates =
+      recentDays > 0
+        ? (() => {
+            const windowStart = now - recentDays * 86_400_000;
+            return nodes
+              .filter(
+                (n) =>
+                  !seen.has(n.id) &&
+                  Math.max(n.updatedAt, n.createdAt) >= windowStart,
+              )
+              .sort(
+                (a, b) =>
+                  Math.max(b.updatedAt, b.createdAt) -
+                  Math.max(a.updatedAt, a.createdAt),
+              );
+          })()
+        : [];
+    const dynamicNodes = dynamicCandidates.slice(0, maxDynamic);
+
+    const profile: MemoryProfile = {
+      static: staticNodes,
+      dynamic: dynamicNodes,
+      generatedAt: now,
+      cached: false,
+      totalStatic: pinnedAll.length,
+      totalDynamic: dynamicCandidates.length,
+    };
+
+    // Cache insert with oldest-first eviction.
+    if (this.profileCache.size >= this.profileCacheMaxEntries) {
+      const oldest = this.profileCache.keys().next().value;
+      if (oldest !== undefined) this.profileCache.delete(oldest);
+    }
+    this.profileCache.set(cacheKey, {
+      profile,
+      expiry: now + (cfg.cacheTtlMs ?? this.profileCacheTtlMs),
+    });
+    return profile;
+  }
+
+  /**
+   * "What does this store know?" — namespaces, types, topics, freshness,
+   * provenance, and trust in one read. Cheap enough to call at session start;
+   * unlike {@link profile}, it describes the shape of the store rather than
+   * listing individual memories.
+   */
+  async overview(opts: OverviewOptions = {}): Promise<MemoryOverview> {
+    this.assertInit();
+    const now = Date.now();
+    const namespace = opts.namespace ?? null;
+    const nodes = this.graph
+      .getAllNodes()
+      .filter((node) =>
+        namespace === null ? true : node.namespace === namespace,
+      );
+    const inScope = new Set(nodes.map((node) => node.id));
+    const edges =
+      namespace === null
+        ? this.graph.getAllEdges()
+        : this.graph
+            .getAllEdges()
+            .filter(
+              (edge) =>
+                inScope.has(edge.sourceId) && inScope.has(edge.targetId),
+            );
+
+    const active = nodes.filter(
+      (node) =>
+        !node.quarantined && (node.validTo === null || node.validTo > now),
+    );
+
+    const tally = <T extends string>(
+      values: T[],
+      limit = Number.POSITIVE_INFINITY,
+    ): Array<{ key: T; count: number }> => {
+      const counts = new Map<T, number>();
+      for (const value of values)
+        counts.set(value, (counts.get(value) ?? 0) + 1);
+      return [...counts.entries()]
+        .map(([key, count]) => ({ key, count }))
+        .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
+        .slice(0, limit);
+    };
+
+    const tagCounts = new Map<string, number>();
+    for (const node of nodes) {
+      for (const tag of node.tags) {
+        tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+      }
+    }
+    const tags = [...tagCounts.entries()]
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+      .slice(0, 20);
+
+    const day = 86_400_000;
+    const activity = (node: MemoryNode): number =>
+      Math.max(node.createdAt, node.updatedAt);
+    const freshness = {
+      last24h: nodes.filter((node) => activity(node) >= now - day).length,
+      last7d: nodes.filter((node) => activity(node) >= now - 7 * day).length,
+      last30d: nodes.filter((node) => activity(node) >= now - 30 * day).length,
+    };
+
+    const trustMean =
+      active.length === 0
+        ? 0
+        : active.reduce((sum, node) => sum + node.trustScore, 0) /
+          active.length;
+    const timestamps = nodes.map((node) => node.createdAt);
+
+    return {
+      generatedAt: now,
+      namespace,
+      total: nodes.length,
+      active: active.length,
+      historical: nodes.filter(
+        (node) => node.validTo !== null && node.validTo <= now,
+      ).length,
+      quarantined: nodes.filter((node) => node.quarantined).length,
+      edges: edges.length,
+      namespaces: tally(nodes.map((node) => node.namespace)).map((row) => ({
+        namespace: row.key,
+        count: row.count,
+      })),
+      types: tally(nodes.map((node) => String(node.type))).map((row) => ({
+        type: row.key,
+        count: row.count,
+      })),
+      tags,
+      sources: tally(nodes.map((node) => String(node.source))).map((row) => ({
+        source: row.key,
+        count: row.count,
+      })),
+      harnesses: tally(nodes.map((node) => node.harness ?? "unknown")).map(
+        (row) => ({ harness: row.key, count: row.count }),
+      ),
+      freshness,
+      trust: {
+        mean: Math.round(trustMean * 1000) / 1000,
+        low: active.filter((node) => node.trustScore < 0.5).length,
+      },
+      oldest:
+        timestamps.length === 0
+          ? null
+          : timestamps.reduce((min, value) => Math.min(min, value)),
+      newest:
+        timestamps.length === 0
+          ? null
+          : timestamps.reduce((max, value) => Math.max(max, value)),
+    };
+  }
+
+  /**
+   * Scope match for profile candidates — mirrors the namespace
+   * semantics `search()` implements (exact / prefix / list, with the
+   * shared `default` namespace unioned into every scoped read).
+   */
+  private nodeInProfileScope(
+    node: MemoryNode,
+    scopeFilter: {
+      namespace?: string;
+      namespaces?: string[];
+      namespacePrefix?: string;
+      includeSharedScope?: boolean;
+    },
+  ): boolean {
+    const inScope =
+      scopeFilter.namespace !== undefined
+        ? node.namespace === scopeFilter.namespace
+        : scopeFilter.namespaces !== undefined
+          ? scopeFilter.namespaces.includes(node.namespace)
+          : scopeFilter.namespacePrefix !== undefined
+            ? node.namespace.startsWith(scopeFilter.namespacePrefix)
+            : true;
+    if (inScope) return true;
+    return (
+      scopeFilter.includeSharedScope === true && node.namespace === "default"
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // Cross-harness handoff
+  // -----------------------------------------------------------------------
+
+  /**
+   * Assemble a compact "continue here" brief for another harness, model, or
+   * session. Composes the profile, a token-budgeted context pack, procedural
+   * lessons, reminders, memory health, and harness attribution. Read-only.
+   */
+  async handoff(opts: HandoffOptions): Promise<HandoffBrief | string> {
+    this.assertInit();
+    const task = opts.task?.trim();
+    if (!task) throw new Error("handoff requires a non-empty task");
+
+    const [profile, packResult, lessons, reminders, harnesses] =
+      await Promise.all([
+        this.profile({
+          query: task,
+          ...(opts.namespace ? { namespace: opts.namespace } : {}),
+          ...(opts.scope ? { scope: opts.scope } : {}),
+          ...(opts.maxStatic ? { maxStatic: opts.maxStatic } : {}),
+          ...(opts.maxDynamic ? { maxDynamic: opts.maxDynamic } : {}),
+        }),
+        this.contextPack({
+          query: task,
+          tokenBudget: opts.tokenBudget ?? 1200,
+          format: "json",
+          citations: true,
+          lessons: true,
+          semanticDedup: true,
+          ...(opts.namespace ? { namespace: opts.namespace } : {}),
+          ...(opts.scope ? { scope: opts.scope } : {}),
+        }),
+        this.recallProcedural(task, opts.lessons ?? 5, {
+          ...(opts.namespace ? { namespace: opts.namespace } : {}),
+          ...(opts.scope ? { scope: opts.scope } : {}),
+        }),
+        opts.includeReminders === false
+          ? Promise.resolve([])
+          : listReminders(this, {
+              now: new Date(),
+              dueOnly: false,
+              limit: 20,
+              ...(opts.namespace ? { namespace: opts.namespace } : {}),
+            }),
+        this.getHarnessCounts(),
+      ]);
+
+    // The pack above usually exercises the provider, but an empty store or a
+    // keyword-only query may not. Probe once so the brief never reports a
+    // false "ok" before FastEmbed has detected a missing local model.
+    await this.flushEmbeddings();
+    const healthBase = await this.health();
+    const embeddingHealth = await this.probeEmbeddingHealth();
+    const health = { ...healthBase, embeddingHealth };
+
+    const pack: HandoffPack =
+      typeof packResult === "string"
+        ? (JSON.parse(packResult) as HandoffPack)
+        : packResult;
+
+    const brief = buildHandoffBrief({
+      task,
+      profile,
+      pack,
+      lessons,
+      reminders,
+      health,
+      harnesses,
+      ...(opts.fromHarness ? { fromHarness: opts.fromHarness } : {}),
+      ...(opts.toHarness ? { toHarness: opts.toHarness } : {}),
+    });
+
+    return opts.format === "json" ? brief : brief.markdown;
   }
 
   // -----------------------------------------------------------------------
@@ -2492,9 +3345,101 @@ export class MemOS {
       modulated = true;
     }
 
+    // (4) Relative-time anchoring: "10 days ago" promotes memories from the
+    // implied window above memories outside it, preserving semantic order
+    // within each group. Only runs when the query actually carries such an
+    // expression, so it costs nothing otherwise.
+    const anchor = this.resolveRelativeTimeAnchor(filter);
+    if (anchor) {
+      const anchored = applyRelativeTimeAnchor(scored, anchor);
+      if (anchored.moved > 0) {
+        scored = anchored.results;
+        modulated = true;
+      }
+    }
+
+    // (5) Opt-in: chronological neighbour expansion. Fills the tail with the
+    // memories immediately before/after existing hits, which is where
+    // "what did we decide in that session" answers usually sit.
+    if (filter.sessionNeighbours) {
+      const options =
+        typeof filter.sessionNeighbours === "object"
+          ? filter.sessionNeighbours
+          : {};
+      const limit = filter.limit ?? 20;
+      if (!options.onlyWhenIncomplete || scored.length < limit) {
+        const expanded = expandToTemporalNeighbours(scored, limit, {
+          radius: options.radius,
+          injected: options.maxInjected,
+        });
+        if (expanded.injected > 0) {
+          scored = expanded.results;
+          modulated = true;
+        }
+      }
+    }
+
+    // (6) Outcome-conditioned ranking: memories that actually helped in
+    // past tasks get a bounded promotion; ones used in failed tasks get a
+    // demotion. No-op until feedback exists, so historical ranking is
+    // byte-for-byte unchanged on an empty feedback store.
+    const feedback = this.resolveOutcomeFeedback(filter);
+    if (feedback) {
+      let adjusted = false;
+      scored = scored
+        .map((r) => {
+          const stat = this.recallStats.get(r.node.id);
+          if (!stat || stat.observations < feedback.minObservations) return r;
+          const multiplier = outcomeMultiplier(
+            utilityFromStat(stat),
+            feedback.weight,
+          );
+          if (multiplier === 1) return r;
+          adjusted = true;
+          return {
+            ...r,
+            score: r.score * multiplier,
+            scores: r.scores
+              ? {
+                  ...r.scores,
+                  outcomeUtility: multiplier,
+                  ...(r.scores.hybrid !== undefined
+                    ? { hybrid: r.scores.hybrid * multiplier }
+                    : {}),
+                }
+              : { outcomeUtility: multiplier },
+          };
+        })
+        .sort(compareScoredMemories);
+      if (adjusted) modulated = true;
+    }
+
     if (!modulated) return scored;
     for (const entry of scored) this.rankingModulated.add(entry);
     return scored;
+  }
+
+  /**
+   * Resolve the query's relative-time expression to an absolute window.
+   *
+   * The reference instant is "now" for a live query. A caller replaying
+   * history (`filter.validAt`) gets that instant instead, so anchoring is
+   * evaluated from the perspective of the question's own moment rather than
+   * today's clock.
+   *
+   * @returns The window, or null when the query has no relative expression
+   *   or anchoring is switched off.
+   */
+  private resolveRelativeTimeAnchor(
+    filter: SearchFilter,
+  ): { at: number; windowDays: number } | null {
+    if (filter.relativeTimeBoost === false) return null;
+    if (!filter.query) return null;
+    const reference = new Date(filter.validAt ?? Date.now());
+    if (Number.isNaN(reference.getTime())) return null;
+    const offset = parseRelativeAgo(filter.query, reference);
+    if (!offset) return null;
+    return { at: offset.at.getTime(), windowDays: offset.windowDays };
   }
 
   /**
@@ -2589,6 +3534,86 @@ export class MemOS {
    * @param id — Memory node ID to forget.
    * @returns `true` if the memory existed and was deleted.
    */
+  /**
+   * Ingest a file or a folder of documents into memory.
+   *
+   * Markdown, text, CSV, JSON, YAML and HTML are parsed natively; PDF needs
+   * the optional `unpdf` package. Ingestion is incremental: unchanged files
+   * are skipped, changed files replace their old chunks, and deleted files
+   * remove theirs. Pass `{ watch: true }` to `watchPath` for live sync.
+   */
+  async ingest(
+    target: string,
+    options: IngestOptions = {},
+  ): Promise<IngestResult> {
+    this.assertInit();
+    return ingestPath(this, target, options);
+  }
+
+  /**
+   * Extract explicit preference statements ("I love X", "I hate Y") and store
+   * them as `preference` memories tagged `preference`.
+   *
+   * They are kept separate so `searchPreferences` can fetch them when a
+   * question asks for a recommendation, where the question's words rarely
+   * overlap with the stored statement.
+   */
+  async capturePreferences(
+    text: string,
+    opts: { namespace?: string; sourceId?: string; limit?: number } = {},
+  ): Promise<MemoryNode[]> {
+    this.assertInit();
+    const extracted = extractPreferences(text, opts.limit ?? 20);
+    const nodes: MemoryNode[] = [];
+    for (const preference of extracted) {
+      const { node } = await this.store(preference.statement, {
+        type: "preference",
+        importance: 0.85,
+        tags: ["preference", "auto-extracted"],
+        ...(opts.namespace ? { namespace: opts.namespace } : {}),
+        metadata: {
+          kind: "preference",
+          polarity: preference.polarity,
+          ...(opts.sourceId ? { sourceId: opts.sourceId } : {}),
+        },
+      });
+      nodes.push(node);
+    }
+    return nodes;
+  }
+
+  /** Search only auto-captured or manually stored preference memories. */
+  async searchPreferences(
+    query: string,
+    opts: { namespace?: string; limit?: number } = {},
+  ): Promise<ScoredMemory[]> {
+    this.assertInit();
+    const limit = opts.limit ?? 5;
+    const namespace = opts.namespace;
+    const hits = await this.search({
+      query,
+      limit,
+      tags: ["preference"],
+      ...(namespace ? { namespace } : {}),
+    });
+    if (hits.length >= limit) return hits;
+
+    // Questions like "what would I enjoy?" share no words with "User prefers
+    // hiking in the rain". Fall back to the preference pool by importance and
+    // recency so taste questions still get evidence.
+    const seen = new Set(hits.map((hit) => hit.node.id));
+    const fallback = (await this.listByTag("preference"))
+      .filter(
+        (node) =>
+          !seen.has(node.id) &&
+          (namespace === undefined || node.namespace === namespace),
+      )
+      .sort((a, b) => b.importance - a.importance || b.updatedAt - a.updatedAt)
+      .slice(0, limit - hits.length)
+      .map((node) => ({ node, score: 0 }));
+    return [...hits, ...fallback];
+  }
+
   async forget(id: string): Promise<boolean> {
     this.assertInit();
 
@@ -2600,11 +3625,227 @@ export class MemOS {
     const deleted = await this.storage.deleteNode(id);
     if (deleted) {
       this.graph.removeNode(id);
+      // Deleted memories must not keep accumulating utility evidence.
+      this.recallStats.delete(id);
+      for (const [batchId, batch] of this.recallBatches) {
+        if (!batch.memoryIds.includes(id)) continue;
+        const next = {
+          ...batch,
+          memoryIds: batch.memoryIds.filter((memoryId) => memoryId !== id),
+        };
+        this.recallBatches.set(batchId, next);
+      }
       this.emit("node:deleted", id);
       this.invalidateSearchCache();
       if (doomed) await this.logMutation("forget", doomed);
     }
     return deleted;
+  }
+
+  /**
+   * Delete every memory that came from one source — a file, folder, URL,
+   * import id, harness, or `source` value. Useful for GDPR-style
+   * source-scoped erasure and for re-ingesting a document from scratch.
+   *
+   * Each deletion goes through {@link forget}, so it writes a hash-chained
+   * tombstone and can be proven later with {@link proveForget}.
+   */
+  async forgetSource(
+    source: string,
+    opts: ForgetSourceOptions = {},
+  ): Promise<ForgetSourceResult> {
+    this.assertInit();
+    const needle = source.trim();
+    if (!needle) throw new Error("forgetSource requires a non-empty source.");
+
+    const fields = opts.field
+      ? [opts.field]
+      : ["sourcePath", "sourceId", "url", "source"];
+    const matches = this.graph.getAllNodes().filter((node) => {
+      if (opts.namespace !== undefined && node.namespace !== opts.namespace) {
+        return false;
+      }
+      const values: unknown[] = fields.map((field) => node.metadata?.[field]);
+      if (!opts.field) values.push(node.harness);
+      return values.some((value) => {
+        if (typeof value !== "string") return false;
+        return opts.prefix === true
+          ? value.startsWith(needle)
+          : value === needle;
+      });
+    });
+
+    const nodeIds = matches.map((node) => node.id);
+    if (opts.dryRun === true) {
+      return {
+        source: needle,
+        field: opts.field ?? null,
+        prefix: opts.prefix === true,
+        dryRun: true,
+        matched: matches.length,
+        deleted: 0,
+        nodeIds,
+        certificates: [],
+      };
+    }
+
+    const certificates: DeletionCertificate[] = [];
+    let deleted = 0;
+    for (const node of matches) {
+      if (!(await this.forget(node.id))) continue;
+      deleted += 1;
+      const certificate = await this.proveForget(node.id);
+      if (certificate) certificates.push(certificate);
+    }
+
+    return {
+      source: needle,
+      field: opts.field ?? null,
+      prefix: opts.prefix === true,
+      dryRun: false,
+      matched: matches.length,
+      deleted,
+      nodeIds,
+      certificates,
+    };
+  }
+
+  /**
+   * Whether a memory is present, deleted (with a proof-of-forgetting
+   * certificate), or unknown to this store.
+   */
+  async deletionStatus(nodeId: string): Promise<DeletionStatusResult> {
+    this.assertInit();
+    const certificate = await this.proveForget(nodeId);
+    if (certificate) {
+      return { nodeId, status: "deleted", certificate };
+    }
+    const present =
+      this.graph.getNode(nodeId) !== undefined ||
+      (this.storage.peekNode
+        ? (await this.storage.peekNode(nodeId)) !== null
+        : false);
+    return {
+      nodeId,
+      status: present ? "present" : "unknown",
+      certificate: null,
+    };
+  }
+
+  /**
+   * A short, maintained brief about one subject (a person, project, or
+   * topic). Open items are what still needs action; closed items are kept
+   * for audit but dropped from the prompt by policy. Recomputed on read —
+   * there is no second copy to drift.
+   */
+  async brief(opts: BriefOptions): Promise<MemoryBrief> {
+    this.assertInit();
+    const subject = opts.subject?.trim();
+    if (!subject) throw new Error("brief requires a non-empty subject.");
+    const limit = Math.max(1, Math.floor(opts.limit ?? 40));
+    const hits = await this.search({
+      query: subject,
+      limit,
+      ...(opts.namespace !== undefined ? { namespace: opts.namespace } : {}),
+    });
+
+    const open: BriefItem[] = [];
+    const closed: BriefItem[] = [];
+    for (const hit of hits) {
+      const node = hit.node;
+      const tags = node.tags.map((tag) => tag.toLowerCase());
+      const status = String(
+        (node.metadata?.status as string | undefined) ?? "",
+      ).toLowerCase();
+      const text = node.content.toLowerCase();
+      const closedSignal =
+        tags.find((tag) =>
+          ["done", "resolved", "closed", "completed", "shipped"].includes(tag),
+        ) ??
+        (["done", "resolved", "closed", "completed", "shipped"].includes(status)
+          ? `status=${status}`
+          : null) ??
+        (/\b(done|resolved|completed|shipped|closed)\b/.test(text)
+          ? "text says done"
+          : null);
+      const openSignal =
+        tags.find((tag) =>
+          ["open", "todo", "blocked", "waiting", "next"].includes(tag),
+        ) ??
+        (["open", "pending", "blocked", "waiting"].includes(status)
+          ? `status=${status}`
+          : null) ??
+        (/\b(todo|pending|blocked|waiting|next step|need to)\b/.test(text)
+          ? "text signals action"
+          : null);
+
+      const item: BriefItem = {
+        id: node.id,
+        content: node.content,
+        type: node.type,
+        tags: node.tags,
+        trustScore: node.trustScore,
+        reason: closedSignal
+          ? `closed: ${closedSignal}`
+          : openSignal
+            ? `open: ${openSignal}`
+            : "open: no resolved signal",
+      };
+      if (closedSignal) closed.push(item);
+      else open.push(item);
+    }
+
+    return {
+      subject,
+      generatedAt: Date.now(),
+      open,
+      closed: opts.includeClosed === false ? [] : closed,
+      policy: {
+        rewrite: "on-read",
+        dropClosedFromPrompt: true,
+        note: "The brief is recomputed from live memories each read; inject only `open`. Close an item by tagging it done/resolved or setting metadata.status.",
+      },
+    };
+  }
+
+  /**
+   * Save a knowledge page: a named query plus optional pinned memories.
+   * Definitions live next to the database; rendered content is not stored.
+   */
+  async savePage(input: {
+    name: string;
+    title?: string;
+    query: string;
+    pinnedIds?: string[];
+    maxItems?: number;
+    namespace?: string;
+  }): Promise<KnowledgePageDef> {
+    this.assertInit();
+    return savePageDef(this.config.dbPath, input);
+  }
+
+  /** List saved knowledge pages, alphabetically. */
+  async listPages(): Promise<KnowledgePageDef[]> {
+    this.assertInit();
+    return listPageDefs(this.config.dbPath);
+  }
+
+  /** Render one knowledge page from live memory. */
+  async readPage(name: string): Promise<KnowledgePage> {
+    this.assertInit();
+    const def = await getPageDef(this.config.dbPath, name);
+    if (!def) throw new Error(`Knowledge page not found: ${name}`);
+    const source: PageSource = {
+      search: (input) => this.search(input),
+      getNode: (id) => this.graph.getNode(id),
+    };
+    return renderPage(source, def);
+  }
+
+  /** Delete one saved knowledge page. Returns false when absent. */
+  async deletePage(name: string): Promise<boolean> {
+    this.assertInit();
+    return deletePageDef(this.config.dbPath, name);
   }
 
   /**
@@ -3079,6 +4320,112 @@ export class MemOS {
     return storage.listProceduralLessons!(namespace);
   }
 
+  /**
+   * Recall lessons *before* the agent acts. Takes the task text and the
+   * entities it touches, ranks procedural lessons against both, and explains
+   * why each one fired. Read-only; use `recordLessonOutcome` afterwards to
+   * reinforce or demote what actually helped.
+   */
+  async trigger(opts: TriggerOptions): Promise<TriggerResult> {
+    this.assertInit();
+    const task = opts.task?.trim();
+    if (!task) throw new Error("trigger requires a non-empty task.");
+    const entities = (opts.entities ?? [])
+      .map((entity) => entity.trim())
+      .filter((entity) => entity.length > 0);
+    const limit = Math.max(1, Math.floor(opts.limit ?? 5));
+
+    const lessons = await this.listProceduralLessons({
+      ...(opts.namespace !== undefined ? { namespace: opts.namespace } : {}),
+      ...(opts.scope !== undefined ? { scope: opts.scope } : {}),
+    });
+    const ranked = rankProceduralLessons(
+      lessons,
+      [task, ...entities].join(" "),
+      limit,
+    );
+
+    const matches = ranked.map((lesson) => {
+      const haystack =
+        `${lesson.lesson} ${lesson.context} ${lesson.tags.join(" ")}`.toLowerCase();
+      const matchedTags = entities.filter((entity) => {
+        const needle = entity.toLowerCase();
+        return (
+          lesson.tags.some((tag) => tag.toLowerCase() === needle) ||
+          haystack.includes(needle)
+        );
+      });
+      const reason =
+        `relevance ${Math.round(lesson.relevance * 100)}%, ` +
+        `score ${lesson.effectiveScore.toFixed(2)}` +
+        (matchedTags.length > 0 ? `, matched ${matchedTags.join(", ")}` : "");
+      return { ...lesson, reason, matchedTags };
+    });
+
+    return {
+      task,
+      entities,
+      matches,
+      generatedAt: Date.now(),
+    };
+  }
+
+  /**
+   * Review repeated successful recall patterns as procedure candidates.
+   * Dry-run by default: pass `apply: true` to write the lessons. Existing
+   * lessons with the same normalized text are skipped, so the command is
+   * idempotent.
+   */
+  async promoteProcedures(
+    opts: PromotionOptions & {
+      apply?: boolean;
+      namespace?: string;
+      scope?: MemoryScope;
+    } = {},
+  ): Promise<{
+    candidates: ProcedureCandidate[];
+    created: ProceduralLesson[];
+    skipped: number;
+  }> {
+    this.assertInit();
+    const graph = await this.getGraph();
+    const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+    const candidates = deriveProcedureCandidates(
+      [...this.recallBatches.values()],
+      nodesById,
+      opts,
+    );
+    if (!opts.apply) {
+      return { candidates, created: [], skipped: 0 };
+    }
+
+    const namespace = opts.scope
+      ? composeScope(opts.scope)
+      : (opts.namespace ?? "default");
+    const existing = await this.listProceduralLessons({ namespace });
+    const existingText = new Set(
+      existing.map((lesson) => normalizeLessonText(lesson.lesson)),
+    );
+    const created: ProceduralLesson[] = [];
+    let skipped = 0;
+    for (const candidate of candidates) {
+      const key = normalizeLessonText(candidate.lesson);
+      if (existingText.has(key)) {
+        skipped += 1;
+        continue;
+      }
+      const lesson = await this.memorizeProcedural(candidate.lesson, {
+        context: candidate.reason,
+        tags: ["auto-promoted"],
+        namespace,
+        initialScore: candidate.confidence,
+      });
+      existingText.add(key);
+      created.push(lesson);
+    }
+    return { candidates, created, skipped };
+  }
+
   // -----------------------------------------------------------------------
   // Memory-grounded citations
   // -----------------------------------------------------------------------
@@ -3266,6 +4613,56 @@ export class MemOS {
    * Add-only: `quarantinedAt`/`quarantineReason` are preserved as the
    * audit trail of the original flagging.
    */
+  /**
+   * Memories waiting for approval. Writes made with `review: true` are
+   * stored quarantined with reason `review:pending`; they never appear in
+   * search or context packs until approved.
+   */
+  async reviewQueue(opts: { namespace?: string } = {}): Promise<MemoryNode[]> {
+    this.assertInit();
+    return this.graph
+      .getAllNodes()
+      .filter(
+        (node) =>
+          node.metadata?.reviewStatus === "pending" &&
+          (opts.namespace === undefined || node.namespace === opts.namespace),
+      )
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /** Approve one pending memory and make it recallable. */
+  async reviewApprove(id: string): Promise<MemoryNode> {
+    this.assertInit();
+    const node = this.graph.getNode(id);
+    if (!node) throw new Error(`Node not found: ${id}`);
+    if (node.metadata?.reviewStatus !== "pending") {
+      throw new Error(`Memory is not pending review: ${id}`);
+    }
+    const updated = await this.update(id, {
+      quarantined: false,
+      quarantinedAt: null,
+      quarantineReason: null,
+      metadata: {
+        ...node.metadata,
+        reviewStatus: "approved",
+        reviewDecidedAt: Date.now(),
+      },
+    });
+    if (!updated) throw new Error(`Node not found: ${id}`);
+    return updated;
+  }
+
+  /** Reject a pending memory by deleting it. */
+  async reviewReject(id: string): Promise<boolean> {
+    this.assertInit();
+    const node = this.graph.getNode(id);
+    if (!node) throw new Error(`Node not found: ${id}`);
+    if (node.metadata?.reviewStatus !== "pending") {
+      throw new Error(`Memory is not pending review: ${id}`);
+    }
+    return this.forget(id);
+  }
+
   async releaseFromQuarantine(id: string): Promise<MemoryNode> {
     this.assertInit();
     const node = this.storage.peekNode
@@ -3730,6 +5127,7 @@ export class MemOS {
         limit,
         resolvedThreshold,
         provider.model,
+        provider.queryPrefix ?? "",
       );
     }
 
@@ -4059,6 +5457,7 @@ export class MemOS {
   async clear(): Promise<void> {
     this.assertInit();
     await this.storage.deleteAllNodes();
+    await this.clearRecallFeedback();
     this.graph.clear();
   }
 
@@ -4117,6 +5516,12 @@ export class MemOS {
     /** Output format: "json" (default), "toon", or "toon-compact" */
     format?: "json" | "toon" | "toon-compact";
     /**
+     * Restrict candidates to nodes carrying ALL of these tags (AND logic).
+     * Useful for hard partitions that are not namespaces, e.g. one tag per
+     * source environment so a query never mixes evidence across sites.
+     */
+    tags?: string[];
+    /**
      * Opt-in semantic dedup: drop pack items whose stored embedding is a
      * near-duplicate (cosine >= 0.90) of an already-selected item's.
      * Catches paraphrased memories that lexical dedup misses. Costs one
@@ -4124,6 +5529,13 @@ export class MemOS {
      * off by default.
      */
     semanticDedup?: boolean;
+    /**
+     * Explicitly enable/disable the cross-encoder rerank for this pack.
+     * `undefined` uses `experimental.rerank` (off by default). Enabling it
+     * without a configured reranker attempts the in-process local model and
+     * degrades to the fused order if it is unavailable.
+     */
+    rerank?: boolean;
     /**
      * Multi-stream retrieval (LongMemEval-V2 design lesson): run the query
      * separately against each granularity pool (`event`, `note`,
@@ -4207,9 +5619,13 @@ export class MemOS {
       // budget retrieves a proportionally larger pool before packing,
       // instead of trimming a pool sized for a 4k window.
       limit: derivePackCandidateDepth(limit),
+      // Reranking is opt-in: it needs a local cross-encoder (or endpoint)
+      // and the first model load is too expensive for a default path.
+      ...(opts.rerank !== undefined ? { rerank: opts.rerank } : {}),
       // Forward the pack-level graph-expansion opt-out to the hybrid
       // search's PPR-lite expansion (undefined keeps the default on).
       graphExpansion: opts.graphExpansion,
+      ...(opts.tags && opts.tags.length > 0 ? { tags: opts.tags } : {}),
       ...scopeFilter,
     };
     const items = this.embeddingProvider
@@ -4290,7 +5706,12 @@ export class MemOS {
         undefined,
         opts.maxWireTokens,
       ) as string;
-      this.trackPackUsage(estimateTokens(serialized), naiveBaselineTokens);
+      this.trackPackUsage(
+        estimateTokens(serialized),
+        naiveBaselineTokens,
+        pack.items.length,
+        opts.format,
+      );
       return serialized;
     }
 
@@ -4299,6 +5720,8 @@ export class MemOS {
         JSON.stringify((pack as { items?: unknown[] }).items ?? pack),
       ),
       naiveBaselineTokens,
+      pack.items.length,
+      "json",
     );
     return pack;
   }
@@ -4331,17 +5754,21 @@ export class MemOS {
    */
   usageStats(): {
     packsBuilt: number;
+    packItems: number;
     packTokens: number;
     naiveBaselineTokens: number;
     savedTokens: number;
     savedPct: number;
+    byFormat: Record<string, number>;
   } {
     const savedTokens = this.usage.naiveBaselineTokens - this.usage.packTokens;
     return {
       packsBuilt: this.usage.packsBuilt,
+      packItems: this.usage.packItems,
       packTokens: this.usage.packTokens,
       naiveBaselineTokens: this.usage.naiveBaselineTokens,
       savedTokens,
+      byFormat: { ...this.usage.byFormat },
       savedPct:
         this.usage.naiveBaselineTokens > 0
           ? Number(
@@ -4354,10 +5781,14 @@ export class MemOS {
   private trackPackUsage(
     packTokens: number,
     naiveBaselineTokens: number,
+    items: number,
+    format: string,
   ): void {
     this.usage.packsBuilt += 1;
+    this.usage.packItems += items;
     this.usage.packTokens += packTokens;
     this.usage.naiveBaselineTokens += naiveBaselineTokens;
+    this.usage.byFormat[format] = (this.usage.byFormat[format] ?? 0) + 1;
   }
 
   /**
@@ -4721,6 +6152,35 @@ export class MemOS {
   }
 
   /**
+   * Assemble the full audit artifact: tamper-chain verification, provenance
+   * and source inventory, quarantine register, deletion certificates, search
+   * health, and actionable recommendations. Read-only.
+   */
+  async auditReport(opts: AuditOptions = {}): Promise<AuditReport> {
+    this.assertInit();
+    const [graph, tamper, tamperLog, quarantine, healthBase] =
+      await Promise.all([
+        this.getGraph(),
+        this.verifyTamperLog(
+          opts.expectTip ? { expectTip: opts.expectTip } : {},
+        ),
+        this.readTamperLog(),
+        this.listQuarantined(),
+        this.health(),
+      ]);
+    const embeddingHealth = await this.probeEmbeddingHealth();
+    return buildAuditReport({
+      nodes: graph.nodes,
+      tamper,
+      tamperLog,
+      quarantine,
+      health: { ...healthBase, embeddingHealth },
+      ...(opts.expectTip ? { expectTip: opts.expectTip } : {}),
+      ...(opts.limit ? { limit: opts.limit } : {}),
+    });
+  }
+
+  /**
    * Reconstruct the memory state as it existed at a given timestamp.
    *
    * Time-travel: answers "what did the agent believe on date X?" by
@@ -4977,6 +6437,12 @@ export class MemOS {
   /** Clear the search result cache. Called on any mutation. */
   private invalidateSearchCache(): void {
     this.searchCache.clear();
+    // Session-neighbour windows are derived from the store too.
+    this.sessionSiblingCache.clear();
+    // Multi-hop subject index is derived from the store too.
+    this.subjectIndexCache.clear();
+    // A profile is derived from the store, so any write invalidates it.
+    this.profileCache.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -5029,12 +6495,92 @@ export class MemOS {
     const vector = provider.embedQuery
       ? await provider.embedQuery(query)
       : await provider.embed(query);
-    this.queryEmbeddingCache.set(key, vector);
-    if (this.queryEmbeddingCache.size > MemOS.QUERY_EMBEDDING_CACHE_MAX) {
-      const oldest = this.queryEmbeddingCache.keys().next();
-      if (!oldest.done) this.queryEmbeddingCache.delete(oldest.value);
-    }
+    this.storeQueryVector(key, vector);
     return vector;
+  }
+
+  private storeQueryVector(key: string, vector: number[]): void {
+    this.queryEmbeddingCache.set(key, vector);
+    while (this.queryEmbeddingCache.size > this.queryEmbeddingCacheMax) {
+      const oldest = this.queryEmbeddingCache.keys().next();
+      if (oldest.done) break;
+      this.queryEmbeddingCache.delete(oldest.value);
+    }
+  }
+
+  /**
+   * Pre-embed a batch of queries in ONE provider round-trip and seed the
+   * query-vector cache, so the subsequent `search()` calls skip the
+   * cheapest-millisecond-stage of the pipeline: the query embedding.
+   *
+   * Why this exists: every text search embeds its query, and a batch of
+   * benchmark questions issued one at a time pays that cost N times. A
+   * local embedder answers a batched request at roughly the cost of one
+   * request (`nomic-embed-text`, 60 queries: 2.9 s sequential vs 0.96 s
+   * batched in one call). Search results are unchanged — the cached
+   * vector is byte-identical to what `embedQuery` would return (verified:
+   * max per-component Δ = 0 across 40 queries), so this is pure
+   * latency, never a recall change.
+   *
+   * Callers that do not know their queries up front lose nothing: a cache
+   * miss still embeds on demand. No-op when no provider is configured.
+   *
+   * @returns How many vectors were computed and cached.
+   */
+  async prewarmQueryEmbeddings(
+    queries: readonly string[],
+    opts: { batchSize?: number } = {},
+  ): Promise<{ embedded: number; cached: number }> {
+    this.assertInit();
+    const provider = this.embeddingProvider;
+    if (!provider) return { embedded: 0, cached: 0 };
+    // `batchEmbedQueries` is the query-side batch (queryPrefix only).
+    // `batchEmbed` is the DOCUMENT batch (documentPrefix), so it is NOT a
+    // correct fallback for queries — providers without a query batch fall
+    // back to the per-query path instead.
+    const batchEmbedQueries = (
+      provider as { batchEmbedQueries?: (t: string[]) => Promise<number[][]> }
+    ).batchEmbedQueries;
+    const keyOf = (q: string) => `${provider.id}:${provider.model}:${q}`;
+
+    // Dedupe and skip anything already cached — the caller may hand over
+    // the same question twice, or re-run a warm sweep.
+    const pending: string[] = [];
+    const seen = new Set<string>();
+    for (const q of queries) {
+      const key = keyOf(q);
+      if (this.queryEmbeddingCache.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      pending.push(q);
+    }
+    if (pending.length === 0)
+      return { embedded: 0, cached: this.queryEmbeddingCache.size };
+
+    // Batch only when the provider can; otherwise fall back to the
+    // per-query path (identical vectors, no speedup).
+    const size = Math.max(1, opts.batchSize ?? 32);
+    let embedded = 0;
+    for (let i = 0; i < pending.length; i += size) {
+      const chunk = pending.slice(i, i + size);
+      if (batchEmbedQueries) {
+        const vectors = await batchEmbedQueries.call(provider, chunk);
+        if (vectors.length !== chunk.length) {
+          throw new Error(
+            `prewarmQueryEmbeddings: provider returned ${vectors.length} vectors for ${chunk.length} queries.`,
+          );
+        }
+        for (let j = 0; j < chunk.length; j += 1) {
+          this.storeQueryVector(keyOf(chunk[j]), vectors[j]);
+          embedded += 1;
+        }
+      } else {
+        for (const q of chunk) {
+          const v = await this.embedQueryCached(q);
+          if (v) embedded += 1;
+        }
+      }
+    }
+    return { embedded, cached: this.queryEmbeddingCache.size };
   }
 
   /**
@@ -5095,6 +6641,7 @@ export class MemOS {
             result.node.id,
             vectors[index],
             provider.model,
+            provider.documentPrefix ?? "",
           );
           this.recordEmbeddingStatus(result.node.id, "ready", null);
           reembedded += 1;
@@ -5108,6 +6655,7 @@ export class MemOS {
               result.node.id,
               vector,
               provider.model,
+              provider.documentPrefix ?? "",
             );
             this.recordEmbeddingStatus(result.node.id, "ready", null);
             reembedded += 1;
@@ -5646,12 +7194,17 @@ export class MemOS {
           this.embeddingProvider &&
           this.storage.querySimilarEmbeddings
         ) {
-          const embedding = await this.embeddingProvider.embed(fact.content);
+          const provider = this.embeddingProvider;
+          const embedding = provider.embedQuery
+            ? await provider.embedQuery(fact.content)
+            : await provider.embed(fact.content);
           const similar = await this.storage.querySimilarEmbeddings(
             embedding,
             { namespace, limit: 1 },
             1,
             dedupeThreshold,
+            provider.model,
+            provider.queryPrefix ?? "",
           );
           if (similar.length > 0) {
             duplicates += 1;
@@ -5805,6 +7358,114 @@ export class MemOS {
       observedDimensions: null,
       fallbackActive: false,
       fallbackReason: null,
+      queryPrefix: provider.queryPrefix,
+      documentPrefix: provider.documentPrefix,
+    };
+  }
+
+  /**
+   * Loud semantic-search health. `EmbeddingRuntimeInfo` is useful for
+   * benchmarks, but a plain user needs a single status and a fix. This is
+   * what `memos doctor`, `memos stats`, `diagnostics()`, and `health()` show.
+   */
+  /**
+   * Exercise the embedding provider once, then return health. Some providers
+   * (FastEmbed) only know whether their optional model loaded after the first
+   * embed call, so a report that never embeds can falsely say "ok".
+   */
+  async probeEmbeddingHealth(): Promise<EmbeddingHealth> {
+    if (this.embeddingProvider && !this.embeddingProbed) {
+      this.embeddingProbed = true;
+      try {
+        const provider = this.embeddingProvider;
+        await (provider.embedQuery ?? provider.embed)(
+          "memos embedding health probe",
+        );
+      } catch {
+        // The runtime info / fallback state carries the actionable reason.
+      }
+    }
+    return this.getEmbeddingHealth();
+  }
+
+  getEmbeddingHealth(): EmbeddingHealth {
+    const runtime = this.getEmbeddingRuntimeInfo();
+    if (!runtime) {
+      return {
+        status: "disabled",
+        enabled: false,
+        provider: null,
+        model: null,
+        dimensions: null,
+        fallbackActive: false,
+        fallbackReason: null,
+        message:
+          "Embeddings are disabled; search is keyword/FTS and graph similarity only.",
+        fix: "Set `embeddings.enabled = true` and configure a provider (fastembed, Ollama, or an API provider), then reindex.",
+      };
+    }
+
+    const dimensions =
+      runtime.observedDimensions ?? runtime.requestedDimensions;
+    if (runtime.fallbackActive) {
+      return {
+        status: "degraded",
+        enabled: true,
+        provider: runtime.resolvedProvider,
+        model: runtime.resolvedModel,
+        dimensions,
+        fallbackActive: true,
+        fallbackReason: runtime.fallbackReason,
+        message:
+          `Semantic search is DEGRADED: ${runtime.fallbackReason ?? "the requested provider did not load"}. ` +
+          "Results are using the deterministic local hash, not real embeddings.",
+        fix:
+          "Install the local embedding runtime (`pnpm add @huggingface/transformers`), " +
+          "or point MemOS at Ollama/OpenAI-compatible embeddings, then run " +
+          "`memos reindex-embeddings --purge-stale`.",
+      };
+    }
+
+    if (runtime.resolvedProvider === "local-hash") {
+      return {
+        status: "degraded",
+        enabled: true,
+        provider: runtime.resolvedProvider,
+        model: runtime.resolvedModel,
+        dimensions,
+        fallbackActive: false,
+        fallbackReason: null,
+        message:
+          "Semantic search is using the local-hash baseline (lexical hashing), not a trained embedding model.",
+        fix: "Configure Ollama (`ollama pull nomic-embed-text`) or install `@huggingface/transformers`, then reindex.",
+      };
+    }
+
+    if (runtime.resolvedProvider === "model2vec") {
+      return {
+        status: "ok",
+        enabled: true,
+        provider: runtime.resolvedProvider,
+        model: runtime.resolvedModel,
+        dimensions,
+        fallbackActive: false,
+        fallbackReason: null,
+        message:
+          `Semantic search is active with the zero-dependency static model ` +
+          `${runtime.resolvedModel} (${dimensions}d). For higher accuracy, ` +
+          "configure Ollama (`nomic-embed-text`) or FastEmbed.",
+      };
+    }
+
+    return {
+      status: "ok",
+      enabled: true,
+      provider: runtime.resolvedProvider,
+      model: runtime.resolvedModel,
+      dimensions,
+      fallbackActive: false,
+      fallbackReason: null,
+      message: `Semantic search is active: ${runtime.resolvedProvider} / ${runtime.resolvedModel} (${dimensions}d).`,
     };
   }
 
@@ -5877,6 +7538,18 @@ export class MemOS {
       byNamespace,
       dbSizeBytes,
       embeddingQueue: this.embeddingQueue ? this.embeddingStatus() : undefined,
+      embeddingRuntime: this.getEmbeddingRuntimeInfo(),
+      embeddingHealth: this.getEmbeddingHealth(),
+      vectorIndex: (
+        this.storage as unknown as {
+          getVectorIndexStatus?: () => {
+            mode: "exact" | "prefilter" | "auto" | "ann";
+            enabled: boolean;
+            error: string | null;
+            indexes: string[];
+          };
+        }
+      ).getVectorIndexStatus?.(),
       storageCapabilities: {
         peekNode: !!this.storage.peekNode,
         evictLeastImportant: !!this.storage.evictLeastImportant,
@@ -5884,6 +7557,681 @@ export class MemOS {
         getAllEmbeddings: !!this.storage.getAllEmbeddings,
         setNodeNamespace: !!this.storage.setNodeNamespace,
       },
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Outcome-conditioned recall
+  // -----------------------------------------------------------------------
+
+  /**
+   * Record whether recalled memories helped on a task.
+   *
+   * This is the only signal in MemOS that measures *usefulness* rather than
+   * predicted relevance. The batch is persisted when the storage adapter
+   * supports it, applied to future ranking with a bounded multiplier, and
+   * summarised by `recallUtility()` / `health()`.
+   *
+   * ```ts
+   * const hits = await memos.search("how do I deploy?");
+   * // ...agent uses hits[0] and hits[2]...the deploy succeeds...
+   * await memos.recordRecallFeedback({
+   *   query: "how do I deploy?",
+   *   used: [hits[0].node.id, hits[2].node.id],
+   *   outcome: "success",
+   * });
+   * ```
+   *
+   * `used` is deliberately explicit: guessing credit from rank position is
+   * how memory systems learn the wrong lesson. Unknown ids are ignored and
+   * returned in `unknown` rather than failing the whole batch.
+   */
+  async recordRecallFeedback(
+    input: RecallFeedbackInput,
+  ): Promise<RecallFeedbackResult> {
+    this.assertInit();
+    const query = typeof input?.query === "string" ? input.query.trim() : "";
+    if (!query) {
+      throw new Error("recordRecallFeedback requires a non-empty query.");
+    }
+    if (!Array.isArray(input.used)) {
+      throw new Error(
+        "recordRecallFeedback requires a `used` array (may be empty).",
+      );
+    }
+    const outcomes: readonly RecallOutcome[] = [
+      "success",
+      "partial",
+      "failure",
+    ];
+    if (!outcomes.includes(input.outcome)) {
+      throw new Error(
+        `Unknown outcome "${String(input.outcome)}". Use success, partial, or failure.`,
+      );
+    }
+
+    const requested = [
+      ...new Set(
+        input.used.filter(
+          (id): id is string => typeof id === "string" && id.length > 0,
+        ),
+      ),
+    ];
+    const known: string[] = [];
+    const unknown: string[] = [];
+    for (const id of requested) {
+      if (this.graph.getNode(id)) known.push(id);
+      else unknown.push(id);
+    }
+
+    const ts = Date.now();
+    const batch: RecallBatchOutcome = {
+      id: generateId(),
+      ts,
+      query,
+      outcome: input.outcome,
+      weight: normaliseWeight(input.weight),
+      memoryIds: known,
+    };
+    if (input.note !== undefined) batch.note = input.note;
+
+    if (this.storage.saveRecallBatch) {
+      const stored: RecallBatchOutcome = batch;
+      await this.storage.saveRecallBatch(
+        {
+          id: stored.id,
+          ts: stored.ts,
+          query: stored.query,
+          outcome: stored.outcome,
+          weight: stored.weight,
+          ...(stored.note !== undefined ? { note: stored.note } : {}),
+        },
+        known,
+      );
+    }
+
+    this.recallBatches.set(batch.id, batch);
+    for (const id of known) {
+      const stat = this.recallStats.get(id) ?? emptyRecallStat(id);
+      this.recallStats.set(
+        id,
+        addOutcomeToStat(stat, batch.outcome, batch.weight, ts),
+      );
+    }
+
+    this.invalidateSearchCache();
+    this.emit("recall:feedback", { ...batch, unknown });
+    return {
+      batchId: batch.id,
+      recorded: known.length,
+      unknown,
+      outcome: batch.outcome,
+    };
+  }
+
+  /**
+   * Utility statistics for one memory, including observational uplift.
+   *
+   * Synchronous: feedback is hydrated at `init()` and maintained in memory.
+   */
+  recallUtility(memoryId: string): MemoryUtility {
+    this.assertInit();
+    return buildMemoryUtility(memoryId, this.recallStats.get(memoryId), [
+      ...this.recallBatches.values(),
+    ]);
+  }
+
+  /** Remove every recorded recall outcome (privacy reset / test hook). */
+  async clearRecallFeedback(): Promise<void> {
+    this.assertInit();
+    this.recallBatches.clear();
+    this.recallStats.clear();
+    if (this.storage.deleteAllRecallFeedback) {
+      await this.storage.deleteAllRecallFeedback();
+    }
+    this.invalidateSearchCache();
+  }
+
+  // -----------------------------------------------------------------------
+  // Recall inspector
+  // -----------------------------------------------------------------------
+
+  /**
+   * Explain a query's ranking: per-leg scores, lifecycle state, supersede
+   * chain, and outcome utility for each candidate.
+   *
+   * Unlike `search()`, this returns candidates **before** the relevance
+   * gate (the gate's verdict is reported separately) so an operator can see
+   * why abstention happened or which tail the gate trimmed. Pass `memoryId`
+   * to focus on one memory: if it was not retrieved, the focus block lists
+   * the static checks (namespace, pool, lifecycle, embedding, lexical
+   * overlap) and says which one excluded it.
+   */
+  async explain(
+    queryOrOptions: string | ExplainOptions,
+  ): Promise<ExplainResult> {
+    this.assertInit();
+    const options: ExplainOptions =
+      typeof queryOrOptions === "string"
+        ? { query: queryOrOptions }
+        : queryOrOptions;
+    const query = typeof options.query === "string" ? options.query.trim() : "";
+    if (!query) throw new Error("explain requires a non-empty query.");
+
+    await this.flushEmbeddings();
+
+    const limit = Math.min(100, Math.max(1, Math.floor(options.limit ?? 10)));
+    const candidateDepth = Math.min(
+      500,
+      Math.max(
+        1,
+        Math.floor(
+          options.candidateDepth ?? Math.max(100, Math.min(500, limit * 8)),
+        ),
+      ),
+    );
+    const filter: SearchFilter = {
+      query,
+      limit: Math.max(limit, 50),
+      candidateDepth,
+      ...(options.namespace !== undefined
+        ? { namespace: options.namespace }
+        : {}),
+      ...(options.pool !== undefined ? { pool: options.pool } : {}),
+    };
+
+    const results = this.canRunHybrid(filter)
+      ? await this.hybridSearch(filter, {
+          skipGate: true,
+          skipMmr: true,
+        })
+      : await this.storage.queryNodes({ ...filter, limit: candidateDepth });
+
+    const gateCfg = this.resolveRelevanceGate();
+    const gate: ExplainResult["gate"] = {
+      enabled: gateCfg !== null,
+      abstained: false,
+      trimmed: false,
+      dropped: 0,
+    };
+    if (gateCfg) {
+      // Reuse the exact search-path gate (including its minResults floor)
+      // instead of re-deriving the logic here; the inspector must never
+      // disagree with what search() would actually return.
+      const staged = this.applyRelevanceGateStage(results, filter);
+      gate.abstained = staged.gate.abstained;
+      gate.trimmed = staged.gate.trimmed;
+      gate.dropped = staged.gate.dropped;
+    }
+
+    const now = Date.now();
+    const candidates = results
+      .slice(0, limit)
+      .map((result, index) =>
+        this.buildExplainCandidate(result, index + 1, now),
+      );
+
+    let focus: ExplainFocus | undefined;
+    if (options.memoryId) {
+      focus = await this.buildExplainFocus(
+        options.memoryId,
+        query,
+        filter,
+        results,
+        candidates,
+        now,
+      );
+    }
+
+    const notes = [
+      "Candidates are shown before the relevance gate; `gate` reports what search() would do.",
+      "Per-leg component scores are evidence, not additive shares: fusion combines them and later stages multiply the fused score.",
+    ];
+    if (this.recallStats.size > 0) {
+      notes.push(
+        "Uplift is observational (used vs not used), not causal; selection effects are real.",
+      );
+    }
+
+    return {
+      query,
+      generatedAt: now,
+      gate,
+      candidateCount: results.length,
+      candidates,
+      ...(focus !== undefined ? { focus } : {}),
+      notes,
+    };
+  }
+
+  /** Assemble one explainable candidate from a scored result. */
+  private buildExplainCandidate(
+    result: ScoredMemory,
+    rank: number,
+    now: number,
+  ): ExplainCandidate {
+    const node = result.node;
+    const status = memoryStatus(node, now);
+    const source = result.scores;
+    const { contradiction_demoted: contradictionDemotion, ...rest } =
+      source ?? {};
+    const components: ExplainScoreComponents = {
+      ...rest,
+      ...(contradictionDemotion !== undefined ? { contradictionDemotion } : {}),
+    };
+    const utility = this.recallUtility(node.id);
+    const lastAccess = lastAccessedDays(node, now);
+    const edges = this.graph.getEdgesForNode(node.id);
+    const supersedes: string[] = [];
+    const supersededBy: string[] = [];
+    for (const edge of edges) {
+      if (edge.relation !== "temporal_precedes") continue;
+      const supersededFlag = edge.metadata?.superseded === true;
+      if (!supersededFlag) continue;
+      if (edge.sourceId === node.id) supersededBy.push(edge.targetId);
+      else if (edge.targetId === node.id) supersedes.push(edge.sourceId);
+    }
+    const reasons = [
+      ...describeRankingEvidence(components),
+      ...describeUtility(utility),
+      ...describeStatus(status, node),
+    ];
+    return {
+      id: node.id,
+      rank,
+      score: result.score,
+      content: node.content,
+      summary: node.summary,
+      type: node.type,
+      pool: node.pool ?? "event",
+      namespace: node.namespace,
+      status,
+      trustScore: node.trustScore,
+      confidence: node.confidence ?? INITIAL_CONFIDENCE,
+      importance: node.importance,
+      ageDays: Number(ageDays(node.createdAt, now).toFixed(1)),
+      lastAccessedDays:
+        lastAccess === null ? null : Number(lastAccess.toFixed(1)),
+      accessCount: node.accessCount,
+      components,
+      utility,
+      reasons,
+      history: { supersedes, supersededBy },
+    };
+  }
+
+  /** Build the "why wasn't my memory returned?" focus block. */
+  private async buildExplainFocus(
+    memoryId: string,
+    query: string,
+    filter: SearchFilter,
+    results: ScoredMemory[],
+    displayed: ExplainCandidate[],
+    now: number,
+  ): Promise<ExplainFocus> {
+    const node = this.graph.getNode(memoryId);
+    const utility = this.recallUtility(memoryId);
+    if (!node) {
+      return {
+        id: memoryId,
+        found: false,
+        retrieved: false,
+        checks: [
+          {
+            name: "exists",
+            pass: false,
+            detail: "No memory with this id exists in the store.",
+          },
+        ],
+        reasons: [
+          "Not found. It may never have been stored, was deleted, or belongs to another database.",
+        ],
+        utility,
+      };
+    }
+
+    const resultIndex = results.findIndex((r) => r.node.id === memoryId);
+    if (resultIndex !== -1) {
+      const candidate =
+        displayed.find((c) => c.id === memoryId) ??
+        this.buildExplainCandidate(results[resultIndex]!, resultIndex + 1, now);
+      return {
+        id: memoryId,
+        found: true,
+        retrieved: true,
+        checks: [
+          {
+            name: "exists",
+            pass: true,
+            detail: `${node.type} memory in namespace "${node.namespace}".`,
+          },
+          {
+            name: "retrieved",
+            pass: true,
+            detail: `Ranked #${resultIndex + 1} of ${results.length} candidates.`,
+          },
+        ],
+        reasons: ["Retrieved and ranked in the candidate window."],
+        candidate,
+        utility,
+      };
+    }
+
+    const status = memoryStatus(node, now);
+    const checks: ExplainCheck[] = [
+      {
+        name: "exists",
+        pass: true,
+        detail: `${node.type} memory in namespace "${node.namespace}".`,
+      },
+      {
+        name: "lifecycle",
+        pass: status === "active",
+        detail:
+          status === "active"
+            ? "Active and eligible for default search."
+            : `Status is "${status}"; default search excludes this memory.`,
+      },
+    ];
+    if (filter.namespace !== undefined) {
+      checks.push({
+        name: "namespace",
+        pass: node.namespace === filter.namespace,
+        detail:
+          node.namespace === filter.namespace
+            ? `Matches namespace "${filter.namespace}".`
+            : `Namespace is "${node.namespace}", query filtered to "${filter.namespace}".`,
+      });
+    }
+    if (filter.pool !== undefined) {
+      const pool = node.pool ?? "event";
+      checks.push({
+        name: "pool",
+        pass: pool === filter.pool,
+        detail:
+          pool === filter.pool
+            ? `Matches pool "${filter.pool}".`
+            : `Pool is "${pool}", query filtered to "${filter.pool}".`,
+      });
+    }
+
+    if (this.embeddingProvider && this.storage.getEmbeddingInfo) {
+      try {
+        const info = await this.storage.getEmbeddingInfo(memoryId);
+        const modelMatches =
+          info?.model === this.embeddingProvider.model &&
+          info.dimensions === this.embeddingProvider.dimensions &&
+          (info.prefix ?? "") === (this.embeddingProvider.documentPrefix ?? "");
+        checks.push({
+          name: "embedding",
+          pass: modelMatches,
+          detail: info
+            ? modelMatches
+              ? `Embedded with ${info.model} (${info.dimensions}d).`
+              : `Embedded with ${info.model} (${info.dimensions}d), but the active provider is ${this.embeddingProvider.model} (${this.embeddingProvider.dimensions}d). Reindex required.`
+            : "No stored embedding; the semantic leg cannot retrieve it.",
+        });
+      } catch {
+        // A storage read failure is not evidence the memory is ineligible.
+      }
+    }
+
+    const overlap = textSimilarity(
+      query,
+      `${node.summary} ${node.content}`.slice(0, 8_000),
+    );
+    checks.push({
+      name: "lexical-overlap",
+      pass: overlap > 0,
+      detail:
+        overlap > 0
+          ? `Query/content bag-of-words similarity ${overlap.toFixed(3)}.`
+          : "No shared content tokens with the query; the keyword leg cannot retrieve it.",
+    });
+
+    const failed = checks.filter((check) => !check.pass);
+    const reasons =
+      failed.length > 0
+        ? failed.map((check) => `${check.name}: ${check.detail}`)
+        : [
+            "Eligible on every static check but ranked outside the candidate window. Widen limit/candidateDepth, or improve embeddings/reranking.",
+          ];
+    return {
+      id: memoryId,
+      found: true,
+      retrieved: false,
+      checks,
+      reasons,
+      utility,
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Memory health
+  // -----------------------------------------------------------------------
+
+  /**
+   * Heuristic health report over the whole store.
+   *
+   * Answers the questions `diagnostics()` does not: how much contradiction
+   * pressure is active, how much storage is past its TTL, how much of the
+   * corpus is low-confidence, and whether recorded recall outcomes are
+   * actually positive. The score is a maintenance heuristic, not a
+   * benchmark; the findings are the actionable part.
+   */
+  async health(): Promise<MemoryHealth> {
+    this.assertInit();
+    const snapshot = await this.getGraph();
+    const now = Date.now();
+    const expiringWindow = 7 * 86_400_000;
+
+    let active = 0;
+    let historical = 0;
+    let expiredActive = 0;
+    let expiringSoon = 0;
+    let quarantined = 0;
+    let lowConfidence = 0;
+
+    for (const node of snapshot.nodes) {
+      const isHistorical = node.validTo !== null && node.validTo <= now;
+      const isExpired = node.expiresAt !== null && node.expiresAt * 1000 < now;
+      const isActive = !isHistorical && !isExpired && !node.quarantined;
+      if (isHistorical) historical += 1;
+      if (node.quarantined) quarantined += 1;
+      if (isExpired) {
+        expiredActive += 1;
+      } else if (
+        node.expiresAt !== null &&
+        node.expiresAt * 1000 - now <= expiringWindow
+      ) {
+        expiringSoon += 1;
+      }
+      if (isActive) active += 1;
+      if (isActive && node.confidence !== undefined && node.confidence < 0.35) {
+        lowConfidence += 1;
+      }
+    }
+
+    const total = snapshot.nodes.length;
+    let unresolvedContradictions: number | null = null;
+    if (this.storage.countContradictions) {
+      try {
+        unresolvedContradictions =
+          await this.storage.countContradictions("unresolved");
+      } catch {
+        unresolvedContradictions = null;
+      }
+    }
+
+    const batches = [...this.recallBatches.values()];
+    const usefulRecallRate = meanOutcome(batches);
+    const historicalShare = total === 0 ? 0 : historical / total;
+    const staleRecallRisk =
+      unresolvedContradictions === null
+        ? 0
+        : Math.min(1, unresolvedContradictions / Math.max(1, active));
+
+    const metrics: MemoryHealthMetrics = {
+      totalNodes: total,
+      activeNodes: active,
+      historicalNodes: historical,
+      expiredActive,
+      expiringSoon,
+      quarantined,
+      unresolvedContradictions,
+      lowConfidence,
+      historicalShare,
+      staleRecallRisk,
+      feedbackBatches: batches.length,
+      usefulRecallRate,
+      memoriesWithFeedback: countMemoriesWithFeedback(batches),
+    };
+
+    let score = 100;
+    const totalDen = Math.max(1, total);
+    if (unresolvedContradictions !== null) {
+      score -= Math.min(
+        25,
+        (unresolvedContradictions / Math.max(1, active)) * 100 * 2.5,
+      );
+    }
+    score -= Math.min(15, (expiredActive / totalDen) * 100 * 1.5);
+    score -= Math.min(10, (lowConfidence / Math.max(1, active)) * 100 * 0.5);
+    score -= Math.min(5, (quarantined / totalDen) * 100 * 0.5);
+    if (
+      usefulRecallRate !== null &&
+      batches.length >= 10 &&
+      usefulRecallRate < 0.5
+    ) {
+      score -= Math.min(15, (0.5 - usefulRecallRate) * 30);
+    }
+    score = Math.round(Math.min(100, Math.max(0, score)));
+
+    const findings: MemoryHealthFinding[] = [];
+    // Do not force an embed here: health() is called in hot paths and on
+    // stores where the model may not be installed. `memos doctor`,
+    // `handoff()`, and `auditReport()` use `probeEmbeddingHealth()` when
+    // they need the post-load fallback state.
+    const embeddingHealth = this.getEmbeddingHealth();
+    if (embeddingHealth.status === "degraded") {
+      findings.push({
+        id: "semantic-search-degraded",
+        severity: "critical",
+        title: "Semantic search is degraded",
+        detail: embeddingHealth.message,
+        action: embeddingHealth.fix,
+      });
+    } else if (embeddingHealth.status === "disabled") {
+      findings.push({
+        id: "semantic-search-disabled",
+        severity: "warn",
+        title: "Semantic search is disabled",
+        detail: embeddingHealth.message,
+        action: embeddingHealth.fix,
+      });
+    }
+    if (unresolvedContradictions !== null && unresolvedContradictions > 0) {
+      findings.push({
+        id: "contradictions-unresolved",
+        severity: "critical",
+        title: `${unresolvedContradictions} unresolved contradiction${
+          unresolvedContradictions === 1 ? "" : "s"
+        }`,
+        detail:
+          "Both versions are active, so retrieval can surface an obsolete fact. Read-time resolution demotes the older one, but the pair stays unresolved until superseded or reverted.",
+        action:
+          'Inspect with `memos explain "<query>" --id <memoryId>`, then `memos revert` or supersede the outdated memory.',
+      });
+    }
+    if (expiredActive > 0) {
+      findings.push({
+        id: "ttl-expired",
+        severity: "warn",
+        title: `${expiredActive} memor${
+          expiredActive === 1 ? "y is" : "ies are"
+        } past TTL`,
+        detail:
+          "Expired rows are dead weight and can confuse diagnostics until the sweep removes them.",
+        action: "Run `memos consolidate` or `memos forget <id>`.",
+      });
+    }
+    if (lowConfidence / Math.max(1, active) > 0.2 && lowConfidence > 0) {
+      findings.push({
+        id: "low-confidence",
+        severity: "warn",
+        title: `${lowConfidence} low-confidence memories`,
+        detail:
+          "More than 20% of the store has confidence below 0.35, usually after repeated partial conflicts.",
+        action:
+          "Review the affected memories with `memos explain`; reinforce or supersede them.",
+      });
+    }
+    if (quarantined > 0) {
+      findings.push({
+        id: "quarantined",
+        severity: "info",
+        title: `${quarantined} quarantined memor${
+          quarantined === 1 ? "y" : "ies"
+        }`,
+        detail:
+          "Quarantined memories are excluded from recall until reviewed. This is protective, not a fault.",
+        action: "List them with `memos quarantine list`.",
+      });
+    }
+    if (batches.length === 0 && total >= 10) {
+      findings.push({
+        id: "no-recall-feedback",
+        severity: "info",
+        title: "No recall outcomes recorded",
+        detail:
+          "Outcome-conditioned ranking and uplift diagnostics stay inactive until the agent reports which memories it used and whether the task worked.",
+        action:
+          "Call `memos.recordRecallFeedback({ query, used, outcome })` or `memos feedback --query ... --used <ids> --outcome success`.",
+      });
+    }
+    if (
+      usefulRecallRate !== null &&
+      batches.length >= 5 &&
+      usefulRecallRate < 0.5
+    ) {
+      findings.push({
+        id: "recall-outcomes-negative",
+        severity: "warn",
+        title:
+          "Recalled memories are associated with more failures than successes",
+        detail: `Weighted useful-recall rate is ${(
+          usefulRecallRate * 100
+        ).toFixed(0)}% across ${batches.length} feedback batches.`,
+        action:
+          "Use `memos explain <query>` on failing queries to see whether irrelevant or obsolete memories are being injected.",
+      });
+    }
+    if (historicalShare > 0.5 && total >= 20) {
+      findings.push({
+        id: "history-share",
+        severity: "info",
+        title: `${Math.round(historicalShare * 100)}% of the store is historical`,
+        detail:
+          "Superseded versions are retained by design for as-of queries and audit; a high share is expected in long-lived stores.",
+      });
+    }
+    if (findings.length === 0) {
+      findings.push({
+        id: "healthy",
+        severity: "info",
+        title: "No hygiene issues detected",
+        detail:
+          "No unresolved contradictions, expired rows, or negative recall-outcome signal were found.",
+      });
+    }
+
+    return {
+      generatedAt: now,
+      score,
+      grade: healthGrade(score),
+      metrics,
+      findings: sortFindings(findings),
+      embeddingHealth,
     };
   }
 
@@ -6152,13 +8500,51 @@ export class MemOS {
    * enrichment later requires `reindexEmbeddings()`.
    */
   private embeddedTextFor(node: MemoryNode): string {
-    const context =
+    const explicit =
       typeof node.metadata?.context === "string" ? node.metadata.context : "";
+    // Contextual headers only help a semantic embedding space. The local-hash
+    // fallback hashes tokens, so extra header tokens dilute lexical matching
+    // (measured: 68.0% → 65.5% Hit@10 on one LoCoMo conversation). Explicit
+    // context still applies - callers may have a reason - but the automatic
+    // header is suppressed on the deterministic provider.
+    const autoContext =
+      this.embeddingProvider?.id !== "local-hash" &&
+      this.config.embeddings?.contextual !== false &&
+      process.env.MEMOS_CONTEXTUAL !== "0";
+    const context =
+      explicit || (autoContext ? this.deriveEmbeddingContext(node) : "");
     const base =
       this.config.embeddings?.embedText === "content"
         ? node.content
         : `${node.summary}\n${node.content}`;
     return context ? `${context}\n${base}` : base;
+  }
+
+  /**
+   * Compact situational header for contextual retrieval, derived from the
+   * metadata conventions already used by the plugins and benchmark
+   * harnesses: `sessionId`/`instanceId`, `timestamp`/`date`, and
+   * `speaker`/`author`. Returns "" when none are present, so enabling
+   * `contextual` on a plain fact store changes nothing.
+   */
+  private deriveEmbeddingContext(node: MemoryNode): string {
+    const metadata = node.metadata ?? {};
+    const rawSession = metadata.sessionId ?? metadata.instanceId;
+    const rawTime = metadata.timestamp ?? metadata.date ?? metadata.createdAt;
+    const rawSpeaker = metadata.speaker ?? metadata.author;
+    const parts: string[] = [];
+    if (typeof rawSession === "string" && rawSession.trim()) {
+      parts.push(rawSession.trim());
+    }
+    if (typeof rawTime === "string" && rawTime.trim()) {
+      parts.push(rawTime.trim());
+    } else if (typeof rawTime === "number" && Number.isFinite(rawTime)) {
+      parts.push(new Date(rawTime).toISOString().slice(0, 10));
+    }
+    if (typeof rawSpeaker === "string" && rawSpeaker.trim()) {
+      parts.push(rawSpeaker.trim());
+    }
+    return parts.length > 0 ? `[${parts.join(" · ")}]` : "";
   }
 
   private async persistEmbedding(node: MemoryNode): Promise<void> {
@@ -6190,7 +8576,12 @@ export class MemOS {
     vector: EmbeddingVector,
     model: string,
   ): Promise<void> {
-    await this.storage.saveEmbedding!(nodeId, vector, model);
+    await this.storage.saveEmbedding!(
+      nodeId,
+      vector,
+      model,
+      this.embeddingProvider?.documentPrefix ?? "",
+    );
     if (!this.contradictionScanPending.has(nodeId)) return;
     this.contradictionScanPending.delete(nodeId);
     try {
@@ -6234,6 +8625,7 @@ export class MemOS {
       CONTRADICTION_SCAN_LIMIT,
       CONTRADICTION_SIM_MIN,
       model,
+      this.embeddingProvider?.queryPrefix ?? "",
     );
     if (neighbors.length === 0) return;
 
@@ -6340,7 +8732,12 @@ export class MemOS {
     // (N+1) — on a 5k-node store the per-node lookups cost ~100ms of init.
     let infoByNode: Map<
       string,
-      { model: string; dimensions: number; updatedAt: number }
+      {
+        model: string;
+        dimensions: number;
+        prefix?: string;
+        updatedAt: number;
+      }
     > | null = null;
     if (this.storage.getAllEmbeddingInfos) {
       const infos = await this.storage.getAllEmbeddingInfos();
@@ -6357,6 +8754,7 @@ export class MemOS {
         info &&
         info.model === this.embeddingProvider.model &&
         info.dimensions === this.embeddingProvider.dimensions &&
+        (info.prefix ?? "") === (this.embeddingProvider.documentPrefix ?? "") &&
         info.updatedAt >= node.updatedAt,
       );
     };
@@ -6370,6 +8768,76 @@ export class MemOS {
     }
     // Backfill is fire-and-forget by design. The queue will eventually
     // call `persistEmbedding` for each job.
+  }
+
+  /**
+   * Every node id stored in `namespace`, read straight from storage.
+   *
+   * Deliberately not `queryNodes`/`search`: those run the retrieval pipeline
+   * and apply limits, ranking and filters, so they are the wrong tool for
+   * "which ids already exist". Callers resuming a bulk ingest need the exact
+   * durable set, because re-writing an existing deterministic id is a
+   * primary-key collision.
+   */
+  async listNamespaceNodeIds(namespace: string): Promise<string[]> {
+    this.assertInit();
+    const rows = await this.storage.queryNodes({
+      namespace,
+      limit: Number.MAX_SAFE_INTEGER,
+    });
+    return rows.map((row) => String(row.node.id));
+  }
+
+  /**
+   * Re-enqueue every node in `namespace` whose stored vector is missing or
+   * stale, then drain the queue so the call returns with the namespace fully
+   * embedded.
+   *
+   * Why this exists: a process killed mid-ingest leaves rows written but
+   * their vectors never persisted. Those nodes are invisible to semantic
+   * search, so a resumed benchmark that skips such a namespace on node
+   * count alone would score it as a retrieval miss rather than a build
+   * interruption. `backfillEmbeddings()` already re-enqueues exactly the
+   * fresh-check failures; this scopes that to one namespace and waits.
+   *
+   * No-op when no provider is configured (BM25-only runs).
+   *
+   * @returns How many nodes were scheduled for embedding.
+   */
+  async backfillNamespaceEmbeddings(namespace: string): Promise<number> {
+    this.assertInit();
+    if (!this.embeddingProvider) return 0;
+    const nodes = this.graph
+      .getAllNodes()
+      .filter((node) => node.namespace === namespace);
+    const infoByNode = this.storage.getAllEmbeddingInfos
+      ? new Map(
+          (await this.storage.getAllEmbeddingInfos()).map((i) => [i.nodeId, i]),
+        )
+      : null;
+    let scheduled = 0;
+    for (const node of nodes) {
+      const info = infoByNode
+        ? (infoByNode.get(node.id) ?? null)
+        : this.storage.getEmbeddingInfo
+          ? await this.storage.getEmbeddingInfo(node.id)
+          : null;
+      const fresh = Boolean(
+        info &&
+        info.model === this.embeddingProvider.model &&
+        info.dimensions === this.embeddingProvider.dimensions &&
+        (info.prefix ?? "") === (this.embeddingProvider.documentPrefix ?? "") &&
+        info.updatedAt >= node.updatedAt,
+      );
+      if (fresh) {
+        this.recordEmbeddingStatus(node.id, "ready", null);
+        continue;
+      }
+      this.scheduleEmbedding(node);
+      scheduled += 1;
+    }
+    if (scheduled > 0) await this.flushEmbeddings();
+    return scheduled;
   }
 
   /**
@@ -6493,6 +8961,10 @@ export class MemOS {
       queryVector?: number[];
       /** Mutable out-param: the relevance gate's outcome for this call. */
       gateOut?: RelevanceGateResult;
+      /** Inspector-only: keep pre-gate candidates (gate verdict computed by caller). */
+      skipGate?: boolean;
+      /** Inspector-only: keep raw ranking order (MMR is a post-rank reorder). */
+      skipMmr?: boolean;
     } = {},
   ): Promise<ScoredMemory[]> {
     const limit = filter.limit ?? 20;
@@ -6658,9 +9130,39 @@ export class MemOS {
     // The LAST scoring stage, after graph / PPR / session expansion and
     // the optional rerank, and before pagination — so it can only remove
     // candidates from the tail, never reorder or re-score the survivors.
-    const gated = this.applyRelevanceGateStage(modulated, filter, opts);
+    const gated = opts.skipGate
+      ? {
+          results: modulated,
+          gate: { abstained: false, trimmed: false, dropped: 0 },
+        }
+      : this.applyRelevanceGateStage(modulated, filter, opts);
 
-    return gated.results.slice(offset, offset + limit);
+    // ── MMR diversification ── reorders the gated head so near-duplicate
+    // memories stop crowding out distinct evidence (precision work: a
+    // top-10 of ten paraphrases has hit@10 = 1 and precision@10 = 0.1).
+    // Off by default; runs after the gate so it can never resurrect a
+    // trimmed candidate.
+    const diversified = opts.skipMmr
+      ? gated.results
+      : this.applyMmrStage(gated.results, filter);
+
+    // With MMR off, enforce one canonical order before any expansion stage.
+    // Fusion can preserve SQL row order for exact score ties, and a JOIN
+    // shape (e.g. the temporal predicate) can vary that order between
+    // otherwise identical queries. Sorting by the shared comparator makes
+    // equal-score results deterministic by id, so `search({multiHop:false})`
+    // and a default search cannot disagree on tie order. MMR output is left
+    // untouched: its reordering IS the ranking.
+    const mmrActive = !opts.skipMmr && this.resolveMmr(filter) !== null;
+    const ordered = mmrActive
+      ? diversified
+      : [...diversified].sort(compareScoredMemories);
+
+    if (offset === 0 && !opts.internal && !gated.gate.abstained) {
+      return this.applyMultiHopExpansion(ordered, limit, filter);
+    }
+
+    return ordered.slice(offset, offset + limit);
   }
 
   /**
@@ -6760,6 +9262,66 @@ export class MemOS {
   }
 
   /**
+   * Resolve outcome-conditioned ranking config, or `null` when the stage
+   * cannot change anything (disabled, zero weight, or no feedback loaded).
+   *
+   * Per-query `filter.outcomeFeedback === false` wins over instance config,
+   * which makes A/B ablation of the feedback signal a one-field change.
+   */
+  private resolveOutcomeFeedback(
+    filter?: SearchFilter,
+  ): { weight: number; minObservations: number } | null {
+    if (filter?.outcomeFeedback === false) return null;
+    const cfg = this.config.retrieval?.outcomeFeedback;
+    if (cfg?.enabled === false) return null;
+    if (this.recallStats.size === 0) return null;
+    const weight = Math.min(
+      1,
+      Math.max(0, cfg?.weight ?? DEFAULT_OUTCOME_WEIGHT),
+    );
+    if (weight === 0) return null;
+    return {
+      weight,
+      minObservations: Math.max(1, Math.floor(cfg?.minObservations ?? 1)),
+    };
+  }
+
+  /**
+   * Resolve the MMR config, or `null` when diversification is off.
+   *
+   * Per-query `filter.mmr` overrides the instance config; a number is
+   * read as the λ directly. Off means byte-identical output: the stage
+   * is skipped entirely and the gated ranking is returned as-is.
+   */
+  private resolveMmr(filter: SearchFilter): { lambda: number } | null {
+    const raw = this.config.retrieval?.mmr;
+    const perQuery = filter.mmr;
+    if (typeof perQuery === "number" && perQuery >= 0 && perQuery < 1) {
+      return { lambda: perQuery };
+    }
+    if (perQuery === false) return null;
+    const enabled = perQuery === undefined ? raw?.enabled === true : perQuery;
+    if (!enabled) return null;
+    return { lambda: raw?.lambda ?? DEFAULT_MMR_LAMBDA };
+  }
+
+  /**
+   * Apply MMR diversification to a finished, best-first result list.
+   *
+   * `applyMmr` (src/retrieval.ts) is pure (token-Jaccard similarity,
+   * no embedding calls); this wrapper only resolves config. The first
+   * result is always kept — MMR trades off the later slots.
+   */
+  private applyMmrStage(
+    results: ScoredMemory[],
+    filter: SearchFilter,
+  ): ScoredMemory[] {
+    const cfg = this.resolveMmr(filter);
+    if (!cfg || results.length <= 1) return results;
+    return applyMmr(results, { lambda: cfg.lambda });
+  }
+
+  /**
    * Apply the relevance gate to a finished, best-first result list.
    *
    * `applyRelevanceGate` (src/retrieval.ts) is pure and already covers
@@ -6849,7 +9411,15 @@ export class MemOS {
     results: ScoredMemory[],
     filter: SearchFilter,
   ): Promise<ScoredMemory[]> {
-    const cfg = this.experimental.rerank;
+    if (filter.rerank === false) return results;
+    const cfg =
+      this.experimental.rerank ??
+      (filter.rerank === true
+        ? ({
+            provider: "local",
+            candidates: 20,
+          } as NonNullable<typeof this.experimental.rerank>)
+        : undefined);
     // Local provider: explicit `provider: "local"`, a `localModel` with no
     // endpoint, or the MEMOS_RERANK_LOCAL=1 experiment override.
     const wantLocal =
@@ -7401,19 +9971,25 @@ export class MemOS {
   }
 
   /**
-   * Session-sibling expansion. Memories recorded from the same
+   * Session-neighbour expansion. Memories recorded from the same
    * conversation (`metadata.sessionId` / `metadata.instanceId`) are
-   * pulled in behind their seed at a decaying fraction of the seed
+   * pulled in around their seed at a decaying fraction of the seed
    * score. Multi-hop answers typically span many turns of one session,
-   * so recovering the neighbours of a single relevant turn raises
+   * so recovering the turns ADJACENT to a relevant one raises
    * all-evidence recall without another embedding pass.
    *
-   * ON by default (`experimental.sessionExpansion`, default true):
-   * injected siblings sit BEHIND every organically-retrieved result at a
-   * decaying `seed.score * scoreFactor^k`, so the head ordering never
-   * moves and only the empty tail is filled — the injected node is only
-   * ever ranked above nodes that scored below it. An explicit
-   * `filter.sessionExpansion === false` disables it per query.
+   * Adjacency is chronological (`createdAt`), not "newest first". That
+   * distinction is the whole point: a conversation's answer usually sits
+   * immediately after the turn the query matched. Selecting siblings in
+   * storage order (the previous behaviour) injected the newest turns of
+   * the session and could drop the one-turn-away answer out of the
+   * top-k, which made expansion a pure-noise tax on long sessions. Each
+   * seed now contributes only its nearest neighbours (±1 then ±2), so
+   * the injected set is small, contiguous, and directly adjacent to
+   * evidence the ranker already trusted.
+   *
+   * ON by default (`experimental.sessionExpansion`, default true). An
+   * explicit `filter.sessionExpansion === false` disables it per query.
    */
   private async applySessionExpansion(
     fused: ScoredMemory[],
@@ -7426,9 +10002,13 @@ export class MemOS {
     if (!enabled || fused.length === 0) return fused;
 
     const maxSeeds = 5;
-    const maxSiblingsPerSeed = 20;
-    const maxInjected = 10;
-    const scoreFactor = 0.85;
+    /** How many session memories we inspect when locating a seed. */
+    const sessionScanLimit = 200;
+    /** Turns injected on each side of a seed. */
+    const neighbourRadius = 2;
+    const maxInjected = 6;
+    /** score = seed.score * decay[distance]. */
+    const decay = [1, 0.9, 0.75];
 
     const present = new Set(fused.map((r) => r.node.id));
     const injected: ScoredMemory[] = [];
@@ -7442,30 +10022,201 @@ export class MemOS {
       const sessionKey = seed.node.metadata.sessionId
         ? "sessionId"
         : "instanceId";
-      const siblings = await this.storage.queryNodes({
-        metadata: { [sessionKey]: sessionId },
-        limit: maxSiblingsPerSeed,
-        namespace: filter.namespace,
-        includeHistorical: filter.includeHistorical,
-      });
-      let decay = scoreFactor;
-      for (const sibling of siblings) {
-        if (injected.length >= maxInjected) break;
-        if (sibling.node.id === seed.node.id || present.has(sibling.node.id)) {
-          continue;
-        }
-        present.add(sibling.node.id);
-        injected.push({
-          node: sibling.node,
-          score: seed.score * decay,
-          scores: { session: seed.score * decay },
+      // Namespace + historical flag are part of the identity: two scopes
+      // can reuse the same session id, and the two modes return different
+      // windows.
+      const cacheKey = [
+        filter.namespace ?? "",
+        filter.includeHistorical === true ? "1" : "0",
+        sessionKey,
+        String(sessionId),
+      ].join("\u0000");
+
+      let siblings = this.sessionSiblingCache.get(cacheKey);
+      if (!siblings) {
+        const fetched = await this.storage.queryNodes({
+          metadata: { [sessionKey]: sessionId },
+          limit: sessionScanLimit,
+          sortBy: "createdAt",
+          sortOrder: "desc",
+          namespace: filter.namespace,
+          includeHistorical: filter.includeHistorical,
         });
-        decay *= scoreFactor;
+        // Chronological order, so index ± 1 really is the adjacent turn.
+        // `createdAt` ties (bulk imports) fall back to the storage order,
+        // which is the best available signal and keeps the result stable.
+        siblings = fetched
+          .map((s) => s.node)
+          .sort((a, b) => a.createdAt - b.createdAt);
+        // Bounded LRU: Map keeps insertion order, so the first key is the
+        // oldest. A write clears the whole cache (see
+        // `invalidateSearchCache`), so entries are never stale.
+        if (
+          this.sessionSiblingCache.size >= this.sessionSiblingCacheMaxEntries
+        ) {
+          const oldest = this.sessionSiblingCache.keys().next().value;
+          if (oldest !== undefined) this.sessionSiblingCache.delete(oldest);
+        }
+        this.sessionSiblingCache.set(cacheKey, siblings);
+      }
+
+      const seedIndex = siblings.findIndex((n) => n.id === seed.node.id);
+      // Seed not in the scanned window (very long session): injecting
+      // arbitrary siblings would be noise, so leave this seed alone.
+      if (seedIndex < 0) continue;
+
+      // Nearest first: previous turn, next turn, then the ±2 ring.
+      for (let distance = 1; distance <= neighbourRadius; distance++) {
+        for (const index of [seedIndex - distance, seedIndex + distance]) {
+          if (injected.length >= maxInjected) break;
+          const neighbour = siblings[index];
+          if (!neighbour) continue;
+          if (neighbour.id === seed.node.id || present.has(neighbour.id)) {
+            continue;
+          }
+          present.add(neighbour.id);
+          const score = seed.score * (decay[distance] ?? decay[1]!);
+          injected.push({
+            node: neighbour,
+            score,
+            scores: { session: score },
+          });
+        }
       }
     }
 
     if (injected.length === 0) return fused;
     return [...fused, ...injected].sort((a, b) => b.score - a.score);
+  }
+
+  /**
+   * Resolve second-hop entity-bridge expansion options (`SearchFilter.multiHop`
+   * / `MemOSConfig.retrieval.multiHop`), or `null` when disabled.
+   *
+   * Off by default: only runs when explicitly enabled via
+   * `filter.multiHop` (`true` or `{ enabled: true, ... }`) or
+   * `config.retrieval.multiHop.enabled === true`.
+   */
+  private resolveMultiHopOptions(filter: SearchFilter): MultiHopOptions | null {
+    const cfg = this.config.retrieval?.multiHop;
+    const perQuery = filter.multiHop;
+    if (perQuery === false) return null;
+    if (typeof perQuery === "object" && perQuery !== null) {
+      if (perQuery.enabled === false) return null;
+      return {
+        ...cfg,
+        ...perQuery,
+        enabled: true,
+      };
+    }
+    if (perQuery === true) {
+      return {
+        ...cfg,
+        enabled: true,
+      };
+    }
+    if (cfg?.enabled === true) {
+      return {
+        ...cfg,
+        enabled: true,
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Second-hop entity-bridge expansion (`src/multi-hop.ts`).
+   *
+   * Extracts bridging entities from the top first-hop seeds, resolves
+   * candidate second-hop memories via the namespace subject index and
+   * entity inverted index, and promotes verified two-hop evidence into
+   * weak tail slots (`minSlot .. limit - 1`) without displacing stronger
+   * first-hop hits or exceeding `limit`.
+   *
+   * Short-circuits in < 0.01ms on dialogue/chat-turn corpora (where
+   * `subjectIndex.byCleanSubject.size === 0`), so conversational
+   * benchmarks such as LongMemEval are returned 100% untouched.
+   */
+  private async applyMultiHopExpansion(
+    firstHopPool: ScoredMemory[],
+    limit: number,
+    filter: SearchFilter,
+  ): Promise<ScoredMemory[]> {
+    const head = firstHopPool.slice(0, limit);
+    if (!filter.query || head.length < 4 || limit < 4) return head;
+    const opts = this.resolveMultiHopOptions(filter);
+    if (!opts) return head;
+
+    const seedNamespaces = new Set(head.map((r) => r.node.namespace));
+    const nsKey = [...seedNamespaces].sort().join("\u0000");
+
+    let subjectIndex = this.subjectIndexCache.get(nsKey);
+    if (!subjectIndex) {
+      const scopedNodes = this.graph
+        .getAllNodes()
+        .filter((n) => seedNamespaces.has(n.namespace));
+      subjectIndex = buildNamespaceSubjectIndex(scopedNodes);
+      if (this.subjectIndexCache.size >= 16) {
+        const oldest = this.subjectIndexCache.keys().next().value;
+        if (oldest !== undefined) this.subjectIndexCache.delete(oldest);
+      }
+      this.subjectIndexCache.set(nsKey, subjectIndex);
+    }
+
+    // Fast path for non-encyclopedic / conversational corpora (e.g. LongMemEval).
+    if (subjectIndex.byCleanSubject.size === 0) {
+      return head;
+    }
+
+    const maxEntities = Math.max(0, Math.floor(opts.maxEntities ?? 10));
+    const maxSeeds = Math.max(1, Math.floor(opts.maxSeeds ?? 5));
+    if (maxEntities <= 0) return head;
+
+    let entityMatches: MemoryNode[] = [];
+    if (this.storage.searchByEntities) {
+      const allBridgeEnts = new Set<string>(
+        extractBridgeEntities(filter.query, "", { maxEntities }),
+      );
+      for (const seed of head.slice(0, Math.min(maxSeeds, head.length))) {
+        for (const e of extractBridgeEntities(seed.node, filter.query, {
+          maxEntities,
+        })) {
+          allBridgeEnts.add(e);
+        }
+      }
+      if (allBridgeEnts.size > 0) {
+        try {
+          const rows = await this.storage.searchByEntities(
+            [...allBridgeEnts].slice(0, maxEntities * 2),
+            25,
+          );
+          for (const row of rows) {
+            const node = this.graph.getNode(row.nodeId);
+            if (node) entityMatches.push(node);
+          }
+        } catch {
+          entityMatches = [];
+        }
+      }
+    }
+
+    const seedHistorical = new Set(head.map((s) => s.node.validTo !== null));
+    const now = Date.now();
+    const nodePassesFilter = (node: MemoryNode): boolean =>
+      seedNamespaces.has(node.namespace) &&
+      seedHistorical.has(node.validTo !== null) &&
+      this.pprInjectedNodePassesFilter(node, filter, now);
+
+    const expanded = expandMultiHop(firstHopPool, {
+      query: filter.query,
+      limit,
+      subjectIndex,
+      entityMatches,
+      nodePassesFilter,
+      options: opts,
+    });
+
+    return expanded.results;
   }
 
   /**
@@ -7564,6 +10315,10 @@ export class MemOS {
   private escapeRegex(str: string): string {
     return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
+}
+
+function normalizeLessonText(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 // Re-export for convenience

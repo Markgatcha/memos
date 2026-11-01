@@ -12,6 +12,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 
 import { MemOS } from "../src/memory";
 import { estimateTokens } from "../src/context-pack";
@@ -284,6 +285,54 @@ async function run() {
   // Pack as compact TOON
   const packToonCompact = serializeContextPack(pack, "toon-compact");
   const packToonCompactTokens = estimateTokens(packToonCompact as string);
+
+  const savings = (baseline: number, value: number): number =>
+    Math.round((1 - value / baseline) * 1000) / 10;
+
+  const artifact = {
+    benchmark: "toon-formats",
+    timestamp: new Date().toISOString(),
+    script: "scripts/bench-toon-formats.ts",
+    fixtures: fixtures.length,
+    query,
+    tokenBudget,
+    searchResults: {
+      json: { chars: jsonStr.length, tokens: jsonTokens },
+      verboseToon: {
+        chars: verboseToon.length,
+        tokens: verboseToonTokens,
+        savingsVsJson: savings(jsonTokens, verboseToonTokens),
+      },
+      compactToon: {
+        chars: compactToon.length,
+        tokens: compactToonTokens,
+        savingsVsJson: savings(jsonTokens, compactToonTokens),
+        improvementVsVerboseToon: savings(verboseToonTokens, compactToonTokens),
+      },
+    },
+    contextPack: {
+      json: { chars: packJson.length, tokens: packJsonTokens },
+      verboseToon: {
+        chars: (packToon as string).length,
+        tokens: packToonTokens,
+        savingsVsJson: savings(packJsonTokens, packToonTokens),
+      },
+      compactToon: {
+        chars: (packToonCompact as string).length,
+        tokens: packToonCompactTokens,
+        savingsVsJson: savings(packJsonTokens, packToonCompactTokens),
+        improvementVsVerboseToon: savings(
+          packToonTokens,
+          packToonCompactTokens,
+        ),
+      },
+    },
+  };
+  writeFileSync(
+    "scripts/bench-toon-results.json",
+    `${JSON.stringify(artifact, null, 2)}\n`,
+    "utf8",
+  );
 
   console.log(
     "┌──────────────────────────────────────────────────────────────────┐",

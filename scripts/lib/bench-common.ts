@@ -20,8 +20,10 @@ import type {
   EmbeddingProvider,
   EmbeddingRuntimeInfo,
 } from "../../src/types.js";
+import { MemOS } from "../../src/memory.js";
 import {
   LocalHashEmbeddingProvider,
+  Model2VecEmbeddingProvider,
   OllamaEmbeddingProvider,
   OpenAICompatibleEmbeddingProvider,
   VoyageAIEmbeddingProvider,
@@ -121,12 +123,41 @@ export interface RetrievalArgs {
   };
   /** Which node text to embed at store time. */
   embedText?: "content" | "summary+content";
+  /** Contextual retrieval: derive a session/date/speaker header for embeddings. */
+  contextual?: boolean;
   /** Forced keyword-leg operator (SearchFilter.ftsOperator). */
   ftsOperator?: "AUTO" | "AND" | "OR";
-  /** Session-sibling expansion of fused results. */
-  sessionExpansion: boolean;
-  /** Graph-edge expansion of fused results. */
-  graphExpansion: boolean;
+  /**
+   * Session-sibling expansion of fused results. Tri-state: `undefined`
+   * leaves the engine default alone, `true`/`false` force it onto the
+   * SearchFilter so an ablation can measure either side.
+   */
+  sessionExpansion?: boolean;
+  /** Graph-edge expansion of fused results (same tri-state contract). */
+  graphExpansion?: boolean;
+  /** Relevance gate: abstention + tail trimming. Opt-in per run. */
+  relevanceGate?: {
+    enabled?: boolean;
+    ratio?: number;
+    abstainSimilarity?: number;
+  };
+  /** MMR diversification. `undefined` = engine default; `true`/`false` force. */
+  mmr?: boolean;
+  /** MMR relevance weight when `mmr` is enabled. */
+  mmrLambda?: number;
+}
+
+/**
+ * Read a tri-state flag: `--<name>` forces true, `--no-<name>` forces
+ * false, neither returns `undefined` so the engine default applies.
+ *
+ * Needed because expansion now defaults ON — without the `--no-` side an
+ * ablation could only ever measure the enabled configuration.
+ */
+function triState(argv: string[], name: string): boolean | undefined {
+  if (argv.includes(`--${name}`)) return true;
+  if (argv.includes(`--no-${name}`)) return false;
+  return undefined;
 }
 
 const NUMERIC_RETRIEVAL_FLAGS: Array<{
@@ -174,30 +205,199 @@ export function parseRetrievalArgs(argv: string[]): RetrievalArgs {
   return {
     fusion,
     embedText,
+    contextual: argv.includes("--contextual"),
     ftsOperator,
-    sessionExpansion: argv.includes("--session-expansion"),
-    graphExpansion: argv.includes("--graph-expansion"),
+    sessionExpansion: triState(argv, "session-expansion"),
+    graphExpansion: triState(argv, "graph-expansion"),
+    ...(argv.includes("--gate")
+      ? {
+          relevanceGate: {
+            enabled: true,
+            ...(flag("relevance-ratio") !== undefined
+              ? { ratio: parseFloat(flag("relevance-ratio")!) }
+              : {}),
+            ...(flag("abstain-similarity") !== undefined
+              ? { abstainSimilarity: parseFloat(flag("abstain-similarity")!) }
+              : {}),
+          },
+        }
+      : {}),
+    ...(triState(argv, "mmr") !== undefined
+      ? { mmr: triState(argv, "mmr") }
+      : {}),
+    ...(flag("mmr-lambda") !== undefined
+      ? { mmrLambda: parseFloat(flag("mmr-lambda")!) }
+      : {}),
   };
 }
 
 /**
  * Build the `MemOS` config fragments for parsed retrieval args: fusion
- * options (forwarded to `fuseResults`), the embed-text selection, and the
- * experimental graph-expansion toggle. Empty when nothing was requested,
- * so default baselines are byte-identical to unconfigured runs.
+ * options (forwarded to `fuseResults`), the embed-text selection, the
+ * experimental graph-expansion toggle, and the opt-in precision knobs
+ * (relevance gate, MMR). Empty when nothing was requested, so default
+ * baselines are byte-identical to unconfigured runs.
  */
 export function retrievalConfig(args: RetrievalArgs): {
   fusion?: Record<string, number>;
-  embeddings?: { embedText: "content" | "summary+content" };
+  embeddings?: {
+    embedText?: "content" | "summary+content";
+    contextual?: boolean;
+  };
   experimental?: { graphExpansion: { enabled: boolean } };
+  retrieval?: {
+    relevanceGate?: {
+      enabled?: boolean;
+      ratio?: number;
+      abstainSimilarity?: number;
+    };
+    mmr?: { enabled?: boolean; lambda?: number };
+  };
 } {
   const config: ReturnType<typeof retrievalConfig> = {};
   if (Object.keys(args.fusion).length > 0) config.fusion = { ...args.fusion };
   if (args.embedText) config.embeddings = { embedText: args.embedText };
-  if (args.graphExpansion) {
-    config.experimental = { graphExpansion: { enabled: true } };
+  if (args.contextual !== undefined) {
+    config.embeddings = {
+      ...config.embeddings,
+      contextual: args.contextual,
+    };
+  }
+  if (args.graphExpansion !== undefined) {
+    config.experimental = { graphExpansion: { enabled: args.graphExpansion } };
+  }
+  if (args.relevanceGate) {
+    config.retrieval = {
+      ...config.retrieval,
+      relevanceGate: { ...args.relevanceGate },
+    };
+  }
+  if (args.mmr !== undefined || args.mmrLambda !== undefined) {
+    config.retrieval = {
+      ...config.retrieval,
+      mmr: {
+        ...(args.mmr !== undefined ? { enabled: args.mmr } : {}),
+        ...(args.mmrLambda !== undefined ? { lambda: args.mmrLambda } : {}),
+      },
+    };
   }
   return config;
+}
+
+// ─── Shared MemOS construction (bench-locomo-noapi / bench-vendors) ──────────
+
+// ─── LoCoMo dataset types (shared by every LoCoMo-protocol harness) ─────────
+// These live here — NOT in bench-locomo-noapi.ts — because that module
+// calls main() at import time; importing it would run a benchmark.
+
+export interface LocoChat {
+  speaker: string;
+  /** Official evidence unit id, e.g. "D1:3" — the exact value that
+   *  appears in qa.evidence. */
+  dia_id: string;
+  text: string;
+}
+
+export interface LocoConversation {
+  conversation: {
+    speaker_a: string;
+    speaker_b: string;
+    [key: string]: unknown;
+  };
+  qa: Array<{
+    question: string;
+    answer: string;
+    evidence: string[];
+    category: number;
+    adversarial_answer?: string;
+  }>;
+  sample_id: string;
+}
+
+/**
+ * Official LoCoMo category mapping (task_eval/evaluation.py):
+ * 1 = multi-hop, 2 = temporal, 3 = open-domain, 4 = single-hop,
+ * 5 = adversarial.
+ */
+export const CATEGORY_NAMES: Record<number, string> = {
+  1: "multi_hop",
+  2: "temporal",
+  3: "open_domain",
+  4: "single_hop",
+  5: "adversarial",
+};
+
+export function categoryName(cat: number): string {
+  return CATEGORY_NAMES[cat] ?? `cat_${cat}`;
+}
+
+// ─── Shared MemOS construction ───────────────────────────────────────────────
+
+/**
+ * Build the bench MemOS instance used by every LoCoMo-protocol script:
+ * deterministic temp DB, embeddings from the parsed provider args, the
+ * parsed retrieval-ablation config. Extracted so the vendor harness
+ * ingests through a BYTE-IDENTICAL MemOS configuration — the only
+ * difference between engines is the engine itself.
+ */
+export function createBenchMemos(opts: {
+  dbPath: string;
+  provider: EmbeddingProvider;
+  providerArgs: BenchProviderArgs;
+  retrievalArgs: RetrievalArgs;
+  /** HTTP rerank endpoint (optional). */
+  rerankUrl?: string;
+  rerankModel?: string;
+  rerankCandidates?: number;
+  rerankTimeoutMs?: number;
+  rerankMaxDocChars?: number;
+  internal?: boolean;
+}): MemOS {
+  const { providerArgs, retrievalArgs } = opts;
+  return new MemOS({
+    dbPath: opts.dbPath,
+    wal: false,
+    autoLinkThreshold: 0,
+    experimental: {
+      namespaces: true,
+      semanticSearch: true,
+      ...(opts.rerankUrl
+        ? {
+            rerank: {
+              endpoint: opts.rerankUrl,
+              ...(opts.rerankModel !== undefined
+                ? { model: opts.rerankModel }
+                : {}),
+              ...(opts.rerankCandidates !== undefined
+                ? { candidates: opts.rerankCandidates }
+                : {}),
+              ...(opts.rerankTimeoutMs !== undefined
+                ? { timeoutMs: opts.rerankTimeoutMs }
+                : {}),
+              ...(opts.rerankMaxDocChars !== undefined
+                ? { maxDocChars: opts.rerankMaxDocChars }
+                : {}),
+            },
+          }
+        : {}),
+    },
+    embeddings: {
+      enabled: true,
+      provider: opts.provider,
+      ...(providerArgs.model ? { model: providerArgs.model } : {}),
+      ...(providerArgs.dimensions
+        ? { dimensions: providerArgs.dimensions }
+        : {}),
+      ...(retrievalArgs.embedText
+        ? { embedText: retrievalArgs.embedText }
+        : {}),
+      ...(retrievalArgs.contextual ? { contextual: true } : {}),
+    },
+    ...(Object.keys(retrievalConfig(retrievalArgs)).length > 0
+      ? retrievalConfig(retrievalArgs)
+      : {}),
+    embeddingQueue: { concurrency: 4, batchSize: 16 },
+  });
 }
 
 // ─── Provider construction ───────────────────────────────────────────────────
@@ -216,6 +416,11 @@ export function buildProvider(args: BenchProviderArgs): EmbeddingProvider {
       return new LocalHashEmbeddingProvider({
         ...(args.model ? { model: args.model } : {}),
         ...(args.dimensions ? { dimensions: args.dimensions } : {}),
+      });
+    case "model2vec":
+      // The SDK default since 1.6.x: zero native dependencies, 256-d.
+      return new Model2VecEmbeddingProvider({
+        ...(args.model ? { model: args.model } : {}),
       });
     case "fastembed":
       return new FastEmbedEmbeddingProvider({
@@ -266,7 +471,7 @@ export function buildProvider(args: BenchProviderArgs): EmbeddingProvider {
     default:
       throw new Error(
         `Unknown embedding provider "${args.provider}". ` +
-          `Supported: local-hash, fastembed, ollama, openai-compatible, voyage, cohere.`,
+          `Supported: local-hash, model2vec, fastembed, ollama, openai-compatible, voyage, cohere.`,
       );
   }
 }
@@ -402,6 +607,21 @@ export function benchMetadata(
           : {}),
         sessionExpansion: retrieval.sessionExpansion,
         graphExpansion: retrieval.graphExpansion,
+        ...(retrieval.relevanceGate
+          ? { relevanceGate: retrieval.relevanceGate }
+          : {}),
+        ...(retrieval.mmr !== undefined || retrieval.mmrLambda !== undefined
+          ? {
+              mmr: {
+                ...(retrieval.mmr !== undefined
+                  ? { enabled: retrieval.mmr }
+                  : {}),
+                ...(retrieval.mmrLambda !== undefined
+                  ? { lambda: retrieval.mmrLambda }
+                  : {}),
+              },
+            }
+          : {}),
       }
     : undefined;
   return {

@@ -10,9 +10,13 @@
 /** Every command the CLI actually implements (mirrors the dispatch in cli.ts). */
 export const CLI_COMMANDS: readonly string[] = [
   "init",
+  "demo",
   "store",
+  "ingest",
   "retrieve",
   "search",
+  "profile",
+  "handoff",
   "forget",
   "summarize",
   "graph",
@@ -31,6 +35,7 @@ export const CLI_COMMANDS: readonly string[] = [
   "learn",
   "lesson",
   "lessons",
+  "promote",
   "cite",
   "quarantine",
   "harness",
@@ -40,9 +45,15 @@ export const CLI_COMMANDS: readonly string[] = [
   "remind",
   "digest",
   "consolidate",
+  "dream",
   "encrypt",
   "decrypt",
   "stats",
+  "health",
+  "audit",
+  "eval",
+  "explain",
+  "feedback",
   "compact",
   "doctor",
   "connect",
@@ -109,12 +120,28 @@ runs a store → search → forget smoke test, and saves ~/.memos/config.json.
 --yes accepts all defaults (for scripts; also auto-detected when stdin is
 not a TTY). Environment variables (MEMOS_DB_PATH, MEMOS_EMBEDDING_*)
 always override the saved config.`,
+  demo: `memos demo [--json]
+
+Stores three sample memories in a temporary database, searches for them,
+closes the process, reopens the same file, and proves the memories survived.
+The temporary database is deleted afterwards. Use it to check the install
+without touching your real store.`,
   store: `memos store "<content>" [--type <type>] [--ttl <seconds>]
   [--pool <pool>] [--context <ctx>] [--scope user:alice[,agent:coder][,run:r1]]
   [--tags a,b] [--json]
 
 Store a new memory. Example:
   memos store "User prefers dark mode" --type preference`,
+  ingest: `memos ingest <file-or-folder> [--watch] [--namespace documents]
+  [--ext .md,.txt,.pdf] [--chunk-chars 1200]
+
+Ingest documents into memory. Markdown, text, HTML and PDF are supported.
+Re-running is incremental: unchanged files are skipped, edited files replace
+their old chunks, deleted files remove theirs.
+
+  memos ingest ./notes
+  memos ingest ./notes --watch
+  memos ingest ./papers --ext .pdf --namespace research`,
   retrieve: `memos retrieve <id> [--json]
 
 Retrieve a single memory by its ID.`,
@@ -124,6 +151,25 @@ Retrieve a single memory by its ID.`,
 Search memories by text (full-text + semantic when embeddings are on).
 Example:
   memos search "dark mode" --limit 5`,
+  profile: `memos profile [--query <text>] [--max-static <n>] [--max-dynamic <n>]
+  [--recent-days <n>] [--scope user:alice[,...]] [--json]
+
+One-call user profile: STATIC (durable facts — preferences, entities,
+facts, best-first by trust) plus DYNAMIC (recent activity inside the
+recency window, newest first). This is the block to inject at session
+start so the agent knows who it is talking to.
+Example:
+  memos profile --scope user:alice --recent-days 3`,
+  handoff: `memos handoff "<task>" [--to <harness>] [--from <harness>]
+  [--token-budget <n>] [--lessons <n>] [--namespace <ns>]
+  [--scope user:alice[,...]] [--no-reminders] [--json]
+
+Build a compact "continue here" brief for another harness, model, or
+session: durable profile, token-budgeted relevant memories with [mem:hex]
+citations, procedural lessons, reminders, memory health, and harness
+attribution. Read-only. Default output is Markdown.
+Example:
+  memos handoff "finish the auth refactor" --to codex --token-budget 1200`,
   forget: `memos forget <id> [--json]
 
 Delete a memory by ID. The deletion is recorded in the bitemporal ledger,
@@ -201,6 +247,13 @@ Record a lesson outcome: reinforces or demotes the lesson's score.`,
   lessons: `memos lessons [--namespace <ns>] [--limit <n>] [--json]
 
 List procedural lessons.`,
+  promote: `memos promote [--apply] [--min-successes <n>] [--max-failure-ratio <r>]
+  [--limit <n>] [--namespace <ns>] [--json]
+
+Review repeated successful recall patterns (from 'memos feedback') as
+procedure candidates. Dry-run by default; --apply writes the lessons.
+Nothing is promoted from a single success, and high-failure patterns are
+excluded.`,
   cite: `memos cite <id> [--json]
 
 Trace a [mem:xxxx] citation token back to its full source memory.`,
@@ -237,6 +290,13 @@ Run consolidation now and print a summary.`,
 
 Offline maintenance pass: merge duplicates, archive stale memories,
 supersede decayed ones (kept as history), distill cluster summary notes.`,
+  dream: `memos dream [--dry-run] [--namespace <ns>] [--json]
+  [--schedule hourly|daily|weekly]
+
+Consolidation with a report: merged duplicates, superseded memories,
+archived rows, cluster notes, and contradiction findings. --schedule keeps
+the process running and repeats the pass on that cadence (ctrl+c to stop);
+use cron or Task Scheduler for a background run.`,
   encrypt: `memos encrypt --db <path> --key <key>
 
 Encrypt the database in place (requires better-sqlite3-multiple-ciphers).
@@ -249,6 +309,35 @@ Remove encryption in place. The previous encrypted file is kept as a backup.`,
 
 Token-savings telemetry for this process (packs built, tokens injected
 vs naive baseline).`,
+  health: `memos health [--json]
+
+Hygiene and usefulness report: contradiction pressure, expired rows,
+low-confidence share, quarantine count, and outcome-conditioned recall
+rate, with actionable findings and a heuristic grade.`,
+  audit: `memos audit [--expect-tip <hash>] [--limit <n>] [--json]
+
+Assemble the full audit artifact: hash-chain verification, provenance/source
+inventory, quarantine register, deletion certificates, semantic-search
+health, and recommendations. --expect-tip checks an externally recorded tip
+so truncation is detectable. Exits 1 when the chain fails.`,
+  eval: `memos eval [--limit <n>] [--k <n>] [--from-sessions]
+  [--corpus <path>] [--namespace <ns>] [--json]
+
+Evaluate retrieval on YOUR store. Default self mode samples recent memories,
+uses a fragment of each as the query, and reports Hit@K, MRR, latency, and
+token cost. --corpus runs a JSON array (or {cases:[...]}) of
+{query, relevantIds}. This is an index-health check, not a public benchmark.`,
+  explain: `memos explain "<query>" [--id <memoryId>] [--limit <n>]
+  [--namespace <ns>] [--pool <event|note|procedure|visual>] [--json]
+
+Explain a ranking: per-leg score signals, lifecycle status, supersede
+chain, outcome utility, and the relevance-gate verdict. Pass --id to
+diagnose one memory that should have matched but did not.`,
+  feedback: `memos feedback --query "<query>" --used <id[,id]> --outcome success|partial|failure
+  [--weight <n>] [--note <text>] [--json]
+
+Record which recalled memories the agent actually used and whether the
+task succeeded. Future ranking is promoted/demoted from this evidence.`,
   compact: `memos compact [--stats] [--namespace <ns>] [--limit <n>] [--dry-run]
 
 Fidelity backfill: generate missing L1/L2 levels for stored memories.

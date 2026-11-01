@@ -42,6 +42,15 @@ environment facts, corrections) and when to recall (`memos_context_pack`
 before answering questions that may depend on prior sessions), plus
 hygiene rules (supersede instead of duplicating, forget only on request).
 
+The skill now also teaches **contextual storage**: pass `context` (topic,
+date, and the previous turn) and `metadata.sessionId` / `timestamp` /
+`speaker` on `memos_store`. The MCP manifest sets `MEMOS_CONTEXTUAL=1`, so
+the session/date/speaker header is added to the embedding automatically.
+On LoCoMo retrieval-only this moved Hit@10 from 69.2% to 80.1% and
+all-evidence recall@10 from 59.6% to 71.5% (same embedder, fusion, top-10).
+This works identically in Claude Code and Hermes — both consume the same
+`skills/memos-memory/SKILL.md` and `mcp.json`.
+
 ## Experimental: local reranking
 
 An opt-in cross-encoder reranker re-scores the top fused candidates for

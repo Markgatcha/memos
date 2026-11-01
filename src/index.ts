@@ -17,7 +17,21 @@
  * @module @mem-os/sdk
  */
 
-export { MemOS, MemorySkippedError } from "./memory.js";
+export { MemOS, MemorySkippedError, MEMOS_PRESET_CONFIGS } from "./memory.js";
+export type {
+  MemOSPresetName,
+  ForgetSourceOptions,
+  ForgetSourceResult,
+  DeletionStatusResult,
+  BriefOptions,
+  BriefItem,
+  MemoryBrief,
+} from "./memory.js";
+export type {
+  KnowledgePageDef,
+  KnowledgePage,
+  KnowledgePageCitation,
+} from "./knowledge-pages.js";
 export {
   decideRetain,
   shouldRetain,
@@ -26,7 +40,47 @@ export {
   type RetainInput,
   type RetainDecision,
 } from "./retain-filter.js";
+export {
+  OUTCOME_SCORES,
+  NEUTRAL_UTILITY,
+  DEFAULT_OUTCOME_WEIGHT,
+  outcomeScore,
+  emptyRecallStat,
+  addOutcomeToStat,
+  utilityFromStat,
+  outcomeMultiplier,
+  meanOutcome,
+  buildMemoryUtility,
+  normaliseWeight,
+  memoriesWithFeedback,
+} from "./feedback.js";
+export {
+  memoryStatus,
+  ageDays,
+  lastAccessedDays,
+  describeRankingEvidence,
+  describeStatus,
+  describeUtility,
+  healthGrade,
+  sortFindings,
+} from "./inspector.js";
 export { getMcpTools, runMcpServer } from "./mcp.js";
+export {
+  chunkText,
+  extractFileText,
+  htmlToText,
+  ingestPath,
+  isSupportedFile,
+  watchPath,
+} from "./ingest.js";
+export { extractPreferences, isPreferenceQuestion } from "./preferences.js";
+export type { ExtractedPreference } from "./preferences.js";
+export type {
+  IngestOptions,
+  IngestProgress,
+  IngestResult,
+  WatchHandle,
+} from "./ingest.js";
 export {
   detectRevertIntent,
   normalizeRevertTarget,
@@ -204,6 +258,18 @@ export type {
   EmbeddingNodeStatusInfo,
   EmbeddingQueueStatus,
   EmbeddingProviderKind,
+  // One-call profile API
+  ProfileConfig,
+  ProfileOptions,
+  MemoryProfile,
+  MemoryOverview,
+  OverviewOptions,
+  TriggerOptions,
+  TriggerMatch,
+  TriggerResult,
+  // Retrieval-quality knobs
+  MmrConfig,
+  MultiHopOptions,
   DedupeOptions,
   DedupeMerge,
   DedupeResult,
@@ -217,6 +283,24 @@ export type {
   ExtractFactsOptions,
   ExtractFactsResult,
   DiagnosticsResult,
+  // Outcome-conditioned recall + inspector + health
+  RecallOutcome,
+  RecallFeedbackInput,
+  RecallBatchRecord,
+  RecallBatchOutcome,
+  RecallFeedbackStat,
+  RecallFeedbackResult,
+  MemoryUtility,
+  ExplainOptions,
+  ExplainResult,
+  ExplainCandidate,
+  ExplainFocus,
+  ExplainCheck,
+  ExplainScoreComponents,
+  MemoryHealth,
+  MemoryHealthMetrics,
+  MemoryHealthFinding,
+  OutcomeFeedbackConfig,
   LessonOutcome,
   NewProceduralLesson,
   ProceduralLesson,
@@ -259,8 +343,32 @@ export {
   DEFAULT_SEMANTIC_WEIGHT,
   DEFAULT_TRUST_FLOOR,
   DEFAULT_ENTITY_LEG_WEIGHT,
+  // Relevance gate + MMR diversification
+  applyRelevanceGate,
+  shouldAbstain,
+  hasExactTermMatch,
+  DEFAULT_RELEVANCE_RATIO,
+  DEFAULT_ABSTAIN_SIMILARITY,
+  applyMmr,
+  DEFAULT_MMR_LAMBDA,
+  type MmrOptions,
+  type RelevanceGateOptions,
 } from "./retrieval.js";
 export type { FusionOptions } from "./retrieval.js";
+export {
+  DEFAULT_MULTIHOP_MAX_ENTITIES,
+  DEFAULT_MULTIHOP_MAX_SEEDS,
+  DEFAULT_MULTIHOP_MAX_INJECTED,
+  DEFAULT_MULTIHOP_MIN_BRIDGE_SCORE,
+  extractLeadSubject,
+  extractBridgeEntities,
+  buildNamespaceSubjectIndex,
+  expandMultiHop,
+  type LeadSubject,
+  type NamespaceSubjectIndex,
+  type ExpandMultiHopInput,
+  type MultiHopExpansionResult,
+} from "./multi-hop.js";
 export {
   personalizedPageRank,
   type PersonalizedPageRankOptions,
@@ -305,6 +413,52 @@ export {
   CITATION_MIN_HEX,
   type CitationResolution,
 } from "./citations.js";
+export {
+  buildHandoffBrief,
+  renderHandoffMarkdown,
+  type HandoffBrief,
+  type HandoffItem,
+  type HandoffOptions,
+} from "./handoff.js";
+export {
+  buildAuditReport,
+  renderAuditMarkdown,
+  type AuditOptions,
+  type AuditReport,
+} from "./compliance.js";
+export {
+  buildSelfEvalCases,
+  runRetrievalEval,
+  type RetrievalEvalCase,
+  type RetrievalEvalCaseResult,
+  type RetrievalEvalOptions,
+  type RetrievalEvalReport,
+} from "./eval.js";
+export {
+  deriveProcedureCandidates,
+  normalizeQuery,
+  type ProcedureCandidate,
+  type PromotionOptions,
+} from "./procedure-promotion.js";
+export {
+  MemOSError,
+  asMemOSError,
+  classifyError,
+  errorPayload,
+  formatErrorCard,
+  isMemOSError,
+  readLatestCrashReport,
+  writeCrashReport,
+  type CrashReportOptions,
+  type FormatErrorOptions,
+  type MemOSErrorCode,
+  type MemOSErrorOptions,
+} from "./errors.js";
+export {
+  resolveEmbeddingPrefixes,
+  type EmbeddingPrefixInput,
+  type ResolvedEmbeddingPrefixes,
+} from "./embedding-prefixes.js";
 export {
   detectHarness,
   normalizeHarness,

@@ -220,6 +220,36 @@ describe("sessionExpansion", () => {
     }
     await memos.close();
   });
+
+  /**
+   * Regression: expansion used to select session siblings in storage
+   * order (newest first) and stop after 10. On a long session that
+   * injected the tail of the conversation and dropped the answer that
+   * sat one turn beside the matched seed — expansion added noise
+   * instead of evidence. Neighbours must be chronological.
+   */
+  test("injects the seed's chronological neighbours, not the session tail", async () => {
+    const memos = makeMemos(new MarkerProvider());
+    await memos.init();
+    for (let i = 0; i < 9; i++) {
+      await memos.store(
+        i === 4 ? "zebra sighting at the zoo" : `turn ${i} filler content`,
+        { metadata: { sessionId: "long-session" } },
+      );
+      // Distinct createdAt values: adjacency is chronological.
+      await new Promise((r) => setTimeout(r, 2));
+    }
+
+    const results = await memos.search({ query: "zebra sighting", limit: 10 });
+    const contents = results.map((r) => r.node.content);
+
+    expect(contents).toContain("turn 3 filler content");
+    expect(contents).toContain("turn 5 filler content");
+    // The ±2 ring is included too, but the far tail of the session is not.
+    expect(contents).toContain("turn 2 filler content");
+    expect(contents).not.toContain("turn 8 filler content");
+    await memos.close();
+  });
 });
 
 describe("graphExpansion", () => {
@@ -565,5 +595,35 @@ describe("experimental.rerank", () => {
     expect(calls[0].body.documents).toHaveLength(3);
     await memos.close();
     restore();
+  });
+});
+
+describe("namespaced semantic candidate selection", () => {
+  test("a namespace query never scores vectors from another namespace", async () => {
+    const memos = makeMemos(new MarkerProvider());
+    await memos.init();
+    await memos.store("zebra sighting in namespace alpha", {
+      namespace: "ns-alpha",
+      quarantineScreen: false,
+    });
+    await memos.store("zebra sighting in namespace beta", {
+      namespace: "ns-beta",
+      quarantineScreen: false,
+    });
+    await memos.store("unrelated giraffe note", {
+      namespace: "ns-alpha",
+      quarantineScreen: false,
+    });
+
+    const results = await memos.search({
+      query: "zebra",
+      namespace: "ns-alpha",
+      limit: 10,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].node.namespace).toBe("ns-alpha");
+    expect(results[0].node.content).toContain("namespace alpha");
+    await memos.close();
   });
 });

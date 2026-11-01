@@ -15,6 +15,8 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
+import hmac
 import json
 import os
 import shutil
@@ -25,6 +27,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .. import __version__
 from .routes import router
@@ -34,7 +37,7 @@ from .routes import router
 # ---------------------------------------------------------------------------
 
 MEMOS_PORT = int(os.environ.get("MEMOS_PORT", 7400))
-MEMOS_HOST = os.environ.get("MEMOS_HOST", "0.0.0.0")
+MEMOS_HOST = os.environ.get("MEMOS_HOST", "127.0.0.1")
 MEMOS_DB_PATH = os.environ.get("MEMOS_DB_PATH", str(Path.home() / ".memos" / "memos.db"))
 MEMOS_LOG_LEVEL = os.environ.get("MEMOS_LOG_LEVEL", "info").lower()
 
@@ -42,6 +45,12 @@ MEMOS_LOG_LEVEL = os.environ.get("MEMOS_LOG_LEVEL", "info").lower()
 # Python wheel — it is installed via npm on first server start when the
 # bundled SDK copy is used (see _ensure_runtime_sdk below).
 _BETTER_SQLITE3_SPEC = "better-sqlite3@^12.11.1"
+# The SDK's default embedding provider is Model2Vec; the wheel does not ship
+# node_modules, so stage the pure-JS model package next to better-sqlite3.
+_POTION_SPEC = "@yarflam/potion-base-8m@1.0.4"
+# Optional ANN extension. Installed best-effort; without it the bridge
+# degrades to exact search even if MEMOS_SEMANTIC_SCAN=ann.
+_SQLITE_VEC_SPEC = "sqlite-vec@0.1.9"
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +81,11 @@ def _native_binding_present(pkg_dir: Path) -> bool:
     # prebuild-install layout: prebuilds/<platform-arch>/*.node
     prebuilds = pkg_dir / "prebuilds"
     if prebuilds.is_dir():
+        # Newer better-sqlite3 releases put platform binaries directly under
+        # prebuilds/ (win32-x64.node); older releases used per-platform
+        # subdirectories. Support both.
+        if any(prebuilds.glob("*.node")):
+            return True
         for sub in prebuilds.iterdir():
             if sub.is_dir() and any(sub.glob("*.node")):
                 return True
@@ -87,6 +101,17 @@ def _better_sqlite3_in(node_modules: Path) -> bool:
     """
     pkg = node_modules / "better-sqlite3"
     return pkg.is_dir() and _native_binding_present(pkg)
+
+
+def _potion_in(node_modules: Path) -> bool:
+    """True if the default Model2Vec embedding package is staged."""
+    return (
+        node_modules / "@yarflam" / "potion-base-8m" / "package.json"
+    ).is_file()
+
+
+def _runtime_deps_present(node_modules: Path) -> bool:
+    return _better_sqlite3_in(node_modules) and _potion_in(node_modules)
 
 
 def _ensure_runtime_sdk() -> Path:
@@ -107,7 +132,9 @@ def _ensure_runtime_sdk() -> Path:
 
     # Layout 1: source checkout with a working repo-level better-sqlite3
     checkout_dist = repo_root / "dist"
-    if (checkout_dist / "index.js").is_file() and _better_sqlite3_in(repo_root / "node_modules"):
+    if (checkout_dist / "index.js").is_file() and _runtime_deps_present(
+        repo_root / "node_modules"
+    ):
         return checkout_dist
 
     # Layout 2: bundled wheel SDK
@@ -144,12 +171,13 @@ def _ensure_runtime_sdk() -> Path:
                 shutil.copy2(item, dest)
         marker.write_text(__version__, encoding="utf-8")
 
-    if not _better_sqlite3_in(runtime / "node_modules"):
+    if not _runtime_deps_present(runtime / "node_modules"):
         npm = shutil.which("npm")
         if npm is None:
             raise RuntimeError(
-                "better-sqlite3 is missing and npm was not found to install it.\n"
-                f"  Run manually: cd {runtime} && npm install {_BETTER_SQLITE3_SPEC}"
+                "MemOS runtime dependencies are missing and npm was not found.\n"
+                f"  Run manually: cd {runtime} && npm install "
+                f"{_BETTER_SQLITE3_SPEC} {_POTION_SPEC}"
             )
         # npm 11+ gates install scripts behind package.json "allowScripts".
         # Without this, better-sqlite3's prebuild-install step is blocked
@@ -169,12 +197,38 @@ def _ensure_runtime_sdk() -> Path:
                 ),
                 encoding="utf-8",
             )
-        print(f"  First run: installing {_BETTER_SQLITE3_SPEC} into {runtime} ...")
+        print(
+            f"  First run: installing {_BETTER_SQLITE3_SPEC} and "
+            f"{_POTION_SPEC} into {runtime} ..."
+        )
         subprocess.run(
-            [npm, "install", "--no-audit", "--no-fund", _BETTER_SQLITE3_SPEC],
+            [
+                npm,
+                "install",
+                "--no-audit",
+                "--no-fund",
+                _BETTER_SQLITE3_SPEC,
+                _POTION_SPEC,
+            ],
             cwd=str(runtime),
             check=True,
         )
+        # Optional: ANN on platforms with a sqlite-vec prebuilt. Failure must
+        # not break the core install; the bridge falls back to exact scan.
+        with contextlib.suppress(OSError):
+            subprocess.run(
+                [
+                    npm,
+                    "install",
+                    "--no-audit",
+                    "--no-fund",
+                    _SQLITE_VEC_SPEC,
+                ],
+                cwd=str(runtime),
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
     return runtime
 
 
@@ -183,9 +237,9 @@ def _start_node_server() -> subprocess.Popen:
     sdk_dir = _ensure_runtime_sdk()
     bridge_script = sdk_dir / "_bridge.mjs"
 
-    # Write bridge script if it doesn't exist
-    if not bridge_script.exists():
-        bridge_script.write_text(_BRIDGE_SCRIPT, encoding="utf-8")
+    # Always rewrite the bridge script: it is versioned with the Python
+    # package, and a stale _bridge.mjs silently lacks newly added methods.
+    bridge_script.write_text(_BRIDGE_SCRIPT, encoding="utf-8")
 
     node_bin = _find_node_binary()
     proc = subprocess.Popen(
@@ -229,6 +283,32 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan,
 )
+
+PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
+
+
+def _is_authorized(path: str, authorization: str) -> bool:
+    """Bearer check used by the HTTP middleware (unit-testable)."""
+    expected = os.environ.get("MEMOS_API_KEY", "").strip()
+    if not expected or path in PUBLIC_PATHS:
+        return True
+    return hmac.compare_digest(authorization, f"Bearer {expected}")
+
+
+@app.middleware("http")
+async def require_api_key(request, call_next):
+    """Bearer auth when MEMOS_API_KEY is set.
+
+    The server reads local files for /api/mem/ingest, so leaving it open on a
+    network interface would expose the filesystem. Health and the generated
+    docs stay public so probes and the Swagger UI keep working.
+    """
+    if not _is_authorized(
+        request.url.path, request.headers.get("authorization", "")
+    ):
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -308,7 +388,9 @@ def _cli_backup(output: str | None = None) -> None:
             os.path.basename(output_path) + ".manifest.json",
         )
     )
-    Path(manifest_path).write_text(json.dumps(manifest, indent=2))
+    # Explicit UTF-8: from Python 3.15 the locale default is UTF-8 (PEP 686),
+    # but pinning it keeps the write/read pair identical on 3.11–3.14 too.
+    Path(manifest_path).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     print(f"Backup created: {output_path}")
     print(f"  Nodes: {node_count}, Edges: {edge_count}")
@@ -328,7 +410,7 @@ def _cli_restore(path: str) -> None:
         sys.exit(1)
 
     if os.path.exists(manifest_path):
-        with open(manifest_path) as f:
+        with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
         print("Backup manifest:")
         print(f"  Timestamp: {manifest['timestamp']}")
@@ -408,14 +490,25 @@ _BRIDGE_SCRIPT = r"""/**
  */
 
 import { MemOS } from './index.js';
+import { buildSelfEvalCases, runRetrievalEval } from './eval.js';
+import { ingestPath } from './ingest.js';
 
 const dbPath = process.argv[2] || undefined;
 
 // Embedding configuration via MEMOS_EMBEDDING_* environment variables.
-// Without MEMOS_EMBEDDING_PROVIDER the bridge falls back to the SDK
-// default (local hash), keeping zero-config behavior for plain installs.
+// Without MEMOS_EMBEDDING_PROVIDER the bridge uses the SDK default
+// (Model2Vec, zero native dependencies).
 const env = process.env;
 const memosConfig = { dbPath };
+if (env.MEMOS_SEMANTIC_SCAN) {
+  memosConfig.storageOptions = { semanticScan: env.MEMOS_SEMANTIC_SCAN };
+}
+if (env.MEMOS_VISION === '1') {
+  memosConfig.vision = {
+    enabled: true,
+    ...(env.MEMOS_VISION_CLIP === '1' ? { clip: { enabled: true } } : {}),
+  };
+}
 if (env.MEMOS_EMBEDDING_PROVIDER) {
   const dimensions = env.MEMOS_EMBEDDING_DIMENSIONS;
   memosConfig.experimental = { semanticSearch: true };
@@ -470,6 +563,17 @@ rl.on('line', async (line) => {
         break;
       case 'forget':
         result = await memos.forget(params.id);
+        break;
+      case 'forgetSource':
+        result = await memos.forgetSource(params.source, {
+          ...(params.field ? { field: params.field } : {}),
+          ...(params.prefix ? { prefix: true } : {}),
+          ...(params.namespace ? { namespace: params.namespace } : {}),
+          ...(params.dryRun ? { dryRun: true } : {}),
+        });
+        break;
+      case 'deletionStatus':
+        result = await memos.deletionStatus(params.nodeId);
         break;
       case 'summarize':
         result = await memos.summarize();
@@ -531,6 +635,86 @@ rl.on('line', async (line) => {
       case 'injectContext':
         result = await memos.injectContext(params.id, params.depth, params.maxChars);
         break;
+      case 'profile':
+        result = await memos.profile(params || {});
+        break;
+      case 'overview':
+        result = await memos.overview(params || {});
+        break;
+      case 'trigger':
+        result = await memos.trigger(params || {});
+        break;
+      case 'brief':
+        result = await memos.brief(params || {});
+        break;
+      case 'contextPack':
+        result = await memos.contextPack(params || {});
+        break;
+      case 'handoff':
+        result = await memos.handoff(params || {});
+        break;
+      case 'audit':
+        result = await memos.auditReport(params || {});
+        break;
+      case 'eval': {
+        const cases =
+          Array.isArray(params.cases) && params.cases.length > 0
+            ? params.cases
+            : await buildSelfEvalCases(memos, {
+                limit: params.limit,
+                fromSessions: params.fromSessions,
+                namespace: params.namespace,
+              });
+        result = cases.length === 0
+          ? { cases: 0, hitAtK: 0, mrr: 0, avgLatencyMs: 0, avgTokens: 0, tokensPerHit: null, weakCases: [], results: [] }
+          : await runRetrievalEval(memos, cases, {
+              k: params.k,
+              mode: Array.isArray(params.cases) && params.cases.length > 0 ? 'corpus' : 'self',
+              namespace: params.namespace,
+            });
+        break;
+      }
+      case 'promote':
+        result = await memos.promoteProcedures(params || {});
+        break;
+      case 'diagnostics':
+        result = await memos.diagnostics();
+        break;
+      case 'embeddingHealth':
+        result = await memos.probeEmbeddingHealth();
+        break;
+      case 'health':
+        result = await memos.health();
+        break;
+      case 'usage':
+        result = memos.usageStats();
+        break;
+      case 'ingest':
+        result = await ingestPath(memos, params.path, {
+          ...(params.namespace ? { namespace: params.namespace } : {}),
+          ...(params.chunkChars ? { chunkChars: params.chunkChars } : {}),
+          ...(Array.isArray(params.extensions) && params.extensions.length
+            ? { extensions: params.extensions.map(String) }
+            : {}),
+        });
+        break;
+      case 'imageAdd':
+        result = await memos.addImageMemory(params.input, params.opts || {});
+        break;
+      case 'imageSearch':
+        result = await memos.searchImages(params.query, params.opts || {});
+        break;
+      case 'imageRecall': {
+        const image = await memos.imageMemory(params.ref);
+        result = image
+          ? {
+              data: image.buffer.toString('base64'),
+              mime: image.mime,
+              ref: image.ref,
+            }
+          : null;
+        break;
+      }
       default:
         writeResponse({ id, error: `Unknown method: ${method}` });
         return;

@@ -135,8 +135,10 @@ jobs:
         with:
           path: node_modules/@huggingface/transformers/.cache
           key: ${{ runner.os }}-huggingface-${{ hashFiles('pnpm-lock.yaml') }}
-      - name: Verify plugin manifest versions match the SDK
-        run: node scripts/check-plugin-version.mjs
+      - name: Verify plugin manifests and versions match the SDK
+        run: pnpm check:plugin
+      - name: Verify version surfaces (npm, PyPI, README, plugin)
+        run: pnpm check:versions
       - name: TypeScript version
         run: pnpm exec tsc --version
       - name: Lint
@@ -145,6 +147,8 @@ jobs:
         run: pnpm format:check
       - name: Build
         run: pnpm build
+      - name: Verify npm package stays small and clean
+        run: pnpm check:pack
       - name: Test
         run: pnpm test --ci --coverage
 
@@ -222,9 +226,12 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Python: Lint + Test
-  # Matrix: 3.11, 3.12 (LTS), 3.13, 3.14. Dropped 3.10
-  # (EOL Oct 2026) to save CI minutes; 3.11 is kept
-  # since it receives updates until Mar 2027.
+  # Matrix: 3.11, 3.12 (LTS), 3.13, 3.14, 3.15.
+  # Dropped 3.10 (EOL Oct 2026) to save CI minutes;
+  # 3.11 is kept since it receives updates until
+  # Mar 2027. 3.15 became the latest stable release
+  # on 2026-10-09, so it is included to keep the
+  # newest-version path covered.
   # ──────────────────────────────────────────────
   python:
     name: Python (${{ matrix.python-version }})
@@ -232,7 +239,7 @@ jobs:
     needs: [verify-lockfile]
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v7
       - name: Setup Python ${{ matrix.python-version }}

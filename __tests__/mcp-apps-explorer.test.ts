@@ -30,6 +30,17 @@ import {
   resolveExplorerMode,
 } from "../src/apps/explorer";
 
+// The explorer drives advanced tools (link, quarantine release, forget), so
+// this suite opts into the full MCP surface rather than the default core set.
+const PREVIOUS_MCP_TOOLS = process.env.MEMOS_MCP_TOOLS;
+beforeAll(() => {
+  process.env.MEMOS_MCP_TOOLS = "all";
+});
+afterAll(() => {
+  if (PREVIOUS_MCP_TOOLS === undefined) delete process.env.MEMOS_MCP_TOOLS;
+  else process.env.MEMOS_MCP_TOOLS = PREVIOUS_MCP_TOOLS;
+});
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

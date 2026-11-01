@@ -52,9 +52,23 @@ function main() {
 			const fact = extractFact(input.prompt);
 			if (!fact) return; // nothing to capture — stay silent
 			const type = PREFERENCE_RE.test(fact) ? "preference" : "fact";
+			// Contextual retrieval: give the fact a project/session header so
+			// its embedding carries "where/when this was said" even though
+			// the returned memory text stays exactly what the user said.
+			const project =
+				typeof input.cwd === "string" && input.cwd.trim()
+					? input.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop()
+					: "";
+			const session =
+				typeof input.session_id === "string" ? input.session_id.slice(0, 8) : "";
+			const context = [project && `project: ${project}`, session && `session: ${session}`]
+				.filter(Boolean)
+				.join(" · ");
+			const storeArgs = ["-y", "@mem-os/sdk", "store", fact, "--type", type];
+			if (context) storeArgs.push("--context", context);
 			execFile(
 				"npx",
-				["-y", "@mem-os/sdk", "store", fact, "--type", type],
+				storeArgs,
 				{ timeout: 15_000, shell: process.platform === "win32" },
 				(error) => {
 					if (!error) console.log(`[MemOS] auto-remembered (${type}): ${fact}`);

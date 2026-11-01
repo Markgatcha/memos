@@ -1,6 +1,6 @@
 {
   "name": "@mem-os/sdk",
-  "version": "1.6.26",
+  "version": "1.6.27",
   "description": "Universal, local-first, persistent memory layer for AI agents, LLM apps, and chatbots.",
   "license": "MIT",
   "author": "Markgatcha",
@@ -32,7 +32,11 @@
     "mcp",
     "mem0",
     "local-llm",
-    "semantic-search"
+    "semantic-search",
+    "model2vec",
+    "ann",
+    "longmemeval",
+    "crash-reporting"
   ],
   "sideEffects": false,
   "publishConfig": {
@@ -61,20 +65,17 @@
     "./anthropic": {
       "import": "./dist/adapters/anthropic.js",
       "types": "./dist/adapters/anthropic.d.ts"
+    },
+    "./vercel": {
+      "import": "./dist/adapters/vercel.js",
+      "types": "./dist/adapters/vercel.d.ts"
     }
   },
   "files": [
     "dist",
     "README.md",
     "LICENSE",
-    "UPGRADING.md",
-    "docs/",
-    "memos/adapters/*.py",
-    "memos/adapters/__init__.py",
-    "!memos/adapters/__pycache__/**",
-    "src/adapters/",
-    "__tests__/",
-    "scripts/"
+    "UPGRADING.md"
   ],
   "bin": {
     "memos": "./dist/cli.js"
@@ -90,7 +91,7 @@
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "prepublishOnly": "pnpm run clean && pnpm run build",
+    "prepublishOnly": "pnpm run clean && pnpm run build && pnpm run check:pack && pnpm run check:versions",
     "serve": "node dist/cli.js serve",
     "bench": "tsx scripts/bench.ts",
     "bench:quality": "tsx scripts/bench-quality.ts",
@@ -100,21 +101,32 @@
     "bench:beam:100k": "tsx scripts/bench-beam.ts --scale=100k",
     "bench:beam:1m": "tsx scripts/bench-beam.ts --scale=1m",
     "bench:locomo:retrieve": "tsx scripts/bench-locomo-noapi.ts",
+    "bench:vendors": "tsx scripts/bench-vendors.ts",
     "bench:locomo": "OPENAI_API_KEY=$OPENAI_API_KEY tsx scripts/bench-locomo.ts",
     "bench:longmemeval": "OPENAI_API_KEY=$OPENAI_API_KEY tsx scripts/bench-longmemeval.ts",
     "bench:crossrepo": "tsx scripts/bench-crossrepo.ts",
     "bench:memory": "tsx scripts/bench-memory.ts",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
     "bench:longmemeval:retrieve": "tsx scripts/bench-longmemeval.ts --retrieve-only",
-    "check:plugin": "node scripts/check-plugin-version.mjs",
+    "check:plugin": "node scripts/check-plugin-version.mjs && node scripts/check-plugin-manifests.mjs",
+    "check:plugin-manifests": "node scripts/check-plugin-manifests.mjs",
+    "check:pack": "node scripts/check-pack-size.mjs",
+    "check:versions": "node scripts/check-versions.mjs",
     "eval:retrieval": "tsx scripts/eval-retrieval.ts",
     "redteam:quarantine": "tsx scripts/redteam-quarantine.ts",
     "eval:retrieval:check": "tsx scripts/eval-retrieval.ts --check",
-    "eval:retrieval:baseline": "tsx scripts/eval-retrieval.ts --write-baseline"
+    "eval:retrieval:baseline": "tsx scripts/eval-retrieval.ts --write-baseline",
+    "bench:convomem": "tsx scripts/bench-convomem.ts",
+    "download:convomem": "tsx scripts/download-convomem.ts",
+    "docs:llms": "node scripts/gen-llms-txt.mjs",
+    "docs:llms:check": "node scripts/gen-llms-txt.mjs --check",
+    "check:server-json": "node scripts/check-server-json.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^2.3.0",
+    "@modelcontextprotocol/server": "2.4.0",
+    "@yarflam/potion-base-8m": "1.0.4",
     "better-sqlite3": "^13.0.3",
+    "unpdf": "^2.0.1",
     "zod": "^4.6.5"
   },
   "peerDependencies": {
@@ -142,7 +154,7 @@
     "@types/better-sqlite3": "^9.6.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.6.4",
-    "@typescript/native": "npm:typescript@^7.0.2",
+    "@typescript/native": "npm:typescript@7.1.0-beta",
     "jest": "^30.5.2",
     "oxlint": "^1.86.0",
     "oxlint-tsgolint": "^7.0.2003",
@@ -164,7 +176,8 @@
     "onnxruntime-node@1.30.0": true
   },
   "optionalDependencies": {
-    "better-sqlite3-multiple-ciphers": "^13.0.3"
+    "better-sqlite3-multiple-ciphers": "^13.0.3",
+    "sqlite-vec": "0.1.9"
   },
   "packageManager": "pnpm@12.9.1"
 }

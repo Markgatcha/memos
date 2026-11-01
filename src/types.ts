@@ -236,6 +236,13 @@ export interface CreateMemoryInput {
   ttl?: number;
   /** Custom tags. */
   tags?: string[];
+  /**
+   * Queue this write for review before it becomes recallable. Inferred
+   * memories are stored but quarantined with reason `review:pending` until
+   * `reviewApprove()` or `reviewReject()`. Tags listed in
+   * `MemOSConfig.review.autoApproveTags` skip the queue.
+   */
+  review?: boolean;
   /** Namespace (experimental). */
   namespace?: string;
   /**
@@ -274,11 +281,18 @@ export interface CreateMemoryInput {
    */
   pool?: MemoryPool;
   /**
-   * One line of write-time context describing the situation this memory
-   * was captured in (e.g. "stated while debugging the deploy pipeline").
-   * Stored in `metadata.context`, prepended to the embedded text, and
-   * included in context packs. When absent, the optional
-   * `MemOSConfig.enrichMemory` hook is consulted.
+   * Write-time context describing the situation this memory was captured
+   * in. Prepended to the embedded text (contextual retrieval) and stored in
+   * `metadata.context`; it is never returned by search.
+   *
+   * For conversational data include the **previous turn** — an answer
+   * rarely repeats the question's wording, and carrying the question in the
+   * vector is the largest measured recall gain (+10.9pp Hit@10 on LoCoMo
+   * for the full contextual stack). Keep it to one or two lines; it is
+   * charged to the embedder on every write. When absent with
+   * `embeddings.contextual` on, a session/date/speaker header is derived
+   * from metadata; otherwise the optional `MemOSConfig.enrichMemory` hook
+   * is consulted.
    */
   context?: string;
   /** Trust score [0, 1]. Overrides the default for the chosen source. */
@@ -317,10 +331,29 @@ export interface CreateMemoryInput {
    */
   evidenceLearning?: boolean;
   /**
+   * Write-time contradiction scan. When true (default), the node's
+   * embedding is compared against its same-namespace neighbours once the
+   * vector is persisted, and near-miss pairs are recorded for read-time
+   * resolution. That scan is a bounded semantic search but it runs on
+   * EVERY write, so bulk ingestion (benchmark setup, history imports,
+   * re-embedding a large store) pays an O(n) vector scan per memory.
+   * Set to false for bulk loads and run `detectContradictions()` once
+   * afterwards if the store needs the pairs.
+   */
+  contradictionScan?: boolean;
+  /**
+   * Deterministic temporal event extraction (event noun + date →
+   * `metadata.event`, used by reminders). Default true. Bulk ingestion of
+   * historical logs can disable it: the extraction runs an update search
+   * per write, and historical sessions do not need new reminders.
+   */
+  eventUpdate?: boolean;
+  /**
    * Reference time (Unix ms) for this write. Overrides `Date.now()` as
    * the write timestamp AND as the reference time for deterministic
-   * temporal parsing (event extraction / update resolution). Primarily
-   * a testing hook — omit in production so the wall clock is used.
+   * temporal parsing (event extraction / update resolution). Useful when
+   * replaying historical records concurrently; omit in normal app code
+   * so the wall clock is used.
    */
   now?: number;
 }
@@ -451,6 +484,68 @@ export interface CreateEdgeInput {
 // ---------------------------------------------------------------------------
 
 /**
+ * Tuning for `SearchFilter.sessionNeighbours`.
+ */
+export interface MemoryNeighboursOptions {
+  /**
+   * How many adjacent memories on each side of a hit to consider. Default 2.
+   */
+  radius?: number;
+  /**
+   * Maximum memories inserted. Default ceil(limit/5), so the retriever keeps
+   * at least 80% of the window.
+   */
+  maxInjected?: number;
+  /**
+   * Only expand when the hit list looks incomplete: fewer than `limit`
+   * results, or the head of the list is a tie/near-tie. Default false —
+   * expansion runs whenever the option is enabled.
+   */
+  onlyWhenIncomplete?: boolean;
+}
+
+/**
+ * Second-hop entity-bridge expansion options for multi-hop recall
+ * (see `src/multi-hop.ts`).
+ *
+ * Extracts bridging entities from top first-hop results, locates candidate
+ * second-hop memories via subject-entity matching and the entity inverted
+ * index, and promotes verified two-hop evidence into weak tail slots
+ * (`minSlot .. limit - 1`) without displacing higher-scoring first-hop hits.
+ *
+ * **Off by default** (`enabled: false` unless set in `MemOSConfig.retrieval.multiHop`
+ * or per-query `SearchFilter.multiHop`).
+ *
+ * **Measured cost:** ~3–6 ms per query (~4–6% p50 search latency overhead on
+ * a 5k-node encyclopedic corpus).
+ *
+ * **Corpus assumption:** Assumes entity-centric documents with a recognisable
+ * lead subject (`"Subject: ..."` header prefix or an encyclopedic copula lead
+ * sentence such as `"Shirley Temple was an American actress..."`) and lexical
+ * surface-form matching between seed mentions and target subjects. It will not
+ * fire on free-form notes or conversational transcripts.
+ */
+export interface MultiHopOptions {
+  /** Whether second-hop expansion is enabled. @default false */
+  enabled?: boolean;
+  /**
+   * Maximum bridging entities extracted per seed memory (and from the query).
+   * @default 10
+   */
+  maxEntities?: number;
+  /**
+   * Maximum top first-hop seeds inspected for bridge extraction.
+   * @default 5
+   */
+  maxSeeds?: number;
+  /**
+   * Maximum second-hop memories promoted into the tail of the `limit` window.
+   * @default 2
+   */
+  maxInjected?: number;
+}
+
+/**
  * Filter criteria for searching memories.
  */
 export interface SearchFilter {
@@ -468,6 +563,12 @@ export interface SearchFilter {
   limit?: number;
   /** Offset for pagination. */
   offset?: number;
+  /**
+   * Apply outcome-conditioned re-ranking from recorded recall feedback
+   * (`recordRecallFeedback`). Default `true`; it is a no-op until feedback
+   * exists. Set `false` for a feedback-free ablation of the same query.
+   */
+  outcomeFeedback?: boolean;
   /** Sort field. */
   sortBy?:
     | "importance"
@@ -556,19 +657,45 @@ export interface SearchFilter {
    */
   ftsOperator?: "AUTO" | "AND" | "OR";
   /**
-   * When true, expand the top base results with their "session siblings" —
-   * other memories sharing the same `sessionId` (or `instanceId`) metadata
-   * value. Multi-hop / multi-evidence answers typically live across many turns
-   * of one conversation, so once a single relevant turn is retrieved, pulling
-   * its conversation neighbours into the ranking materially raises All-Evidence
-   * Recall. Deterministic, model-free, and ON by default (override with
-   * `config.experimental.sessionExpansion`); injected siblings are ranked
-   * behind every organically-retrieved result, so head ordering never moves
-   * and only the empty tail is filled.
+   * When true, expand the top base results with their chronologically
+   * adjacent "session neighbours" — memories sharing the same `sessionId`
+   * (or `instanceId`) metadata value, ordered by `createdAt`. Multi-hop /
+   * multi-evidence answers typically live across many turns of one
+   * conversation, and an answer usually sits immediately beside the turn
+   * the query matched, so injecting the ±1/±2 neighbours of a retrieved
+   * turn materially raises All-Evidence Recall. Deterministic, model-free,
+   * and ON by default (override with `experimental.sessionExpansion`);
+   * injected neighbours are scored at a decaying fraction of their seed,
+   * so a weak seed cannot drag unrelated turns above the organic head.
    */
   sessionExpansion?: boolean;
   /** Timestamp filter (Unix ms): only return memories valid at this time. */
   validAt?: number;
+  /**
+   * Chronological neighbour expansion.
+   *
+   * When a retrieval finds SOME memories from a conversation/day but likely
+   * not all of it, pull in the temporally adjacent memories (the ones
+   * immediately before and after each hit in the timeline) and let them take
+   * the place of low-ranked unrelated results — never of a better-ranked
+   * one, and never beyond `limit`.
+   *
+   * This is opt-in because it is a recall/precision trade: it is right for
+   * "what did we decide in that session" questions and wrong for exact
+   * keyword lookups. `MemoryNeighboursOptions` tunes the radius.
+   */
+  sessionNeighbours?: boolean | MemoryNeighboursOptions;
+  /**
+   * Relative-time anchoring ("10 days ago", "two weeks ago", "in the past
+   * month"). When the query carries such an expression, memories whose
+   * timestamp falls inside the implied window are promoted above memories
+   * outside it, preserving semantic order within each group.
+   *
+   * Orthogonal to `sessionNeighbours`: anchoring fixes *when*, neighbours
+   * fix *which adjacent items*. Defaults to on when the query contains a
+   * relative expression and off otherwise, so it costs nothing to ignore.
+   */
+  relativeTimeBoost?: boolean;
   /**
    * How many candidates each hybrid-search leg fetches before fusion.
    * Overrides the default `max(limit * 4, 20)`. Higher values widen the
@@ -576,6 +703,12 @@ export interface SearchFilter {
    * afterwards) at linear scan cost.
    */
   candidateDepth?: number;
+  /**
+   * Force (`true`) or disable (`false`) the cross-encoder rerank for this
+   * call. `undefined` uses `experimental.rerank`. Context packs set `true`
+   * by default because precision per token is their product metric.
+   */
+  rerank?: boolean;
   /**
    * Drop results whose stored embedding is a near-duplicate (cosine >=
    * `experimental.searchDedupThreshold`, default 0.95) of an
@@ -585,6 +718,15 @@ export interface SearchFilter {
    */
   semanticDedup?: boolean;
   /**
+   * MMR (Maximal Marginal Relevance) diversification for this query.
+   * `true` enables it with the configured/default λ; a number enables
+   * it with that λ (0 = maximum novelty, 1 = pure relevance). Unset
+   * leaves the engine default (`retrieval.mmr`) alone. Runs after the
+   * relevance gate, reordering the surviving head so near-duplicate
+   * memories stop crowding out distinct evidence.
+   */
+  mmr?: boolean | number;
+  /**
    * Per-query override for the PPR-lite graph expansion
    * (`config.fusion.graphExpansion`). `true` forces expansion on for this
    * query, `false` disables it (byte-identical to the pre-expansion
@@ -593,6 +735,19 @@ export interface SearchFilter {
    * forwards its own `graphExpansion: false` through this flag.
    */
   graphExpansion?: boolean;
+  /**
+   * Second-hop entity-bridge retrieval (`src/multi-hop.ts`).
+   *
+   * Extracts candidate bridging entities from the top first-hop results,
+   * resolves second-hop memories via subject and entity-index lookup, and
+   * promotes verified bridge memories into weak tail slots (`minSlot .. limit - 1`)
+   * without displacing higher-scoring first-hop hits or exceeding `limit`.
+   *
+   * Off by default. Pass `true` or `{ enabled: true, maxEntities, maxSeeds, maxInjected }`
+   * to enable for a query, or `false` / `{ enabled: false }` to override an
+   * instance-level `retrieval.multiHop.enabled = true`.
+   */
+  multiHop?: boolean | MultiHopOptions;
 }
 
 /**
@@ -730,6 +885,19 @@ export interface ScoredMemory {
      * `applyRetrievalAnomalyScoring` in src/memory.ts).
      */
     retrievalAnomaly?: number;
+    /**
+     * Present when second-hop entity-bridge retrieval promoted this
+     * memory into the result window: the raw bridge verification score
+     * (see `expandMultiHop` in `src/multi-hop.ts`).
+     */
+    multiHop?: number;
+    /**
+     * Present when outcome-conditioned ranking ran: the multiplier applied
+     * from recorded recall feedback (see `src/feedback.ts`). `1` means no
+     * adjustment; values above 1 promote memories whose outcomes have been
+     * more successful, values below 1 demote them.
+     */
+    outcomeUtility?: number;
   };
   /**
    * Relevance-gate outcome (see `RelevanceGateConfig` /
@@ -875,6 +1043,40 @@ export interface NewProceduralLesson {
   initialScore?: number;
 }
 
+/** Input for {@link MemoryManager.trigger}. */
+export interface TriggerOptions {
+  /** What the agent is about to do. */
+  task: string;
+  /** Entities, files, tools, or services the task touches. */
+  entities?: string[];
+  namespace?: string;
+  scope?: MemoryScope;
+  /** Maximum lessons to return. Default 5. */
+  limit?: number;
+}
+
+/** A procedural lesson selected for an upcoming task, with its reason. */
+export interface TriggerMatch extends ProceduralLesson {
+  /** Score after read-time decay. */
+  effectiveScore: number;
+  /** Fraction of task/entity tokens found in the lesson. */
+  relevance: number;
+  /** Blended rank used for ordering. */
+  rankScore: number;
+  /** Human-readable explanation of why this lesson fired. */
+  reason: string;
+  /** Entities from the request that matched the lesson's tags. */
+  matchedTags: string[];
+}
+
+/** Result of {@link MemoryManager.trigger}. */
+export interface TriggerResult {
+  task: string;
+  entities: string[];
+  matches: TriggerMatch[];
+  generatedAt: number;
+}
+
 // ---------------------------------------------------------------------------
 // Embeddings
 // ---------------------------------------------------------------------------
@@ -913,6 +1115,32 @@ export interface EmbeddingRuntimeInfo {
   fallbackActive: boolean;
   /** Human-readable reason for the fallback, or null when none occurred. */
   fallbackReason: string | null;
+  /** Query-side instruction actually applied, when the provider uses text prefixes. */
+  queryPrefix?: string;
+  /** Document-side instruction actually applied, when the provider uses text prefixes. */
+  documentPrefix?: string;
+}
+
+/** One-line status for the semantic-search layer, safe to show in any UI. */
+export type EmbeddingHealthStatus = "ok" | "degraded" | "disabled";
+
+/**
+ * Human-facing embedding health. This is the loud version of
+ * `EmbeddingRuntimeInfo`: it answers "is semantic search actually working, and
+ * if not, what should the user do?" without requiring them to interpret
+ * requested/resolved provider fields.
+ */
+export interface EmbeddingHealth {
+  status: EmbeddingHealthStatus;
+  enabled: boolean;
+  provider: string | null;
+  model: string | null;
+  dimensions: number | null;
+  fallbackActive: boolean;
+  fallbackReason: string | null;
+  message: string;
+  /** Concrete next step when status is not `ok`. */
+  fix?: string;
 }
 
 export interface EmbeddingProvider {
@@ -922,6 +1150,10 @@ export interface EmbeddingProvider {
   model: string;
   /** Expected vector dimensionality. */
   dimensions: number;
+  /** Query-side instruction applied by this provider, if any. */
+  queryPrefix?: string;
+  /** Document-side instruction applied by this provider, if any. */
+  documentPrefix?: string;
   /**
    * Runtime resolution metadata (requested vs. resolved provider/model,
    * fallback status). Optional so custom providers need not implement it;
@@ -975,6 +1207,7 @@ export interface EmbeddingProvider {
 
 export type EmbeddingProviderKind =
   | "local-hash"
+  | "model2vec"
   | "ollama"
   | "openai-compatible"
   | "voyage"
@@ -1004,7 +1237,8 @@ export interface EmbeddingConfig {
   /**
    * Prefix prepended to DOCUMENT text (stored memory content) before
    * embedding at index time. e.g. Liquid LFM2.5-Embedding and e5 models
-   * expect `"document: "`. Empty (default) sends documents as-is.
+   * expect `"passage: "`; Nomic expects `"search_document: "`. When omitted,
+   * MemOS resolves the model's recommended prefix automatically.
    */
   documentPrefix?: string;
   /**
@@ -1013,12 +1247,32 @@ export interface EmbeddingConfig {
    * the extractive summary roughly doubles the embedded tokens).
    */
   embedText?: "content" | "summary+content";
+  /**
+   * Contextual retrieval for the DOCUMENT side. When true and a node has
+   * no explicit `context`, the embedded text is prefixed with a compact
+   * line derived from its metadata — conversation/session id, timestamp
+   * and speaker/author:
+   *
+   *   `[session_2 · 7 May 2023 · Caroline]\n<summary>\n<content>`
+   *
+   * The prefix is embedded but never returned, so recall can use
+   * situational context ("who/when/where") that the raw sentence omits.
+   * Measured on LoCoMo: +2.0pp Hit@10, +2.3pp all-evidence recall@10 at
+   * 0.5/0.5 fusion. Default true for semantic providers; set `false` (or
+   * `MEMOS_CONTEXTUAL=0`) to disable. Suppressed automatically when the
+   * active provider is the deterministic `local-hash` fallback (headers
+   * dilute lexical matching there); explicit `context` still applies.
+   * `reindexEmbeddings()` is required when changing it on an existing store.
+   */
+  contextual?: boolean;
 }
 
 export interface EmbeddingRecordInfo {
   model: string;
   dimensions: number;
   updatedAt: number;
+  /** Document-side prefix used when this vector was produced. */
+  prefix?: string;
 }
 
 /**
@@ -1054,6 +1308,12 @@ export interface EmbeddingQueueStatus {
 export interface EmbeddingQueueConfig {
   /** Max concurrent in-flight embed calls. Default 2. */
   concurrency?: number;
+  /**
+   * Upper bound on cached query vectors (`search()` embeds each distinct
+   * query once per process). Default 256. Raise it for a workload that
+   * sweeps a few hundred distinct queries; each entry is ~3 KB at 768-d.
+   */
+  queryCacheEntries?: number;
   /**
    * Max pending jobs drained into a single `batchEmbed()` call when the
    * provider supports batching (array-input HTTP endpoints). Default 1 =
@@ -1189,6 +1449,15 @@ export interface StorageAdapter {
   deleteNode(id: string): Promise<boolean>;
 
   /**
+   * Drop cached vectors that do not belong to `namespace`; returns how many
+   * were dropped. Optional, and advisory only: it is a cache-locality hint
+   * for workloads that rotate through namespaces (each query then pays a
+   * cold refetch otherwise). Implementations without a vector cache do
+   * nothing. Never affects results — a dropped vector is simply re-read.
+   */
+  pruneVectorCacheForNamespace?(namespace: string): number;
+
+  /**
    * Record one read access for a node: bumps `access_count` and
    * `last_accessed` ONLY. Must not touch `updatedAt` or any content —
    * a read is not a write, and mutating `updatedAt` on read would
@@ -1200,6 +1469,34 @@ export interface StorageAdapter {
    * see `bumpAccessCounters` in `src/memory.ts`.
    */
   recordAccess?(id: string): void | Promise<void>;
+
+  /**
+   * Persist one recall-feedback batch plus the memory ids it attributed
+   * credit/blame to. Implementations MUST write the batch and its
+   * attributions atomically. Optional: adapters without it keep feedback
+   * in process memory only (ranking still works for the current session,
+   * but the evidence is lost on restart).
+   */
+  saveRecallBatch?(
+    batch: RecallBatchRecord,
+    memoryIds: string[],
+  ): Promise<void>;
+
+  /**
+   * Load every persisted feedback batch for the startup cache. Called once
+   * by `init()`; the returned rows feed outcome-conditioned ranking,
+   * `explain()`, and `health()`. Optional, paired with `saveRecallBatch`.
+   */
+  getRecallBatches?(): Promise<RecallBatchOutcome[]>;
+
+  /**
+   * Drop all feedback attributed to one memory. Called by `forget()` so
+   * deleted memories cannot keep influencing aggregate metrics. Optional.
+   */
+  deleteRecallFeedback?(nodeId: string): Promise<number>;
+
+  /** Drop every feedback batch. Called by `clear()`. Optional. */
+  deleteAllRecallFeedback?(): Promise<void>;
 
   /**
    * Append one entry to the tamper-evident mutation log. The adapter
@@ -1259,6 +1556,9 @@ export interface StorageAdapter {
     nodeId: string,
     vector: EmbeddingVector,
     model: string,
+    /** Document-side prefix used to produce the vector. Optional for
+     * backward compatibility with custom adapters. */
+    prefix?: string,
   ): Promise<void>;
 
   /** Return stored embedding metadata for startup backfill decisions. */
@@ -1287,6 +1587,9 @@ export interface StorageAdapter {
      * not prevent silently mixing incompatible vectors.
      */
     model?: string,
+    /** When provided, only vectors produced with this exact document prefix
+     * are compared. Prevents mixing prefixed and unprefixed vector spaces. */
+    prefix?: string,
   ): Promise<ScoredMemory[]>;
 
   /** Counts of stored embeddings grouped by model (reindex/audit support). */
@@ -1385,6 +1688,13 @@ export interface StorageAdapter {
    * `resolveContradictionsAtRead`.
    */
   getContradictionPairsFor?(nodeIds: string[]): Promise<ContradictionRecord[]>;
+
+  /**
+   * Count recorded contradiction pairs by status. Optional — `health()`
+   * reports `unresolvedContradictions: null` when an adapter cannot count
+   * them, rather than scanning the whole store.
+   */
+  countContradictions?(status?: ContradictionStatus): Promise<number>;
 
   /** Transition a contradiction record between `unresolved`/`resolved`. */
   updateContradictionStatus?(
@@ -1681,13 +1991,15 @@ export interface ExperimentalConfig {
   };
   /**
    * Session-neighbour expansion for hybrid search. After fusion, the top
-   * `maxSeeds` results are expanded along their same-conversation
-   * neighbours and unseen siblings are injected into the ranking at a
-   * decaying `seed.score * scoreFactor^k`. Multi-hop answers typically
-   * span many turns of one session, so recovering the neighbours of a
-   * single relevant turn raises all-evidence recall without another
-   * embedding pass. Default: true (injected siblings sit behind every
-   * organically-retrieved result, so head ordering never moves).
+   * seeds are expanded to the turns chronologically adjacent to them
+   * (same `metadata.sessionId` / `metadata.instanceId`, ordered by
+   * `createdAt`) and unseen neighbours are injected at a decaying
+   * `seed.score * decay[distance]`. Multi-hop answers typically span
+   * many turns of one session, and an answer usually sits immediately
+   * beside the turn the query matched, so expanding ±1/±2 raises
+   * all-evidence recall without another embedding pass. Default: true;
+   * an explicit `SearchFilter.sessionExpansion === false` opts out per
+   * query.
    */
   sessionExpansion?: boolean;
 }
@@ -1781,6 +2093,149 @@ export interface RelevanceGateResult {
   trimmed: boolean;
   /** How many fused candidates the gate removed. */
   dropped: number;
+}
+
+/**
+ * MMR (Maximal Marginal Relevance) diversification config — see
+ * `applyMmr` in `src/retrieval.ts`. Runs AFTER the relevance gate, on
+ * the surviving head, so it can reorder but never resurrect a
+ * trimmed candidate. Off by default: like the gate, it changes how
+ * many memories a search returns.
+ */
+export interface MmrConfig {
+  /** Master switch. Default `false`. */
+  enabled?: boolean;
+  /**
+   * Relevance weight in [0, 1]: 1 = pure relevance (identity), 0 =
+   * maximum novelty. Default 0.5 (`DEFAULT_MMR_LAMBDA`).
+   */
+  lambda?: number;
+}
+
+/**
+ * Outcome-conditioned ranking ("did this memory actually help?").
+ *
+ * `recordRecallFeedback` records which memories an agent used and whether
+ * the task succeeded. This config tunes how that evidence re-ranks future
+ * searches. It is a no-op until feedback exists, so leaving it unset keeps
+ * historical ranking byte-for-byte.
+ */
+export interface OutcomeFeedbackConfig {
+  /** Master switch. Default `true`; has no effect until feedback is recorded. */
+  enabled?: boolean;
+  /**
+   * Maximum rank multiplier swing. `0.2` means a memory with perfect
+   * feedback is promoted at most 20% and one with only failures demoted at
+   * most 20%. Default 0.2.
+   */
+  weight?: number;
+  /**
+   * Minimum weighted observations before a memory is re-ranked. Default 1.
+   * Raise this to require repeated evidence before feedback can move rank.
+   */
+  minObservations?: number;
+}
+
+/**
+ * Defaults for the one-call {@link MemOS.profile} API. A profile is a
+ * maintained, query-independent slice of the store — the "who am I
+ * talking to" block you inject at session start. Every field can be
+ * overridden per call.
+ */
+export interface ProfileConfig {
+  /** Max durable ("static") items. Default 25. */
+  maxStatic?: number;
+  /** Max recent-activity ("dynamic") items. Default 10. */
+  maxDynamic?: number;
+  /** Recency window for the dynamic half, in days. Default 7. */
+  recentDays?: number;
+  /** Cache lifetime in ms. A write anywhere clears the cache immediately. Default 30_000. */
+  cacheTtlMs?: number;
+}
+
+/** Per-call overrides for {@link MemOS.profile}. */
+export interface ProfileOptions {
+  namespace?: string;
+  scope?: MemoryScope;
+  scopeMatch?: "exact" | "hierarchical";
+  /** Max durable items (overrides `profile.maxStatic`). */
+  maxStatic?: number;
+  /** Max recent items (overrides `profile.maxDynamic`). */
+  maxDynamic?: number;
+  /** Recency window in days (overrides `profile.recentDays`). */
+  recentDays?: number;
+  /**
+   * Optional bias query. When given, the static half is led by the
+   * memories most relevant to this topic (a scope-tuned profile),
+   * with pinned durable facts filling the remaining slots.
+   */
+  query?: string;
+  /** Bypass the cache and recompute. */
+  refresh?: boolean;
+  /** Include quarantined / historical memories (excluded by default). */
+  includeQuarantined?: boolean;
+}
+
+/** Result of {@link MemOS.profile}. */
+export interface MemoryProfile {
+  /**
+   * Durable facts: preferences, entities, and facts — the stable
+   * "who am I talking to" content. Best-first.
+   */
+  static: MemoryNode[];
+  /**
+   * Recent activity: memories created or updated inside the recency
+   * window, newest-first. What happened lately.
+   */
+  dynamic: MemoryNode[];
+  /** When this profile was computed (Unix ms). */
+  generatedAt: number;
+  /** True when served from cache (value unchanged since a prior call). */
+  cached: boolean;
+  /** Total static candidates available (may exceed `static.length`). */
+  totalStatic: number;
+  /** Total dynamic candidates available (may exceed `dynamic.length`). */
+  totalDynamic: number;
+}
+
+export interface MemoryOverview {
+  /** When this overview was computed (Unix ms). */
+  generatedAt: number;
+  /** Namespace filter applied, or null for the whole store. */
+  namespace: string | null;
+  /** Every node in scope, including historical and quarantined rows. */
+  total: number;
+  /** Nodes eligible for default recall (not historical, not quarantined). */
+  active: number;
+  /** Nodes whose `validTo` has passed. */
+  historical: number;
+  /** Write-gate quarantined nodes awaiting review. */
+  quarantined: number;
+  /** Graph edges among nodes in scope. */
+  edges: number;
+  /** Node counts by namespace, largest first. */
+  namespaces: Array<{ namespace: string; count: number }>;
+  /** Node counts by memory type, largest first. */
+  types: Array<{ type: string; count: number }>;
+  /** Most frequent tags, largest first (top 20). */
+  tags: Array<{ tag: string; count: number }>;
+  /** Provenance sources, largest first. */
+  sources: Array<{ source: string; count: number }>;
+  /** Harnesses that wrote memories, largest first. */
+  harnesses: Array<{ harness: string; count: number }>;
+  /** Activity windows over `updatedAt`/`createdAt`. */
+  freshness: { last24h: number; last7d: number; last30d: number };
+  /** Trust distribution across active nodes. */
+  trust: { mean: number; low: number };
+  /** Oldest and newest timestamps in scope (Unix ms), or null when empty. */
+  oldest: number | null;
+  newest: number | null;
+}
+
+/** Options for {@link MemoryManager.overview}. */
+export interface OverviewOptions {
+  /** Restrict counts to one namespace. Omit for the whole store. */
+  namespace?: string;
 }
 
 /**
@@ -1983,6 +2438,16 @@ export interface MemOSConfig {
   fusion?: FusionOptions;
 
   /**
+   * Review queue for inferred memories. A write with `review: true` is
+   * stored but quarantined (reason `review:pending`) until approved. Tags
+   * in `autoApproveTags` skip the queue.
+   */
+  review?: {
+    /** Writes carrying any of these tags are approved automatically. */
+    autoApproveTags?: string[];
+  };
+
+  /**
    * Path to the SQLite database file.
    * @default "~/.memos/memos.db"
    */
@@ -2035,10 +2500,14 @@ export interface MemOSConfig {
      *   projection and only the top `max(32, limit * 4)` are exactly
      *   rescored. Bounds the scan on large corpora, but is APPROXIMATE:
      *   a true neighbour ranked below the cutoff is never returned.
+     * - `"auto"`: exact up to 20k candidate vectors, prefilter above.
+     * - `"ann"`: use the optional `sqlite-vec` extension for an HNSW-like
+     *   approximate nearest-neighbour index. Falls back to exact when the
+     *   extension is unavailable. The default remains `"exact"`.
      *
      * Only the built-in SQLite adapter reads this.
      */
-    semanticScan?: "exact" | "prefilter";
+    semanticScan?: "exact" | "prefilter" | "auto" | "ann";
   };
   /**
    * Encryption key for at-rest encryption of the SQLite database.
@@ -2078,12 +2547,29 @@ export interface MemOSConfig {
 
   /**
    * Retrieval-quality knobs: the relevance gate (abstention + tail
-   * trimming). Off by default — see `RelevanceGateConfig.enabled` for
-   * why turning it on is an explicit opt-in.
+   * trimming) and MMR diversification. Off by default — see
+   * `RelevanceGateConfig.enabled` for why turning the gate on is an
+   * explicit opt-in.
    */
   retrieval?: {
     relevanceGate?: RelevanceGateConfig;
+    mmr?: MmrConfig;
+    multiHop?: MultiHopOptions;
+    outcomeFeedback?: OutcomeFeedbackConfig;
   };
+
+  /**
+   * Apply a named configuration bundle before the rest of this config.
+   * Caller fields win; `retrieval` and `embeddingQueue` merge
+   * key-by-key. See {@link MemOS.chatbot} / {@link MemOS.codingAgent}
+   * / {@link MemOS.researchBot}.
+   */
+  preset?: "chatbot" | "codingAgent" | "researchBot";
+
+  /**
+   * Defaults for the one-call `profile()` API — see {@link ProfileConfig}.
+   */
+  profile?: ProfileConfig;
 
   /**
    * Half-life (days) for the optional recency boost in hybrid search
@@ -2465,7 +2951,8 @@ export type MemOSEvent =
   | "memory:reinforced"
   | "memory:superseded"
   | "memory:reverted"
-  | "contradiction:detected";
+  | "contradiction:detected"
+  | "recall:feedback";
 
 /** Event listener signature. */
 export type MemOSEventListener = (data: unknown) => void;
@@ -2766,6 +3253,17 @@ export interface DiagnosticsResult {
   dbSizeBytes: number;
   /** Embedding queue status, if configured. */
   embeddingQueue?: EmbeddingQueueStatus;
+  /** Requested vs. resolved embedding provider metadata. */
+  embeddingRuntime?: EmbeddingRuntimeInfo | null;
+  /** Loud semantic-search status, including the degraded-hash fallback. */
+  embeddingHealth: EmbeddingHealth;
+  /** ANN/prefilter backend state when the storage adapter exposes it. */
+  vectorIndex?: {
+    mode: "exact" | "prefilter" | "auto" | "ann";
+    enabled: boolean;
+    error: string | null;
+    indexes: string[];
+  };
   /** Whether the storage adapter supports optional methods. */
   storageCapabilities: {
     peekNode: boolean;
@@ -2774,4 +3272,254 @@ export interface DiagnosticsResult {
     getAllEmbeddings: boolean;
     setNodeNamespace: boolean;
   };
+}
+
+// ---------------------------------------------------------------------------
+// Recall feedback — outcome-conditioned memory
+// ---------------------------------------------------------------------------
+
+/** Outcome of a task that used (or ignored) recalled memories. */
+export type RecallOutcome = "success" | "partial" | "failure";
+
+/** Input to {@link MemOS.recordRecallFeedback}. */
+export interface RecallFeedbackInput {
+  /** The query whose results the agent acted on. */
+  query: string;
+  /**
+   * Ids of the memories the agent actually used in its answer or action.
+   * Passing an empty array records a batch with no attributed memories,
+   * which still contributes to the global outcome baseline.
+   */
+  used: string[];
+  /** Whether the task succeeded, partially succeeded, or failed. */
+  outcome: RecallOutcome;
+  /**
+   * Optional importance weight in (0, 100]. Default 1. Use >1 for outcomes
+   * that matter more (e.g. a production incident) and <1 for exploratory
+   * runs.
+   */
+  weight?: number;
+  /** Optional free-form note stored with the batch (never embedded). */
+  note?: string;
+}
+
+/** One recorded feedback batch, before its memory ids are attached. */
+export interface RecallBatchRecord {
+  id: string;
+  /** Unix ms when the outcome was recorded. */
+  ts: number;
+  query: string;
+  outcome: RecallOutcome;
+  weight: number;
+  note?: string;
+}
+
+/** A feedback batch with the memories it attributed credit/blame to. */
+export interface RecallBatchOutcome extends RecallBatchRecord {
+  memoryIds: string[];
+}
+
+/** Aggregated weighted feedback counts for one memory. */
+export interface RecallFeedbackStat {
+  memoryId: string;
+  success: number;
+  partial: number;
+  failure: number;
+  /** Weighted total observations (success + partial + failure). */
+  observations: number;
+  /** Unix ms of the most recent attributed batch. */
+  lastAt: number | null;
+}
+
+/** Result returned by {@link MemOS.recordRecallFeedback}. */
+export interface RecallFeedbackResult {
+  batchId: string;
+  /** Number of existing memories credited/blamed. */
+  recorded: number;
+  /** Requested ids that are not in the store (ignored). */
+  unknown: string[];
+  outcome: RecallOutcome;
+}
+
+/**
+ * Observational utility of one memory, derived from recorded outcomes.
+ *
+ * `utility` is a Beta-smoothed success rate in [0, 1] (0.5 = neutral).
+ * `uplift` compares mean task outcomes when the memory was used against
+ * batches where it was not. It is **observational, not causal**: selection
+ * effects are real, so treat it as a diagnostic signal, not a guarantee.
+ */
+export interface MemoryUtility {
+  memoryId: string;
+  success: number;
+  partial: number;
+  failure: number;
+  observations: number;
+  utility: number;
+  /** Used-batch mean outcome minus unused-batch mean outcome, or null. */
+  uplift: number | null;
+  usedBatches: number;
+  unusedBatches: number;
+  lastAt: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Recall inspector — "why did I recall this?"
+// ---------------------------------------------------------------------------
+
+/** Options for {@link MemOS.explain}. */
+export interface ExplainOptions {
+  /** Query to explain. */
+  query: string;
+  /**
+   * Optional memory id to focus on. When provided, the result includes a
+   * `focus` block explaining whether that memory was retrieved and, if not,
+   * which filters or lifecycle state excluded it.
+   */
+  memoryId?: string;
+  /** Number of ranked candidates to return. Default 10. */
+  limit?: number;
+  /** Namespace filter applied to the explained query. */
+  namespace?: string;
+  /** Pool filter applied to the explained query. */
+  pool?: MemoryPool;
+  /** Per-leg candidate depth. Default scales with `limit` (max 500). */
+  candidateDepth?: number;
+}
+
+/** Per-leg score signals copied from `ScoredMemory.scores`. */
+export interface ExplainScoreComponents {
+  keyword?: number;
+  semantic?: number;
+  semanticRaw?: number;
+  hybrid?: number;
+  graph?: number;
+  ppr?: number;
+  session?: number;
+  rerank?: number;
+  entity?: number;
+  entityLeg?: number;
+  imageLeg?: number;
+  provenance?: number;
+  contradictionDemotion?: number;
+  retrievalAnomaly?: number;
+  multiHop?: number;
+  outcomeUtility?: number;
+}
+
+/** One memory in an {@link ExplainResult}, with its ranking evidence. */
+export interface ExplainCandidate {
+  id: string;
+  rank: number;
+  score: number;
+  content: string;
+  summary: string;
+  type: MemoryType;
+  pool: MemoryPool;
+  namespace: string;
+  status: "active" | "historical" | "expired" | "quarantined";
+  trustScore: number;
+  confidence: number;
+  importance: number;
+  /** Days since creation. */
+  ageDays: number;
+  /** Days since last access; null when never accessed. */
+  lastAccessedDays: number | null;
+  accessCount: number;
+  components: ExplainScoreComponents;
+  utility: MemoryUtility;
+  /** Human-readable reasons this candidate earned its position. */
+  reasons: string[];
+  /** Supersede chain (ids) from `temporal_precedes` edges. */
+  history: { supersedes: string[]; supersededBy: string[] };
+}
+
+/** One static eligibility check for a focused memory. */
+export interface ExplainCheck {
+  name: string;
+  pass: boolean;
+  detail: string;
+}
+
+/** Focus block for the `memoryId` passed to {@link MemOS.explain}. */
+export interface ExplainFocus {
+  id: string;
+  /** Whether a memory with this id exists. */
+  found: boolean;
+  /** Whether it appeared in the ranked candidate window. */
+  retrieved: boolean;
+  checks: ExplainCheck[];
+  reasons: string[];
+  candidate?: ExplainCandidate;
+  /** Feedback utility for this memory, even when it was not retrieved. */
+  utility?: MemoryUtility;
+}
+
+/** Result returned by {@link MemOS.explain}. */
+export interface ExplainResult {
+  query: string;
+  generatedAt: number;
+  /** Relevance-gate verdict `search()` would apply to these candidates. */
+  gate: RelevanceGateResult & { enabled: boolean };
+  /** Number of candidates considered before the display limit. */
+  candidateCount: number;
+  candidates: ExplainCandidate[];
+  focus?: ExplainFocus;
+  /** Caveats about how to read the numbers. */
+  notes: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Memory health
+// ---------------------------------------------------------------------------
+
+/** Counts and rates behind a {@link MemoryHealth} report. */
+export interface MemoryHealthMetrics {
+  totalNodes: number;
+  activeNodes: number;
+  historicalNodes: number;
+  /** Nodes past their TTL that are still stored. */
+  expiredActive: number;
+  /** Nodes expiring within the next 7 days. */
+  expiringSoon: number;
+  quarantined: number;
+  /** Contradiction pairs with status `unresolved`, when supported. */
+  unresolvedContradictions: number | null;
+  /** Active nodes with confidence below 0.35. */
+  lowConfidence: number;
+  /** Historical share of all stored nodes (0..1). */
+  historicalShare: number;
+  /**
+   * Heuristic exposure to obsolete-memory reuse: unresolved contradictions
+   * per active node, clamped to [0, 1]. Not the FAMA benchmark metric.
+   */
+  staleRecallRisk: number;
+  /** Number of feedback batches recorded. */
+  feedbackBatches: number;
+  /** Weighted success rate across feedback batches, or null. */
+  usefulRecallRate: number | null;
+  /** Number of distinct memories with at least one attributed outcome. */
+  memoriesWithFeedback: number;
+}
+
+/** One actionable observation in a {@link MemoryHealth} report. */
+export interface MemoryHealthFinding {
+  id: string;
+  severity: "info" | "warn" | "critical";
+  title: string;
+  detail: string;
+  /** Suggested next command or API call. */
+  action?: string;
+}
+
+/** Result returned by {@link MemOS.health}. */
+export interface MemoryHealth {
+  generatedAt: number;
+  /** Heuristic score in [0, 100]. Higher is healthier. */
+  score: number;
+  grade: "A" | "B" | "C" | "D";
+  metrics: MemoryHealthMetrics;
+  findings: MemoryHealthFinding[];
+  /** Loud semantic-search status, independent of memory hygiene. */
+  embeddingHealth: EmbeddingHealth;
 }

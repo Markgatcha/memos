@@ -123,29 +123,17 @@ describe("MemOS MCP adapter", () => {
 
     expect(toolNames).toEqual([
       "memos_store",
+      "memos_ingest",
       "memos_search",
+      "memos_profile",
       "memos_retrieve",
       "memos_forget",
-      "memos_link",
-      "memos_quarantine_release",
-      "memos_graph",
-      "memos_context",
       "memos_context_pack",
-      "memos_search_temporal",
-      "memos_set_validity",
-      "memos_supersede",
-      "memos_set_trust",
-      "memos_extract_facts",
-      "memos_diagnostics",
-      "memos_reindex",
-      "memos_consolidate",
-      "memos_usage",
-      "memos_history",
-      "memos_revert",
-      "memos_reminders",
-      "memos_image_add",
-      "memos_image_recall",
-      "memos_image_search",
+      "memos_explain",
+      "memos_feedback",
+      "memos_health",
+      "memos_overview",
+      "memos_handoff",
     ]);
   });
 });
@@ -336,12 +324,13 @@ describe("MemOS Experimental", () => {
     await memos.close();
   });
 
-  test("embeddings are enabled by default with the fastembed provider", () => {
+  test("embeddings are enabled by default with the zero-dependency provider", () => {
     const memos = new MemOS({ dbPath: TEST_DB });
     const info = memos.getEmbeddingRuntimeInfo();
     expect(info).not.toBeNull();
-    expect(info?.requestedProvider).toBe("fastembed");
-    expect(info?.resolvedProvider).toBe("fastembed");
+    expect(info?.requestedProvider).toBe("model2vec");
+    expect(info?.resolvedProvider).toBe("model2vec");
+    expect(info?.requestedDimensions).toBe(256);
     // Nothing embedded yet, so no fallback can be active.
     expect(info?.fallbackActive).toBe(false);
   });

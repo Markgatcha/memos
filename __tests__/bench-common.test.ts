@@ -98,13 +98,18 @@ describe("buildProvider", () => {
 
 describe("assertNoFallback — strict benchmark mode", () => {
   test("fastembed with an unloadable model is detected as fallback", async () => {
-    // A model name that cannot resolve forces `pipeline()` to throw, which
-    // MUST surface as the local-hash fallback. This is the exact
-    // silent-fallback the flag guards against. NOTE: no
-    // --fail-on-embedding-fallback here — this test only verifies the
-    // DETECTION (warn mode); termination is covered separately below.
+    // A filesystem-looking model id that does not exist forces
+    // `pipeline()` to reject immediately (it aborts the download instead
+    // of resolving a Hub repo), which MUST surface as the local-hash
+    // fallback. This is the exact silent-fallback the flag guards
+    // against. A Hub model name like "definitely-not-a-real-model-xyz"
+    // also fails, but only after a network round-trip — that made this
+    // test flake past Jest's 5s timeout whenever the suite ran under
+    // load. A missing local path is deterministic and offline-safe.
+    // NOTE: no --fail-on-embedding-fallback here — this test only
+    // verifies the DETECTION (warn mode); termination is covered below.
     const provider = new FastEmbedEmbeddingProvider({
-      model: "definitely-not-a-real-model-xyz",
+      model: "/nonexistent/memos-test-model",
     });
     const args = parseProviderArgs(["--provider=fastembed"]);
 

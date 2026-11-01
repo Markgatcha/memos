@@ -542,6 +542,30 @@ describe("write-time detection + read-time resolution (integration)", () => {
     await memos.close();
   });
 
+  test("contradictionScan:false skips the per-write vector scan", async () => {
+    const memos = makeMemos();
+    await memos.init();
+
+    let fired = 0;
+    memos.on("contradiction:detected", () => {
+      fired += 1;
+    });
+
+    // Bulk-ingestion path: neither write registers a contradiction scan,
+    // so no embedding-time neighbour search runs.
+    await memos.store(OLD_CONTENT, { contradictionScan: false });
+    await memos.store(NEW_CONTENT, { contradictionScan: false });
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(fired).toBe(0);
+    const pairs = await (
+      memos as unknown as { storage: SQLiteStorage }
+    ).storage.getContradictionPairsFor([]);
+    expect(pairs).toHaveLength(0);
+
+    await memos.close();
+  });
+
   test("evidenceLearning supersede records a resolved pair", async () => {
     const memos = makeMemos();
     await memos.init();

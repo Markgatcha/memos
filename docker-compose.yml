@@ -12,6 +12,8 @@ services:
       - MEMOS_HOST=0.0.0.0
       - MEMOS_DB_PATH=/root/.memos/memos.db
       - MEMOS_LOG_LEVEL=info
+      # Set MEMOS_API_KEY to require a bearer token on /api/mem/*.
+      - MEMOS_API_KEY=${MEMOS_API_KEY:-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7400/health"]

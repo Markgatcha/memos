@@ -26,6 +26,17 @@ const CLIENT_CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities";
 const CLIENT_INFO_KEY = "io.modelcontextprotocol/clientInfo";
 const SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo";
 
+// The protocol suites below assert the full tool surface. The default MCP
+// profile is the 10-tool core set; opt into all tools for these assertions.
+const PREVIOUS_MCP_TOOLS = process.env.MEMOS_MCP_TOOLS;
+beforeAll(() => {
+  process.env.MEMOS_MCP_TOOLS = "all";
+});
+afterAll(() => {
+  if (PREVIOUS_MCP_TOOLS === undefined) delete process.env.MEMOS_MCP_TOOLS;
+  else process.env.MEMOS_MCP_TOOLS = PREVIOUS_MCP_TOOLS;
+});
+
 interface JsonRpcResponse {
   jsonrpc: string;
   id?: number | string;
@@ -149,7 +160,7 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
     ).toBeDefined();
   });
 
-  test("tools/list returns all 24 tools with outputSchema", async () => {
+  test("tools/list returns all 40 tools with outputSchema", async () => {
     const response = await sendRequest(
       clientTransport,
       "tools/list",
@@ -162,12 +173,13 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
     expect(response.error).toBeUndefined();
     const result = response.result!;
     const tools = result.tools as Array<Record<string, unknown>>;
-    expect(tools).toHaveLength(24);
+    expect(tools).toHaveLength(40);
     // Full-capability surface: core CRUD + context pack + temporal + trust +
     // extraction + operations.
     const names = tools.map((t) => t.name);
     for (const expected of [
       "memos_store",
+      "memos_ingest",
       "memos_search",
       "memos_retrieve",
       "memos_forget",
@@ -197,9 +209,14 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
 
     const expectedNames = [
       "memos_store",
+      "memos_ingest",
       "memos_search",
+      "memos_profile",
       "memos_retrieve",
       "memos_forget",
+      "memos_forget_source",
+      "memos_deletion_status",
+      "memos_review",
       "memos_link",
       "memos_quarantine_release",
       "memos_graph",
@@ -220,6 +237,17 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
       "memos_image_add",
       "memos_image_recall",
       "memos_image_search",
+      "memos_explain",
+      "memos_feedback",
+      "memos_health",
+      "memos_overview",
+      "memos_handoff",
+      "memos_audit",
+      "memos_eval",
+      "memos_promote",
+      "memos_trigger",
+      "memos_brief",
+      "memos_page",
     ];
     const toolNames = tools.map((t) => t.name);
     expect(toolNames).toEqual(expectedNames);
@@ -447,12 +475,13 @@ describe("MCP Protocol — legacy 2025-era backward compatibility", () => {
     expect(response.error).toBeUndefined();
     const result = response.result!;
     const tools = result.tools as Array<Record<string, unknown>>;
-    expect(tools).toHaveLength(24);
+    expect(tools).toHaveLength(40);
     // Full-capability surface: core CRUD + context pack + temporal + trust +
     // extraction + operations.
     const names = tools.map((t) => t.name);
     for (const expected of [
       "memos_store",
+      "memos_ingest",
       "memos_search",
       "memos_retrieve",
       "memos_forget",
@@ -485,12 +514,13 @@ describe("MCP Protocol — legacy 2025-era backward compatibility", () => {
 describe("getMcpTools static metadata", () => {
   test("returns the full tool surface with outputSchema", () => {
     const tools = getMcpTools();
-    expect(tools).toHaveLength(24);
+    expect(tools).toHaveLength(40);
     // Full-capability surface: core CRUD + context pack + temporal + trust +
     // extraction + operations.
     const names = tools.map((t) => t.name);
     for (const expected of [
       "memos_store",
+      "memos_ingest",
       "memos_search",
       "memos_retrieve",
       "memos_forget",
@@ -529,9 +559,14 @@ describe("getMcpTools static metadata", () => {
     const names = getMcpTools().map((t) => t.name);
     expect(names).toEqual([
       "memos_store",
+      "memos_ingest",
       "memos_search",
+      "memos_profile",
       "memos_retrieve",
       "memos_forget",
+      "memos_forget_source",
+      "memos_deletion_status",
+      "memos_review",
       "memos_link",
       "memos_quarantine_release",
       "memos_graph",
@@ -552,6 +587,17 @@ describe("getMcpTools static metadata", () => {
       "memos_image_add",
       "memos_image_recall",
       "memos_image_search",
+      "memos_explain",
+      "memos_feedback",
+      "memos_health",
+      "memos_overview",
+      "memos_handoff",
+      "memos_audit",
+      "memos_eval",
+      "memos_promote",
+      "memos_trigger",
+      "memos_brief",
+      "memos_page",
     ]);
   });
 });

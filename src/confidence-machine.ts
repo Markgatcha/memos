@@ -45,7 +45,17 @@ export const CONTRADICTION_SIGNALS = [
 /**
  * The outcome of comparing a new observation against an existing memory.
  */
-export type EvidenceOutcome = "confirmed" | "partial_conflict" | "contradicted";
+export type EvidenceOutcome =
+  "confirmed" | "partial_conflict" | "contradicted" | "unrelated";
+
+/**
+ * Neutral, no-op outcome for content that does not compare to the existing
+ * memory at all. Distinct from "confirmed" so the compiler enforces the
+ * difference at every call site — the two used to share the "confirmed"
+ * value via a sentinel fallthrough, which made any caller that forgot to
+ * re-check similarity silently reinforce unrelated memories.
+ */
+export type NeutralOutcome = "unrelated";
 
 /**
  * The result of applying evidence to a memory's confidence score.
@@ -81,12 +91,27 @@ export function applyEvidence(
   outcome: EvidenceOutcome,
 ): ConfidenceUpdate {
   if (outcome === "contradicted") {
-    // Superseded — mark as historical, don't delete
+    // Superseded — mark as historical, don't delete. Confidence is driven
+    // to zero so the suppression machinery (confidenceWeight below, and
+    // the trust blend in retrieval) actually demotes the retracted fact;
+    // before this it was only marked validTo-stamped and kept its
+    // reinforced score, ranking almost at full weight.
     return {
       confidence: 0,
       evidenceCount: currentEvidence + 1,
       superseded: true,
       flaggedForReview: false, // superseded is a stronger signal
+    };
+  }
+
+  // "unrelated" is the neutral no-op: the new observation says nothing
+  // about this memory, so confidence must not move in either direction.
+  if (outcome === "unrelated") {
+    return {
+      confidence: currentConfidence,
+      evidenceCount: currentEvidence,
+      superseded: false,
+      flaggedForReview: currentConfidence < CONFIDENCE_FLOOR,
     };
   }
 
@@ -151,20 +176,21 @@ export function classifyEvidence(
 
   // If the NEW content carries a contradiction signal and similarity is
   // low, treat as contradicted (e.g. "user likes coffee" vs "user no
-  // longer likes coffee").
+  // longer likes coffee"). The band is [0, 0.5): above 0.5 the pair is a
+  // partial conflict, below it a signal word means the new observation
+  // replaces the old one.
   if (
     CONTRADICTION_SIGNALS.some((w) => newLower.includes(w)) &&
-    similarity < 0.3
+    similarity < 0.5
   ) {
     return "contradicted";
   }
 
   // Very low similarity and no contradiction → unrelated (no change).
-  // NOTE for callers: this is the NEUTRAL fallthrough, not a positive
-  // confirmation — unrelated content must NOT reinforce a memory. The
-  // store-path wiring (src/memory.ts) distinguishes the two by requiring
-  // pair similarity >= 0.85 before treating "confirmed" as a reinforce.
-  return "confirmed";
+  // This is the NEUTRAL fallthrough: unrelated content must NOT reinforce
+  // a memory. Callers no longer need to re-check similarity — the
+  // distinct "unrelated" outcome is compiler-enforced.
+  return "unrelated";
 }
 
 /**

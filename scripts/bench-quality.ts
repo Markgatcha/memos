@@ -508,7 +508,9 @@ async function main(): Promise<void> {
       ...(retrievalArgs.ftsOperator
         ? { ftsOperator: retrievalArgs.ftsOperator }
         : {}),
-      ...(retrievalArgs.sessionExpansion ? { sessionExpansion: true } : {}),
+      ...(retrievalArgs.sessionExpansion !== undefined
+        ? { sessionExpansion: retrievalArgs.sessionExpansion }
+        : {}),
     });
     const retrievedIds = results.map((r) => {
       // Reverse-map back to the dataset id.

@@ -35,6 +35,7 @@
 import { MemOS } from "../index.js";
 import type {
   ConversationMessage,
+  ContextPackItem,
   CreateMemoryInput,
   ExtractFactsResult,
   MemoryNode,
@@ -44,6 +45,11 @@ import type {
   ScoredMemory,
   SearchFilter,
 } from "../index.js";
+import {
+  buildBudgetedPack,
+  packItemToEntry,
+  type AdapterTokenBudgetOptions,
+} from "./token-budget.js";
 
 // ---------------------------------------------------------------------------
 // OpenAI-compatible types (no `openai` package dependency required)
@@ -159,10 +165,17 @@ export interface MemOSOpenAIPluginOptions {
   namespace?: string;
 }
 
+/** Token-budget options for {@link MemOSOpenAIPlugin}. */
+export interface MemOSOpenAITokenBudgetOptions extends AdapterTokenBudgetOptions {}
+
+/** Options accepted by {@link MemOSOpenAIPlugin}. */
+export type MemOSOpenAIPluginFullOptions = MemOSOpenAIPluginOptions &
+  MemOSOpenAITokenBudgetOptions;
+
 /** Configuration for {@link createOpenAIMemory}. */
 export interface OpenAIMemoryConfig extends MemOSConfig {
   /** Plugin-level options. */
-  plugin?: MemOSOpenAIPluginOptions;
+  plugin?: MemOSOpenAIPluginFullOptions;
 }
 
 /** Result of {@link createOpenAIMemory}. */
@@ -196,6 +209,9 @@ export class MemOSOpenAIPlugin {
     source: MemorySource;
     minConfidence: number;
     namespace: string;
+    /** `undefined` = legacy count-based path (no token budgeting). */
+    tokenBudget: number | undefined;
+    packFormat: AdapterTokenBudgetOptions["packFormat"];
   };
 
   /**
@@ -204,7 +220,7 @@ export class MemOSOpenAIPlugin {
    * @param memos - An initialised MemOS instance.
    * @param opts  - Plugin options. All fields optional with sensible defaults.
    */
-  constructor(memos: MemOS, opts: MemOSOpenAIPluginOptions = {}) {
+  constructor(memos: MemOS, opts: MemOSOpenAIPluginFullOptions = {}) {
     this.memos = memos;
     this.opts = {
       maxContextMemories: opts.maxContextMemories ?? 5,
@@ -213,6 +229,14 @@ export class MemOSOpenAIPlugin {
       source: opts.source ?? "user_input",
       minConfidence: opts.minConfidence ?? 0.6,
       namespace: opts.namespace ?? "default",
+      // Only a configured budget switches assembly to the context-pack
+      // path; without it every output below stays byte-identical to the
+      // pre-budget implementation.
+      tokenBudget:
+        typeof opts.tokenBudget === "number"
+          ? Math.max(1, Math.floor(opts.tokenBudget))
+          : undefined,
+      packFormat: opts.packFormat ?? "json",
     };
   }
 
@@ -283,12 +307,16 @@ export class MemOSOpenAIPlugin {
   /**
    * Search memories and format the results for OpenAI tool use.
    *
+   * With `tokenBudget` configured, memory assembly goes through
+   * `MemOS.contextPack` and `toolMessage.content` is a deterministic,
+   * compact serialization of the budgeted pack instead of pretty-printed
+   * raw entries. Without it, the historical JSON path is used unchanged.
+   *
    * @param query - Natural-language search query.
    * @param opts  - Search options (limit, type, namespace).
    * @returns An object containing the ranked memory entries and a
-   *   ready-to-send `tool` message (JSON-encoded memories). Set
-   *   `toolMessage.tool_call_id` to the model's `tool_call` id before
-   *   returning it.
+   *   ready-to-send `tool` message. Set `toolMessage.tool_call_id` to the
+   *   model's `tool_call` id before returning it.
    */
   async searchMemories(
     query: string,
@@ -300,6 +328,22 @@ export class MemOSOpenAIPlugin {
     };
     if (opts.type) filter.type = opts.type;
     if (opts.namespace) filter.namespace = opts.namespace;
+
+    if (this.opts.tokenBudget !== undefined) {
+      const pack = await buildBudgetedPack(this.memos, {
+        query,
+        namespace: opts.namespace ?? this.opts.namespace,
+        tokenBudget: this.opts.tokenBudget,
+        limit: opts.limit ?? this.opts.maxContextMemories,
+        format: this.opts.packFormat,
+        emptyText: "No relevant memories found.",
+      });
+      return {
+        query,
+        memories: pack.items.map((item) => this.toPackEntry(item)),
+        toolMessage: { role: "tool", content: pack.text },
+      };
+    }
 
     const results = await this.memos.search(filter);
     const memories = results.map((r) => this.toEntry(r));
@@ -322,6 +366,10 @@ export class MemOSOpenAIPlugin {
    * then searches MemOS using the most recent user message and returns the
    * matches as a formatted block ready to prepend to the `system` prompt.
    *
+   * With `tokenBudget` configured the block is a deterministic
+   * serialization of the budgeted context pack (TOON by default); without
+   * it the historical numbered-list rendering is used unchanged.
+   *
    * @param messages - Recent conversation messages.
    * @param opts     - Context options (limit, whether to extract).
    * @returns A memory-context string, or `""` if nothing relevant was found.
@@ -338,6 +386,18 @@ export class MemOSOpenAIPlugin {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const query = lastUser?.content.trim() ?? "";
     if (!query) return "";
+
+    if (this.opts.tokenBudget !== undefined) {
+      const pack = await buildBudgetedPack(this.memos, {
+        query,
+        namespace: this.opts.namespace,
+        tokenBudget: this.opts.tokenBudget,
+        limit: opts.limit ?? this.opts.maxContextMemories,
+        format: this.opts.packFormat,
+        emptyText: "",
+      });
+      return pack.text;
+    }
 
     const results = await this.memos.search({
       query,
@@ -422,6 +482,22 @@ export class MemOSOpenAIPlugin {
       trustScore: scored.node.trustScore,
     };
   }
+
+  /**
+   * Convert a budgeted pack item into the same entry shape.
+   *
+   * The pack schema deliberately omits the node's `type` (it costs tokens
+   * to carry and the pack is a rendering artifact, not the node), so the
+   * entry falls back to the pack's trust label. Consumers that need the
+   * raw node should use `memos.get()`.
+   */
+  private toPackEntry(item: ContextPackItem): OpenAIMemoryEntry {
+    return {
+      ...packItemToEntry(item),
+      type: "fact" as MemoryType,
+      trustScore: 0.5,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -454,7 +530,6 @@ export async function createOpenAIMemory(
   const plugin = new MemOSOpenAIPlugin(memos, pluginOpts);
   return { memos, plugin };
 }
-
 // ---------------------------------------------------------------------------
 // Usage example
 // ---------------------------------------------------------------------------

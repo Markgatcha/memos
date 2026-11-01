@@ -73,10 +73,13 @@ describe("Ebbinghaus reinforcement must not mutate updatedAt", () => {
     await memos.store("a dog ran through the park quickly");
 
     // Distinct queries: the search cache short-circuits repeat queries
-    // before postSortResults (and therefore before reinforcement).
+    // before postSortResults (and therefore before reinforcement). The
+    // short settle yields to the fire-and-forget access bump; the explicit
+    // flush then persists it. No long sleeps: the old 3x400ms budget was
+    // enough to push this test past Jest's 5s timeout on macOS CI.
     for (const q of ["cat", "mat", "cat sat mat"]) {
       await memos.search(q, { limit: 5 });
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, 10));
       storage.flushAccessCounts();
     }
 

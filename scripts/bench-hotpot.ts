@@ -96,6 +96,7 @@ async function main(): Promise<void> {
     .find((a) => a.startsWith("--rerank-url="))
     ?.split("=")[1];
   const rerankTimeoutArg = argv.find((a) => a.startsWith("--rerank-timeout="));
+  const multiHop = argv.includes("--multi-hop");
 
   const rows: HotpotRow[] = JSON.parse(readFileSync(datasetPath, "utf8"));
   const questions = maxQuestions > 0 ? rows.slice(0, maxQuestions) : rows;
@@ -203,7 +204,10 @@ async function main(): Promise<void> {
         ...(retrievalArgs.ftsOperator
           ? { ftsOperator: retrievalArgs.ftsOperator }
           : {}),
-        ...(retrievalArgs.sessionExpansion ? { sessionExpansion: true } : {}),
+        ...(retrievalArgs.sessionExpansion !== undefined
+          ? { sessionExpansion: retrievalArgs.sessionExpansion }
+          : {}),
+        ...(multiHop ? { multiHop: true } : {}),
       });
       const elapsed = Date.now() - start;
 
@@ -262,12 +266,24 @@ async function main(): Promise<void> {
           rrfK: retrievalArgs.fusion.rrfK ?? 60,
           rerank: rerankUrl ?? null,
           sessionExpansion: retrievalArgs.sessionExpansion,
+          multiHop,
           embedText: retrievalArgs.embedText ?? "summary+content",
         },
         durationMs,
         ingestionMs,
         metrics: { at5: report.at5, at10: report.at10 },
         perCategory: report.perCategory,
+        // Per-question evidence, so a run can be studied after the fact.
+        // Without this a published score is a number with no failures to
+        // learn from: which titles were missed, in which hop, and at what
+        // rank. Mirrors the LongMemEval artifact.
+        perQuestion: evalQueries.map((q) => ({
+          questionId: q.questionId,
+          category: q.category,
+          relevantIds: q.relevantIds,
+          retrievedIds: q.retrievedIds,
+          latencyMs: q.latencyMs,
+        })),
       },
       null,
       2,

@@ -37,6 +37,7 @@
 import { MemOS } from "../index.js";
 import type {
   ConversationMessage,
+  ContextPackItem,
   CreateMemoryInput,
   ExtractFactsResult,
   MemoryNode,
@@ -46,6 +47,11 @@ import type {
   ScoredMemory,
   SearchFilter,
 } from "../index.js";
+import {
+  buildBudgetedPack,
+  packItemToEntry,
+  type AdapterTokenBudgetOptions,
+} from "./token-budget.js";
 
 // ---------------------------------------------------------------------------
 // Anthropic-compatible types (no `@anthropic-ai/sdk` dependency required)
@@ -175,10 +181,17 @@ export interface MemOSAnthropicPluginOptions {
   namespace?: string;
 }
 
+/** Token-budget options for {@link MemOSAnthropicPlugin}. */
+export interface MemOSAnthropicTokenBudgetOptions extends AdapterTokenBudgetOptions {}
+
+/** Options accepted by {@link MemOSAnthropicPlugin}. */
+export type MemOSAnthropicPluginFullOptions = MemOSAnthropicPluginOptions &
+  MemOSAnthropicTokenBudgetOptions;
+
 /** Configuration for {@link createAnthropicMemory}. */
 export interface AnthropicMemoryConfig extends MemOSConfig {
   /** Plugin-level options. */
-  plugin?: MemOSAnthropicPluginOptions;
+  plugin?: MemOSAnthropicPluginFullOptions;
 }
 
 /** Result of {@link createAnthropicMemory}. */
@@ -213,6 +226,9 @@ export class MemOSAnthropicPlugin {
     source: MemorySource;
     minConfidence: number;
     namespace: string;
+    /** `undefined` = legacy count-based path (no token budgeting). */
+    tokenBudget: number | undefined;
+    packFormat: AdapterTokenBudgetOptions["packFormat"];
   };
 
   /**
@@ -221,7 +237,7 @@ export class MemOSAnthropicPlugin {
    * @param memos - An initialised MemOS instance.
    * @param opts  - Plugin options. All fields optional with sensible defaults.
    */
-  constructor(memos: MemOS, opts: MemOSAnthropicPluginOptions = {}) {
+  constructor(memos: MemOS, opts: MemOSAnthropicPluginFullOptions = {}) {
     this.memos = memos;
     this.opts = {
       maxContextMemories: opts.maxContextMemories ?? 5,
@@ -230,6 +246,11 @@ export class MemOSAnthropicPlugin {
       source: opts.source ?? "user_input",
       minConfidence: opts.minConfidence ?? 0.6,
       namespace: opts.namespace ?? "default",
+      tokenBudget:
+        typeof opts.tokenBudget === "number"
+          ? Math.max(1, Math.floor(opts.tokenBudget))
+          : undefined,
+      packFormat: opts.packFormat ?? "json",
     };
   }
 
@@ -297,6 +318,10 @@ export class MemOSAnthropicPlugin {
   /**
    * Search memories and format the results for Anthropic tool use.
    *
+   * With `tokenBudget` configured, `content` is a deterministic compact
+   * serialization of the budgeted context pack instead of pretty-printed
+   * raw entries. Without it, the historical JSON path is used unchanged.
+   *
    * @param query - Natural-language search query.
    * @param opts  - Search options (limit, type, namespace).
    * @returns An object containing the ranked memory entries, a JSON string,
@@ -313,6 +338,27 @@ export class MemOSAnthropicPlugin {
     };
     if (opts.type) filter.type = opts.type;
     if (opts.namespace) filter.namespace = opts.namespace;
+
+    if (this.opts.tokenBudget !== undefined) {
+      const pack = await buildBudgetedPack(this.memos, {
+        query,
+        namespace: opts.namespace ?? this.opts.namespace,
+        tokenBudget: this.opts.tokenBudget,
+        limit: opts.limit ?? this.opts.maxContextMemories,
+        format: this.opts.packFormat,
+        emptyText: "No relevant memories found.",
+      });
+      return {
+        query,
+        memories: pack.items.map((item) => this.toPackEntry(item)),
+        content: pack.text,
+        toToolResult: (toolUseId: string): AnthropicToolResultBlock => ({
+          type: "tool_result",
+          tool_use_id: toolUseId,
+          content: pack.text,
+        }),
+      };
+    }
 
     const results = await this.memos.search(filter);
     const memories = results.map((r) => this.toEntry(r));
@@ -357,6 +403,18 @@ export class MemOSAnthropicPlugin {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const query = lastUser?.content.trim() ?? "";
     if (!query) return "";
+
+    if (this.opts.tokenBudget !== undefined) {
+      const pack = await buildBudgetedPack(this.memos, {
+        query,
+        namespace: this.opts.namespace,
+        tokenBudget: this.opts.tokenBudget,
+        limit: opts.limit ?? this.opts.maxContextMemories,
+        format: this.opts.packFormat,
+        emptyText: "",
+      });
+      return pack.text;
+    }
 
     const results = await this.memos.search({
       query,
@@ -441,6 +499,19 @@ export class MemOSAnthropicPlugin {
       trustScore: scored.node.trustScore,
     };
   }
+
+  /**
+   * Convert a budgeted pack item into the same entry shape. The pack
+   * schema omits the node's `type` (it costs tokens to carry), so the
+   * entry falls back to the pack's trust label.
+   */
+  private toPackEntry(item: ContextPackItem): AnthropicMemoryEntry {
+    return {
+      ...packItemToEntry(item),
+      type: "fact" as MemoryType,
+      trustScore: 0.5,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +544,6 @@ export async function createAnthropicMemory(
   const plugin = new MemOSAnthropicPlugin(memos, pluginOpts);
   return { memos, plugin };
 }
-
 // ---------------------------------------------------------------------------
 // Usage example
 // ---------------------------------------------------------------------------

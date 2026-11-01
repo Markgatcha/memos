@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { escapeLikePrefix } from "../scope.js";
 import { clampLessonScore } from "../procedural.js";
+import type * as sqliteVec from "sqlite-vec";
 import { isProvenanceTier } from "../provenance.js";
 import {
   backfillEntityIndex,
@@ -34,6 +35,8 @@ import type {
   NewTamperLogEntry,
   TamperLogEntry,
   MemoryEdge,
+  RecallBatchOutcome,
+  RecallBatchRecord,
   SearchFilter,
   ScoredMemory,
   GraphSnapshot,
@@ -42,7 +45,9 @@ import type {
   EmbeddingVector,
   EmbeddingRecordInfo,
 } from "../types.js";
+import { createHash } from "node:crypto";
 import { cosineSimilarity } from "../embeddings.js";
+import { asMemOSError } from "../errors.js";
 
 /**
  * Default database path: `~/.memos/memos.db`.
@@ -181,7 +186,7 @@ interface CachedVector {
 }
 
 /** How the semantic leg chooses which stored vectors to score. */
-export type SemanticScanMode = "exact" | "prefilter";
+export type SemanticScanMode = "exact" | "prefilter" | "auto" | "ann";
 
 /**
  * Telemetry for the most recent `querySimilarEmbeddings` call. Lets
@@ -218,6 +223,13 @@ const PREFILTER_STRIDE = 8;
 
 /** Floor for the prefilter's exact-rescore window. */
 const PREFILTER_MIN_KEEP = 32;
+
+/**
+ * `semanticScan: "auto"` keeps exact scoring until a query has more than this
+ * many candidate vectors, then switches to the bounded prefilter. 20k is the
+ * point where the exact JS scan starts to dominate p95 on consumer hardware.
+ */
+const AUTO_PREFILTER_MIN_CANDIDATES = 20_000;
 
 /**
  * Minimal function-word stoplist for FTS5 query tokenization.
@@ -408,7 +420,10 @@ export class SQLiteStorage implements StorageAdapter {
        * `"exact"` (default) scores every candidate. `"prefilter"` ranks
        * candidates with a coarse prefix projection first and exactly
        * rescodes only the top-N — bounded work at large corpus sizes,       * APPROXIMATE (a true neighbour ranked below the cutoff can be
-       * missed). Set via `MemOSConfig.storageOptions.semanticScan`.
+       * missed). `"auto"` uses exact up to 20k candidates, then prefilter.
+       * `"ann"` uses the optional sqlite-vec extension and falls back to
+       * exact when it is unavailable. Set via
+       * `MemOSConfig.storageOptions.semanticScan`.
        */
       semanticScan?: SemanticScanMode;
     } = {},
@@ -459,24 +474,32 @@ export class SQLiteStorage implements StorageAdapter {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    this.db = this.openDatabase(this.path, this.cipherKey);
+    try {
+      this.db = this.openDatabase(this.path, this.cipherKey);
 
-    if (this.wal) {
-      this.db.pragma("journal_mode = WAL");
+      if (this.wal) {
+        this.db.pragma("journal_mode = WAL");
+      }
+      this.db.pragma("foreign_keys = ON");
+
+      // Cross-OS performance pragmas. `synchronous = NORMAL` is safe with WAL
+      // (the WAL file itself is still fsynced) and gives ~10x faster writes
+      // compared to FULL on macOS / Windows where fsync is expensive. The
+      // 32 MiB page cache and 256 MiB mmap cut read latency for medium
+      // stores without bumping RSS materially. Temp tables in memory keep
+      // ORDER BY and GROUP BY on heavy queries from spilling to disk.
+      this.db.pragma("synchronous = NORMAL");
+      this.db.pragma("cache_size = -32000");
+      this.db.pragma("temp_store = MEMORY");
+      this.db.pragma("wal_autocheckpoint = 1000");
+      this.db.pragma("mmap_size = 268435456");
+    } catch (err) {
+      throw asMemOSError(err, "MEMOS_DB_OPEN", {
+        dbPath: this.path,
+        encrypted: Boolean(this.cipherKey),
+        wal: this.wal,
+      });
     }
-    this.db.pragma("foreign_keys = ON");
-
-    // Cross-OS performance pragmas. `synchronous = NORMAL` is safe with WAL
-    // (the WAL file itself is still fsynced) and gives ~10x faster writes
-    // compared to FULL on macOS / Windows where fsync is expensive. The
-    // 32 MiB page cache and 256 MiB mmap cut read latency for medium
-    // stores without bumping RSS materially. Temp tables in memory keep
-    // ORDER BY and GROUP BY on heavy queries from spilling to disk.
-    this.db.pragma("synchronous = NORMAL");
-    this.db.pragma("cache_size = -32000");
-    this.db.pragma("temp_store = MEMORY");
-    this.db.pragma("wal_autocheckpoint = 1000");
-    this.db.pragma("mmap_size = 268435456");
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS nodes (
@@ -518,6 +541,7 @@ export class SQLiteStorage implements StorageAdapter {
         vector     BLOB NOT NULL,
         dimensions INTEGER NOT NULL,
         model      TEXT NOT NULL,
+        prefix     TEXT NOT NULL DEFAULT '',
         updated_at INTEGER NOT NULL
       );
 
@@ -582,6 +606,30 @@ export class SQLiteStorage implements StorageAdapter {
 
       CREATE INDEX IF NOT EXISTS idx_procedural_lessons_namespace ON procedural_lessons(namespace);
       CREATE INDEX IF NOT EXISTS idx_procedural_lessons_score ON procedural_lessons(score);
+
+      -- Outcome-conditioned recall: one row per explicit task outcome, and
+      -- one attribution row per memory the agent reported using. Kept in
+      -- two tables so aggregate outcome rates never double-count a batch
+      -- that used several memories. All scoring math lives in
+      -- src/feedback.ts.
+      CREATE TABLE IF NOT EXISTS recall_batches (
+        id            TEXT PRIMARY KEY,
+        ts            INTEGER NOT NULL,
+        query         TEXT NOT NULL,
+        outcome       TEXT NOT NULL,
+        weight        REAL NOT NULL DEFAULT 1,
+        note          TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_recall_batches_ts ON recall_batches(ts);
+
+      CREATE TABLE IF NOT EXISTS recall_feedback (
+        batch_id      TEXT NOT NULL,
+        memory_id     TEXT NOT NULL,
+        PRIMARY KEY (batch_id, memory_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_recall_feedback_memory ON recall_feedback(memory_id);
 
       -- Tamper-evident mutation log: append-only hash chain over every
       -- node mutation (store / import / update / forget). The chain
@@ -671,6 +719,21 @@ export class SQLiteStorage implements StorageAdapter {
     this.migrateAddColumn("edges", "valid_from", "INTEGER DEFAULT NULL");
     this.migrateAddColumn("edges", "valid_to", "INTEGER DEFAULT NULL");
 
+    // Migration: record the document-side retrieval prefix that produced each
+    // vector. Without it, switching from nomic's `search_document:` to an
+    // unprefixed model silently mixed incomparable vector spaces. Legacy rows
+    // read as the empty prefix, which is exactly how they were embedded.
+    this.migrateAddColumn("embeddings", "prefix", "TEXT NOT NULL DEFAULT ''");
+
+    // Namespaced reads are the common path (per-user, per-project,
+    // per-benchmark-question stores). Created after the namespace migration
+    // so it also works on a fresh DB; without it the semantic id-select
+    // joins every embedding row to nodes and filters namespace afterwards,
+    // which is O(corpus) per query on a 24k-node store.
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_nodes_namespace ON nodes(namespace)",
+    );
+
     // Index for edge validity-interval queries (as-of / time-travel reads).
     // Created here rather than in the schema block above because the
     // columns only exist after the migrations run on pre-existing DBs.
@@ -751,6 +814,183 @@ export class SQLiteStorage implements StorageAdapter {
     // (entity) lookup index, backfilled from existing rows on init.
     ensureEntityIndexTable(this.db);
     this.migrateBackfillEntityIndex();
+
+    if (this.semanticScanMode === "ann") {
+      await this.initVectorIndex();
+    }
+  }
+
+  /**
+   * Load the optional sqlite-vec extension and restore the index registry.
+   * A missing/incompatible extension is not fatal: ANN mode degrades to the
+   * exact scan and `getVectorIndexStatus().error` explains why.
+   */
+  private async initVectorIndex(): Promise<void> {
+    try {
+      const mod = (await import("sqlite-vec")) as typeof sqliteVec;
+      this.db.loadExtension(mod.getLoadablePath());
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS vec_indexes (
+          index_key  TEXT PRIMARY KEY,
+          table_name TEXT NOT NULL,
+          model      TEXT NOT NULL,
+          prefix     TEXT NOT NULL DEFAULT '',
+          dimensions INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      `);
+      const rows = this.db
+        .prepare("SELECT index_key, table_name FROM vec_indexes")
+        .all() as Array<{ index_key: string; table_name: string }>;
+      for (const row of rows) {
+        this.vecIndexes.set(row.index_key, row.table_name);
+      }
+      this.vecEnabled = true;
+    } catch (err) {
+      this.vecEnabled = false;
+      this.vecLoadError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /** ANN backend status for `memos doctor` / diagnostics. */
+  getVectorIndexStatus(): {
+    mode: SemanticScanMode;
+    enabled: boolean;
+    error: string | null;
+    indexes: string[];
+  } {
+    return {
+      mode: this.semanticScanMode,
+      enabled: this.vecEnabled,
+      error: this.vecLoadError,
+      indexes: [...this.vecIndexes.values()],
+    };
+  }
+
+  private annKey(model: string, prefix: string, dimensions: number): string {
+    return createHash("sha256")
+      .update(`${model}\u0000${prefix}\u0000${dimensions}`)
+      .digest("hex")
+      .slice(0, 16);
+  }
+
+  /**
+   * Ensure a vec0 table exists for this model/prefix/dimension and backfill
+   * any rows written before ANN was enabled. The first ANN query pays the
+   * one-time build; subsequent saves update the index incrementally.
+   */
+  private ensureAnnIndex(
+    model: string,
+    prefix: string,
+    dimensions: number,
+  ): string | null {
+    if (!this.vecEnabled || !model || dimensions <= 0) return null;
+    const key = this.annKey(model, prefix, dimensions);
+    let table = this.vecIndexes.get(key) ?? null;
+    if (!table) {
+      const row = this.db
+        .prepare("SELECT table_name FROM vec_indexes WHERE index_key = ?")
+        .get(key) as { table_name?: string } | undefined;
+      table = row?.table_name ?? `vec_${key}`;
+      this.db.exec(
+        `CREATE VIRTUAL TABLE IF NOT EXISTS "${table}" USING vec0(` +
+          `node_id TEXT PRIMARY KEY, embedding float[${dimensions}])`,
+      );
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO vec_indexes
+             (index_key, table_name, model, prefix, dimensions, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(key, table, model, prefix, dimensions, Date.now());
+      this.vecIndexes.set(key, table);
+    }
+
+    const expected = (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM embeddings
+           WHERE model = ? AND prefix = ? AND dimensions = ?`,
+        )
+        .get(model, prefix, dimensions) as { c: number }
+    ).c;
+    const actual = (
+      this.db.prepare(`SELECT COUNT(*) AS c FROM "${table}"`).get() as {
+        c: number;
+      }
+    ).c;
+    if (actual < expected) {
+      const rows = this.db
+        .prepare(
+          `SELECT node_id, vector FROM embeddings
+           WHERE model = ? AND prefix = ? AND dimensions = ?`,
+        )
+        .iterate(model, prefix, dimensions) as Iterable<{
+        node_id: string;
+        vector: Buffer;
+      }>;
+      const remove = this.db.prepare(
+        `DELETE FROM "${table}" WHERE node_id = ?`,
+      );
+      const insert = this.db.prepare(
+        `INSERT INTO "${table}"(node_id, embedding) VALUES (?, ?)`,
+      );
+      const tx = this.db.transaction(
+        (batch: Array<{ node_id: string; vector: Buffer }>) => {
+          for (const row of batch) {
+            const vector = this.parseEmbeddingF32(row.vector);
+            remove.run(row.node_id);
+            insert.run(
+              row.node_id,
+              Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength),
+            );
+          }
+        },
+      );
+      let batch: Array<{ node_id: string; vector: Buffer }> = [];
+      for (const row of rows) {
+        batch.push(row);
+        if (batch.length >= 500) {
+          tx(batch);
+          batch = [];
+        }
+      }
+      if (batch.length > 0) tx(batch);
+    }
+    return table;
+  }
+
+  private annSearchIds(
+    table: string,
+    vector: EmbeddingVector,
+    limit: number,
+  ): string[] {
+    try {
+      const payload = Float32Array.from(vector);
+      const rows = this.db
+        .prepare(
+          `SELECT node_id FROM "${table}"
+           WHERE embedding MATCH ? ORDER BY distance LIMIT ?`,
+        )
+        .all(
+          Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength),
+          Math.max(1, limit),
+        ) as Array<{ node_id: string }>;
+      return rows.map((row) => row.node_id);
+    } catch {
+      return [];
+    }
+  }
+
+  private deleteVectorRows(id: string): void {
+    if (!this.vecEnabled) return;
+    for (const table of this.vecIndexes.values()) {
+      try {
+        this.db.prepare(`DELETE FROM "${table}" WHERE node_id = ?`).run(id);
+      } catch {
+        // A dropped/corrupt index must not block the node delete.
+      }
+    }
   }
 
   /**
@@ -966,6 +1206,103 @@ export class SQLiteStorage implements StorageAdapter {
     this.bufferAccess(id, Date.now());
   }
 
+  // -----------------------------------------------------------------------
+  // Outcome-conditioned recall feedback
+  // -----------------------------------------------------------------------
+
+  /**
+   * Persist one feedback batch and its attributions atomically. Re-saving
+   * the same batch id replaces its attributions, so the method is
+   * idempotent per batch.
+   */
+  async saveRecallBatch(
+    batch: RecallBatchRecord,
+    memoryIds: string[],
+  ): Promise<void> {
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO recall_batches (id, ts, query, outcome, weight, note)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          batch.id,
+          batch.ts,
+          batch.query,
+          batch.outcome,
+          batch.weight,
+          batch.note ?? null,
+        );
+      this.db
+        .prepare(`DELETE FROM recall_feedback WHERE batch_id = ?`)
+        .run(batch.id);
+      const insert = this.db.prepare(
+        `INSERT OR IGNORE INTO recall_feedback (batch_id, memory_id) VALUES (?, ?)`,
+      );
+      for (const id of new Set(memoryIds)) insert.run(batch.id, id);
+    });
+    tx();
+  }
+
+  /**
+   * Load every feedback batch with its attributed memory ids. Called once
+   * by `MemOS.init()`; the SDK keeps the result in memory so ranking and
+   * explanation never issue per-query feedback reads.
+   */
+  async getRecallBatches(): Promise<RecallBatchOutcome[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT b.id, b.ts, b.query, b.outcome, b.weight, b.note,
+                COALESCE(GROUP_CONCAT(f.memory_id), '') AS memory_ids
+         FROM recall_batches b
+         LEFT JOIN recall_feedback f ON f.batch_id = b.id
+         GROUP BY b.id
+         ORDER BY b.ts ASC`,
+      )
+      .all() as Array<{
+      id: string;
+      ts: number;
+      query: string;
+      outcome: string;
+      weight: number;
+      note: string | null;
+      memory_ids: string;
+    }>;
+    const outcomes = new Set(["success", "partial", "failure"]);
+    const batches: RecallBatchOutcome[] = [];
+    for (const row of rows) {
+      if (!outcomes.has(row.outcome)) continue;
+      const memoryIds = row.memory_ids
+        ? row.memory_ids.split(",").filter(Boolean)
+        : [];
+      const batch: RecallBatchOutcome = {
+        id: row.id,
+        ts: row.ts,
+        query: row.query,
+        outcome: row.outcome as RecallBatchOutcome["outcome"],
+        weight: row.weight,
+        memoryIds,
+      };
+      if (row.note !== null) batch.note = row.note;
+      batches.push(batch);
+    }
+    return batches;
+  }
+
+  /** Remove all attributions for one memory. Batches are kept. */
+  async deleteRecallFeedback(nodeId: string): Promise<number> {
+    const info = this.db
+      .prepare(`DELETE FROM recall_feedback WHERE memory_id = ?`)
+      .run(nodeId);
+    return info.changes;
+  }
+
+  /** Drop every feedback batch and attribution. */
+  async deleteAllRecallFeedback(): Promise<void> {
+    this.db.exec("DELETE FROM recall_feedback");
+    this.db.exec("DELETE FROM recall_batches");
+  }
+
   private bufferAccess(id: string, now: number): void {
     const existing = this.accessBuffer.get(id);
     if (existing) {
@@ -1128,6 +1465,12 @@ export class SQLiteStorage implements StorageAdapter {
     // CASCADE; the in-memory cache entry has to go explicitly (a node
     // deleted between two queries must not be served from cache).
     this.vectorCache.delete(id);
+    this.vectorCacheNamespaces.delete(id);
+    this.deleteVectorRows(id);
+    // Feedback attributed to a deleted memory must not keep influencing
+    // aggregate metrics. Batches themselves are retained: their outcomes
+    // remain valid evidence about the query, just with fewer attributions.
+    this.db.prepare(`DELETE FROM recall_feedback WHERE memory_id = ?`).run(id);
     const result = this.db.prepare("DELETE FROM nodes WHERE id = ?").run(id);
     return result.changes > 0;
   }
@@ -1581,32 +1924,71 @@ export class SQLiteStorage implements StorageAdapter {
     nodeId: string,
     vector: EmbeddingVector,
     model: string,
+    prefix = "",
   ): Promise<void> {
     const normalized = this.serializeEmbedding(vector);
     this.db
       .prepare(
-        `INSERT INTO embeddings (node_id, vector, dimensions, model, updated_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO embeddings (node_id, vector, dimensions, model, prefix, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(node_id) DO UPDATE SET
            vector = excluded.vector,
            dimensions = excluded.dimensions,
            model = excluded.model,
+           prefix = excluded.prefix,
            updated_at = excluded.updated_at`,
       )
-      .run(nodeId, normalized, vector.length, model, Date.now());
+      .run(nodeId, normalized, vector.length, model, prefix, Date.now());
     this.vectorCacheSet(nodeId, this.parseEmbeddingF32(normalized), "text");
+    if (this.semanticScanMode === "ann" && this.vecEnabled) {
+      try {
+        const table = this.ensureAnnIndex(model, prefix, vector.length);
+        if (table) {
+          const payload = Float32Array.from(vector);
+          // vec0 virtual tables do not implement INSERT OR REPLACE; delete the
+          // old row first so an embedding refresh is an update.
+          this.db
+            .prepare(`DELETE FROM "${table}" WHERE node_id = ?`)
+            .run(nodeId);
+          this.db
+            .prepare(`INSERT INTO "${table}"(node_id, embedding) VALUES (?, ?)`)
+            .run(
+              nodeId,
+              Buffer.from(
+                payload.buffer,
+                payload.byteOffset,
+                payload.byteLength,
+              ),
+            );
+        }
+      } catch (err) {
+        // The primary embedding row is already durable. A broken ANN index
+        // must not fail the write; demote to exact scans and report why.
+        this.vecEnabled = false;
+        this.vecLoadError = err instanceof Error ? err.message : String(err);
+      }
+    }
+    // Index the row under its namespace so a later rotation can purge the
+    // previous namespace wholesale (see `pruneVectorCacheForNamespace`).
+    const nsRow = this.getPreparedStatement(
+      "getNodeNamespaceForVectorCache",
+      "SELECT namespace FROM nodes WHERE id = ?",
+    ).get(nodeId) as { namespace?: string } | undefined;
+    if (nsRow?.namespace)
+      this.vectorCacheNamespaces.set(nodeId, nsRow.namespace);
   }
 
   async getEmbeddingInfo(nodeId: string): Promise<EmbeddingRecordInfo | null> {
     const row = this.getPreparedStatement(
       "getEmbeddingInfo",
-      "SELECT model, dimensions, updated_at FROM embeddings WHERE node_id = ?",
+      "SELECT model, dimensions, prefix, updated_at FROM embeddings WHERE node_id = ?",
     ).get(nodeId) as Record<string, unknown> | undefined;
 
     if (!row) return null;
     return {
       model: row.model as string,
       dimensions: row.dimensions as number,
+      prefix: (row.prefix as string | null) ?? "",
       updatedAt: row.updated_at as number,
     };
   }
@@ -1710,6 +2092,19 @@ export class SQLiteStorage implements StorageAdapter {
     this.db
       .prepare("UPDATE contradictions SET status = ? WHERE id = ?")
       .run(status, id);
+  }
+
+  async countContradictions(status?: ContradictionStatus): Promise<number> {
+    const row = status
+      ? (this.db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM contradictions WHERE status = ?",
+          )
+          .get(status) as { count: number })
+      : (this.db
+          .prepare("SELECT COUNT(*) AS count FROM contradictions")
+          .get() as { count: number });
+    return row.count;
   }
 
   private rowToContradiction(
@@ -1877,12 +2272,13 @@ export class SQLiteStorage implements StorageAdapter {
   > {
     const rows = this.getPreparedStatement(
       "getAllEmbeddingInfos",
-      "SELECT node_id, model, dimensions, updated_at FROM embeddings",
+      "SELECT node_id, model, dimensions, prefix, updated_at FROM embeddings",
     ).all() as Array<Record<string, unknown>>;
     return rows.map((row) => ({
       nodeId: row.node_id as string,
       model: row.model as string,
       dimensions: row.dimensions as number,
+      prefix: (row.prefix as string | null) ?? "",
       updatedAt: row.updated_at as number,
     }));
   }
@@ -1917,8 +2313,46 @@ export class SQLiteStorage implements StorageAdapter {
     limit: number,
     threshold = 0,
     model?: string,
+    prefix?: string,
   ): Promise<ScoredMemory[]> {
-    return this.scanSimilar("text", vector, filter, limit, threshold, model);
+    if (
+      this.semanticScanMode === "ann" &&
+      this.vecEnabled &&
+      model &&
+      prefix !== undefined
+    ) {
+      try {
+        const table = this.ensureAnnIndex(model, prefix, vector.length);
+        if (table) {
+          const ids = this.annSearchIds(table, vector, Math.max(limit * 8, 64));
+          if (ids.length > 0) {
+            const seeded = await this.scanSimilar(
+              "text",
+              vector,
+              filter,
+              limit,
+              threshold,
+              model,
+              prefix,
+              ids,
+            );
+            if (seeded.length >= limit) return seeded;
+          }
+        }
+      } catch (err) {
+        this.vecEnabled = false;
+        this.vecLoadError = err instanceof Error ? err.message : String(err);
+      }
+    }
+    return this.scanSimilar(
+      "text",
+      vector,
+      filter,
+      limit,
+      threshold,
+      model,
+      prefix,
+    );
   }
 
   /**
@@ -1955,6 +2389,8 @@ export class SQLiteStorage implements StorageAdapter {
     limit: number,
     threshold: number,
     model?: string,
+    prefix?: string,
+    seedIds?: string[],
   ): Promise<ScoredMemory[]> {
     const table = space === "image" ? "image_embeddings" : "embeddings";
     const indexName =
@@ -1963,6 +2399,12 @@ export class SQLiteStorage implements StorageAdapter {
         : "idx_embeddings_model_dims";
     const conditions: string[] = [];
     const params: unknown[] = [vector.length];
+    // Node-side filters tracked separately so a namespaced read can select
+    // candidate node ids FIRST (namespace index) instead of joining every
+    // embedding row and filtering afterwards. The planner otherwise prefers
+    // the (dimensions, model) index and scans the whole vector table.
+    const nodeConditions: string[] = [];
+    const nodeParams: unknown[] = [];
     // True as soon as any node-side (`n.*`) condition is added — only then
     // do we need the JOIN. The common case (no type/namespace/pool/tags/
     // importance/metadata filter) selects ids straight from the table,
@@ -1978,29 +2420,43 @@ export class SQLiteStorage implements StorageAdapter {
       conditions.push("e.model = ?");
       params.push(model);
     }
+    if (space === "text" && prefix !== undefined) {
+      conditions.push("e.prefix = ?");
+      params.push(prefix);
+    }
     if (filter.type) {
       conditions.push("n.type = ?");
       params.push(filter.type);
+      nodeConditions.push("n.type = ?");
+      nodeParams.push(filter.type);
       needsNodeJoin = true;
     }
     if (filter.minImportance !== undefined) {
       conditions.push("n.importance >= ?");
       params.push(filter.minImportance);
+      nodeConditions.push("n.importance >= ?");
+      nodeParams.push(filter.minImportance);
       needsNodeJoin = true;
     }
     if (filter.maxImportance !== undefined) {
       conditions.push("n.importance <= ?");
       params.push(filter.maxImportance);
+      nodeConditions.push("n.importance <= ?");
+      nodeParams.push(filter.maxImportance);
       needsNodeJoin = true;
     }
     if (filter.namespace) {
       conditions.push("n.namespace = ?");
       params.push(filter.namespace);
+      nodeConditions.push("n.namespace = ?");
+      nodeParams.push(filter.namespace);
       needsNodeJoin = true;
     }
     if (filter.namespacePrefix) {
       conditions.push("n.namespace LIKE ? ESCAPE '\\'");
       params.push(escapeLikePrefix(filter.namespacePrefix) + "%");
+      nodeConditions.push("n.namespace LIKE ? ESCAPE '\\'");
+      nodeParams.push(escapeLikePrefix(filter.namespacePrefix) + "%");
       needsNodeJoin = true;
     }
     if (filter.pool !== undefined) {
@@ -2008,17 +2464,23 @@ export class SQLiteStorage implements StorageAdapter {
       if (pools.length > 0) {
         conditions.push(`n.pool IN (${pools.map(() => "?").join(", ")})`);
         params.push(...pools);
+        nodeConditions.push(`n.pool IN (${pools.map(() => "?").join(", ")})`);
+        nodeParams.push(...pools);
         needsNodeJoin = true;
       }
     }
     const metadata = this.buildMetadataFilter(filter.metadata, "n");
     conditions.push(...metadata.conditions);
     params.push(...metadata.params);
+    nodeConditions.push(...metadata.conditions);
+    nodeParams.push(...metadata.params);
     if (metadata.conditions.length > 0) needsNodeJoin = true;
     if (filter.tags && filter.tags.length > 0) {
       for (const tag of filter.tags) {
         conditions.push("n.tags LIKE ?");
         params.push(`%${JSON.stringify(tag)}%`);
+        nodeConditions.push("n.tags LIKE ?");
+        nodeParams.push(`%${JSON.stringify(tag)}%`);
       }
       needsNodeJoin = true;
     }
@@ -2027,6 +2489,8 @@ export class SQLiteStorage implements StorageAdapter {
     if (filter.harness && filter.harness !== "all") {
       conditions.push("n.harness = ?");
       params.push(filter.harness);
+      nodeConditions.push("n.harness = ?");
+      nodeParams.push(filter.harness);
       needsNodeJoin = true;
     }
     // Provenance-trust: quarantine visibility (see `queryNodes` — excluded
@@ -2034,9 +2498,35 @@ export class SQLiteStorage implements StorageAdapter {
     // MemOS apply the same rule via `quarantineVisible`).
     if (filter.quarantinedOnly === true) {
       conditions.push("n.quarantined = 1");
+      nodeConditions.push("n.quarantined = 1");
       needsNodeJoin = true;
     } else if (filter.includeQuarantined !== true) {
       conditions.push("n.quarantined = 0");
+      nodeConditions.push("n.quarantined = 0");
+      needsNodeJoin = true;
+    }
+
+    // Temporal validity must be applied to the semantic leg exactly as it
+    // is to the keyword and structured legs. Without this, a superseded
+    // memory disappeared from FTS but still surfaced through its embedding,
+    // silently violating the documented "historical memories are excluded
+    // from default search" guarantee.
+    if (filter.validAt !== undefined) {
+      conditions.push("(n.valid_from IS NULL OR n.valid_from <= ?)");
+      params.push(filter.validAt);
+      nodeConditions.push("(n.valid_from IS NULL OR n.valid_from <= ?)");
+      nodeParams.push(filter.validAt);
+      conditions.push("(n.valid_to IS NULL OR n.valid_to >= ?)");
+      params.push(filter.validAt);
+      nodeConditions.push("(n.valid_to IS NULL OR n.valid_to >= ?)");
+      nodeParams.push(filter.validAt);
+      needsNodeJoin = true;
+    } else if (filter.includeHistorical !== true) {
+      const nowMs = Date.now();
+      conditions.push("(n.valid_to IS NULL OR n.valid_to > ?)");
+      params.push(nowMs);
+      nodeConditions.push("(n.valid_to IS NULL OR n.valid_to > ?)");
+      nodeParams.push(nowMs);
       needsNodeJoin = true;
     }
 
@@ -2061,14 +2551,48 @@ export class SQLiteStorage implements StorageAdapter {
     // in-memory cache when warm, so repeat queries skip re-fetching every
     // BLOB (tens of MB per query on large stores). Statement cache keys
     // include the WHERE clause — filter composition varies the SQL.
-    const idRows = this.getPreparedStatement(
-      `querySimilarEmbeddingsIds::${space}::${needsNodeJoin ? "jn" : "noj"}::${where}`,
-      `SELECT e.node_id
-       ${fromClause}
-       ${where}`,
-    ).all(...params) as Array<{ node_id: string }>;
-
-    const candidateIds = idRows.map((r) => r.node_id);
+    // A namespaced read is sparse: select the namespace's node ids first
+    // (idx_nodes_namespace), then fetch only those embeddings. The generic
+    // join made SQLite start from `(dimensions, model)` — which matches
+    // every row — so a 50-session namespace paid a full 24k-row join per
+    // query. Other filter shapes keep the join path.
+    let candidateIds: string[];
+    if (
+      needsNodeJoin &&
+      (filter.namespace !== undefined || filter.namespacePrefix !== undefined)
+    ) {
+      // Keep only nodes that actually have a compatible vector. Without
+      // this, a namespace containing an unembedded (or differently
+      // embedded) node would hand a missing id to the scorer and fall
+      // through to the legacy lookup path with no row to parse.
+      const embeddingPredicate =
+        `EXISTS (SELECT 1 FROM ${table} e WHERE e.node_id = n.id AND e.dimensions = ?` +
+        (model ? " AND e.model = ?" : "") +
+        ")";
+      const nodeWhere = [...nodeConditions, embeddingPredicate].join(" AND ");
+      const nodeQueryParams = [
+        ...nodeParams,
+        vector.length,
+        ...(model ? [model] : []),
+      ];
+      const nodeRows = this.getPreparedStatement(
+        `querySimilarNodeIds::${nodeWhere}`,
+        `SELECT n.id FROM nodes n WHERE ${nodeWhere}`,
+      ).all(...nodeQueryParams) as Array<{ id: string }>;
+      candidateIds = nodeRows.map((r) => r.id);
+    } else {
+      const idRows = this.getPreparedStatement(
+        `querySimilarEmbeddingsIds::${space}::${needsNodeJoin ? "jn" : "noj"}::${where}`,
+        `SELECT e.node_id
+         ${fromClause}
+         ${where}`,
+      ).all(...params) as Array<{ node_id: string }>;
+      candidateIds = idRows.map((r) => r.node_id);
+    }
+    if (seedIds && seedIds.length > 0) {
+      const allowed = new Set(seedIds);
+      candidateIds = candidateIds.filter((id) => allowed.has(id));
+    }
     const missing = candidateIds.filter(
       (id) => !this.vectorCacheGet(id, space),
     );
@@ -2118,18 +2642,18 @@ export class SQLiteStorage implements StorageAdapter {
       vector instanceof Float32Array ? vector : Float32Array.from(vector);
     const queryNormSq = sumSquares(queryF32);
 
-    // Opt-in coarse prefilter (`storageOptions.semanticScan`): rank the
-    // candidates by a strided prefix projection and exactly rescore only
-    // the best `keep`. Bounded work on large corpora, approximate: a
-    // candidate the projection ranks below the cutoff is never seen
-    // again. Off by default, so the exact scan above is the shipped
-    // behavior.
+    // Coarse prefilter (`storageOptions.semanticScan`): rank the candidates
+    // by a strided prefix projection and exactly rescore only the best
+    // `keep`. Bounded work on large corpora, approximate: a candidate the
+    // projection ranks below the cutoff is never seen again. `"auto"` keeps
+    // exact scoring for small candidate sets and switches above 20k.
+    const prefilterRequested =
+      this.semanticScanMode === "prefilter" ||
+      (this.semanticScanMode === "auto" &&
+        candidateIds.length > AUTO_PREFILTER_MIN_CANDIDATES);
     let scanIds = candidateIds;
     let prefilterSkipped = 0;
-    if (
-      this.semanticScanMode === "prefilter" &&
-      candidateIds.length > PREFILTER_MIN_KEEP
-    ) {
+    if (prefilterRequested && candidateIds.length > PREFILTER_MIN_KEEP) {
       const keep = Math.max(
         PREFILTER_MIN_KEEP,
         Math.min(candidateIds.length, limit * 4),
@@ -2288,10 +2812,31 @@ export class SQLiteStorage implements StorageAdapter {
   }
 
   async deleteEmbeddingsByModel(model: string): Promise<number> {
+    if (this.vecEnabled) {
+      const indexes = this.db
+        .prepare(
+          "SELECT index_key, table_name FROM vec_indexes WHERE model = ?",
+        )
+        .all(model) as Array<{ index_key: string; table_name: string }>;
+      for (const index of indexes) {
+        try {
+          this.db
+            .prepare(
+              `DELETE FROM "${index.table_name}" WHERE node_id IN (
+                 SELECT node_id FROM embeddings WHERE model = ?
+               )`,
+            )
+            .run(model);
+        } catch {
+          // Rebuild on the next query.
+        }
+      }
+    }
     const info = this.db
       .prepare(`DELETE FROM embeddings WHERE model = ?`)
       .run(model);
     this.vectorCache.clear();
+    this.vectorCacheNamespaces.clear();
     return info.changes;
   }
 
@@ -2382,6 +2927,7 @@ export class SQLiteStorage implements StorageAdapter {
       .prepare("DELETE FROM image_embeddings WHERE model = ?")
       .run(model);
     this.vectorCache.clear();
+    this.vectorCacheNamespaces.clear();
     return info.changes;
   }
 
@@ -2580,10 +3126,22 @@ export class SQLiteStorage implements StorageAdapter {
 
   async deleteAllNodes(): Promise<void> {
     this.vectorCache.clear();
+    this.vectorCacheNamespaces.clear();
+    if (this.vecEnabled) {
+      for (const table of this.vecIndexes.values()) {
+        try {
+          this.db.exec(`DELETE FROM "${table}"`);
+        } catch {
+          // Rebuild on the next query if the virtual table is unavailable.
+        }
+      }
+    }
     this.db.exec("DELETE FROM embeddings");
     this.db.exec("DELETE FROM image_embeddings");
     this.db.exec("DELETE FROM edges");
     this.db.exec("DELETE FROM nodes");
+    this.db.exec("DELETE FROM recall_feedback");
+    this.db.exec("DELETE FROM recall_batches");
     // Rebuild FTS index
     this.db.exec("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')");
   }
@@ -2670,7 +3228,44 @@ export class SQLiteStorage implements StorageAdapter {
    */
   private vectorCache = new Map<string, CachedVector>();
   private vectorCacheMaxEntries = 25_000;
+  /**
+   * `nodeId → namespace`, recorded when a row is cached. `vectorCacheSet`
+   * does not know a row's namespace (the scan path hands it bare ids), so
+   * `pruneVectorCacheForNamespace` reads this to drop the evicted
+   * namespace's vectors in one pass.
+   */
+  private vectorCacheNamespaces = new Map<string, string>();
   private semanticScanMode: SemanticScanMode = "exact";
+  /** sqlite-vec extension loaded successfully (only for `semanticScan: "ann"`). */
+  private vecEnabled = false;
+  private vecLoadError: string | null = null;
+  /** ANN index key -> vec0 virtual table name. */
+  private vecIndexes = new Map<string, string>();
+
+  /**
+   * Drop every cached vector that does NOT belong to `namespace`.
+   *
+   * Without this, a rotation over N namespaces (a benchmark sweep, or any
+   * agent that touches one project at a time) thrashes the LRU: each new
+   * namespace inserts its own rows at the tail, so the head — the
+   * namespace the next iteration needs — is always the first thing
+   * evicted, and every query pays a cold refetch. Purging the previous
+   * namespace's rows keeps the cache at one namespace's footprint instead
+   * of `vectorCacheMaxEntries`, which is what makes rotation cheap.
+   *
+   * Keys with no recorded namespace are kept: they were cached before the
+   * mapping existed (or by a caller that passes rows directly), and
+   * dropping them would only cost a refetch.
+   */
+  pruneVectorCacheForNamespace(namespace: string): number {
+    let dropped = 0;
+    for (const [nodeId, cachedNs] of this.vectorCacheNamespaces) {
+      if (cachedNs === namespace) continue;
+      if (this.vectorCache.delete(nodeId)) dropped += 1;
+      this.vectorCacheNamespaces.delete(nodeId);
+    }
+    return dropped;
+  }
 
   private vectorCacheGet(
     nodeId: string,
@@ -2697,13 +3292,16 @@ export class SQLiteStorage implements StorageAdapter {
       // FIFO eviction (Map preserves insertion order). The norm rides in
       // the same entry, so deleting the entry drops both.
       const oldest = this.vectorCache.keys().next().value;
-      if (oldest !== undefined) this.vectorCache.delete(oldest);
+      if (oldest !== undefined) {
+        this.vectorCache.delete(oldest);
+        this.vectorCacheNamespaces.delete(oldest);
+      }
     }
     const entry: CachedVector = { vector, space, normSq: sumSquares(vector) };
     // The coarse projection only exists in prefilter mode, so the exact
     // path never pays to build it. Same funnel as the vector itself —
     // every write re-derives it, so it can never go stale.
-    if (this.semanticScanMode === "prefilter") {
+    if (this.semanticScanMode !== "exact") {
       entry.proj = this.project(vector);
       entry.projNormSq = sumSquares(entry.proj);
     }

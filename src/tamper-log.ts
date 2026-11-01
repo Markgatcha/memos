@@ -172,10 +172,10 @@ export async function appendTamperEntry(
   op: TamperOp,
   node: MemoryNode,
   ts: number = Date.now(),
-): Promise<void> {
-  if (!storage.appendTamperEntry || !storage.readTamperLog) return;
+): Promise<TamperLogEntry | null> {
+  if (!storage.appendTamperEntry || !storage.readTamperLog) return null;
   try {
-    await storage.appendTamperEntry({
+    return await storage.appendTamperEntry({
       ts,
       op,
       nodeId: node.id,
@@ -183,6 +183,7 @@ export async function appendTamperEntry(
     });
   } catch {
     // Fail-open: a logging failure must never break the write path.
+    return null;
   }
 }
 

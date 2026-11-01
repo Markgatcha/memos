@@ -1,9 +1,23 @@
+import { createRequire } from "node:module";
 import type {
   EmbeddingConfig,
   EmbeddingProvider,
+  EmbeddingProviderKind,
   EmbeddingRuntimeInfo,
   EmbeddingVector,
 } from "./types.js";
+import { resolveEmbeddingPrefixes } from "./embedding-prefixes.js";
+
+/**
+ * Load the transformers runtime through CommonJS.
+ *
+ * `import("@huggingface/transformers")` fails on Node 26 because its ESM
+ * entry imports named exports from the CommonJS `onnxruntime-common` package
+ * ("Named export 'Tensor' not found"). The package ships a working CJS entry,
+ * and `createRequire` selects it. This was the difference between a bare
+ * `new MemOS()` using real embeddings and silently falling back to the hash.
+ */
+const nodeRequire = createRequire(import.meta.url);
 
 /**
  * Strip all trailing slash characters from a URL/base path without using a
@@ -195,13 +209,85 @@ export class LocalHashEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
+/**
+ * Zero-native-dependency semantic embeddings.
+ *
+ * Model2Vec's potion-base-8M is a static embedding table: tokenize, look up
+ * each token vector, mean-pool, normalize. No ONNX, no native addons, no
+ * install scripts, no model download at runtime. It is the SDK default so a
+ * bare `new MemOS()` actually has semantic recall instead of silently
+ * degrading to the lexical hash.
+ *
+ * Quality is below a task-tuned neural embedder (Nomic/BGE), so the docs and
+ * `memos doctor` point users at Ollama/FastEmbed for higher accuracy. The
+ * important guarantee is that the default is real semantic search and cannot
+ * fail on a missing native runtime.
+ */
+export class Model2VecEmbeddingProvider implements EmbeddingProvider {
+  public readonly id = "model2vec";
+  public readonly model: string;
+  public readonly dimensions: number;
+  public readonly queryPrefix = "";
+  public readonly documentPrefix = "";
+  private modulePromise: Promise<{
+    embed(input: string | string[]): Promise<Float32Array[]>;
+  }> | null = null;
+
+  constructor(options: { model?: string; dimensions?: number } = {}) {
+    this.model = options.model ?? "potion-base-8M";
+    this.dimensions = options.dimensions ?? 256;
+  }
+
+  getRuntimeInfo(): EmbeddingRuntimeInfo {
+    return {
+      requestedProvider: "model2vec",
+      resolvedProvider: "model2vec",
+      requestedModel: this.model,
+      resolvedModel: this.model,
+      modelRevision: null,
+      requestedDimensions: this.dimensions,
+      observedDimensions: this.dimensions,
+      fallbackActive: false,
+      fallbackReason: null,
+      queryPrefix: "",
+      documentPrefix: "",
+    };
+  }
+
+  async embed(text: string): Promise<EmbeddingVector> {
+    const module = await this.load();
+    const [vector] = await module.embed(text);
+    if (!vector) throw new Error("Model2Vec returned no embedding.");
+    return Array.from(vector);
+  }
+
+  async batchEmbed(texts: string[]): Promise<EmbeddingVector[]> {
+    if (texts.length === 0) return [];
+    const module = await this.load();
+    const vectors = await module.embed(texts);
+    return vectors.map((vector) => Array.from(vector));
+  }
+
+  private load(): Promise<{
+    embed(input: string | string[]): Promise<Float32Array[]>;
+  }> {
+    this.modulePromise ??= import("@yarflam/potion-base-8m").then(
+      (module) =>
+        module as unknown as {
+          embed(input: string | string[]): Promise<Float32Array[]>;
+        },
+    );
+    return this.modulePromise;
+  }
+}
+
 export class OllamaEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "ollama";
   public readonly model: string;
   public readonly dimensions: number;
   private readonly baseUrl: string;
-  private readonly queryPrefix: string;
-  private readonly documentPrefix: string;
+  public readonly queryPrefix: string;
+  public readonly documentPrefix: string;
 
   constructor(
     options: {
@@ -284,6 +370,19 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     return this.callEmbed(input);
   }
 
+  /**
+   * Batch form of `embedQuery`: applies `queryPrefix` (never
+   * `documentPrefix`) to every text, one request for the whole batch.
+   * Vectors are identical to N separate `embedQuery` calls — asymmetry is
+   * a text transform, not a request-shape thing.
+   */
+  async batchEmbedQueries(texts: string[]): Promise<EmbeddingVector[]> {
+    const input = this.queryPrefix
+      ? texts.map((t) => `${this.queryPrefix}${t}`)
+      : texts;
+    return this.callEmbed(input);
+  }
+
   async embedDocuments(texts: string[]): Promise<EmbeddingVector[]> {
     if (texts.length === 1) {
       return this.embed(texts[0]).then((v) => [v]);
@@ -298,8 +397,8 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
   public readonly dimensions: number;
   private readonly baseUrl: string;
   private readonly apiKey: string;
-  private readonly queryPrefix: string;
-  private readonly documentPrefix: string;
+  public readonly queryPrefix: string;
+  public readonly documentPrefix: string;
 
   constructor(options: {
     baseUrl?: string;
@@ -375,6 +474,17 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
       : texts;
     return this.callEmbeddings(input);
   }
+
+  /**
+   * Batch form of `embedQuery`: applies `queryPrefix` (never
+   * `documentPrefix`) to every text, one request for the whole batch.
+   */
+  async batchEmbedQueries(texts: string[]): Promise<EmbeddingVector[]> {
+    const input = this.queryPrefix
+      ? texts.map((t) => `${this.queryPrefix}${t}`)
+      : texts;
+    return this.callEmbeddings(input);
+  }
 }
 
 /**
@@ -421,14 +531,29 @@ export class VoyageAIEmbeddingProvider implements EmbeddingProvider {
     return this.callEmbeddings(texts);
   }
 
-  private async callEmbeddings(texts: string[]): Promise<EmbeddingVector[]> {
+  async embedQuery(text: string): Promise<EmbeddingVector> {
+    return this.callEmbeddings([text], "query").then((v) => v[0]);
+  }
+
+  async batchEmbedQueries(texts: string[]): Promise<EmbeddingVector[]> {
+    return this.callEmbeddings(texts, "query");
+  }
+
+  private async callEmbeddings(
+    texts: string[],
+    inputType: "document" | "query" = "document",
+  ): Promise<EmbeddingVector[]> {
     const response = await fetch(`${this.baseUrl}/embeddings`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({ model: this.model, input: texts }),
+      body: JSON.stringify({
+        model: this.model,
+        input: texts,
+        input_type: inputType,
+      }),
     });
     if (!response.ok) {
       throw new Error(
@@ -465,28 +590,60 @@ export function createEmbeddingProvider(
     return config.provider;
   }
 
-  const provider = config?.provider ?? "fastembed";
-  // NOTE: "fastembed" is the default because a bare `new MemOS()` should
-  // give real local semantic search. FastEmbedEmbeddingProvider lazily
-  // loads the transformers pipeline on first use and degrades loudly to
-  // the deterministic local hash when the optional peer dep isn't
-  // installed — so the default is always safe, just sometimes degraded.
+  const provider =
+    (config?.provider as EmbeddingProviderKind | undefined) ?? "model2vec";
+  // NOTE: "model2vec" is the default because a bare `new MemOS()` must give
+  // real local semantic search without ONNX, native addons, install scripts,
+  // or a network model download. potion-base-8M is ~30 MB of static vectors
+  // and runs in pure JavaScript. Users who want higher accuracy can opt into
+  // `ollama`/`nomic-embed-text`, `fastembed`, or an API provider.
+  const defaultModel =
+    provider === "model2vec"
+      ? "potion-base-8M"
+      : provider === "ollama"
+        ? "nomic-embed-text"
+        : provider === "openai-compatible"
+          ? "text-embedding-3-small"
+          : provider === "voyage"
+            ? "voyage-3"
+            : provider === "cohere"
+              ? "embed-english-v3.0"
+              : provider === "fastembed"
+                ? "BAAI/bge-small-en-v1.5"
+                : undefined;
+  const model = config?.model ?? defaultModel;
+  const prefixes = resolveEmbeddingPrefixes({
+    provider,
+    model,
+    queryPrefix: config?.queryPrefix,
+    documentPrefix: config?.documentPrefix,
+  });
+  const resolved: EmbeddingConfig = {
+    ...(config ?? {}),
+    ...(model ? { model } : {}),
+    queryPrefix: prefixes.queryPrefix,
+    documentPrefix: prefixes.documentPrefix,
+  };
+
+  if (provider === "model2vec") {
+    return new Model2VecEmbeddingProvider(resolved);
+  }
   if (provider === "ollama") {
-    return new OllamaEmbeddingProvider(config);
+    return new OllamaEmbeddingProvider(resolved);
   }
   if (provider === "openai-compatible") {
-    return new OpenAICompatibleEmbeddingProvider(config ?? {});
+    return new OpenAICompatibleEmbeddingProvider(resolved);
   }
   if (provider === "voyage") {
-    return new VoyageAIEmbeddingProvider(config ?? {});
+    return new VoyageAIEmbeddingProvider(resolved);
   }
   if (provider === "cohere") {
-    return new CohereEmbeddingProvider(config ?? {});
+    return new CohereEmbeddingProvider(resolved);
   }
   if (provider === "fastembed") {
-    return new FastEmbedEmbeddingProvider(config ?? {});
+    return new FastEmbedEmbeddingProvider(resolved);
   }
-  return new LocalHashEmbeddingProvider(config);
+  return new LocalHashEmbeddingProvider(resolved);
 }
 
 /**
@@ -536,7 +693,18 @@ export class CohereEmbeddingProvider implements EmbeddingProvider {
     return this.callEmbed(texts);
   }
 
-  private async callEmbed(texts: string[]): Promise<EmbeddingVector[]> {
+  async embedQuery(text: string): Promise<EmbeddingVector> {
+    return this.callEmbed([text], "search_query").then((v) => v[0]);
+  }
+
+  async batchEmbedQueries(texts: string[]): Promise<EmbeddingVector[]> {
+    return this.callEmbed(texts, "search_query");
+  }
+
+  private async callEmbed(
+    texts: string[],
+    inputType: string = this.inputType,
+  ): Promise<EmbeddingVector[]> {
     const response = await fetch(`${this.baseUrl}/embed`, {
       method: "POST",
       headers: {
@@ -546,7 +714,7 @@ export class CohereEmbeddingProvider implements EmbeddingProvider {
       body: JSON.stringify({
         model: this.model,
         texts,
-        input_type: this.inputType,
+        input_type: inputType,
       }),
     });
     if (!response.ok) {
@@ -592,6 +760,8 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
   public readonly id = "fastembed";
   public readonly model: string;
   public readonly dimensions: number;
+  public readonly queryPrefix: string;
+  public readonly documentPrefix: string;
   private pipeline:
     | ((
         text: string | string[],
@@ -608,9 +778,18 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
    */
   private fallbackReason: string | null = null;
 
-  constructor(options: { model?: string; dimensions?: number } = {}) {
+  constructor(
+    options: {
+      model?: string;
+      dimensions?: number;
+      queryPrefix?: string;
+      documentPrefix?: string;
+    } = {},
+  ) {
     this.model = options.model ?? "BAAI/bge-small-en-v1.5";
     this.dimensions = options.dimensions ?? 384;
+    this.queryPrefix = options.queryPrefix ?? "";
+    this.documentPrefix = options.documentPrefix ?? "";
   }
 
   /**
@@ -634,6 +813,8 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
       observedDimensions: this.lastObservedDimensions,
       fallbackActive: this.fallbackReason !== null,
       fallbackReason: this.fallbackReason,
+      queryPrefix: this.queryPrefix,
+      documentPrefix: this.documentPrefix,
     };
   }
 
@@ -641,41 +822,50 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
   private lastObservedDimensions: number | null = null;
 
   /**
-   * Lazily resolve the transformers pipeline. We use a dynamic import so
-   * the optional dep is only paid for when (and if) the user installs it.
-   * Any failure to load silently falls back to the local hash.
+   * Lazily resolve the transformers pipeline.
+   *
+   * Loads through CommonJS (`createRequire`) because the ESM entry of
+   * `@huggingface/transformers` fails on Node 26 with a named-export
+   * interop error from `onnxruntime-common`. The CJS entry works.
    *
    * Tries `@huggingface/transformers` (the maintained successor) first,
-   * then falls back to the abandoned `@xenova/transformers` for users who
-   * still have it installed.
+   * then falls back to the older `@xenova/transformers` for users who
+   * still have it installed. Any failure degrades to the local hash, but
+   * the exact load error is preserved for `memos doctor` and crash reports.
    */
   private async resolve(): Promise<void> {
     if (this.resolved) return;
     this.resolved = true;
     try {
-      // Both packages are optional peer deps — users opt in by installing
-      // one of them. We use dynamic imports so they're only paid for when
-      // installed. Types are declared in `src/xenova-transformers.d.ts`.
-      const mod = (await import("@huggingface/transformers" as string).catch(
-        () => null,
-      )) as {
-        pipeline: (task: string, model: string) => Promise<unknown>;
-      } | null;
-      const legacyMod = mod
-        ? null
-        : ((await import("@xenova/transformers" as string).catch(
-            () => null,
-          )) as {
-            pipeline: (task: string, model: string) => Promise<unknown>;
-          } | null);
-      const resolved = mod ?? legacyMod;
-      if (!resolved) {
-        // Neither optional peer dep is installed — record WHY so
-        // `getRuntimeInfo()` can report the fallback, then fall through
-        // to the local hash. (The early return here previously skipped
-        // the missing-package reason entirely — the silent-fallback bug.)
+      const loadErrors: string[] = [];
+      const load = (
+        name: string,
+      ): {
+        pipeline?: (task: string, model: string) => Promise<unknown>;
+      } | null => {
+        try {
+          return nodeRequire(name) as {
+            pipeline?: (task: string, model: string) => Promise<unknown>;
+          };
+        } catch (err) {
+          loadErrors.push(
+            `${name}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return null;
+        }
+      };
+      const mod = load("@huggingface/transformers");
+      const legacyMod = mod?.pipeline ? null : load("@xenova/transformers");
+      const resolved = mod?.pipeline
+        ? mod
+        : legacyMod?.pipeline
+          ? legacyMod
+          : null;
+      if (!resolved?.pipeline) {
         this.fallbackReason =
-          "neither @huggingface/transformers nor @xenova/transformers is installed";
+          loadErrors.length > 0
+            ? `embedding runtime could not load (${loadErrors.join("; ").slice(0, 300)})`
+            : "no embedding runtime installed";
         this.warnFallbackOnce();
         return;
       }
@@ -716,49 +906,96 @@ export class FastEmbedEmbeddingProvider implements EmbeddingProvider {
     console.warn(
       `[memos] embedding fallback: ${this.fallbackReason}. ` +
         "Semantic search is degraded to a deterministic local hash. " +
-        "For real embeddings: pnpm add @huggingface/transformers",
+        "Install `@huggingface/transformers`, configure Ollama, or run " +
+        "`memos doctor` for the exact fix.",
     );
   }
 
+  /** Document-side embedding. Applies the model's document instruction. */
   async embed(text: string): Promise<EmbeddingVector> {
-    await this.resolve();
-    if (this.pipeline) {
-      const out = await this.pipeline(text, {
-        pooling: "mean",
-        normalize: true,
-      });
-      this.lastObservedDimensions = out.data.length;
-      return Array.from(out.data);
-    }
-    return this.fallbackEmbed(text);
+    return this.embedWithPrefix(text, this.documentPrefix);
   }
 
-  async batchEmbed(texts: string[]): Promise<EmbeddingVector[]> {
+  /** Query-side embedding. Applies the model's query instruction. */
+  async embedQuery(text: string): Promise<EmbeddingVector> {
+    return this.embedWithPrefix(text, this.queryPrefix);
+  }
+
+  async batchEmbedQueries(texts: string[]): Promise<EmbeddingVector[]> {
+    return this.batchEmbedWithPrefix(texts, this.queryPrefix);
+  }
+
+  async embedDocuments(texts: string[]): Promise<EmbeddingVector[]> {
+    return this.batchEmbedWithPrefix(texts, this.documentPrefix);
+  }
+
+  private async embedWithPrefix(
+    text: string,
+    prefix: string,
+  ): Promise<EmbeddingVector> {
+    const input = `${prefix}${text}`;
     await this.resolve();
     if (this.pipeline) {
-      // The transformers pipeline runs array input as one batched ONNX
-      // session — far cheaper than one session run per text. Batched output
-      // is a single Tensor with dims [batch, hidden]; slice it per row.
-      // Chunked to bound peak memory on large backfills.
-      const CHUNK_SIZE = 32;
-      const vectors: EmbeddingVector[] = [];
-      for (let i = 0; i < texts.length; i += CHUNK_SIZE) {
-        const chunk = texts.slice(i, i + CHUNK_SIZE);
-        const out = await this.pipeline(chunk, {
+      try {
+        const out = await this.pipeline(input, {
           pooling: "mean",
           normalize: true,
         });
-        const hidden = out.dims[out.dims.length - 1];
-        this.lastObservedDimensions = hidden;
-        for (let r = 0; r < chunk.length; r += 1) {
-          vectors.push(
-            Array.from(out.data.slice(r * hidden, (r + 1) * hidden)),
-          );
-        }
+        this.lastObservedDimensions = out.data.length;
+        return Array.from(out.data);
+      } catch (err) {
+        this.fallbackReason =
+          `ONNX inference failed for model "${this.model}": ` +
+          `${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
+        this.pipeline = null;
+        this.warnFallbackOnce();
       }
-      return vectors;
     }
-    return texts.map((t) => this.fallbackEmbed(t));
+    return this.fallbackEmbed(input);
+  }
+
+  async batchEmbed(texts: string[]): Promise<EmbeddingVector[]> {
+    return this.batchEmbedWithPrefix(texts, this.documentPrefix);
+  }
+
+  private async batchEmbedWithPrefix(
+    texts: string[],
+    prefix: string,
+  ): Promise<EmbeddingVector[]> {
+    const inputs = texts.map((text) => `${prefix}${text}`);
+    await this.resolve();
+    if (this.pipeline) {
+      try {
+        // The transformers pipeline runs array input as one batched ONNX
+        // session — far cheaper than one session run per text. Batched output
+        // is a single Tensor with dims [batch, hidden]; slice it per row.
+        // Chunked to bound peak memory on large backfills.
+        const CHUNK_SIZE = 32;
+        const vectors: EmbeddingVector[] = [];
+        for (let i = 0; i < inputs.length; i += CHUNK_SIZE) {
+          const chunk = inputs.slice(i, i + CHUNK_SIZE);
+          const out = await this.pipeline(chunk, {
+            pooling: "mean",
+            normalize: true,
+          });
+          const hidden = out.dims[out.dims.length - 1];
+          this.lastObservedDimensions = hidden;
+          for (let r = 0; r < chunk.length; r += 1) {
+            vectors.push(
+              Array.from(out.data.slice(r * hidden, (r + 1) * hidden)),
+            );
+          }
+        }
+        return vectors;
+      } catch (err) {
+        this.fallbackReason =
+          `ONNX batch inference failed for model "${this.model}": ` +
+          `${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
+        this.pipeline = null;
+        this.warnFallbackOnce();
+      }
+    }
+    return inputs.map((input) => this.fallbackEmbed(input));
   }
 
   /**

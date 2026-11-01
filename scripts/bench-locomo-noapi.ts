@@ -33,15 +33,20 @@
  *   npx tsx scripts/bench-locomo-noapi.ts --provider=fastembed --model=Xenova/gemma-300m-e5-it-v1 \
  *       --dimensions=768 --fail-on-embedding-fallback
  *
+ * Precision ablations (always pass --out= so the committed baseline
+ * artifact is never overwritten by an experiment):
+ *   npx tsx scripts/bench-locomo-noapi.ts --gate --relevance-ratio=0.25 --out=/tmp/gate.json
+ *   npx tsx scripts/bench-locomo-noapi.ts --mmr --mmr-lambda=0.5 --out=/tmp/mmr.json
+ *   npx tsx scripts/bench-locomo-noapi.ts --gate --mmr --out=/tmp/both.json
+ *
  * Provider flags (CLI > env > default local-hash):
  *   --provider=local-hash|fastembed|ollama|openai-compatible|voyage|cohere
  *   --model=<name>  --dimensions=<n>  --base-url=<url>  --api-key=<key>
  *   --fail-on-embedding-fallback   terminate if the requested backend did not load
  *
- * Results: scripts/bench-locomo-noapi-results.json
+ * Results: scripts/bench-locomo-noapi-results.json (override with --out=)
  */
 
-import { MemOS } from "../src/memory.ts";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -51,7 +56,10 @@ import {
   buildProvider,
   assertNoFallback,
   benchMetadata,
-  retrievalConfig,
+  createBenchMemos,
+  categoryName,
+  type LocoChat,
+  type LocoConversation,
 } from "./lib/bench-common.ts";
 import {
   aggregateMetrics,
@@ -61,48 +69,11 @@ import {
 } from "./lib/bench-metrics.ts";
 
 // ─── LoCoMo data types ───────────────────────────────────────────────────────
-
-interface LocoChat {
-  speaker: string;
-  /** Official evidence unit id, e.g. "D1:3" — the exact value that
-   *  appears in qa.evidence. */
-  dia_id: string;
-  text: string;
-}
-
-interface LocoConversation {
-  conversation: {
-    speaker_a: string;
-    speaker_b: string;
-    [key: string]: unknown;
-  };
-  qa: Array<{
-    question: string;
-    answer: string;
-    evidence: string[];
-    category: number;
-    adversarial_answer?: string;
-  }>;
-  sample_id: string;
-}
-
-/**
- * Official LoCoMo category mapping (task_eval/evaluation.py):
- * 1 = multi-hop, 2 = temporal, 3 = open-domain, 4 = single-hop,
- * 5 = adversarial. The dataset's evidence distribution corroborates:
- * cat 1 overwhelmingly carries 2+ evidence ids (multi-hop), cat 4 exactly 1.
- */
-const CATEGORY_NAMES: Record<number, string> = {
-  1: "multi_hop",
-  2: "temporal",
-  3: "open_domain",
-  4: "single_hop",
-  5: "adversarial",
-};
-
-function categoryName(cat: number): string {
-  return CATEGORY_NAMES[cat] ?? `cat_${cat}`;
-}
+// Defined in ./lib/bench-common.ts (this module runs main() on import, so
+// nothing may import it for shared data). Re-exported here for existing
+// consumers of this file.
+export type { LocoChat, LocoConversation } from "./lib/bench-common.ts";
+export { CATEGORY_NAMES, categoryName } from "./lib/bench-common.ts";
 
 /**
  * Group consecutive utterances into conversational EXCHANGES (pairs) —
@@ -206,6 +177,32 @@ async function main() {
   const maxConvos = convsArg ? parseInt(convsArg.split("=")[1] ?? "2", 10) : 2;
   // Two-stage / ingestion ablation flags.
   const groupTurnsFlag = args.includes("--group-turns");
+  // Second-hop entity-bridge expansion (src/multi-hop.ts). Opt-in: it is
+  // designed for entity-centric documents, so the default run stays
+  // byte-identical to the published baseline.
+  const multiHop = args.includes("--multi-hop");
+  // Ingest this many turns concurrently. The embedding providers are
+  // latency-bound HTTP calls (a sequential loop serialises them and the
+  // embedding queue never sees a full batch), so concurrency here is the
+  // single biggest benchmark-speed lever. Chronology is preserved with
+  // the explicit `now` option, not wall-clock arrival order.
+  const ingestConcurrency = Math.max(
+    1,
+    parseInt(
+      args.find((a) => a.startsWith("--ingest-concurrency="))?.split("=")[1] ??
+        "16",
+      10,
+    ) || 16,
+  );
+  // Write-time contradiction detection is a full vector scan per memory;
+  // in benchmark setup it only inflates ingestion time (retrieval scores
+  // don't read contradiction pairs). Opt in with --contradiction-scan.
+  const contradictionScan = args.includes("--contradiction-scan");
+  // Write-time context (contextual retrieval): prepend session/date/speaker
+  // to the EMBEDDED text only. Content and FTS stay verbatim.
+  const contextualFlag = args.includes("--contextual");
+  // Experiment: also prepend the previous turn to the embedded text.
+  const prevContextFlag = args.includes("--prev-context");
   const depthArg = args.find((a) => a.startsWith("--candidate-depth="));
   const candidateDepth = depthArg
     ? parseInt(depthArg.split("=")[1] ?? "", 10)
@@ -243,64 +240,37 @@ async function main() {
 
   // Deterministic temp DB (timestamped, cleaned in finally).
   const dbPath = join(tmpdir(), `bench-locomo-noapi-${Date.now()}.db`);
-  const memos = new MemOS({
+  const memos = createBenchMemos({
     dbPath,
-    wal: false,
-    autoLinkThreshold: 0,
-    experimental: {
-      namespaces: true,
-      semanticSearch: true,
-      ...(rerankUrl
-        ? {
-            rerank: {
-              endpoint: rerankUrl,
-              ...(rerankModelArg
-                ? { model: rerankModelArg.split("=")[1] }
-                : {}),
-              ...(rerankCandidatesArg
-                ? {
-                    candidates: parseInt(
-                      rerankCandidatesArg.split("=")[1] ?? "50",
-                      10,
-                    ),
-                  }
-                : {}),
-              ...(rerankTimeoutArg
-                ? {
-                    timeoutMs: parseInt(
-                      rerankTimeoutArg.split("=")[1] ?? "5000",
-                      10,
-                    ),
-                  }
-                : {}),
-              ...(rerankMaxDocCharsArg
-                ? {
-                    maxDocChars: parseInt(
-                      rerankMaxDocCharsArg.split("=")[1] ?? "0",
-                      10,
-                    ),
-                  }
-                : {}),
-            },
-          }
-        : {}),
-    },
-    embeddings: {
-      enabled: true,
-      provider,
-      // Pass model/dimensions through so storage records match the request.
-      ...(providerArgs.model ? { model: providerArgs.model } : {}),
-      ...(providerArgs.dimensions
-        ? { dimensions: providerArgs.dimensions }
-        : {}),
-      ...(retrievalArgs.embedText
-        ? { embedText: retrievalArgs.embedText }
-        : {}),
-    },
-    ...(Object.keys(retrievalConfig(retrievalArgs)).length > 0
-      ? retrievalConfig(retrievalArgs)
+    provider,
+    providerArgs,
+    retrievalArgs,
+    ...(rerankUrl ? { rerankUrl } : {}),
+    ...(rerankModelArg ? { rerankModel: rerankModelArg.split("=")[1] } : {}),
+    ...(rerankCandidatesArg
+      ? {
+          rerankCandidates: parseInt(
+            rerankCandidatesArg.split("=")[1] ?? "50",
+            10,
+          ),
+        }
       : {}),
-    embeddingQueue: { concurrency: 4, batchSize: 16 },
+    ...(rerankTimeoutArg
+      ? {
+          rerankTimeoutMs: parseInt(
+            rerankTimeoutArg.split("=")[1] ?? "5000",
+            10,
+          ),
+        }
+      : {}),
+    ...(rerankMaxDocCharsArg
+      ? {
+          rerankMaxDocChars: parseInt(
+            rerankMaxDocCharsArg.split("=")[1] ?? "0",
+            10,
+          ),
+        }
+      : {}),
   });
 
   await memos.init();
@@ -331,46 +301,86 @@ async function main() {
         const sessionTimestamp = String(
           (conversation as Record<string, unknown>)[sessionDateKey] ?? "",
         );
+        // Explicit timestamps (not wall-clock arrival) keep neighbours in
+        // chronological order even when writes are pipelined.
+        const parsedSession = Date.parse(sessionTimestamp);
+        const sessionBase = Number.isFinite(parsedSession)
+          ? parsedSession
+          : Date.now();
+        const writes: Array<() => Promise<unknown>> = [];
+
         if (groupTurnsFlag) {
           // Conversational exchanges (utterance pairs) become one memory
           // node carrying all their dia_ids.
+          let turnIndex = 0;
           for (const turn of groupTurns(chats)) {
             turn.dia_ids.forEach((id, i) => {
               evidenceTextMap.set(id, `${turn.speaker}: ${turn.texts[i]}`);
             });
-            await memos.store(`${turn.speaker}: ${turn.texts.join("\n")}`, {
-              namespace: `locomo_conv_${convIdx}`,
-              metadata: {
-                dia_id: turn.dia_ids[0],
-                dia_ids: turn.dia_ids,
-                benchmark: "locomo",
-                instanceId: `locomo_conv_${convIdx}`,
-                speaker: turn.speaker,
-                sessionId: sessionKey,
-                timestamp: sessionTimestamp,
-              },
-            });
+            const now = sessionBase + turnIndex * 1000;
+            turnIndex += 1;
+            const content = `${turn.speaker}: ${turn.texts.join("\n")}`;
+            writes.push(() =>
+              memos.store(content, {
+                namespace: `locomo_conv_${convIdx}`,
+                now,
+                contradictionScan,
+                metadata: {
+                  dia_id: turn.dia_ids[0],
+                  dia_ids: turn.dia_ids,
+                  benchmark: "locomo",
+                  instanceId: `locomo_conv_${convIdx}`,
+                  speaker: turn.speaker,
+                  sessionId: sessionKey,
+                  timestamp: sessionTimestamp,
+                },
+              }),
+            );
           }
         } else {
-          for (const chat of chats) {
+          let turnIndex = 0;
+          for (let chatIndex = 0; chatIndex < chats.length; chatIndex++) {
+            const chat = chats[chatIndex]!;
             if (!chat?.dia_id) continue;
             const content = `${chat.speaker}: ${chat.text}`;
             evidenceTextMap.set(chat.dia_id, content);
             // THE fix: preserve the official evidence unit id so retrieval can
             // be scored by direct ID comparison, plus the session timestamp so
             // temporal behaviors have real data to work with.
-            await memos.store(content, {
-              namespace: `locomo_conv_${convIdx}`,
-              metadata: {
-                dia_id: chat.dia_id,
-                benchmark: "locomo",
-                instanceId: `locomo_conv_${convIdx}`,
-                speaker: chat.speaker,
-                sessionId: sessionKey,
-                timestamp: sessionTimestamp,
-              },
-            });
+            const now = sessionBase + turnIndex * 1000;
+            turnIndex += 1;
+            const previous = chats[chatIndex - 1];
+            const prevContext =
+              prevContextFlag && previous
+                ? `\n${previous.speaker}: ${previous.text}`
+                : "";
+            writes.push(() =>
+              memos.store(content, {
+                namespace: `locomo_conv_${convIdx}`,
+                now,
+                contradictionScan,
+                ...(prevContext
+                  ? {
+                      context: `${sessionKey} · ${sessionTimestamp} · ${chat.speaker}${prevContext}`,
+                    }
+                  : {}),
+                metadata: {
+                  dia_id: chat.dia_id,
+                  benchmark: "locomo",
+                  instanceId: `locomo_conv_${convIdx}`,
+                  speaker: chat.speaker,
+                  sessionId: sessionKey,
+                  timestamp: sessionTimestamp,
+                },
+              }),
+            );
           }
+        }
+
+        for (let i = 0; i < writes.length; i += ingestConcurrency) {
+          await Promise.all(
+            writes.slice(i, i + ingestConcurrency).map((write) => write()),
+          );
         }
       }
       await memos.flushEmbeddings();
@@ -391,8 +401,16 @@ async function main() {
           ...(retrievalArgs.ftsOperator
             ? { ftsOperator: retrievalArgs.ftsOperator }
             : {}),
-          ...(retrievalArgs.sessionExpansion ? { sessionExpansion: true } : {}),
+          ...(retrievalArgs.sessionExpansion !== undefined
+            ? { sessionExpansion: retrievalArgs.sessionExpansion }
+            : {}),
           ...(args.includes("--semantic-dedup") ? { semanticDedup: true } : {}),
+          // Phase C4: pseudo-relevance-feedback query expansion. Opt-in so
+          // the default run stays byte-identical to the published baseline.
+          ...(args.includes("--query-expansion")
+            ? { queryExpansion: true }
+            : {}),
+          ...(multiHop ? { multiHop: true } : {}),
         });
         const elapsed = Date.now() - startTime;
 
@@ -469,7 +487,9 @@ async function main() {
   });
 
   // ─── Write results (SEPARATE file from the LLM-judge bench) ───────────────
-  const outPath = "scripts/bench-locomo-noapi-results.json";
+  const outPath =
+    args.find((a) => a.startsWith("--out="))?.split("=")[1] ??
+    "scripts/bench-locomo-noapi-results.json";
   writeFileSync(
     outPath,
     JSON.stringify(
@@ -500,8 +520,23 @@ async function main() {
           graphExpansion: retrievalArgs.graphExpansion,
           embedText: retrievalArgs.embedText ?? "summary+content",
           groupTurns: groupTurnsFlag,
+          contextual: contextualFlag,
+          prevContext: prevContextFlag,
+          ingestConcurrency,
+          contradictionScan,
           semanticDedup: args.includes("--semantic-dedup"),
+          queryExpansion: args.includes("--query-expansion"),
+          relevanceGate: retrievalArgs.relevanceGate ?? null,
+          mmr:
+            retrievalArgs.mmr === undefined &&
+            retrievalArgs.mmrLambda === undefined
+              ? null
+              : {
+                  enabled: retrievalArgs.mmr ?? true,
+                  lambda: retrievalArgs.mmrLambda ?? null,
+                },
           candidateDepth: candidateDepth ?? Math.max(topK * 4, 20),
+          multiHop,
           rerank: rerankUrl ?? null,
           rerankCandidates: rerankCandidatesArg
             ? parseInt(rerankCandidatesArg.split("=")[1] ?? "50", 10)

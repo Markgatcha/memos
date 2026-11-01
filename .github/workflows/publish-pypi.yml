@@ -1,13 +1,13 @@
 name: Publish to PyPI
 
-# Publishes the Python package (mem-os-sdk) to PyPI whenever a GitHub
+# Publishes the Python package (mem-os-python) to PyPI whenever a GitHub
 # Release is published. Uses PyPI Trusted Publishing (OIDC) — no API
 # token secret is stored in the repo.
 #
 # One-time setup (done in the PyPI UI, see README "Publishing" section):
-#   1. On pypi.org, create the project "mem-os-sdk" (or a pending publisher)
+#   1. On pypi.org, create the project "mem-os-python" (or a pending publisher)
 #   2. Add a "trusted publisher":
-#        - PyPI project:      mem-os-sdk
+#        - PyPI project:      mem-os-python
 #        - Owner:             Markgatcha
 #        - Repository:        memos
 #        - Workflow filename: publish-pypi.yml

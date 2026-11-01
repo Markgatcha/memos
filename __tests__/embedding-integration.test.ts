@@ -45,15 +45,18 @@ function makeMemos(provider: EmbeddingProvider) {
 describe("MemOS embedding queue integration", () => {
   test("store() returns before the embedding call resolves", async () => {
     const provider = new TrackingProvider();
-    provider.delayMs = 50;
+    // A deliberately long provider delay: the assertion is that store()
+    // does NOT wait for it, so the bound can be generous and still prove
+    // the point. (A 50ms delay with a 60ms bound used to fail on slow CI
+    // runners whenever module/JIT warm-up ate the 10ms of slack.)
+    provider.delayMs = 300;
     const memos = makeMemos(provider);
     await memos.init();
 
     const start = Date.now();
     await memos.store("user prefers dark mode");
     const elapsed = Date.now() - start;
-    // Should be well under the 50ms provider delay.
-    expect(elapsed).toBeLessThan(60);
+    expect(elapsed).toBeLessThan(provider.delayMs);
     await memos.close();
   });
 
@@ -86,7 +89,12 @@ describe("MemOS embedding queue integration", () => {
     expect(beforeFlush.total).toBeGreaterThanOrEqual(0);
     const own = beforeFlush.nodes.find((n) => n.nodeId === node.id);
     expect(own).toBeDefined();
-    const allowed: EmbeddingNodeStatus[] = ["queued", "running", "ready", "pending"];
+    const allowed: EmbeddingNodeStatus[] = [
+      "queued",
+      "running",
+      "ready",
+      "pending",
+    ];
     expect(allowed).toContain(own!.status);
 
     await memos.flushEmbeddings();

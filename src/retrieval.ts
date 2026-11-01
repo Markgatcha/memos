@@ -1116,6 +1116,119 @@ export function applyRelevanceGate(
 }
 
 /* ------------------------------------------------------------------ *
+ * Maximal Marginal Relevance (MMR) diversification
+ *
+ * Precision, not recall. A top-10 that is ten near-identical memories
+ * from the same session has hit@10 = 1 and precision@10 = 0.1 — the
+ * recall metrics celebrate while the caller's context window is 90%
+ * noise. MMR re-selects the head so each slot earns its place:
+ *
+ *   score(c) = λ · relevance(c) − (1 − λ) · max_{s ∈ selected} sim(c, s)
+ *
+ * Greedy selection: at each step pick the candidate with the best
+ * relevance-minus-redundancy trade-off. λ = 1 is the identity (pure
+ * relevance order); λ = 0 orders purely by novelty. The default 0.5
+ * keeps the top rank (nothing is ever similar to an empty selection
+ * set) and only demotes candidates that duplicate an already-selected
+ * one.
+ *
+ * Similarity is token-Jaccard over summary + content — no embedding
+ * call, no model, deterministic. That also means MMR works on the
+ * keyword-only path, where no vector exists to dedupe with.
+ * ------------------------------------------------------------------ */
+
+/** Default MMR relevance/diversity trade-off. */
+export const DEFAULT_MMR_LAMBDA = 0.5;
+
+/** Hard cap on tokens scanned per document for the similarity estimate. */
+const MMR_MAX_TOKENS = 512;
+
+export interface MmrOptions {
+  /**
+   * Relevance weight in [0, 1]. 1 = pure relevance (identity), 0 =
+   * maximum novelty. Default {@link DEFAULT_MMR_LAMBDA}.
+   */
+  lambda?: number;
+  /** Result count. Defaults to the input length. */
+  limit?: number;
+}
+
+function mmrTokenSet(text: string): Set<string> {
+  return new Set(tokenize(text).slice(0, MMR_MAX_TOKENS));
+}
+
+/**
+ * Reorder (and optionally truncate) a best-first list for diversity.
+ *
+ * Pure and dependency-free, like {@link applyRelevanceGate}: no
+ * storage, no embeddings. The top result is always kept — MMR trades
+ * off the third and later slots, it never demotes rank 1.
+ */
+export function applyMmr<T extends ScoredMemory>(
+  results: T[],
+  options: MmrOptions = {},
+): T[] {
+  const limit = Math.max(1, Math.floor(options.limit ?? results.length));
+  if (results.length <= 1) return results.slice(0, limit);
+  const lambda = Math.min(1, Math.max(0, options.lambda ?? DEFAULT_MMR_LAMBDA));
+  if (lambda >= 1) return results.slice(0, limit);
+
+  // Normalize fused scores to [0, 1] so the trade-off is scale-free
+  // (convex fusion scores and raw RRF sums never share a range).
+  const maxScore = Math.max(...results.map((r) => r.score));
+  const scaled =
+    maxScore > 0
+      ? results.map((r) => ({ item: r, relevance: r.score / maxScore }))
+      : results.map((r) => ({ item: r, relevance: 0 }));
+
+  const tokens = results.map((r) =>
+    mmrTokenSet(`${r.node.summary ?? ""} ${r.node.content ?? ""}`),
+  );
+
+  const picked: T[] = [];
+  const pickedTokens: Array<Set<string>> = [];
+  const remaining = new Set(results.map((_, i) => i));
+  while (picked.length < limit && remaining.size > 0) {
+    let bestIdx = -1;
+    let bestValue = -Infinity;
+    for (const idx of remaining) {
+      const candidate = scaled[idx]!;
+      let maxSim = 0;
+      if (pickedTokens.length > 0) {
+        const candidateTokens = tokens[idx]!;
+        for (const chosenTokens of pickedTokens) {
+          const sim = jaccard(candidateTokens, chosenTokens);
+          if (sim > maxSim) maxSim = sim;
+        }
+      }
+      const value = lambda * candidate.relevance - (1 - lambda) * maxSim;
+      if (value > bestValue) {
+        bestValue = value;
+        bestIdx = idx;
+      }
+    }
+    if (bestIdx < 0) break;
+    remaining.delete(bestIdx);
+    picked.push(results[bestIdx]!);
+    pickedTokens.push(tokens[bestIdx]!);
+  }
+
+  // The greedy sequence IS the new ranking — that is the point.
+  return picked;
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  for (const token of small) {
+    if (large.has(token)) intersection += 1;
+  }
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/* ------------------------------------------------------------------ *
  * Pseudo-relevance feedback (PRF) query expansion
  *
  * Open-domain questions are memos' weakest LoCoMo category (hit@10

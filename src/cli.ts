@@ -27,6 +27,7 @@
  */
 
 import { MemOS } from "./memory.js";
+import { ingestPath, watchPath } from "./ingest.js";
 import { graphToMermaid } from "./graph-mermaid.js";
 import { parseScopeArg } from "./scope.js";
 import { MemorySkippedError } from "./memory.js";
@@ -42,7 +43,19 @@ import type { StorageAdapter } from "./types.js";
 import type { ChildProcess } from "node:child_process";
 import type { SQLiteStorage } from "./storage/sqlite.js";
 import { getSdkVersion } from "./version.js";
-import { redactSecrets } from "./redact.js";
+import { renderAuditMarkdown } from "./compliance.js";
+import {
+  asMemOSError,
+  errorPayload,
+  formatErrorCard,
+  readLatestCrashReport,
+  writeCrashReport,
+} from "./errors.js";
+import {
+  buildSelfEvalCases,
+  runRetrievalEval,
+  type RetrievalEvalCase,
+} from "./eval.js";
 import { CLI_COMMANDS, suggestCommand, getCommandHelp } from "./cli-help.js";
 import { getCompletionScript, COMPLETION_SHELLS } from "./cli-completion.js";
 import type { EmbeddingConfig, EmbeddingProviderKind } from "./types.js";
@@ -112,7 +125,6 @@ function cliEmbeddingsConfig(project?: {
 }): EmbeddingConfig | null {
   const provider = process.env.MEMOS_EMBEDDING_PROVIDER ?? project?.provider;
   if (!provider) return null;
-  const dimensions = process.env.MEMOS_EMBEDDING_DIMENSIONS;
   const dimensionsRaw = process.env.MEMOS_EMBEDDING_DIMENSIONS;
   return {
     provider: provider as EmbeddingProviderKind,
@@ -221,11 +233,17 @@ async function maybeBetaUpdateNotice(): Promise<void> {
 }
 
 /**
- * Embedding config for the CLI: MEMOS_EMBEDDING_* wins, then the config
- * file, then nothing (SDK default — embeddings on, fastembed provider).
+ * Embedding config for the CLI: MEMOS_EMBEDDING_* wins, then the project
+ * `.memos.json`, then `~/.memos/config.json`, then nothing (SDK default —
+ * embeddings on, Model2Vec provider).
  */
-function resolveCliEmbeddingsConfig(): EmbeddingConfig | null {
-  const fromEnv = cliEmbeddingsConfig();
+function resolveCliEmbeddingsConfig(project?: {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  dimensions?: number;
+}): EmbeddingConfig | null {
+  const fromEnv = cliEmbeddingsConfig(project);
   if (fromEnv) return fromEnv;
   const file = loadFileConfig();
   const e = file?.embeddings;
@@ -251,7 +269,8 @@ function resolveDbPath(cliDbPath: string | undefined): string | undefined {
 // `memos init` — interactive onboarding wizard.
 // ---------------------------------------------------------------------------
 
-type InitProviderChoice = "fastembed" | "openai-compatible" | "ollama" | "off";
+type InitProviderChoice =
+  "model2vec" | "fastembed" | "openai-compatible" | "ollama" | "off";
 
 /** Prompt for a line of input; returns the default when the user hits enter. */
 async function promptText(
@@ -388,15 +407,20 @@ async function runInitWizard(cliArgs: string[]): Promise<void> {
       : await promptText(rl!, "Database path", existing?.dbPath ?? defaultDb);
 
     const providerChoice: InitProviderChoice = nonInteractive
-      ? ((existing?.embeddings?.provider as InitProviderChoice) ?? "fastembed")
+      ? ((existing?.embeddings?.provider as InitProviderChoice) ?? "model2vec")
       : await promptChoice<InitProviderChoice>(
           rl!,
           "Embedding provider (semantic search):",
           [
             {
+              key: "model2vec",
+              label: "Local (Model2Vec, recommended)",
+              hint: "zero native deps, no model download; 256-d static embeddings",
+            },
+            {
               key: "fastembed",
-              label: "Local (fastembed)",
-              hint: "free, on-device; needs `npm i @huggingface/transformers` for real vectors",
+              label: "Local (FastEmbed / ONNX)",
+              hint: "higher accuracy; needs `npm i @huggingface/transformers` and a native ONNX runtime",
             },
             {
               key: "openai-compatible",
@@ -406,7 +430,7 @@ async function runInitWizard(cliArgs: string[]): Promise<void> {
             {
               key: "ollama",
               label: "Ollama",
-              hint: "local models via Ollama",
+              hint: "higher accuracy; local models via Ollama (recommended: nomic-embed-text)",
             },
             {
               key: "off",
@@ -414,7 +438,7 @@ async function runInitWizard(cliArgs: string[]): Promise<void> {
               hint: "keyword-only search, no embeddings",
             },
           ],
-          "fastembed",
+          "model2vec",
         );
 
     const embeddings: NonNullable<MemosFileConfig["embeddings"]> = {};
@@ -462,10 +486,15 @@ async function runInitWizard(cliArgs: string[]): Promise<void> {
               "Ollama embedding model",
               existing?.embeddings?.model ?? "nomic-embed-text",
             );
+      } else if (providerChoice === "model2vec") {
+        console.log(
+          "Note: Model2Vec ships with MemOS (pure JavaScript, no native addons). " +
+            "It is real semantic search; for higher accuracy choose Ollama with nomic-embed-text.",
+        );
       } else {
         console.log(
-          "Note: real local vectors need `pnpm add @huggingface/transformers`; " +
-            "without it MemOS falls back to a deterministic local hash and warns loudly.",
+          "Note: FastEmbed needs `npm i @huggingface/transformers` plus a compatible " +
+            "native ONNX runtime. If it cannot load, MemOS reports DEGRADED rather than crashing.",
         );
       }
     }
@@ -480,19 +509,12 @@ async function runInitWizard(cliArgs: string[]): Promise<void> {
       await memos.init();
       const probe = `memos init smoke test ${Date.now()}`;
       const { node } = await memos.store(probe);
-      const info = memos.getEmbeddingRuntimeInfo();
-      if (info) {
-        if (info.fallbackActive) {
-          console.log(
-            `  embeddings: ${info.resolvedProvider} (fallback — ${info.fallbackReason})`,
-          );
-        } else {
-          console.log(
-            `  embeddings: ${info.resolvedProvider} (${info.resolvedModel}, ${info.observedDimensions ?? info.requestedDimensions}d)`,
-          );
-        }
-      } else {
-        console.log("  embeddings: disabled (keyword search only)");
+      const embeddingHealth = memos.getEmbeddingHealth();
+      console.log(
+        `  semantic search: ${embeddingHealth.status.toUpperCase()} — ${embeddingHealth.message}`,
+      );
+      if (embeddingHealth.fix) {
+        console.log(`  fix: ${embeddingHealth.fix}`);
       }
       const hits = await memos.search({
         query: "memos init smoke test",
@@ -713,6 +735,12 @@ function connectTarget(
           "The server speaks MCP 2026-07-28 with a legacy-2025 fallback and",
           `exposes ${short.length} tools: ${short.join("/")}.`,
           "All data stays in local SQLite.",
+          "",
+          "Streamable HTTP (for hosted clients, or several harnesses at once):",
+          "  memos mcp --http --port=8788",
+          "  endpoint: http://127.0.0.1:8788/mcp",
+          "It binds loopback by default and has no authentication — put it",
+          "behind an authenticating proxy before exposing it beyond localhost.",
         ].join("\n"),
       };
     }
@@ -753,11 +781,15 @@ Commands:
   init                  Interactive setup wizard: database path, embedding
                           provider, smoke test — saves ~/.memos/config.json
                           (--yes accepts all defaults)
+  demo                    30-second proof: store, recall, restart, recall.
+                          Uses a temporary database and deletes it.
   store <content>         Store a new memory (--pool, --context,
                           --scope user:alice[,agent:coder][,run:r1])
   retrieve <id>           Retrieve a memory by ID
   search <query>          Search memories by text (--pool event|note|procedure,
                           --scope user:alice[,...])
+  handoff "<task>"        Compact continue-here brief for another harness
+                          (--to <harness>, --token-budget <n>, --json)
   forget <id>             Delete a memory by ID
   summarize               Summarize all memories
   graph                   Print the full memory graph (--mermaid for a
@@ -790,6 +822,8 @@ Commands:
                           (reinforces or demotes the lesson score)
   lessons                 List procedural lessons (--namespace <ns>,
                           --limit <n>)
+  promote                 Review repeated successful recalls as procedure
+                          candidates (dry run; --apply writes the lessons)
   cite <id>               Trace a [mem:xxxx] citation token back to its
                           full source memory
   quarantine <list|release>
@@ -824,11 +858,23 @@ Commands:
                           --decay-half-life <days>, --min-retention <score>,
                           --older-than <days>, --namespace <ns>, --watch,
                           --interval-min <n>)
+  dream                   Consolidation with a report (--dry-run, --namespace
+                          <ns>, --json, --schedule hourly|daily|weekly)
   encrypt                 Encrypt the database in place (--key <key> or
                           MEMOS_KEY; requires better-sqlite3-multiple-ciphers)
   decrypt                 Remove encryption in place (--key <key>)
   stats                   Token-savings telemetry for this process
                           (packs built, tokens injected vs naive baseline)
+  health                  Hygiene + usefulness report with findings
+                          (contradictions, TTL, confidence, recall outcomes)
+  audit                   Full audit artifact: tamper chain, provenance,
+                          quarantine, deletion certificates (--expect-tip)
+  eval                    Retrieval eval on your store (--corpus <path>,
+                          --k <n>, --limit <n>, --json)
+  explain "<query>"       Explain a ranking; --id <memoryId> diagnoses one
+                          memory that should have matched but did not
+  feedback                Record which recalled memories were used and whether
+                          the task succeeded (--query, --used, --outcome)
   compact                 Fidelity backfill: generate missing L1/L2 levels
                           for stored memories (--stats shows avg tokens per
                           level, --namespace <ns>, --limit <n>, --dry-run)
@@ -839,6 +885,8 @@ Commands:
   reindex-embeddings      Re-embed all memories with the configured provider
                           (--purge-stale deletes vectors from other models first)
   mcp                     Start the MemOS MCP stdio server
+  mcp --http [--port=8788] [--host=127.0.0.1]
+                          Serve MCP over Streamable HTTP instead of stdio
   trio [--up]             Show (or launch) the full AI Trio: MemOS + LLM-Guardian + Universal-MCP-Toolkit
   completion <shell>      Print shell completion script (bash|zsh|fish)
   help                    Show this help message
@@ -959,12 +1007,45 @@ async function main(): Promise<void> {
   }
 
   if (command === "mcp") {
-    const { runMcpServer } = await import("./mcp.js");
-    const embeddings = cliEmbeddingsConfig(projectConfig?.embeddings);
-    await runMcpServer({
+    const embeddings = resolveCliEmbeddingsConfig(projectConfig?.embeddings);
+    const serverConfig = {
       dbPath,
       ...(embeddings ? { embeddings: { ...embeddings, enabled: true } } : {}),
-    });
+    };
+    // Streamable HTTP is opt-in: stdio stays the default because a
+    // local-first tool should not open a socket unless asked.
+    if (args.includes("--http")) {
+      const portArg = args.find((a) => a.startsWith("--port="));
+      const hostArg = args.find((a) => a.startsWith("--host="));
+      const port = portArg
+        ? Number.parseInt(portArg.split("=")[1] ?? "", 10)
+        : 8788;
+      if (!Number.isFinite(port) || port < 0 || port > 65535) {
+        console.error("Invalid --port. Expected an integer 0-65535.");
+        process.exitCode = 1;
+        return;
+      }
+      const { startMcpHttpServer } = await import("./mcp.js");
+      const handle = await startMcpHttpServer(serverConfig, {
+        port,
+        ...(hostArg ? { host: hostArg.split("=")[1] } : {}),
+      });
+      console.log(`MemOS MCP server listening on ${handle.url}`);
+      if (handle.host !== "127.0.0.1" && handle.host !== "localhost") {
+        console.log(
+          "Warning: bound beyond loopback. This server has no authentication and can read/write your memory store.",
+        );
+      }
+      await new Promise<void>((resolve) => {
+        const stop = () => resolve();
+        process.once("SIGINT", stop);
+        process.once("SIGTERM", stop);
+      });
+      await handle.close();
+      return;
+    }
+    const { runMcpServer } = await import("./mcp.js");
+    await runMcpServer(serverConfig);
     return;
   }
 
@@ -1148,7 +1229,9 @@ async function main(): Promise<void> {
   // Embedding config via environment (same variables the Python server
   // and benchmark scripts accept). Without MEMOS_EMBEDDING_PROVIDER the
   // CLI runs the default local-hash provider.
-  const embeddingsConfig = cliEmbeddingsConfig(projectConfig?.embeddings);
+  const embeddingsConfig = resolveCliEmbeddingsConfig(
+    projectConfig?.embeddings,
+  );
   // Vision (image memory) config: `--vision` enables the caption track,
   // `--vision-clip` additionally enables the CLIP pixel track. Env
   // fallbacks (MEMOS_VISION=1 / MEMOS_VISION_CLIP=1) let scripts turn it
@@ -1181,6 +1264,69 @@ async function main(): Promise<void> {
 
   try {
     switch (command) {
+      case "ingest": {
+        const target = args[1];
+        if (!target) {
+          console.error(
+            "Error: a file or folder is required.\n  Usage: memos ingest <path> [--watch]",
+          );
+          process.exit(1);
+        }
+        const nsIdx = args.indexOf("--namespace");
+        const extIdx = args.indexOf("--ext");
+        const chunkIdx = args.indexOf("--chunk-chars");
+        const ingestOptions = {
+          ...(nsIdx !== -1 ? { namespace: args[nsIdx + 1] } : {}),
+          ...(extIdx !== -1
+            ? {
+                extensions: args[extIdx + 1]
+                  .split(",")
+                  .map((value) => value.trim())
+                  .filter(Boolean),
+              }
+            : {}),
+          ...(chunkIdx !== -1
+            ? { chunkChars: parseInt(args[chunkIdx + 1], 10) }
+            : {}),
+          onProgress: (event: {
+            path: string;
+            status: string;
+            chunks?: number;
+            error?: string;
+          }) => {
+            if (jsonFlag) return;
+            const suffix = event.chunks ? ` (${event.chunks} chunks)` : "";
+            const detail = event.error ? `: ${event.error}` : "";
+            console.log(
+              `  ${event.status.padEnd(9)} ${event.path}${suffix}${detail}`,
+            );
+          },
+        };
+        if (args.includes("--watch")) {
+          const handle = await watchPath(memos, target, ingestOptions);
+          console.log(`Watching ${target} for changes. Ctrl+C to stop.`);
+          const stop = () => {
+            handle.close();
+            process.exit(0);
+          };
+          process.on("SIGINT", stop);
+          process.on("SIGTERM", stop);
+          await new Promise(() => {});
+          break;
+        }
+        const summary = await ingestPath(memos, target, ingestOptions);
+        if (jsonFlag) {
+          console.log(JSON.stringify(summary, null, 2));
+        } else {
+          console.log(
+            `Ingested: ${summary.added} added, ${summary.updated} updated, ` +
+              `${summary.unchanged} unchanged, ${summary.removed} removed, ` +
+              `${summary.skipped} skipped, ${summary.errors} errors ` +
+              `(${summary.chunks} chunks).`,
+          );
+        }
+        break;
+      }
       case "store": {
         const content = args[1];
         if (!content) {
@@ -1415,6 +1561,109 @@ async function main(): Promise<void> {
         } else {
           console.log(summary);
         }
+        break;
+      }
+
+      case "profile": {
+        // One-call user profile: static (durable facts) + dynamic
+        // (recent activity), the session-start system-prompt block.
+        const scopeIdx = args.indexOf("--scope");
+        const scopeArg = scopeIdx !== -1 ? args[scopeIdx + 1] : undefined;
+        const scope = scopeArg ? parseScopeArg(scopeArg) : undefined;
+        const queryFlag = args
+          .find((a) => a.startsWith("--query="))
+          ?.split("=")[1];
+        const maxStaticFlag = args
+          .find((a) => a.startsWith("--max-static="))
+          ?.split("=")[1];
+        const maxDynamicFlag = args
+          .find((a) => a.startsWith("--max-dynamic="))
+          ?.split("=")[1];
+        const recentDaysFlag = args
+          .find((a) => a.startsWith("--recent-days="))
+          ?.split("=")[1];
+        const intOpt = (raw: string | undefined): number | undefined => {
+          if (raw === undefined) return undefined;
+          const n = parseInt(raw, 10);
+          return Number.isFinite(n) ? n : undefined;
+        };
+        const profile = await memos.profile({
+          ...(queryFlag ? { query: queryFlag } : {}),
+          ...(intOpt(maxStaticFlag) !== undefined
+            ? { maxStatic: intOpt(maxStaticFlag) }
+            : {}),
+          ...(intOpt(maxDynamicFlag) !== undefined
+            ? { maxDynamic: intOpt(maxDynamicFlag) }
+            : {}),
+          ...(intOpt(recentDaysFlag) !== undefined
+            ? { recentDays: intOpt(recentDaysFlag) }
+            : {}),
+          ...(scope ? { scope } : {}),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(profile, null, 2));
+        } else {
+          const printNode = (n: { type: string; content: string }): void =>
+            console.log(`  [${n.type}] ${n.content}`);
+          console.log(`Static (durable facts) — ${profile.static.length}`);
+          for (const n of profile.static) printNode(n);
+          console.log(
+            `\nDynamic (recent activity) — ${profile.dynamic.length}`,
+          );
+          for (const n of profile.dynamic) printNode(n);
+          if (profile.static.length === 0 && profile.dynamic.length === 0) {
+            console.log(
+              "\n(empty — store a few preferences and facts first: " +
+                'memos store "User prefers dark mode" --type preference)',
+            );
+          }
+        }
+        break;
+      }
+
+      case "handoff": {
+        const taskFlag = args
+          .find((a) => a.startsWith("--task="))
+          ?.split("=")[1];
+        const task = taskFlag ?? args[1];
+        if (!task || task.startsWith("--")) {
+          console.error(
+            'Error: handoff needs a task.\n  Usage: memos handoff "<what the next agent should continue>" [--to <harness>] [--from <harness>] [--token-budget <n>] [--lessons <n>] [--namespace <ns>] [--scope user:alice[,...]] [--no-reminders] [--json]',
+          );
+          process.exit(1);
+        }
+        const flagValue = (name: string): string | undefined => {
+          const prefixed = args
+            .find((a) => a.startsWith(`${name}=`))
+            ?.split("=")[1];
+          if (prefixed !== undefined) return prefixed;
+          const idx = args.indexOf(name);
+          return idx !== -1 ? args[idx + 1] : undefined;
+        };
+        const scopeArg = flagValue("--scope");
+        const scope = scopeArg ? parseScopeArg(scopeArg) : undefined;
+        const namespace = flagValue("--namespace");
+        const tokenBudget = Number.parseInt(
+          flagValue("--token-budget") ?? "",
+          10,
+        );
+        const lessons = Number.parseInt(flagValue("--lessons") ?? "", 10);
+        const result = await memos.handoff({
+          task,
+          ...(namespace ? { namespace } : {}),
+          ...(scope ? { scope } : {}),
+          ...(Number.isFinite(tokenBudget) && tokenBudget > 0
+            ? { tokenBudget }
+            : {}),
+          ...(Number.isFinite(lessons) && lessons >= 0 ? { lessons } : {}),
+          includeReminders: !args.includes("--no-reminders"),
+          ...(flagValue("--to") ? { toHarness: flagValue("--to") } : {}),
+          ...(flagValue("--from") ? { fromHarness: flagValue("--from") } : {}),
+          format: jsonFlag ? "json" : "markdown",
+        });
+        console.log(
+          typeof result === "string" ? result : JSON.stringify(result, null, 2),
+        );
         break;
       }
 
@@ -1848,6 +2097,70 @@ async function main(): Promise<void> {
         break;
       }
 
+      case "promote": {
+        const numberFlag = (name: string): number | undefined => {
+          const prefixed = args
+            .find((a) => a.startsWith(`${name}=`))
+            ?.split("=")[1];
+          const raw =
+            prefixed ??
+            (args.indexOf(name) !== -1
+              ? args[args.indexOf(name) + 1]
+              : undefined);
+          if (raw === undefined) return undefined;
+          const value = Number.parseFloat(raw);
+          return Number.isFinite(value) ? value : undefined;
+        };
+        const namespace = (() => {
+          const idx = args.indexOf("--namespace");
+          return idx !== -1 ? args[idx + 1] : undefined;
+        })();
+        const apply = args.includes("--apply");
+        const result = await memos.promoteProcedures({
+          apply,
+          ...(numberFlag("--min-successes") !== undefined
+            ? { minSuccesses: numberFlag("--min-successes") }
+            : {}),
+          ...(numberFlag("--max-failure-ratio") !== undefined
+            ? { maxFailureRatio: numberFlag("--max-failure-ratio") }
+            : {}),
+          ...(numberFlag("--limit") !== undefined
+            ? { limit: numberFlag("--limit") }
+            : {}),
+          ...(namespace ? { namespace } : {}),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(result, null, 2));
+          break;
+        }
+        if (result.candidates.length === 0) {
+          console.log(
+            "No repeated successful recall patterns yet. Record outcomes with `memos feedback` first.",
+          );
+          break;
+        }
+        console.log(
+          `Procedure candidates (${result.candidates.length})${apply ? "" : " — dry run"}:`,
+        );
+        for (const candidate of result.candidates) {
+          console.log(
+            `  [${candidate.confidence.toFixed(2)}] ${candidate.query}`,
+          );
+          console.log(`    ${candidate.reason}`);
+          console.log(`    ${candidate.lesson}`);
+        }
+        if (!apply) {
+          console.log(
+            "\nNo changes written. Re-run with --apply to create these lessons.",
+          );
+        } else {
+          console.log(
+            `\nCreated ${result.created.length} lesson(s), skipped ${result.skipped} duplicate(s).`,
+          );
+        }
+        break;
+      }
+
       case "cite": {
         const id = args[1];
         if (!id) {
@@ -1989,11 +2302,23 @@ async function main(): Promise<void> {
 
       case "stats": {
         const usage = memos.usageStats();
+        const embeddingHealth = memos.getEmbeddingHealth();
         if (jsonFlag) {
-          console.log(JSON.stringify(usage, null, 2));
+          console.log(JSON.stringify({ ...usage, embeddingHealth }, null, 2));
         } else {
+          console.log(
+            `Embedding health: ${embeddingHealth.status.toUpperCase()} — ${embeddingHealth.message}`,
+          );
           console.log("Context-pack token telemetry (this process):");
           console.log(`  packs built:   ${usage.packsBuilt}`);
+          console.log(`  items packed:  ${usage.packItems}`);
+          console.log(
+            `  formats:       ${
+              Object.entries(usage.byFormat)
+                .map(([format, count]) => `${format}=${count}`)
+                .join(", ") || "none"
+            }`,
+          );
           console.log(`  tokens injected: ${usage.packTokens}`);
           console.log(
             `  naive baseline:  ${usage.naiveBaselineTokens} (raw node JSON, same candidates)`,
@@ -2001,6 +2326,294 @@ async function main(): Promise<void> {
           console.log(
             `  saved:           ${usage.savedTokens} tok (${usage.savedPct}%)`,
           );
+        }
+        break;
+      }
+
+      case "health": {
+        const report = await memos.health();
+        if (jsonFlag) {
+          console.log(JSON.stringify(report, null, 2));
+          break;
+        }
+        console.log(
+          `Memory health: ${report.score}/100 (grade ${report.grade})`,
+        );
+        console.log(
+          `  semantic search: ${report.embeddingHealth.status.toUpperCase()} — ${report.embeddingHealth.message}`,
+        );
+        console.log(
+          `  memories: ${report.metrics.totalNodes} total, ` +
+            `${report.metrics.activeNodes} active, ` +
+            `${report.metrics.historicalNodes} historical, ` +
+            `${report.metrics.quarantined} quarantined`,
+        );
+        console.log(
+          `  hygiene: ${report.metrics.expiredActive} past TTL, ` +
+            `${report.metrics.lowConfidence} low-confidence, ` +
+            `${report.metrics.unresolvedContradictions ?? "?"} unresolved contradictions`,
+        );
+        console.log(
+          `  recall outcomes: ${
+            report.metrics.usefulRecallRate === null
+              ? "none recorded"
+              : `${Math.round(report.metrics.usefulRecallRate * 100)}% useful over ${
+                  report.metrics.feedbackBatches
+                } batch${report.metrics.feedbackBatches === 1 ? "" : "es"}`
+          }`,
+        );
+        console.log("");
+        for (const finding of report.findings) {
+          console.log(`[${finding.severity}] ${finding.title}`);
+          console.log(`  ${finding.detail}`);
+          if (finding.action) console.log(`  -> ${finding.action}`);
+        }
+        break;
+      }
+
+      case "audit": {
+        const flagValue = (name: string): string | undefined => {
+          const prefixed = args
+            .find((a) => a.startsWith(`${name}=`))
+            ?.split("=")[1];
+          if (prefixed !== undefined) return prefixed;
+          const idx = args.indexOf(name);
+          return idx !== -1 ? args[idx + 1] : undefined;
+        };
+        const limit = Number.parseInt(flagValue("--limit") ?? "", 10);
+        const report = await memos.auditReport({
+          ...(flagValue("--expect-tip")
+            ? { expectTip: flagValue("--expect-tip") }
+            : {}),
+          ...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          console.log(renderAuditMarkdown(report));
+        }
+        if (!report.ok) process.exitCode = 1;
+        break;
+      }
+
+      case "eval": {
+        const flagValue = (name: string): string | undefined => {
+          const prefixed = args
+            .find((a) => a.startsWith(`${name}=`))
+            ?.split("=")[1];
+          if (prefixed !== undefined) return prefixed;
+          const idx = args.indexOf(name);
+          return idx !== -1 ? args[idx + 1] : undefined;
+        };
+        const k = Math.max(1, parseInt(flagValue("--k") ?? "5", 10) || 5);
+        const limit = Math.max(
+          1,
+          parseInt(flagValue("--limit") ?? "20", 10) || 20,
+        );
+        const namespace = flagValue("--namespace");
+        const corpusPath = flagValue("--corpus");
+        let cases: RetrievalEvalCase[];
+        let mode: "self" | "corpus" = "self";
+        if (corpusPath) {
+          const raw = JSON.parse(readFileSync(corpusPath, "utf8")) as
+            RetrievalEvalCase[] | { cases?: RetrievalEvalCase[] };
+          const parsed = Array.isArray(raw) ? raw : (raw.cases ?? []);
+          cases = parsed.filter(
+            (entry) =>
+              typeof entry?.query === "string" &&
+              Array.isArray(entry.relevantIds) &&
+              entry.relevantIds.length > 0,
+          );
+          mode = "corpus";
+          if (cases.length === 0) {
+            console.error(
+              "Error: corpus must be a JSON array (or {cases:[...]}) of {query, relevantIds}.",
+            );
+            process.exit(1);
+          }
+        } else {
+          cases = await buildSelfEvalCases(memos, {
+            limit,
+            fromSessions: args.includes("--from-sessions"),
+            ...(namespace ? { namespace } : {}),
+          });
+        }
+        if (cases.length === 0) {
+          console.log(
+            "No memories to evaluate yet. Store a few facts first (`memos demo` works).",
+          );
+          break;
+        }
+        const report = await runRetrievalEval(memos, cases, {
+          k,
+          mode,
+          ...(namespace ? { namespace } : {}),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(report, null, 2));
+          break;
+        }
+        console.log(
+          `Retrieval eval (${mode}, ${report.cases} cases, k=${report.k}):`,
+        );
+        console.log(
+          `  Hit@${report.k}:      ${(report.hitAtK * 100).toFixed(1)}%`,
+        );
+        console.log(`  MRR:         ${report.mrr.toFixed(3)}`);
+        console.log(`  Latency:     ${report.avgLatencyMs.toFixed(1)}ms avg`);
+        console.log(
+          `  Tokens:      ${report.avgTokens.toFixed(0)} avg/case` +
+            (report.tokensPerHit === null
+              ? ""
+              : `, ${report.tokensPerHit.toFixed(0)} per hit`),
+        );
+        if (mode === "self") {
+          console.log(
+            "  Note: self mode asks whether a fragment of each memory still retrieves it; it is an index-health smoke test, not a semantic-QA benchmark.",
+          );
+        }
+        if (report.weakCases.length > 0) {
+          console.log("\n  Weak cases (not retrieved):");
+          for (const weak of report.weakCases) {
+            console.log(`  - "${weak.query}"`);
+          }
+        }
+        break;
+      }
+
+      case "explain": {
+        const getFlag = (name: string): string | undefined => {
+          const idx = args.indexOf(name);
+          return idx !== -1 ? args[idx + 1] : undefined;
+        };
+        const query = getFlag("--query") ?? args[1];
+        if (!query || query.startsWith("--")) {
+          console.error(
+            'Error: query is required.\n  Usage: memos explain "<query>" [--id <memoryId>] [--limit <n>] [--namespace <ns>] [--pool <pool>] [--json]',
+          );
+          process.exit(1);
+        }
+        const memoryId = getFlag("--id");
+        const namespace = getFlag("--namespace");
+        const poolArg = getFlag("--pool");
+        const limitArg = getFlag("--limit");
+        const explanation = await memos.explain({
+          query,
+          ...(memoryId !== undefined ? { memoryId } : {}),
+          ...(namespace !== undefined ? { namespace } : {}),
+          ...(limitArg !== undefined
+            ? {
+                limit: Number.isFinite(Number.parseInt(limitArg, 10))
+                  ? Number.parseInt(limitArg, 10)
+                  : 10,
+              }
+            : {}),
+          ...(poolArg === "event" ||
+          poolArg === "note" ||
+          poolArg === "procedure" ||
+          poolArg === "visual"
+            ? { pool: poolArg }
+            : {}),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(explanation, null, 2));
+          break;
+        }
+        const gate = explanation.gate;
+        console.log(`Query: ${explanation.query}`);
+        console.log(
+          `Gate: ${
+            !gate.enabled
+              ? "disabled"
+              : gate.abstained
+                ? "would abstain"
+                : gate.trimmed
+                  ? `would trim ${gate.dropped} candidate(s)`
+                  : "keeps all candidates"
+          }`,
+        );
+        console.log(
+          `Candidates (${explanation.candidates.length} shown of ${explanation.candidateCount}):`,
+        );
+        for (const candidate of explanation.candidates) {
+          console.log(
+            `  #${candidate.rank} ${candidate.id}  score ${candidate.score.toFixed(3)}  ` +
+              `[${candidate.status}/${candidate.pool}] ${candidate.summary}`,
+          );
+          for (const reason of candidate.reasons) {
+            console.log(`      - ${reason}`);
+          }
+        }
+        if (explanation.focus) {
+          const focus = explanation.focus;
+          console.log("");
+          console.log(
+            `Focus ${focus.id}: ${
+              focus.retrieved ? "retrieved" : "NOT retrieved"
+            }`,
+          );
+          for (const check of focus.checks) {
+            console.log(
+              `  [${check.pass ? "pass" : "fail"}] ${check.name}: ${check.detail}`,
+            );
+          }
+          for (const reason of focus.reasons) {
+            console.log(`  -> ${reason}`);
+          }
+        }
+        break;
+      }
+
+      case "feedback": {
+        const getFlag = (name: string): string | undefined => {
+          const idx = args.indexOf(name);
+          return idx !== -1 ? args[idx + 1] : undefined;
+        };
+        const query = getFlag("--query");
+        const outcomeArg = getFlag("--outcome") ?? "success";
+        const usedIdx = args.indexOf("--used");
+        const used: string[] = [];
+        if (usedIdx !== -1) {
+          for (let i = usedIdx + 1; i < args.length; i++) {
+            const value = args[i]!;
+            if (value.startsWith("--")) break;
+            used.push(...value.split(",").filter(Boolean));
+          }
+        }
+        if (!query) {
+          console.error(
+            'Error: --query is required.\n  Usage: memos feedback --query "<query>" --used <id[,id]> --outcome success|partial|failure [--weight <n>] [--note <text>] [--json]',
+          );
+          process.exit(1);
+        }
+        if (
+          outcomeArg !== "success" &&
+          outcomeArg !== "partial" &&
+          outcomeArg !== "failure"
+        ) {
+          console.error(
+            `Error: invalid --outcome "${outcomeArg}". Use success, partial, or failure.`,
+          );
+          process.exit(1);
+        }
+        const weightArg = getFlag("--weight");
+        const noteArg = getFlag("--note");
+        const result = await memos.recordRecallFeedback({
+          query,
+          used,
+          outcome: outcomeArg,
+          ...(weightArg !== undefined ? { weight: parseFloat(weightArg) } : {}),
+          ...(noteArg !== undefined ? { note: noteArg } : {}),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(
+            `Recorded ${result.outcome} outcome for ${result.recorded} memory(ies) (batch ${result.batchId}).`,
+          );
+          if (result.unknown.length > 0) {
+            console.log(`  Unknown ids ignored: ${result.unknown.join(", ")}`);
+          }
         }
         break;
       }
@@ -2167,6 +2780,99 @@ async function main(): Promise<void> {
             }
           }
         }
+        break;
+      }
+
+      case "dream": {
+        const dryRun = args.includes("--dry-run");
+        const nsIdx = args.indexOf("--namespace");
+        const namespace = nsIdx !== -1 ? args[nsIdx + 1] : undefined;
+        const scheduleIdx = args.indexOf("--schedule");
+        const schedule =
+          scheduleIdx !== -1
+            ? (args[scheduleIdx + 1] ?? "").toLowerCase()
+            : null;
+        const intervals: Record<string, number> = {
+          hourly: 60,
+          daily: 1440,
+          weekly: 10080,
+        };
+        if (schedule !== null && intervals[schedule] === undefined) {
+          console.error(
+            "Unknown --schedule value. Use hourly, daily, or weekly.",
+          );
+          process.exitCode = 1;
+          break;
+        }
+
+        const runDream = async (): Promise<void> => {
+          const started = Date.now();
+          const consolidation = await memos.consolidate({
+            ...(namespace ? { namespace } : {}),
+            dryRun,
+          });
+          const health = await memos.health();
+          const conflicts = health.findings.filter(
+            (finding) => finding.id === "contradictions-unresolved",
+          );
+          const report = {
+            at: new Date(started).toISOString(),
+            dryRun,
+            merged: consolidation.merges.length,
+            archived: consolidation.moves.length,
+            superseded: consolidation.decayed.length,
+            clusterNotes: consolidation.clusters.length,
+            conflicts: health.metrics.unresolvedContradictions ?? 0,
+            durationMs: Date.now() - started,
+          };
+
+          if (jsonFlag) {
+            console.log(
+              JSON.stringify(
+                { report, consolidation, conflictFindings: conflicts },
+                null,
+                2,
+              ),
+            );
+            return;
+          }
+
+          console.log(
+            `Dream ${dryRun ? "(dry run — nothing changed)" : "complete"} in ${report.durationMs} ms`,
+          );
+          console.log(`  merged:      ${report.merged} duplicate cluster(s)`);
+          console.log(`  superseded:  ${report.superseded} (kept as history)`);
+          console.log(`  archived:    ${report.archived} memory(ies)`);
+          console.log(
+            `  notes:       ${report.clusterNotes} cluster summary(ies)`,
+          );
+          console.log(`  conflicts:   ${report.conflicts}`);
+          for (const finding of conflicts) {
+            console.log(`    - ${finding.title}: ${finding.detail}`);
+          }
+        };
+
+        if (schedule !== null) {
+          const minutes = intervals[schedule]!;
+          console.log(
+            `dream schedule: ${schedule} (every ${minutes} min) — ctrl+c to stop`,
+          );
+          for (;;) {
+            try {
+              await runDream();
+            } catch (error) {
+              console.error(
+                "dream cycle failed:",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+            await new Promise((resolve) =>
+              setTimeout(resolve, minutes * 60_000),
+            );
+          }
+        }
+
+        await runDream();
         break;
       }
 
@@ -2716,6 +3422,30 @@ async function main(): Promise<void> {
                 `Playbook: ${PLAYBOOK}#search-returns-nothing-or-weak-results`,
             );
           }
+          const activeEmbedding = memos.getEmbeddingRuntimeInfo();
+          if (
+            activeEmbedding &&
+            !activeEmbedding.fallbackActive &&
+            counts.length > 0
+          ) {
+            const stale = counts.filter(
+              (c: { model: string; count: number }) =>
+                c.model !== activeEmbedding.resolvedModel,
+            );
+            if (stale.length > 0) {
+              problems.push(
+                `${stale.reduce((sum, c) => sum + c.count, 0)} stored vector(s) ` +
+                  `use a different model than the active provider ` +
+                  `(${activeEmbedding.resolvedModel}). Those vectors are ` +
+                  "invisible to the semantic leg until reindexed.",
+              );
+              suggestions.push(
+                "Run `memos reindex-embeddings --purge-stale` after changing the " +
+                  "embedding model (including the default Model2Vec provider). " +
+                  `Playbook: ${PLAYBOOK}#search-returns-nothing-or-weak-results`,
+              );
+            }
+          }
           if (!jsonOut) {
             console.log(
               "Embedding models: " +
@@ -2731,8 +3461,33 @@ async function main(): Promise<void> {
           }
         }
 
+        // 3b. ANN backend status (only meaningful for semanticScan: "ann").
+        const vectorIndex = storage.getVectorIndexStatus?.();
+        if (vectorIndex) {
+          report.vectorIndex = vectorIndex;
+          if (!jsonOut && vectorIndex.mode !== "exact") {
+            console.log(
+              `Vector index: ${vectorIndex.mode}` +
+                (vectorIndex.mode === "ann"
+                  ? ` (${vectorIndex.enabled ? `enabled, ${vectorIndex.indexes.length} index(es)` : "unavailable"})`
+                  : ""),
+            );
+          }
+          if (vectorIndex.mode === "ann" && !vectorIndex.enabled) {
+            problems.push(
+              `ANN mode requested but sqlite-vec did not load: ${vectorIndex.error ?? "unknown error"}.`,
+            );
+            suggestions.push(
+              'Install the optional `sqlite-vec` package (or use `semanticScan: "auto"`). ' +
+                `Playbook: ${PLAYBOOK}#search-returns-nothing-or-weak-results`,
+            );
+          }
+        }
+
         // 4. Provider probe — embed one query and report what actually loaded.
-        const embeddings = cliEmbeddingsConfig(projectConfig?.embeddings);
+        const embeddings = resolveCliEmbeddingsConfig(
+          projectConfig?.embeddings,
+        );
         if (embeddings?.provider && embeddings.baseUrl) {
           const started = Date.now();
           try {
@@ -2783,33 +3538,29 @@ async function main(): Promise<void> {
           );
         }
 
-        // 5b. Provider runtime info — the semantic probe above forced the
-        // provider to resolve, so fallbackActive is accurate here.
-        if (!(embeddings?.provider && embeddings.baseUrl)) {
-          const info = memos.getEmbeddingRuntimeInfo();
-          report.embeddingProvider = info;
-          if (!jsonOut) {
-            if (!info) {
-              console.log(
-                "Embeddings disabled — semantic search falls back to keyword scoring.",
-              );
-            } else if (info.fallbackActive) {
-              problems.push(
-                `Embedding fallback active: ${info.fallbackReason}.`,
-              );
-              suggestions.push(
-                "Install @huggingface/transformers for real local embeddings: pnpm add @huggingface/transformers. " +
-                  `Playbook: ${PLAYBOOK}#embeddings-silently-fell-back-to-local-hash`,
-              );
-              console.log(
-                `Embedding provider: ${info.resolvedProvider} (fallback — ${info.fallbackReason}).`,
-              );
-            } else {
-              console.log(
-                `Embedding provider: ${info.resolvedProvider} (${info.resolvedModel}, ${info.requestedDimensions}d).`,
-              );
-            }
-          }
+        // 5b. Provider runtime + loud health. The semantic probe above forced
+        // the provider to resolve, so fallbackActive is accurate here.
+        const info = memos.getEmbeddingRuntimeInfo();
+        report.embeddingProvider = info;
+        const embeddingHealth = memos.getEmbeddingHealth();
+        report.embeddingHealth = embeddingHealth;
+        if (!jsonOut) {
+          console.log(
+            `Semantic search: ${embeddingHealth.status.toUpperCase()} — ${embeddingHealth.message}`,
+          );
+        }
+        if (embeddingHealth.status === "degraded") {
+          problems.push(embeddingHealth.message);
+          suggestions.push(
+            (embeddingHealth.fix ??
+              "Install a real local embedding provider, then reindex.") +
+              ` Playbook: ${PLAYBOOK}#embeddings-silently-fell-back-to-local-hash`,
+          );
+        } else if (embeddingHealth.status === "disabled") {
+          suggestions.push(
+            embeddingHealth.fix ??
+              "Enable embeddings in your MemOS config for semantic recall.",
+          );
         }
 
         // 6. Rerank endpoint probe (when configured).
@@ -2835,6 +3586,18 @@ async function main(): Promise<void> {
             suggestions.push(
               `Rerank is optional — an unreachable endpoint means reranking silently falls back to the base ranking. ` +
                 `Playbook: ${PLAYBOOK}#search-returns-nothing-or-weak-results`,
+            );
+          }
+        }
+
+        const lastCrash = readLatestCrashReport();
+        if (lastCrash) {
+          report.lastCrash = lastCrash;
+          if (!jsonOut) {
+            console.log(
+              `Last crash report: [${String(lastCrash.code ?? "?")}] ` +
+                `${String(lastCrash.message ?? "").slice(0, 160)} ` +
+                `(${String(lastCrash.at ?? "unknown")})`,
             );
           }
         }
@@ -2880,6 +3643,139 @@ async function main(): Promise<void> {
 
       case "init": {
         await runInitWizard(args);
+        break;
+      }
+
+      case "demo": {
+        // A 30-second proof of the core promise: store, recall, restart,
+        // recall again. Uses a temporary database so a demo never pollutes
+        // the user's real memory store.
+        const { mkdtempSync, rmSync } = await import("node:fs");
+        const { tmpdir } = await import("node:os");
+        const dir = mkdtempSync(join(tmpdir(), "memos-demo-"));
+        const demoDb = join(dir, "demo.db");
+        const demoEmbeddings = resolveCliEmbeddingsConfig(
+          projectConfig?.embeddings,
+        );
+        const createDemo = (): MemOS =>
+          new MemOS({
+            dbPath: demoDb,
+            ...(demoEmbeddings ? { embeddings: demoEmbeddings } : {}),
+          });
+        let demo: MemOS | null = null;
+        let reopened: MemOS | null = null;
+        try {
+          demo = createDemo();
+          await demo.init();
+          const seeds = [
+            {
+              content: "The user prefers dark mode in editors and terminals.",
+              type: "preference" as const,
+            },
+            {
+              content: "The deploy window is Friday at 14:00 UTC.",
+              type: "fact" as const,
+            },
+            {
+              content: "The project uses TypeScript, React, and SQLite.",
+              type: "context" as const,
+            },
+          ];
+          const ids: string[] = [];
+          for (const seed of seeds) {
+            const { node } = await demo.store(seed.content, {
+              type: seed.type,
+            });
+            ids.push(node.id);
+          }
+          const queries = [
+            { query: "what theme does the user like?", expected: ids[0]! },
+            { query: "when is the deploy window?", expected: ids[1]! },
+          ];
+          const results: Array<{
+            query: string;
+            hit: boolean;
+            top: string | null;
+            score: number | null;
+          }> = [];
+          for (const probe of queries) {
+            const hits = await demo.search({
+              query: probe.query,
+              limit: 3,
+            });
+            results.push({
+              query: probe.query,
+              hit: hits.some((hit) => hit.node.id === probe.expected),
+              top: hits[0]?.node.content ?? null,
+              score: hits[0]?.score ?? null,
+            });
+          }
+          const embeddingHealth = demo.getEmbeddingHealth();
+          await demo.close();
+          demo = null;
+
+          // Fresh process, same file: this is the promise, not a cache hit.
+          reopened = createDemo();
+          await reopened.init();
+          const afterRestart = await reopened.search({
+            query: "what theme does the user like?",
+            limit: 3,
+          });
+          const survivedRestart = afterRestart.some(
+            (hit) => hit.node.id === ids[0],
+          );
+
+          if (jsonFlag) {
+            console.log(
+              JSON.stringify(
+                {
+                  dbPath: demoDb,
+                  stored: seeds.length,
+                  queries: results,
+                  survivedRestart,
+                  embeddingHealth,
+                },
+                null,
+                2,
+              ),
+            );
+          } else {
+            console.log(
+              "MemOS demo — temporary database, removed when this finishes.\n",
+            );
+            for (const seed of seeds) console.log(`  stored: ${seed.content}`);
+            for (const result of results) {
+              console.log(
+                `  search "${result.query}" -> ${result.hit ? "HIT" : "MISS"}` +
+                  (result.top ? `: ${result.top}` : ""),
+              );
+            }
+            console.log(
+              `  restart proof: ${survivedRestart ? "memory survived a fresh process" : "FAILED"}`,
+            );
+            console.log(
+              `  semantic search: ${embeddingHealth.status.toUpperCase()} — ${embeddingHealth.message}`,
+            );
+            if (embeddingHealth.fix)
+              console.log(`  fix: ${embeddingHealth.fix}`);
+            console.log(
+              "\nNext: `memos init` to configure your real store, or `memos connect claude-code` to wire an agent.",
+            );
+          }
+          if (!survivedRestart) process.exit(1);
+        } finally {
+          try {
+            await demo?.close();
+          } catch {
+            // already closed
+          }
+          try {
+            await reopened?.close();
+          } catch {
+            // already closed
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }
         break;
       }
 
@@ -3496,17 +4392,47 @@ async function main(): Promise<void> {
   } finally {
     // Only close if we haven't already (backup/restore handle their own close)
     if (command !== "backup" && command !== "restore") {
-      await memos.close();
+      try {
+        await memos.close();
+      } catch (closeErr) {
+        // Never mask the original failure with a teardown failure.
+        if (process.env.MEMOS_DEBUG === "1") {
+          console.error(
+            "MemOS close warning:",
+            closeErr instanceof Error ? closeErr.message : String(closeErr),
+          );
+        }
+      }
     }
   }
 }
 
 main().catch((err) => {
-  // err.message can echo key material from a failing operation — redact
-  // before it hits stderr (CodeQL js/clear-text-logging).
-  console.error(
-    "Fatal:",
-    redactSecrets(err instanceof Error ? err.message : String(err)),
-  );
+  const error = asMemOSError(err, "MEMOS_UNKNOWN", {
+    command,
+    dbPath: args.find((arg) => arg === "--db")
+      ? args[args.indexOf("--db") + 1]
+      : undefined,
+  });
+  const reportPath = writeCrashReport(error, {
+    command,
+    argv: args,
+  });
+  if (args.includes("--json")) {
+    console.error(
+      JSON.stringify(
+        { ...errorPayload(error), crashReport: reportPath },
+        null,
+        2,
+      ),
+    );
+  } else {
+    console.error(
+      formatErrorCard(error, {
+        debug: process.env.MEMOS_DEBUG === "1",
+        reportPath,
+      }),
+    );
+  }
   process.exit(1);
 });

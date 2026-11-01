@@ -440,10 +440,17 @@ describe("revert", () => {
 
 describe("memos_revert MCP tool", () => {
   it("is registered in the tool metadata", () => {
-    const tools = getMcpTools();
-    const revert = tools.find((t) => t.name === "memos_revert");
-    expect(revert).toBeDefined();
-    expect(revert!.description).toMatch(/dryRun/i);
-    expect(tools).toHaveLength(24);
+    const previous = process.env.MEMOS_MCP_TOOLS;
+    process.env.MEMOS_MCP_TOOLS = "all";
+    try {
+      const tools = getMcpTools();
+      const revert = tools.find((t) => t.name === "memos_revert");
+      expect(revert).toBeDefined();
+      expect(revert!.description).toMatch(/dryRun/i);
+      expect(tools).toHaveLength(40);
+    } finally {
+      if (previous === undefined) delete process.env.MEMOS_MCP_TOOLS;
+      else process.env.MEMOS_MCP_TOOLS = previous;
+    }
   });
 });
