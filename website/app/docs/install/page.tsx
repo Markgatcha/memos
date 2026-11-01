@@ -74,6 +74,79 @@ const harnesses = [
     body: server,
   },
   {
+    name: "Hermes Agent",
+    where: "~/.hermes/config.yaml",
+    command: "npx -y @mem-os/sdk connect hermes",
+    body: `mcp_servers:
+  memos:
+    command: "npx"
+    args: ["-y", "@mem-os/sdk", "mcp"]
+    protocol: auto
+    trust: full`,
+  },
+  {
+    name: "Kilo Code",
+    where: "kilo.json or ~/.config/kilo/kilo.json",
+    command: "npx -y @mem-os/sdk connect kilo --write",
+    body: `{
+  "mcp": {
+    "memos": {
+      "type": "local",
+      "command": ["npx", "-y", "@mem-os/sdk", "mcp"],
+      "enabled": true
+    }
+  }
+}`,
+  },
+  {
+    name: "pi",
+    where: "~/.pi/agent/mcp.json",
+    command: "npx -y @mem-os/sdk connect pi --write",
+    body: server,
+  },
+  {
+    name: "OpenClaw",
+    where: "~/.openclaw/openclaw.json",
+    command: "npx -y @mem-os/sdk connect openclaw",
+    body: `{
+  "mcp": {
+    "servers": {
+      "memos": {
+        "command": "npx",
+        "args": ["-y", "@mem-os/sdk", "mcp"],
+        "enabled": true
+      }
+    }
+  }
+}`,
+  },
+  {
+    name: "Zed",
+    where: "~/.config/zed/settings.json",
+    command: "npx -y @mem-os/sdk connect zed",
+    body: `{
+  "context_servers": {
+    "memos": {
+      "source": "custom",
+      "command": "npx",
+      "args": ["-y", "@mem-os/sdk", "mcp"]
+    }
+  }
+}`,
+  },
+  {
+    name: "goose",
+    where: "~/.config/goose/config.yaml",
+    command: "npx -y @mem-os/sdk connect goose",
+    body: `extensions:
+  memos:
+    type: stdio
+    cmd: "npx"
+    args: ["-y", "@mem-os/sdk", "mcp"]
+    enabled: true
+    timeout: 300`,
+  },
+  {
     name: "Anything else",
     where: "any stdio MCP client",
     command: "npx -y @mem-os/sdk connect generic",
@@ -120,7 +193,7 @@ npx -y @mem-os/sdk search "package manager"`}</code>
                   <h2 className="text-lg font-medium tracking-[-0.01em] text-zinc-100">
                     {harness.name}
                   </h2>
-                  <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-zinc-500">
+                  <span className="font-mono text-[10px] tracking-[0.02em] text-zinc-500">
                     {harness.where}
                   </span>
                 </div>

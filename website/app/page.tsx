@@ -16,7 +16,16 @@ import InstallCommand from "./_components/InstallCommand";
 import StarButton from "./_components/StarButton";
 import { posts } from "../lib/posts";
 
-const integrations = ["OLLAMA", "LANGCHAIN", "CREWAI", "OPENAI", "MCP", "ANY LLM"];
+const integrations = [
+  "Hermes Agent",
+  "Claude Code",
+  "Kilo Code",
+  "Codex",
+  "Cline",
+  "Cursor",
+  "Zed",
+  "MCP",
+];
 
 const stats = [
   {
@@ -178,77 +187,59 @@ export default function Home() {
         <div className="relative mx-auto max-w-6xl px-6 pb-14 pt-14 md:pb-20 md:pt-24">
           <div className="grid items-center gap-12 lg:grid-cols-[1.02fr_1fr] lg:gap-10">
             <div>
-              <div
-                className="animate-fade-up flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500"
-              >
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[10px] tracking-[0.02em] text-zinc-500">
                 <span className="flex items-center gap-2 text-zinc-300">
-                  <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-zinc-300 text-zinc-500" />
-                  Open source
+                  <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                  open source
                 </span>
-                <span className="text-zinc-600">/</span>
-                <span>Local-first</span>
-                <span className="text-zinc-600">/</span>
-                <span>No accounts</span>
+                <span className="text-zinc-600">·</span>
+                <span>local-first</span>
+                <span className="text-zinc-600">·</span>
+                <span>MIT</span>
               </div>
 
-              <h1
-                className="animate-fade-up display mt-6 text-[3rem] text-zinc-50 sm:text-6xl xl:text-[4.75rem]"
-                style={{ animationDelay: "0.06s" }}
-              >
-                Your agents,
+              <h1 className="display mt-6 text-[3rem] text-zinc-50 sm:text-6xl xl:text-[4.6rem]">
+                Your agents run
                 <br />
-                with a <span className="text-fade">memory.</span>
+                on your machine.
+                <br />
+                Their memory should too.
               </h1>
 
-              <p
-                className="animate-fade-up mt-6 max-w-lg text-[15px] leading-relaxed text-zinc-400 md:text-base"
-                style={{ animationDelay: "0.12s" }}
-              >
-                Persistent memory, MCP tooling, and token-cost control — three
-                tools that share one SQLite file on your machine and never
-                phone home.
+              <p className="mt-6 max-w-xl text-[15px] leading-relaxed text-zinc-400 md:text-base">
+                MemOS keeps what an agent learns in a SQLite file. UMT connects
+                the tools. Guardian keeps the prompt small. No account, no
+                cloud, and no API key in the critical path.
               </p>
 
-              <div
-                className="animate-fade-up mt-8 flex flex-wrap items-center gap-3"
-                style={{ animationDelay: "0.18s" }}
-              >
-                <a href="#stack" className="btn btn-primary">
-                  Explore the stack
+              <div className="mt-8 flex flex-wrap items-center gap-3">
+                <a href="/docs" className="btn btn-primary">
+                  Read the field guide
                   <ArrowRight size={14} />
                 </a>
                 <StarButton repo="Markgatcha/memos" label="Star on GitHub" />
               </div>
 
-              <div
-                className="animate-fade-up mt-6"
-                style={{ animationDelay: "0.21s" }}
-              >
+              <div className="mt-6">
                 <InstallCommand
                   command="npm install @mem-os/sdk"
                   note="quick start"
                 />
               </div>
 
-              <div
-                className="animate-fade-up mt-8 hidden flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500 sm:flex"
-                style={{ animationDelay: "0.24s" }}
-              >
+              <div className="mt-8 hidden flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[10px] tracking-[0.02em] text-zinc-500 sm:flex">
                 <span>MIT licensed</span>
                 <span aria-hidden className="h-3 w-px bg-white/10" />
                 <span>runs on a laptop</span>
                 <span aria-hidden className="h-3 w-px bg-white/10" />
-                <span>0 cloud calls</span>
+                <span>zero telemetry</span>
               </div>
             </div>
 
-            <div
-              className="animate-fade-up"
-              style={{ animationDelay: "0.16s" }}
-            >
+            <div>
               <HeroDemo />
-              <div className="mt-3 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
-                <span>fig. 0 / product surface</span>
+              <div className="mt-3 flex items-center justify-between font-mono text-[10px] tracking-[0.02em] text-zinc-500">
+                <span>the memory index, not a mockup</span>
                 <span className="hidden sm:inline">nothing leaves the panel</span>
               </div>
             </div>
@@ -258,7 +249,7 @@ export default function Home() {
         <div className="border-t border-white/[0.07]">
           <div className="mx-auto flex max-w-6xl flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:gap-6">
             <span className="mono-label shrink-0">Works with</span>
-            <div className="flex flex-wrap items-center gap-x-7 gap-y-2 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+            <div className="flex flex-wrap items-center gap-x-7 gap-y-2 font-mono text-[10px] tracking-[0.02em] text-zinc-500">
               {integrations.map((name) => (
                 <span
                   key={name}
@@ -268,9 +259,12 @@ export default function Home() {
                 </span>
               ))}
             </div>
-            <span className="mono-label hidden sm:ml-auto sm:inline">
-              via MCP · SDK
-            </span>
+            <a
+              href="/docs/install"
+              className="mono-label hidden transition-colors hover:text-zinc-200 sm:ml-auto sm:inline"
+            >
+              all harnesses →
+            </a>
           </div>
         </div>
       </section>
@@ -291,18 +285,18 @@ export default function Home() {
                 >
                   <div className="flex items-baseline justify-between gap-4">
                     <span className="mono-label">0{i + 1}</span>
-                    <span className="hidden font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500 transition-colors group-hover:text-zinc-300 sm:inline">
-                      verified ↗
+                    <span className="hidden font-mono text-[10px] tracking-[0.02em] text-zinc-500 transition-colors group-hover:text-zinc-300 sm:inline">
+                      source ↗
                     </span>
                   </div>
-                  <div className="mt-4 font-mono text-[1.55rem] tabular-nums tracking-[-0.05em] text-zinc-50 sm:mt-5 sm:text-4xl md:text-5xl">
+                  <div className="mt-4 font-serif text-[1.8rem] tabular-nums tracking-[-0.03em] text-zinc-50 sm:mt-5 sm:text-4xl md:text-5xl">
                     {s.value.toFixed(s.decimals)}
                     {s.suffix}
                   </div>
                   <div className="mt-2 text-[10px] leading-snug text-zinc-400 transition-colors group-hover:text-zinc-200 sm:text-[12px]">
                     {s.label}
                   </div>
-                  <div className="mt-1 hidden font-mono text-[10px] uppercase tracking-[0.1em] text-zinc-500 sm:block">
+                  <div className="mt-1 hidden font-mono text-[10px] tracking-[0.02em] text-zinc-500 sm:block">
                     {s.note}
                   </div>
                 </a>
@@ -325,7 +319,7 @@ export default function Home() {
         <div className="mx-auto max-w-6xl px-6 py-20 md:py-28">
           <Reveal className="mb-10 grid gap-5 md:grid-cols-2 md:items-end">
             <div>
-              <div className="kicker mb-5">01 / the stack</div>
+              <div className="kicker mb-5">the stack</div>
               <h2 className="display text-4xl text-zinc-50 md:text-5xl">
                 Three layers.
                 <br />
@@ -367,7 +361,7 @@ export default function Home() {
                   </div>
                   <div className="max-w-[260px]">{p.visual}</div>
                   <div className="flex items-center justify-between gap-6 md:flex-col md:items-end md:gap-3">
-                    <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-zinc-500">
+                    <span className="font-mono text-[10px] tracking-[0.02em] text-zinc-500">
                       {p.meta}
                     </span>
                     <a
@@ -389,8 +383,8 @@ export default function Home() {
       {/* ---------------- Guarantee ---------------- */}
       <section className="invert-focus bg-zinc-100 text-zinc-950">
         <div className="mx-auto max-w-6xl px-6 py-20 md:py-24">
-          <div className="flex items-center justify-between border-b border-black/15 pb-3 font-mono text-[10px] uppercase tracking-[0.16em] text-black/55">
-            <span>02 / the guarantee</span>
+          <div className="flex items-center justify-between border-b border-black/15 pb-3 font-mono text-[10px] tracking-[0.02em] text-black/55">
+            <span>the guarantee</span>
             <span className="hidden sm:inline">context-core.dev</span>
           </div>
 
@@ -412,7 +406,7 @@ export default function Home() {
                 key={p.title}
                 className="border-b border-black/15 py-6 sm:border-b-0 sm:border-r sm:px-7 sm:first:pl-0 sm:last:border-r-0 sm:last:pr-0"
               >
-                <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.12em] text-black/55">
+                <div className="flex items-center justify-between font-mono text-[10px] tracking-[0.02em] text-black/55">
                   <span>0{i + 1}</span>
                   <p.icon size={14} strokeWidth={1.6} />
                 </div>
@@ -424,8 +418,8 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="mt-10 flex flex-col gap-3 font-mono text-[10px] uppercase tracking-[0.12em] text-black/55 sm:flex-row sm:items-center sm:justify-between">
-            <span>0 bytes egress · 0 accounts · 0 api keys</span>
+          <div className="mt-10 flex flex-col gap-3 font-mono text-[10px] tracking-[0.02em] text-black/55 sm:flex-row sm:items-center sm:justify-between">
+            <span>0 bytes egress · 0 accounts · 0 API keys</span>
             <a
               href="/docs/architecture"
               className="link-underline w-fit text-black/70 hover:text-black"
@@ -441,7 +435,7 @@ export default function Home() {
         <div className="mx-auto max-w-6xl px-6 py-20 md:py-24">
           <Reveal className="grid gap-10 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
             <div>
-              <div className="kicker mb-5">03 / evidence</div>
+              <div className="kicker mb-5">evidence</div>
               <h2 className="display text-4xl text-zinc-50 md:text-5xl">
                 Numbers,
                 <br />
@@ -468,10 +462,10 @@ export default function Home() {
                       : ""
                   }`}
                 >
-                  <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-zinc-500">
+                  <div className="font-mono text-[10px] tracking-[0.02em] text-zinc-500">
                     {row.metric}
                   </div>
-                  <div className="font-mono text-xl tabular-nums tracking-[-0.03em] text-zinc-50">
+                  <div className="font-serif text-2xl tabular-nums tracking-[-0.02em] text-zinc-50">
                     {row.value}
                   </div>
                   <div className="col-span-2 font-mono text-[10px] text-zinc-500">
@@ -479,7 +473,7 @@ export default function Home() {
                   </div>
                 </div>
               ))}
-              <div className="flex items-center justify-between border-t border-white/[0.07] px-5 py-3 font-mono text-[10px] uppercase tracking-[0.1em] text-zinc-500">
+              <div className="flex items-center justify-between border-t border-white/[0.07] px-5 py-3 font-mono text-[10px] tracking-[0.02em] text-zinc-500">
                 <span>raw artifacts in repo</span>
                 <span className="text-zinc-500">updated oct 2026</span>
               </div>
@@ -493,14 +487,16 @@ export default function Home() {
         <div className="mx-auto max-w-6xl px-6 py-20 md:py-24">
           <Reveal className="mb-9 flex flex-wrap items-end justify-between gap-4">
             <div>
-              <div className="kicker mb-5">04 / writing</div>
+              <div className="kicker mb-5">writing</div>
               <h2 className="display text-4xl text-zinc-50 md:text-5xl">
-                Engineering notes.
+                Notes from the
+                <br />
+                benchmark runs.
               </h2>
             </div>
             <a
               href="/blogs"
-              className="arrow-link mb-1 font-mono !text-[10px] uppercase tracking-[0.12em]"
+              className="arrow-link mb-1 font-mono !text-[10px] tracking-[0.02em]"
             >
               All posts
               <ArrowRight size={13} />
@@ -517,7 +513,7 @@ export default function Home() {
                     : { target: "_blank", rel: "noopener noreferrer" })}
                   className="group grid gap-3 border-b border-white/[0.08] py-6 transition-colors hover:bg-white/[0.015] md:grid-cols-[150px_1fr_24px] md:items-start md:gap-8"
                 >
-                  <div className="pt-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+                  <div className="pt-0.5 font-mono text-[10px] tracking-[0.02em] text-zinc-500">
                     <div>{p.date}</div>
                     <div className="mt-1 text-zinc-500">{p.tag}</div>
                   </div>
@@ -546,13 +542,13 @@ export default function Home() {
         <div className="mx-auto max-w-6xl px-6 py-20 md:py-24">
           <div className="grid gap-12 lg:grid-cols-2 lg:items-center">
             <Reveal className="min-w-0">
-              <div className="kicker mb-5">05 / get started</div>
+              <div className="kicker mb-5">get started</div>
               <h2 className="display text-4xl text-zinc-50 md:text-6xl">
-                Clone it.
+                Read the code.
                 <br />
-                Run it.
+                Run the demo.
                 <br />
-                <span className="text-fade">Own it.</span>
+                <span className="text-fade">Keep the file.</span>
               </h2>
               <p className="mt-6 max-w-md text-sm leading-relaxed text-zinc-400 md:text-[15px]">
                 No account, no trial, no usage meter. One command and a SQLite
@@ -575,7 +571,7 @@ export default function Home() {
 
             <Reveal delay={100} className="min-w-0">
               <Terminal />
-              <div className="mt-3 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+              <div className="mt-3 flex items-center justify-between font-mono text-[10px] tracking-[0.02em] text-zinc-500">
                 <span>fig. 2 / first run</span>
                 <span>local only</span>
               </div>

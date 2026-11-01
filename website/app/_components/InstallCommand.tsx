@@ -51,7 +51,7 @@ export default function InstallCommand({
         )}
       </button>
       {note && (
-        <span className="hidden items-center border-l border-white/[0.08] px-3 font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-600 sm:flex">
+        <span className="hidden items-center border-l border-white/[0.08] px-3 font-mono text-[10px] tracking-[0.02em] text-zinc-600 sm:flex">
           {note}
         </span>
       )}

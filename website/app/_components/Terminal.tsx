@@ -41,7 +41,7 @@ export default function Terminal() {
           >
             {l.prompt && (
               <>
-                <span className="text-zinc-600 select-none">$ </span>
+                <span className="text-zinc-500 select-none">$ </span>
                 <span className="text-zinc-100">{l.cmd}</span>
               </>
             )}
@@ -50,7 +50,7 @@ export default function Terminal() {
                 <span className="text-zinc-100 select-none">✓ </span>
                 <span className="text-zinc-100">{l.product}</span>
                 <span className="text-zinc-500"> {l.text}</span>
-                <span className="text-zinc-600"> {l.meta}</span>
+                <span className="text-zinc-500"> {l.meta}</span>
               </>
             )}
             {l.done && (
@@ -65,7 +65,7 @@ export default function Terminal() {
           className="term-line"
           style={{ animationDelay: `${0.5 + lines.length * 0.35}s` }}
         >
-          <span className="text-zinc-600 select-none">$ </span>
+          <span className="text-zinc-500 select-none">$ </span>
           <span className="term-caret" />
         </div>
       </div>

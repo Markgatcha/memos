@@ -1,6 +1,4 @@
-"use client";
-
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 type RevealProps = {
   children: ReactNode;
@@ -8,40 +6,11 @@ type RevealProps = {
   className?: string;
 };
 
-export default function Reveal({ children, delay = 0, className = "" }: RevealProps) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setVisible(true);
-          observer.disconnect();
-        }
-      },
-      // threshold 0 (not 0.15): a fractional threshold can never be reached
-      // by elements taller than viewportHeight/threshold — e.g. a full
-      // article body on mobile — leaving them stuck at opacity 0 forever.
-      { threshold: 0 }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div
-      ref={ref}
-      className={`reveal ${visible ? "reveal-visible" : ""} ${className}`}
-      style={{ transitionDelay: `${delay}ms` }}
-    >
-      {children}
-    </div>
-  );
+/**
+ * Layout wrapper kept for call-site compatibility. The old scroll-triggered
+ * fade is intentionally gone: a page that animates every section into view
+ * reads as a template, and the content is already legible without it.
+ */
+export default function Reveal({ children, className = "" }: RevealProps) {
+  return <div className={className}>{children}</div>;
 }

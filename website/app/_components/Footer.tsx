@@ -1,7 +1,6 @@
 import GithubIcon from "./GithubIcon";
 import DiscordIcon from "./DiscordIcon";
 import XIcon from "./XIcon";
-import { Layers } from "lucide-react";
 
 const columns = [
   {
@@ -18,6 +17,7 @@ const columns = [
     title: "Resources",
     links: [
       { label: "Documentation", href: "/docs" },
+      { label: "Harness matrix", href: "/docs/install" },
       { label: "Architecture", href: "/docs/architecture" },
       { label: "Benchmarks", href: "/benchmarks" },
       { label: "Changelog", href: "/changelog" },
@@ -51,9 +51,12 @@ export default function Footer() {
       <div className="mx-auto max-w-6xl px-6 py-14">
         <div className="grid grid-cols-2 gap-8 md:grid-cols-[1.5fr_1fr_1fr_1fr] md:gap-10">
           <div className="col-span-2 max-w-xs md:col-span-1">
-            <a href="/" className="flex items-center gap-2.5" aria-label="ContextCore home">
-              <span className="grid h-7 w-7 place-items-center rounded-sm bg-ink text-canvas">
-                <Layers size={15} strokeWidth={2.2} />
+            <a href="/" className="flex items-center gap-2.5">
+              <span
+                aria-hidden="true"
+                className="grid h-7 w-7 place-items-center border border-white/20 font-serif text-[15px] leading-none text-ink"
+              >
+                C
               </span>
               <span className="text-[15px] font-medium tracking-[-0.02em] text-zinc-100">
                 ContextCore
@@ -112,7 +115,7 @@ export default function Footer() {
           </div>
         </div>
 
-        <div className="mt-14 flex flex-col gap-3 border-t border-white/[0.07] pt-5 font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-14 flex flex-col gap-3 border-t border-white/[0.07] pt-5 font-mono text-[10px] tracking-[0.02em] text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
           <p>© 2026 ContextCore</p>
           <p className="flex items-center gap-2 text-zinc-500">
             <span className="h-1 w-1 rounded-full bg-zinc-400" />

@@ -14,7 +14,7 @@ export default function PageHeader({
       <div className="flex items-baseline justify-between gap-4 border-b border-white/[0.08] pb-3">
         <span className="kicker">{kicker}</span>
         <span className="mono-label hidden sm:inline">
-          contextcore / local
+          local-first / MIT
         </span>
       </div>
       <h1 className="display mt-8 text-[2.6rem] text-zinc-50 sm:text-5xl md:text-6xl">

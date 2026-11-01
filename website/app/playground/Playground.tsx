@@ -11,7 +11,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
       <div className={`font-mono text-xl tabular-nums ${accent ? "text-zinc-100" : "text-zinc-100"}`}>
         {value}
       </div>
-      <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+      <div className="mt-1 font-mono text-[10px] tracking-[0.02em] text-zinc-500">
         {label}
       </div>
     </div>

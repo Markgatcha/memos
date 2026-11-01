@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { usePathname } from "next/navigation";
-import { Layers, Menu, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import GithubIcon from "./GithubIcon";
 
 const links = [
@@ -36,12 +36,14 @@ export default function Navbar() {
         <a
           href="/"
           className="group flex shrink-0 items-center gap-2.5"
-          aria-label="ContextCore home"
         >
-          <span className="grid h-7 w-7 place-items-center rounded-sm bg-ink text-canvas transition-colors group-hover:bg-white">
-            <Layers size={15} strokeWidth={2.2} />
+          <span
+            aria-hidden="true"
+            className="grid h-7 w-7 place-items-center border border-white/20 font-serif text-[15px] leading-none text-ink transition-colors group-hover:border-accent group-hover:text-accent"
+          >
+            C
           </span>
-          <span className="text-[15px] font-medium tracking-[-0.02em] text-zinc-100">
+          <span className="text-[15px] font-medium tracking-[-0.01em] text-zinc-100">
             ContextCore
           </span>
         </a>
@@ -66,7 +68,7 @@ export default function Navbar() {
                 {active && (
                   <span
                     aria-hidden
-                    className="absolute inset-x-0 -bottom-[1px] h-px bg-zinc-200"
+                    className="absolute inset-x-0 -bottom-[1px] h-px bg-accent"
                   />
                 )}
               </a>

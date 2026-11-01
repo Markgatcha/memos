@@ -80,7 +80,7 @@ export default function ServerGrid({ servers }: ServerGridProps) {
               key={c}
               type="button"
               onClick={() => setCategory(c)}
-              className={`rounded-lg px-3 py-2 font-mono text-[11px] uppercase tracking-wide transition-colors border ${
+              className={`rounded-lg px-3 py-2 font-mono text-[11px] tracking-[0.02em] transition-colors border ${
                 category === c
                   ? "border-white/25 bg-white/[0.08] text-zinc-100"
                   : "border-white/[0.07] bg-transparent text-zinc-500 hover:text-zinc-300 hover:border-white/15"
@@ -103,7 +103,7 @@ export default function ServerGrid({ servers }: ServerGridProps) {
             <div className="flex items-start justify-between gap-3 mb-2">
               <div>
                 <div className="text-sm font-medium text-zinc-100">{s.title}</div>
-                <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-zinc-600 mt-0.5">
+                <div className="font-mono text-[10px] tracking-[0.02em] text-zinc-600 mt-0.5">
                   {s.category}
                 </div>
               </div>

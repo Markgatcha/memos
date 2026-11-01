@@ -13,7 +13,7 @@ type FigureProps = {
 export function Figure({ kicker, viewBox, label, children }: FigureProps) {
   return (
     <figure className="card p-5 md:p-6 my-8">
-      <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-4">
+      <div className="font-mono text-[11px] tracking-[0.02em] text-zinc-500 mb-4">
         {kicker}
       </div>
       <svg

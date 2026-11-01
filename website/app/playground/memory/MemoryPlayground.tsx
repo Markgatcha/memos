@@ -236,7 +236,7 @@ export default function MemoryPlayground() {
                 className="border border-white/[0.06] bg-white/[0.015] px-3 py-2"
               >
                 <div className="flex items-start gap-2">
-                  <span className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-zinc-600">
+                  <span className="mt-1 font-mono text-[9px] tracking-[0.02em] text-zinc-600">
                     {memory.type}
                   </span>
                   <p className="flex-1 text-[12px] leading-relaxed text-zinc-300">
@@ -318,7 +318,7 @@ export default function MemoryPlayground() {
             </div>
 
             {mode && (
-              <div className="mt-3 font-mono text-[9px] uppercase tracking-[0.1em] text-zinc-600">
+              <div className="mt-3 font-mono text-[9px] tracking-[0.02em] text-zinc-600">
                 {mode === "recorded"
                   ? `recorded from ${demo.engine}`
                   : "browser lexical demo · the SDK uses hybrid retrieval"}

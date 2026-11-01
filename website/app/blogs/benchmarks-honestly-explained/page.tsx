@@ -49,7 +49,7 @@ function LI({ children }: { children: React.ReactNode }) {
 function Callout({ children }: { children: React.ReactNode }) {
   return (
     <div className="card p-5 md:p-6 my-8 border-white/15">
-      <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-300 mb-2.5">
+      <div className="font-mono text-[11px] tracking-[0.02em] text-zinc-300 mb-2.5">
         takeaway
       </div>
       <div className="text-[14px] text-zinc-300 leading-[1.75]">{children}</div>
@@ -122,7 +122,7 @@ export default function BenchmarksExplainedPost() {
           >
             <ArrowLeft size={13} /> all posts
           </Link>
-          <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-4">
+          <div className="font-mono text-[11px] tracking-[0.02em] text-zinc-500 mb-4">
             benchmarks · sep 2026
           </div>
           <h1 className="text-3xl md:text-4xl font-semibold tracking-[-0.03em] text-zinc-50 text-balance leading-[1.15]">

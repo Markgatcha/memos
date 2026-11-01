@@ -1,10 +1,31 @@
 import type { Metadata, Viewport } from "next";
-import { GeistSans } from "geist/font/sans";
-import { GeistMono } from "geist/font/mono";
+import { IBM_Plex_Mono, IBM_Plex_Sans, Spectral } from "next/font/google";
 import "./globals.css";
 import Navbar from "./_components/Navbar";
 import PageBackground from "./_components/PageBackground";
 import Footer from "./_components/Footer";
+
+const spectral = Spectral({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  style: ["normal", "italic"],
+  variable: "--font-spectral",
+  display: "swap",
+});
+
+const plexSans = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-plex-sans",
+  display: "swap",
+});
+
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-plex-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: {
@@ -32,7 +53,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#050506",
+  themeColor: "#10140f",
   colorScheme: "dark",
 };
 
@@ -42,7 +63,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+    <html
+      lang="en"
+      className={`${spectral.variable} ${plexSans.variable} ${plexMono.variable}`}
+    >
       <body className="min-h-screen bg-canvas font-sans text-zinc-100 antialiased">
         <noscript>
           <style>{`.reveal{opacity:1 !important;transform:none !important}`}</style>

@@ -41,7 +41,7 @@ export default function Changelog() {
                         v{release.version}
                       </span>
                       {index === 0 && (
-                        <span className="rounded-sm border border-white/[0.12] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-400">
+                        <span className="rounded-sm border border-white/[0.12] px-1.5 py-0.5 font-mono text-[9px] tracking-[0.02em] text-zinc-400">
                           latest
                         </span>
                       )}
@@ -53,7 +53,7 @@ export default function Changelog() {
                   <div className="border-t border-white/[0.06] px-6 py-5">
                     {release.sections.map((section) => (
                       <section key={section.title} className="mb-6 last:mb-0">
-                        <h3 className="font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+                        <h3 className="font-mono text-[10px] tracking-[0.02em] text-zinc-500">
                           {section.title}
                         </h3>
                         <ul className="mt-3 space-y-2.5">

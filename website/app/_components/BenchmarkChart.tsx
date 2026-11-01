@@ -43,7 +43,7 @@ export default function BenchmarkChart({ title, bars, footnote }: BenchmarkChart
   return (
     <div ref={ref} className="card p-6 md:p-7">
       {title && (
-        <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-6">
+        <div className="font-mono text-[11px] tracking-[0.02em] text-zinc-500 mb-6">
           {title}
         </div>
       )}

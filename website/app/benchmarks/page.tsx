@@ -304,7 +304,7 @@ export default function Benchmarks() {
             </h2>
             <div className="grid sm:grid-cols-2 gap-x-10 gap-y-6 text-[13px] leading-relaxed">
               <div>
-                <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-1.5">
+                <div className="font-mono text-[11px] tracking-[0.02em] text-zinc-500 mb-1.5">
                   hardware
                 </div>
                 <p className="text-zinc-400">
@@ -314,7 +314,7 @@ export default function Benchmarks() {
                 </p>
               </div>
               <div>
-                <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-1.5">
+                <div className="font-mono text-[11px] tracking-[0.02em] text-zinc-500 mb-1.5">
                   retrieval stack
                 </div>
                 <p className="text-zinc-400">
@@ -324,7 +324,7 @@ export default function Benchmarks() {
                 </p>
               </div>
               <div>
-                <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-1.5">
+                <div className="font-mono text-[11px] tracking-[0.02em] text-zinc-500 mb-1.5">
                   scoring
                 </div>
                 <p className="text-zinc-400">
@@ -334,7 +334,7 @@ export default function Benchmarks() {
                 </p>
               </div>
               <div>
-                <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-1.5">
+                <div className="font-mono text-[11px] tracking-[0.02em] text-zinc-500 mb-1.5">
                   reproduce
                 </div>
                 <p className="text-zinc-400 font-mono text-xs space-y-1">

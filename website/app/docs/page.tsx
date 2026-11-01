@@ -11,6 +11,41 @@ export const metadata: Metadata = {
 
 const sections = [
   {
+    title: "Start here",
+    links: [
+      {
+        label: "Memory model: nodes, trust, time, packs",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/concepts.md",
+        internal: false,
+      },
+      {
+        label: "Harness matrix: Claude Code, Hermes, Kilo, pi, Codex",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/harness-matrix.md",
+        internal: false,
+      },
+      {
+        label: "CLI reference (all 60 commands)",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/reference/cli.md",
+        internal: false,
+      },
+      {
+        label: "MCP tools (all 40)",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/reference/mcp-tools.md",
+        internal: false,
+      },
+      {
+        label: "HTTP API (all 35 paths)",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/reference/http-api.md",
+        internal: false,
+      },
+      {
+        label: "Website and harness research notes",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/research/2026-11-website-harness-audit.md",
+        internal: false,
+      },
+    ],
+  },
+  {
     title: "MemOS",
     links: [
       { label: "MemOS Overview & Quick Start", href: "/memos", internal: true },
@@ -94,6 +129,21 @@ const sections = [
         internal: false,
       },
       {
+        label: "Security model",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/security-model.md",
+        internal: false,
+      },
+      {
+        label: "Operations runbook",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/operations.md",
+        internal: false,
+      },
+      {
+        label: "Documentation coverage",
+        href: "https://github.com/Markgatcha/memos/blob/main/docs/coverage.md",
+        internal: false,
+      },
+      {
         label: "Context Pack Format Spec",
         href: "https://github.com/Markgatcha/memos/blob/main/docs/benchmark-quality.md",
         internal: false,
@@ -124,7 +174,7 @@ export default function Docs() {
         <PageHeader
           kicker="docs"
           title="Documentation"
-          subtitle="Everything you need to run the AI Trio locally."
+          subtitle="Install MemOS, wire it into a harness, look up an exact command, or run a store over time."
         />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

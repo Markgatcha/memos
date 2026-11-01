@@ -72,14 +72,14 @@ function FlowArrow({ vertical = false }: { vertical?: boolean }) {
 
   return (
     <div className="hidden flex-col items-center justify-center gap-1.5 md:flex">
-      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+      <span className="font-mono text-[10px] tracking-[0.02em] text-zinc-500">
         mcp
       </span>
       <div className="flex w-full items-center gap-1">
         <span className="h-px flex-1 border-t border-dashed border-white/20" />
         <ArrowRight size={13} className="shrink-0 text-zinc-500" />
       </div>
-      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+      <span className="font-mono text-[10px] tracking-[0.02em] text-zinc-500">
         local
       </span>
     </div>
@@ -93,8 +93,8 @@ function FlowArrow({ vertical = false }: { vertical?: boolean }) {
  */
 export default function StackDiagram() {
   return (
-    <figure className="border border-white/[0.09] bg-[#070708]">
-      <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+    <figure className="border border-white/[0.12] bg-panel">
+      <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-2 font-mono text-[10px] tracking-[0.02em] text-zinc-500">
         <span>figure 1 / one request path</span>
         <span className="text-zinc-500">0 cloud hops</span>
       </div>
@@ -108,17 +108,17 @@ export default function StackDiagram() {
         {/* Local boundary */}
         <div className="relative border border-dashed border-white/20 bg-white/[0.018] p-3">
           <div className="mb-3 flex items-center justify-between">
-            <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
+            <span className="font-mono text-[10px] tracking-[0.02em] text-zinc-400">
               your machine
             </span>
-            <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+            <span className="font-mono text-[10px] tracking-[0.02em] text-zinc-500">
               no egress
             </span>
           </div>
 
           <div className="mono-label mb-2">02 / context core</div>
 
-          <div className="divide-y divide-white/[0.07] border border-white/[0.08] bg-[#0a0a0b]">
+          <div className="divide-y divide-white/[0.08] border border-white/[0.1] bg-[#12160f]">
             {layers.map((l) => (
               <div
                 key={l.name}
@@ -132,7 +132,7 @@ export default function StackDiagram() {
                 <span className="w-[70px] shrink-0 text-[13px] font-medium text-zinc-100">
                   {l.name}
                 </span>
-                <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-zinc-500">
+                <span className="shrink-0 font-mono text-[10px] tracking-[0.02em] text-zinc-500">
                   {l.role}
                 </span>
                 <span className="ml-auto hidden truncate font-mono text-[10px] text-zinc-500 sm:block">
