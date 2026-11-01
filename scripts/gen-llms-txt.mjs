@@ -96,6 +96,8 @@ const lines = [
   "> Local-first, persistent memory layer for AI agents. SQLite on your own",
   "> machine, no cloud and no API keys. TypeScript SDK, Python server, MCP",
   "> tools, document ingestion, and reproducible retrieval benchmarks.",
+  ">",
+  "> Packages: npm `@mem-os/sdk`, PyPI `mem-os-python`.",
   "",
   "Use this file to choose the right page. Every link is the canonical docs",
   "page; the repository has runnable examples under `examples/` and benchmark",

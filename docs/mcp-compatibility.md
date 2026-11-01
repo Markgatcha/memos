@@ -89,7 +89,7 @@ rather than silently changing behavior.
 
 Tested against Claude Code, Cursor, Windsurf, Cline, OpenCode, Codex CLI, and
 Gemini CLI through `memos connect`. Per-harness snippets are in
-[`llms-install.md`](../llms-install.md) and on the site's `/docs/install` page.
+[`llms-install.md`](https://github.com/Markgatcha/memos/blob/main/llms-install.md) and on the site's `/docs/install` page.
 
 If a client only implements the legacy handshake, it should connect without
 configuration. If it implements `2026-07-28`, it should call `server/discover`

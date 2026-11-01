@@ -8,14 +8,14 @@ theme:
   name: material
   palette:
     - scheme: default
-      primary: deep purple
-      accent: purple
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: deep purple
-      accent: purple
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -25,6 +25,9 @@ theme:
     - navigation.expand
     - toc.follow
     - search.suggest
+
+extra_css:
+  - stylesheets/extra.css
 
 markdown_extensions:
   - admonition
@@ -40,30 +43,45 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - Home: index.md
-  - Installation: installation.md
-  - Ingest your notes in 60 seconds: quickstart-ingest.md
-  - Document Ingestion: ingestion.md
-  - Preferences: preferences.md
-  - Troubleshooting: troubleshooting.md
-  - Memory Operations Guide: memory-guide.md
-  - API Reference: api-reference.md
-  - Adapters: adapters.md
-  - Benchmarks: benchmark-comparison.md
-  - Benchmark Results (plain English): benchmark-results.md
-  - Accuracy Roadmap: accuracy-roadmap.md
-  - Benchmark Quality: benchmark-quality.md
-  - Benchmarking Guide: benchmarking.md
-  - AI Trio Contracts: ai-trio-contracts.md
-  - Fidelity Levels: fidelity-levels.md
-  - Temporal Events & Reminders: temporal-events.md
-  - Recall Inspector, Feedback & Health: recall-inspector.md
-  - Cross-Harness Memory Sync: cross-harness.md
-  - Integrations: integrations.md
-  - UMT × MemOS shared config: umt-integration.md
-  - LLM Guardian integration: guardian-integration.md
-  - Memory Explorer (MCP App): mcp-apps-explorer.md
-  - MCP Compatibility: mcp-compatibility.md
-  - Remote MCP and OAuth: remote-mcp.md
+  - Start here:
+      - Overview: index.md
+      - Installation: installation.md
+      - Your first memory: quickstart-ingest.md
+      - Harness matrix: harness-matrix.md
+      - Website and harness audit: research/2026-11-website-harness-audit.md
+  - Concepts:
+      - Memory model: concepts.md
+      - Fidelity levels: fidelity-levels.md
+      - Temporal events and reminders: temporal-events.md
+      - Recall inspector, feedback, and health: recall-inspector.md
+  - Guides:
+      - Memory operations: memory-guide.md
+      - Document ingestion: ingestion.md
+      - Preferences: preferences.md
+      - Cross-harness sync: cross-harness.md
+      - Adapters: adapters.md
+      - Integrations: integrations.md
+      - UMT and MemOS config: umt-integration.md
+      - LLM Guardian integration: guardian-integration.md
+      - Remote MCP and OAuth: remote-mcp.md
+  - Reference:
+      - CLI commands: reference/cli.md
+      - MCP tools: reference/mcp-tools.md
+      - HTTP API: reference/http-api.md
+      - TypeScript API: api-reference.md
+      - MCP compatibility: mcp-compatibility.md
+      - Memory Explorer (MCP App): mcp-apps-explorer.md
+      - Documentation coverage: coverage.md
+  - Operations:
+      - Security model: security-model.md
+      - Operations runbook: operations.md
+      - Troubleshooting: troubleshooting.md
+  - Benchmarks:
+      - How we benchmark: benchmarking.md
+      - Results in plain English: benchmark-results.md
+      - Comparison table: benchmark-comparison.md
+      - Benchmark quality: benchmark-quality.md
+      - Accuracy roadmap: accuracy-roadmap.md
+      - AI Trio contracts: ai-trio-contracts.md
   - Contributing: https://github.com/Markgatcha/memos/blob/main/CONTRIBUTING.md
   - Roadmap: https://github.com/Markgatcha/memos/blob/main/ROADMAP.md

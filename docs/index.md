@@ -1,111 +1,56 @@
-# Welcome to MemOS
+# MemOS documentation
 
-**The memory layer your AI agent has been missing.**
+MemOS is a local-first memory layer for AI agents. It stores facts,
+preferences, decisions, and ingested documents in a single SQLite file, then
+recalls them through a TypeScript SDK, a CLI, an MCP server, or an HTTP API.
 
-You know that feeling — you tell your AI assistant something important, close the app, and next time it's back to square one. Every conversation starts with "so, what were we working on?" MemOS fixes that. It gives any LLM, chatbot, or agent a memory that **survives restarts**, stored as a plain SQLite file on your own machine.
+There is no account, no hosted control plane, and no API key in the core path.
 
-No cloud. No API keys. No account. No monthly bill. Just memory that stays yours.
+## Choose your path
 
-!!! tip "Five minutes to your first memory"
-    If you're new here, start with the [Installation guide](installation.md) — it walks you through everything step by step, and we'll wait right here.
+| If you want to... | Start here |
+| --- | --- |
+| Put memory behind an agent in five minutes | [Installation](installation.md) |
+| Point MemOS at a folder of notes | [Ingest your notes in 60 seconds](quickstart-ingest.md) |
+| Wire it into Claude Code, Cursor, Codex, Hermes, Kilo, or another harness | [Harness matrix](harness-matrix.md) |
+| Understand nodes, trust, time, packs, and deletion | [Memory model](concepts.md) |
+| Look up an exact command, tool, or route | [CLI reference](reference/cli.md) · [MCP tools](reference/mcp-tools.md) · [HTTP API](reference/http-api.md) |
+| Run it on a server | [Remote MCP and OAuth](remote-mcp.md) |
+| Operate a store over time | [Operations](operations.md) |
 
-## The 30-second version
+## The four surfaces
 
-=== "TypeScript"
+| Surface | Use it for | Start |
+| --- | --- | --- |
+| TypeScript SDK | Embed memory in a Node or Bun app | `npm install @mem-os/sdk` |
+| CLI | Local work, scripts, maintenance | `npx @mem-os/sdk --help` |
+| MCP server | Any MCP-capable coding agent | `npx -y @mem-os/sdk mcp` |
+| HTTP API | Python, Dify, n8n, or a shared service | `python -m memos.server.main` |
 
-    ```bash
-    npm install @mem-os/sdk
-    ```
+All four read and write the same SQLite database. `MEMOS_DB_PATH` selects the
+file; `MEMOS_NAMESPACE` selects the default namespace.
 
-    ```typescript
-    import { MemOS } from "@mem-os/sdk";
+## What the docs cover
 
-    const memos = new MemOS();
-    await memos.init();
+- **Concepts:** the memory graph, provenance, temporal validity, retrieval,
+  context packs, procedural lessons, review, knowledge pages, and proof of
+  forgetting.
+- **Guides:** installation, ingestion, preferences, cross-harness sync, UMT,
+  Guardian, remote deployment, troubleshooting.
+- **Reference:** every CLI command, every MCP tool, and every HTTP route,
+  generated from the source. See [coverage](coverage.md) for the current map.
 
-    // Remember something
-    await memos.store("User prefers dark mode", { type: "preference" });
+## A note on claims
 
-    // Recall it later — even in a brand-new process
-    const results = await memos.search("dark mode");
-    ```
+Benchmark numbers on this site come from checked-in artifacts. Where a result
+is not reproducible, the docs say so and link to the artifact that does exist.
+Start with [Benchmark results in plain English](benchmark-results.md) if you
+want the short version.
 
-=== "Python"
+## Repository
 
-    ```bash
-    git clone https://github.com/Markgatcha/memos.git
-    cd memos
-    pip install -e .
-    memos-server   # → http://localhost:7400
-    ```
-
-    ```python
-    import requests
-
-    requests.post(
-        "http://localhost:7400/api/mem/store",
-        json={"content": "User prefers dark mode", "type": "preference"},
-    )
-    ```
-
-That's genuinely it. Store a memory, kill the process, start a new one, search — it's still there.
-
-## Why people pick MemOS
-
-- **It's actually local.** Your memories live in one SQLite file you can open, copy, back up, or delete. Nothing phones home.
-- **It's a graph, not a list.** New memories auto-link to related ones, so searching "theme" can surface your "dark mode" preference.
-- **It understands time.** Memories carry validity windows (`validFrom`/`validTo`), so "user lives in Berlin" can gracefully stop being true.
-- **It's cheap to feed to an LLM.** The compact TOON format cuts context tokens by ~77% versus JSON.
-- **It learns what actually helped.** Optional outcome feedback asks which memories the agent used and whether the task worked, then nudges future ranking within a bounded range. `explain()` shows exactly why anything was recalled.
-- **It's free.** MIT license, no paid tier, no "graph memory costs extra." Fork it, modify it, ship it.
-
-## Core concepts
-
-### Memory nodes
-
-A **memory node** is a single unit of knowledge. It contains:
-
-- `content` — the raw text
-- `summary` — an extractive summary (auto-generated if not provided)
-- `type` — semantic category (`fact`, `preference`, `context`, `relationship`, `entity`, `custom`)
-- `metadata` — arbitrary JSON-serialisable data
-- `importance` — a score from 0 to 1
-
-### Memory edges
-
-An **edge** connects two nodes with a typed relationship:
-
-- `relates_to` — general association
-- `contradicts` — the target contradicts the source
-- `supports` — the target supports the source
-- `derived_from` — the source was derived from the target
-- `part_of` — the source is part of the target
-
-Edges are created automatically (via text similarity) or manually (via `memos.link()`).
-
-### The graph
-
-Memories aren't stored as a flat list — they're a **graph**. When you store a new memory, MemOS automatically links it to related existing memories based on text similarity. This enables associative recall: searching for "theme" can surface a memory about "dark mode" because they're linked.
-
-### Storage
-
-By default, MemOS uses **SQLite** with WAL mode for concurrent reads and FTS5 for full-text search. The database file lives at `~/.memos/memos.db` (configurable). You can implement a custom `StorageAdapter` for Postgres, Redis, Qdrant, or any other backend.
-
-## Architecture overview
-
-```
-Application → SDK/HTTP → Memory Engine → Graph → SQLite
-                ↑
-          Auto-linking
-          Summarisation
-          FTS5 Search
-```
-
-## Where to next?
-
-- [Installation](installation.md) — step-by-step setup for every platform (start here)
-- [API Reference](api-reference.md) — full method documentation
-- [Adapters](adapters.md) — framework integrations (Ollama, LangChain, CrewAI)
-- [Provenance Trust](provenance-trust.md) — provenance tiers, write-gate quarantine, and read-time trust flags
-- [Benchmarks](benchmark-comparison.md) — how MemOS measures up (spoiler: 95.9% recall on BEAM-1M)
-- [GitHub](https://github.com/Markgatcha/memos) — source code, issues, and the star button ⭐
+- Source: <https://github.com/Markgatcha/memos>
+- Issues: <https://github.com/Markgatcha/memos/issues>
+- Changelog: <https://context-core.dev/changelog>
+- Install contract for agents:
+  <https://github.com/Markgatcha/memos/blob/main/llms-install.md>

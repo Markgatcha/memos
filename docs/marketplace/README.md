@@ -47,7 +47,7 @@ npm run check:server-json
 
 Publishing requires a DNS-verified namespace (or GitHub auth for the
 `io.github.markgatcha` namespace) and is tracked in
-[`ROADMAP-NEXT-2.md`](../../ROADMAP-NEXT-2.md) item 4. The manifest is prepared
+[`ROADMAP-NEXT-2.md`](https://github.com/Markgatcha/memos/blob/main/ROADMAP-NEXT-2.md) item 4. The manifest is prepared
 so publishing is one command once the namespace is verified.
 
 ## Reviewer short path

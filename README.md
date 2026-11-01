@@ -34,7 +34,11 @@
 
 > **New here?** [Ingest your notes in 60 seconds](docs/quickstart-ingest.md) — install, point at a folder, search it.
 
-> **Installing?** [Agent-readable install contract](llms-install.md) · [MCP compatibility policy](docs/mcp-compatibility.md) · [per-harness snippets](https://context-core.dev/docs/install)
+> **Installing?** [Agent-readable install contract](llms-install.md) · [Harness matrix](docs/harness-matrix.md) · [MCP compatibility policy](docs/mcp-compatibility.md) · [per-harness snippets](https://context-core.dev/docs/install)
+
+> **Reference:** [CLI commands](docs/reference/cli.md) · [MCP tools](docs/reference/mcp-tools.md) · [HTTP API](docs/reference/http-api.md) · [docs coverage](docs/coverage.md)
+
+> **Agent Plugins:** the repo root ships `plugin.json`, `mcp.json`, and `skills/` for Hermes Agent and OpenClaw, alongside the Claude, Cursor, and Gemini manifests.
 
 > **Release status:** The GitHub source is the canonical, always-current build (v1.6.27). The npm package (`@mem-os/sdk`) and PyPI package (`mem-os-python`) are updated on each tagged release but may briefly lag the source. For unreleased changes, install from source.
 

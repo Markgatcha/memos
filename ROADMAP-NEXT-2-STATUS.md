@@ -50,6 +50,25 @@ Status of `ROADMAP-NEXT-2.md` after the 2026-11-01 implementation pass.
 - Guardian: 324 tests passed; lint/typecheck clean (`format:check` still flags the
   pre-existing `.tmp-shot.ts` scratch file)
 
+## Post-round: website and harness pass (2026-11-01)
+
+- Site redesigned around a warm "archive" system: Spectral / IBM Plex, oxide
+  accent, squared index cards, no glow/dot-grid/fade-up. `website/DESIGN.md`
+  records the rules.
+- Lighthouse on the rebuilt homepage: accessibility 1.0, best practices 1.0,
+  SEO 1.0, zero failing audits.
+- Docs restructured into Start here / Concepts / Guides / Reference /
+  Operations / Benchmarks. Generated references:
+  - 60 CLI commands
+  - 40 MCP tools
+  - 35 HTTP paths / 36 operations
+  - `docs/coverage.md`: 100% name coverage on all three surfaces
+- New harnesses: `memos connect` targets for Hermes Agent, Kilo Code, pi,
+  OpenClaw, Zed, and goose; root Agent Plugins 1.0.0 package (`plugin.json`,
+  `mcp.json`, `skills/`) for Hermes and OpenClaw.
+- Research notes with sources:
+  `docs/research/2026-11-website-harness-audit.md`.
+
 ## Open blockers
 
 1. **MCP registry publish (#4)** — needs a DNS-verified namespace or GitHub

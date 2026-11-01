@@ -1,0 +1,69 @@
+/* ContextCore docs skin: warm paper, oxide accent, serif headings. */
+
+:root {
+  --md-primary-fg-color: #10140f;
+  --md-primary-fg-color--light: #1c241c;
+  --md-primary-fg-color--dark: #0b0e0a;
+  --md-accent-fg-color: #b85f38;
+  --md-accent-fg-color--transparent: rgba(184, 95, 56, 0.12);
+  --md-typeset-a-color: #9a4a2b;
+}
+
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #f6f0e3;
+  --md-default-fg-color: #1c1a16;
+  --md-default-fg-color--light: #5f574a;
+  --md-default-fg-color--lighter: #8a8172;
+  --md-code-bg-color: #ece4d3;
+  --md-typeset-color: #1c1a16;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #10140f;
+  --md-default-fg-color: #efe6d3;
+  --md-default-fg-color--light: #b9b1a0;
+  --md-default-fg-color--lighter: #918a7b;
+  --md-code-bg-color: #171d15;
+  --md-typeset-a-color: #e08d63;
+}
+
+.md-typeset h1,
+.md-typeset h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  letter-spacing: -0.015em;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset h1 {
+  font-weight: 500;
+}
+
+.md-typeset h2 {
+  font-weight: 500;
+  border-bottom: 1px solid var(--md-default-fg-color--lighter);
+  padding-bottom: 0.3rem;
+}
+
+.md-header__topic:first-child {
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.md-typeset table:not([class]) th {
+  background: var(--md-code-bg-color);
+  font-weight: 600;
+}
+
+.md-typeset code {
+  border-radius: 1px;
+}
+
+.md-typeset pre > code {
+  border-radius: 0;
+}
+
+/* Keep the nav readable without the default pill highlight. */
+.md-nav__link--active {
+  font-weight: 600;
+}

@@ -28,8 +28,8 @@ Workflow platforms use the HTTP API instead of MCP:
 
 | Platform | Connector |
 |---|---|
-| **Dify** | Import [`integrations/dify/memos-openapi.yaml`](../integrations/dify/memos-openapi.yaml) as a custom tool |
-| **n8n** | Import [`integrations/n8n/memos-workflow.json`](../integrations/n8n/memos-workflow.json) |
+| **Dify** | Import [`integrations/dify/memos-openapi.yaml`](https://github.com/Markgatcha/memos/blob/main/integrations/dify/memos-openapi.yaml) as a custom tool |
+| **n8n** | Import [`integrations/n8n/memos-workflow.json`](https://github.com/Markgatcha/memos/blob/main/integrations/n8n/memos-workflow.json) |
 
 `memos connect <target>` always *prints* the exact config first; add
 `--write` to write the file (add `--force` to overwrite). A custom store

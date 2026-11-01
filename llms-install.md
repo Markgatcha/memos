@@ -32,6 +32,22 @@ required after the npm download.
 }
 ```
 
+## Portable Agent Plugin
+
+The repository root is also an Agent Plugins 1.0.0 package: `plugin.json`,
+`mcp.json`, and `skills/`. Hermes Agent and OpenClaw can install it directly:
+
+```bash
+hermes plugins install Markgatcha/memos --no-enable
+# then enable `memos` in ~/.hermes/config.yaml
+
+openclaw plugins install Markgatcha/memos
+```
+
+The skills are read-only and namespaced by the host. The MCP server is the
+same `npx -y @mem-os/sdk mcp` process. `npm run plugin:check` verifies that the
+root package stays in sync with `plugin/`.
+
 ## Per-harness install
 
 Let the CLI print or write the right file for your harness:
@@ -45,6 +61,12 @@ Let the CLI print or write the right file for your harness:
 | OpenCode | `npx -y @mem-os/sdk connect opencode` | `npx -y @mem-os/sdk connect opencode --write` |
 | Codex CLI | `npx -y @mem-os/sdk connect codex` | `npx -y @mem-os/sdk connect codex --write` |
 | Gemini CLI | `npx -y @mem-os/sdk connect gemini` | `npx -y @mem-os/sdk connect gemini --write` |
+| Hermes Agent | `npx -y @mem-os/sdk connect hermes` | paste into `~/.hermes/config.yaml` |
+| Kilo Code | `npx -y @mem-os/sdk connect kilo` | `npx -y @mem-os/sdk connect kilo --write` |
+| pi | `npx -y @mem-os/sdk connect pi` | `npx -y @mem-os/sdk connect pi --write` |
+| OpenClaw | `npx -y @mem-os/sdk connect openclaw` | paste into `~/.openclaw/openclaw.json` |
+| Zed | `npx -y @mem-os/sdk connect zed` | paste into `~/.config/zed/settings.json` |
+| goose | `npx -y @mem-os/sdk connect goose` | paste into `~/.config/goose/config.yaml` |
 
 Exact config bodies, if you prefer to edit files by hand:
 
@@ -88,6 +110,75 @@ args = ["-y", "@mem-os/sdk", "mcp"]
 ```
 
 **Gemini CLI** — `~/.gemini/settings.json`: same `mcpServers` shape as Cursor.
+
+**Hermes Agent** — `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  memos:
+    command: "npx"
+    args: ["-y", "@mem-os/sdk", "mcp"]
+    protocol: auto
+    trust: full
+```
+
+**Kilo Code** — `kilo.json` (project) or `~/.config/kilo/kilo.json`:
+
+```json
+{
+  "mcp": {
+    "memos": {
+      "type": "local",
+      "command": ["npx", "-y", "@mem-os/sdk", "mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**pi** — `~/.pi/agent/mcp.json`: canonical `mcpServers` shape.
+
+**OpenClaw** — `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "memos": {
+        "command": "npx",
+        "args": ["-y", "@mem-os/sdk", "mcp"],
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+**Zed** — `~/.config/zed/settings.json`:
+
+```json
+{
+  "context_servers": {
+    "memos": {
+      "source": "custom",
+      "command": "npx",
+      "args": ["-y", "@mem-os/sdk", "mcp"]
+    }
+  }
+}
+```
+
+**goose** — `~/.config/goose/config.yaml`:
+
+```yaml
+extensions:
+  memos:
+    type: stdio
+    cmd: "npx"
+    args: ["-y", "@mem-os/sdk", "mcp"]
+    enabled: true
+    timeout: 300
+```
 
 ## Verify
 

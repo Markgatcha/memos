@@ -11,6 +11,6 @@ Python server drives it through a Node.js subprocess, so Node.js >= 18 is
 required at runtime.
 """
 
-__version__ = "1.6.26"
+__version__ = "1.6.27"
 
 __all__ = ["__version__"]
