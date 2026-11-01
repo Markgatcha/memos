@@ -55,8 +55,7 @@ def main() -> None:
             for state in trajectory.get("states") or []
         ]
     environment = {
-        tid: str(trajectory.get("environment") or "")
-        for tid, trajectory in trajectories.items()
+        tid: str(trajectory.get("environment") or "") for tid, trajectory in trajectories.items()
     }
 
     zero = 0
@@ -100,8 +99,7 @@ def main() -> None:
     print(f"no text match anywhere: {zero} ({zero / scored:.1%})")
     print(f"matches exist but none in the question's environment: {cross_env}")
     buckets = Counter(
-        "0" if c == 0 else "1" if c == 1 else "2-5" if c <= 5 else "6+"
-        for c in counts
+        "0" if c == 0 else "1" if c == 1 else "2-5" if c <= 5 else "6+" for c in counts
     )
     print("matching-state count buckets:", dict(buckets))
     print("\nby type (n, no-text-match):")

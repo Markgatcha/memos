@@ -1,4 +1,3 @@
-
 def test_api_key_guard(monkeypatch) -> None:
     from memos.server.main import _is_authorized
 

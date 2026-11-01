@@ -78,6 +78,12 @@ interface RawImageLike {
 export interface ClipEmbeddingProviderOptions {
   model?: string;
   dimensions?: number;
+  /**
+   * Never attempt to load or download the CLIP model. Embed calls fail
+   * fast with a typed error. Useful for air-gapped installs and tests
+   * that must not depend on a model download.
+   */
+  offline?: boolean;
 }
 
 /**
@@ -98,12 +104,14 @@ export class ClipEmbeddingProvider implements EmbedImageProvider {
 
   private extractor: ImageExtractionCallable | null = null;
   private resolveAttempted = false;
+  private readonly offline: boolean;
   /** Why the pipeline could not be built, or null when it loaded fine. */
   private failureReason: string | null = null;
 
   constructor(options: ClipEmbeddingProviderOptions = {}) {
     this.model = options.model ?? DEFAULT_CLIP_MODEL;
     this.dimensions = options.dimensions ?? DEFAULT_CLIP_DIMENSIONS;
+    this.offline = options.offline === true;
   }
 
   /**
@@ -130,6 +138,11 @@ export class ClipEmbeddingProvider implements EmbedImageProvider {
   private async resolve(): Promise<void> {
     if (this.resolveAttempted) return;
     this.resolveAttempted = true;
+    if (this.offline) {
+      this.failureReason =
+        "offline mode: CLIP model loading is disabled (offline: true)";
+      return;
+    }
     try {
       // A package that is installed but fails to load (broken transitive
       // resolution, a native module that will not build) must not be

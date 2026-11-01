@@ -26,9 +26,10 @@ from memos_backend import (  # noqa: E402
 
 
 def test_partition_tags_map_webarena_ports_to_sites() -> None:
-    assert _partition_tags(
-        {"environment": "webarena", "start_url": "http://localhost:9080/"}
-    ) == ["env:webarena", "site:forum"]
+    assert _partition_tags({"environment": "webarena", "start_url": "http://localhost:9080/"}) == [
+        "env:webarena",
+        "site:forum",
+    ]
     assert _partition_tags(
         {"environment": "webarena", "start_url": "http://localhost:9082/product"}
     ) == ["env:webarena", "site:shop"]
@@ -86,6 +87,7 @@ def test_affordance_extraction_strips_icon_glyphs() -> None:
         "heading 'Low Stock Report'",
     ]
 
+
 def test_partition_tags_include_trajectory_tag() -> None:
     # The rescue search filters on traj:<id>; without it the search has no way
     # to stay inside an already-selected trajectory.
@@ -97,6 +99,7 @@ def test_partition_tags_include_trajectory_tag() -> None:
         }
     )
     assert tags == ["traj:00c06bce", "env:webarena", "site:shop"]
+
 
 def test_controller_json_parsing_is_tolerant() -> None:
     assert _parse_json_object('{"a": 1}') == {"a": 1}

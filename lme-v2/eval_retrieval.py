@@ -38,9 +38,7 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-DEFAULT_DATA_ROOT = os.getenv(
-    "LME_DATA_ROOT", str(Path.home() / "memos-data" / "lme-v2")
-)
+DEFAULT_DATA_ROOT = os.getenv("LME_DATA_ROOT", str(Path.home() / "memos-data" / "lme-v2"))
 
 PHRASE_EVALS = {"norm_phrase_set_match", "norm_phrase_set_match_ordered"}
 CHOICE_EVALS = {"mc_choice_match", "mc_choice_set_match"}
@@ -306,8 +304,7 @@ def run_domain(
             texts = [
                 item["value"]
                 for item in items
-                if item["type"] == "text"
-                and not item["value"].startswith("Support check:")
+                if item["type"] == "text" and not item["value"].startswith("Support check:")
             ]
             context = "\n".join(texts)
             coverage, complete, mode = score_question(question, context)
@@ -362,21 +359,17 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
             "coverage": round(sum(r["coverage"] for r in rows) / len(rows), 4),
             "mrr": round(sum(1 / rank for rank in ranks) / len(rows), 4),
             "complete_in_top5": round(
-                sum(1 for r in rows if r["complete_rank"] and r["complete_rank"] <= 5)
-                / len(rows),
+                sum(1 for r in rows if r["complete_rank"] and r["complete_rank"] <= 5) / len(rows),
                 4,
             ),
             "complete_in_top10": round(
-                sum(1 for r in rows if r["complete_rank"] and r["complete_rank"] <= 10)
-                / len(rows),
+                sum(1 for r in rows if r["complete_rank"] and r["complete_rank"] <= 10) / len(rows),
                 4,
             ),
             "median_complete_rank": sorted(complete_ranks)[len(complete_ranks) // 2]
             if complete_ranks
             else None,
-            "avg_context_tokens": int(
-                sum(r["context_tokens"] for r in rows) / len(rows)
-            ),
+            "avg_context_tokens": int(sum(r["context_tokens"] for r in rows) / len(rows)),
             "avg_latency_s": round(sum(r["latency_s"] for r in rows) / len(rows), 3),
         }
 
@@ -441,9 +434,7 @@ def main() -> None:
         subset = [q for q in questions if q["domain"] == domain]
         if args.limit:
             subset = subset[: args.limit]
-        all_results.extend(
-            run_domain(data_root, domain, subset, haystack, args)
-        )
+        all_results.extend(run_domain(data_root, domain, subset, haystack, args))
 
     summary = summarize(all_results)
     summary["config"] = {

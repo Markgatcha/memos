@@ -51,12 +51,14 @@ def main() -> None:
     accuracy = (tp + tn) / scored
     print(f"rows with a verdict: {scored}/{len(rows)}")
     print(f"verdicts: {dict(verdicts)}")
-    print(f"abstention detection: precision {precision:.3f} recall {recall:.3f} accuracy {accuracy:.3f}")
+    print(
+        f"abstention detection: precision {precision:.3f} recall {recall:.3f} accuracy {accuracy:.3f}"
+    )
     print(f"confusion: tp={tp} fp={fp} tn={tn} fn={fn}")
     print()
     for name, items in sorted(per_type.items()):
         flagged = sum(1 for f, _ in items if f)
-        print(f"  {name:24s} n={len(items):3d} flagged={flagged/len(items):.1%}")
+        print(f"  {name:24s} n={len(items):3d} flagged={flagged / len(items):.1%}")
 
 
 if __name__ == "__main__":

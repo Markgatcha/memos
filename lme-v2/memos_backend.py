@@ -59,6 +59,7 @@ except ImportError:  # pragma: no cover - only for direct script tests
         if not condition:
             raise RuntimeError(message)
 
+
 BRIDGE_JS = "__MEMOS_BRIDGE_JS__"
 
 DEFAULT_TOKEN_BUDGET = 120_000
@@ -86,7 +87,7 @@ NOTE_SYSTEM_PROMPT = (
 
 DECOMPOSE_SYSTEM_PROMPT = (
     "You write retrieval queries for a memory of web-agent trajectories. "
-    "Return JSON only: {\"queries\":[\"...\"]}. "
+    'Return JSON only: {"queries":["..."]}. '
     "Emit at most 3 short, concrete queries. Target distinct surfaces or "
     "entities when the question compares things; otherwise one query is "
     "enough. Keep exact UI labels, module names and entity names from the "
@@ -95,8 +96,8 @@ DECOMPOSE_SYSTEM_PROMPT = (
 
 PREMISE_SYSTEM_PROMPT = (
     "You check whether retrieved memory evidence supports the premise of a "
-    "question. Return JSON only: {\"verdict\":\"supported\"|\"unsupported\"|"
-    "\"contradicted\",\"reason\":\"...\"}. "
+    'question. Return JSON only: {"verdict":"supported"|"unsupported"|'
+    '"contradicted","reason":"..."}. '
     "Use 'contradicted' only when the evidence shows the premise is false "
     "(a claimed control, field or step does not exist). Use 'unsupported' "
     "when the evidence is silent. Use 'supported' when the evidence confirms "
@@ -124,9 +125,7 @@ def _truncate(text: str, limit: int) -> str:
 
 
 def _node_id(trajectory_id: str, kind: str, index: int | None = None) -> str:
-    safe = "".join(
-        ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in trajectory_id
-    )[:96]
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in trajectory_id)[:96]
     suffix = f"_{index}" if index is not None else ""
     return f"lme_{safe}_{kind}{suffix}"
 
@@ -175,9 +174,7 @@ def _extract_affordances(text: str, limit: int = 80) -> list[str]:
     return items
 
 
-def _collect_actions(
-    trajectory: dict[str, Any], states: list[dict[str, Any]]
-) -> list[str]:
+def _collect_actions(trajectory: dict[str, Any], states: list[dict[str, Any]]) -> list[str]:
     explicit = [
         str(action)
         for action in trajectory.get("actions") or []
@@ -204,9 +201,7 @@ def _simplify_trajectory(trajectory: dict[str, Any]) -> dict[str, Any]:
                     "url": _as_text(state.get("url")),
                     "action": state.get("action"),
                     "thoughts": state.get("thought", state.get("thoughts")),
-                    "text": _as_text(
-                        state.get("accessibility_tree", state.get("text"))
-                    ),
+                    "text": _as_text(state.get("accessibility_tree", state.get("text"))),
                     "screenshot": _as_text(state.get("screenshot")),
                 }
             )
@@ -283,8 +278,7 @@ def _prepare_trajectory(
             # relative paths.
             if os.getenv("MEMOS_LME_ALLOW_LOOSE") != "1":
                 raise RuntimeError(
-                    f"official trajectory normalization failed for "
-                    f"{trajectory.get('id')!r}: {exc}"
+                    f"official trajectory normalization failed for {trajectory.get('id')!r}: {exc}"
                 ) from exc
     simplified = _simplify_trajectory(trajectory)
     screenshots = [state["screenshot"] for state in simplified["states"]]
@@ -314,9 +308,7 @@ def trajectory_to_nodes(
     if prepared is not None:
         simplified, screenshots = prepared
     else:
-        simplified, screenshots = _prepare_trajectory(
-            trajectory, trajectories_root_dir
-        )
+        simplified, screenshots = _prepare_trajectory(trajectory, trajectories_root_dir)
     trajectory_id = simplified["id"]
     require(bool(trajectory_id), "trajectory id must be non-empty")
     goal = simplified.get("goal") or "<goal not found>"
@@ -471,9 +463,7 @@ def trajectory_to_nodes(
                 nodes.append(
                     {
                         "id": _node_id(trajectory_id, "elements", index),
-                        "content": _truncate(
-                            "\n".join([header, *elements]), elements_chars
-                        ),
+                        "content": _truncate("\n".join([header, *elements]), elements_chars),
                         "pool": "note",
                         "type": "context",
                         "namespace": namespace,
@@ -548,14 +538,10 @@ class Controller:
         max_tokens: int = 1_200,
     ) -> None:
         self.base_url = (
-            base_url
-            or os.getenv("MEMOS_CONTROLLER_BASE_URL")
-            or "https://api.river.ai/v1"
+            base_url or os.getenv("MEMOS_CONTROLLER_BASE_URL") or "https://api.river.ai/v1"
         ).rstrip("/")
         self.model = (
-            model
-            or os.getenv("MEMOS_CONTROLLER_MODEL")
-            or "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+            model or os.getenv("MEMOS_CONTROLLER_MODEL") or "deepseek-ai/DeepSeek-V4.1-Flash-1017"
         )
         self.api_key = api_key or _controller_key()
         self.timeout = float(os.getenv("MEMOS_CONTROLLER_TIMEOUT", timeout))
@@ -598,9 +584,7 @@ class Controller:
             self.failures += 1
             return None
 
-    def json_chat(
-        self, messages: list[dict[str, str]], **overrides: Any
-    ) -> dict[str, Any] | None:
+    def json_chat(self, messages: list[dict[str, str]], **overrides: Any) -> dict[str, Any] | None:
         text = self.chat(messages, **overrides)
         return _parse_json_object(text) if text else None
 
@@ -660,16 +644,11 @@ def _note_digest(
     for index in range(0, len(states), step):
         state = states[index]
         text = str(state.get("text") or "").replace("\n", " ")[:state_chars]
-        lines.append(
-            f"[{index}] {state.get('url', '')} | action={state.get('action')}"
-            f"\n{text}"
-        )
+        lines.append(f"[{index}] {state.get('url', '')} | action={state.get('action')}\n{text}")
     return "\n".join(lines)[:16_000]
 
 
-def _controller_notes(
-    controller: Any, simplified: dict[str, Any]
-) -> list[dict[str, Any]]:
+def _controller_notes(controller: Any, simplified: dict[str, Any]) -> list[dict[str, Any]]:
     """Ask the controller for procedure/hint notes; [] on any failure."""
     reply = controller.json_chat(
         [
@@ -692,9 +671,7 @@ def _controller_notes(
         content = str(note.get("content") or "").strip()
         if not content:
             continue
-        body = "\n".join(
-            part for part in (title, description, content) if part
-        )
+        body = "\n".join(part for part in (title, description, content) if part)
         notes.append(
             {
                 "id": _node_id(trajectory_id, kind),
@@ -738,13 +715,9 @@ class MemosMemory(Memory):
         self.top_k = int(params.get("top_k") or DEFAULT_TOP_K)
         self.state_chars = int(params.get("state_chars") or DEFAULT_STATE_CHARS)
         self.note_chars = int(params.get("note_chars") or DEFAULT_NOTE_CHARS)
-        self.procedure_chars = int(
-            params.get("procedure_chars") or DEFAULT_PROCEDURE_CHARS
-        )
+        self.procedure_chars = int(params.get("procedure_chars") or DEFAULT_PROCEDURE_CHARS)
         self.gotcha_chars = int(params.get("gotcha_chars") or DEFAULT_GOTCHA_CHARS)
-        self.elements_chars = int(
-            params.get("elements_chars") or DEFAULT_ELEMENTS_CHARS
-        )
+        self.elements_chars = int(params.get("elements_chars") or DEFAULT_ELEMENTS_CHARS)
         ui = params.get("ui_elements")
         if ui is None:
             ui = os.getenv("MEMOS_LME_UI_ELEMENTS", "1")
@@ -772,22 +745,17 @@ class MemosMemory(Memory):
         if rescue is None:
             rescue = os.getenv("MEMOS_LME_RESCUE", "0")
         self.within_trajectory_rescue = _as_flag(rescue)
-        self.query_mode = str(
-            params.get("query_mode") or os.getenv("MEMOS_LME_QUERY_MODE", "full")
-        )
+        self.query_mode = str(params.get("query_mode") or os.getenv("MEMOS_LME_QUERY_MODE", "full"))
         self.low_confidence_note = _as_flag(
             params.get("low_confidence_note")
             if params.get("low_confidence_note") is not None
             else os.getenv("MEMOS_LME_LOW_CONFIDENCE_NOTE", "0")
         )
         self.confidence_threshold = float(
-            params.get("confidence_threshold")
-            or os.getenv("MEMOS_LME_CONFIDENCE_THRESHOLD", "0")
+            params.get("confidence_threshold") or os.getenv("MEMOS_LME_CONFIDENCE_THRESHOLD", "0")
         )
         self.checkpoint_every = int(
-            params.get("checkpoint_every")
-            or os.getenv("MEMOS_LME_CHECKPOINT_EVERY")
-            or 25
+            params.get("checkpoint_every") or os.getenv("MEMOS_LME_CHECKPOINT_EVERY") or 25
         )
         self.checkpoint_path = self.workspace_dir / "checkpoint.db"
         # A checkpoint is a recovery copy, not the primary store. If the main
@@ -795,18 +763,12 @@ class MemosMemory(Memory):
         if not self.db_path.exists() and self.checkpoint_path.exists():
             shutil.copy2(self.checkpoint_path, self.db_path)
         root = params.get("trajectories_root_dir")
-        self.trajectories_root_dir = (
-            Path(str(root)).expanduser().resolve() if root else None
-        )
+        self.trajectories_root_dir = Path(str(root)).expanduser().resolve() if root else None
         self.embedding_base_url = str(
-            params.get("embedding_base_url")
-            or os.getenv("LME_EMBEDDING_BASE_URL")
-            or ""
+            params.get("embedding_base_url") or os.getenv("LME_EMBEDDING_BASE_URL") or ""
         ).strip()
         self.embedding_provider = str(
-            params.get("embedding_provider")
-            or os.getenv("MEMOS_EMBEDDING_PROVIDER")
-            or "model2vec"
+            params.get("embedding_provider") or os.getenv("MEMOS_EMBEDDING_PROVIDER") or "model2vec"
         ).strip()
         self.embedding_model = str(
             params.get("embedding_model")
@@ -814,9 +776,7 @@ class MemosMemory(Memory):
             or "Qwen/Qwen3-Embedding-8B"
         ).strip()
         self.embedding_dimensions = int(
-            params.get("embedding_dimensions")
-            or os.getenv("MEMOS_EMBEDDING_DIMENSIONS")
-            or 4096
+            params.get("embedding_dimensions") or os.getenv("MEMOS_EMBEDDING_DIMENSIONS") or 4096
         )
         self.node_binary = str(os.getenv("MEMOS_NODE_BINARY", "node"))
         self._proc: subprocess.Popen[str] | None = None
@@ -836,21 +796,30 @@ class MemosMemory(Memory):
             model=str(params.get("controller_model") or ""),
             api_key=str(params.get("controller_api_key") or ""),
         )
-        self.controller_notes = _as_flag(
-            params.get("controller_notes")
-            if params.get("controller_notes") is not None
-            else os.getenv("MEMOS_LME_CONTROLLER_NOTES", "0")
-        ) and self.controller.enabled
-        self.controller_decompose = _as_flag(
-            params.get("controller_decompose")
-            if params.get("controller_decompose") is not None
-            else os.getenv("MEMOS_LME_CONTROLLER_DECOMPOSE", "0")
-        ) and self.controller.enabled
-        self.controller_premise = _as_flag(
-            params.get("controller_premise")
-            if params.get("controller_premise") is not None
-            else os.getenv("MEMOS_LME_CONTROLLER_PREMISE", "0")
-        ) and self.controller.enabled
+        self.controller_notes = (
+            _as_flag(
+                params.get("controller_notes")
+                if params.get("controller_notes") is not None
+                else os.getenv("MEMOS_LME_CONTROLLER_NOTES", "0")
+            )
+            and self.controller.enabled
+        )
+        self.controller_decompose = (
+            _as_flag(
+                params.get("controller_decompose")
+                if params.get("controller_decompose") is not None
+                else os.getenv("MEMOS_LME_CONTROLLER_DECOMPOSE", "0")
+            )
+            and self.controller.enabled
+        )
+        self.controller_premise = (
+            _as_flag(
+                params.get("controller_premise")
+                if params.get("controller_premise") is not None
+                else os.getenv("MEMOS_LME_CONTROLLER_PREMISE", "0")
+            )
+            and self.controller.enabled
+        )
 
     # ---- process lifecycle -------------------------------------------------
 
@@ -916,14 +885,10 @@ class MemosMemory(Memory):
             if os.getenv("MEMOS_LME_DEBUG") == "1":
                 print(f"[memos-bridge] {line}", file=sys.stderr)
 
-    def _call(
-        self, payload: dict[str, Any], *, timeout: float | None = None
-    ) -> dict[str, Any]:
+    def _call(self, payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
         with self._lock:
             if self._proc is None or self._proc.poll() is not None:
-                raise RuntimeError(
-                    "MemOS bridge is not running. Check `node` and @mem-os/sdk."
-                )
+                raise RuntimeError("MemOS bridge is not running. Check `node` and @mem-os/sdk.")
             require(self._proc.stdin is not None, "bridge stdin unavailable")
             require(self._proc.stdout is not None, "bridge stdout unavailable")
             self._proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -933,8 +898,7 @@ class MemosMemory(Memory):
             if line == "":
                 tail = "\n".join(self._stderr_tail)
                 raise RuntimeError(
-                    "MemOS bridge exited unexpectedly."
-                    + (f"\n{tail}" if tail else "")
+                    "MemOS bridge exited unexpectedly." + (f"\n{tail}" if tail else "")
                 )
             response = json.loads(line)
             if response.get("ok"):
@@ -989,9 +953,7 @@ class MemosMemory(Memory):
             generated = _controller_notes(self.controller, prepared[0])
             extra_tags = _partition_tags(trajectory)
             for note in generated:
-                note["tags"] = list(
-                    dict.fromkeys([*note.get("tags", []), *extra_tags])
-                )
+                note["tags"] = list(dict.fromkeys([*note.get("tags", []), *extra_tags]))
             nodes.extend(generated)
         for start in range(0, len(nodes), 100):
             self._call(
@@ -1003,10 +965,7 @@ class MemosMemory(Memory):
                 timeout=600.0,
             )
         self._inserted += 1
-        if (
-            self.checkpoint_every > 0
-            and self._inserted % self.checkpoint_every == 0
-        ):
+        if self.checkpoint_every > 0 and self._inserted % self.checkpoint_every == 0:
             self._checkpoint()
 
     def query(
@@ -1038,9 +997,7 @@ class MemosMemory(Memory):
             timeout=300.0,
         )
         items = response.get("items") or []
-        self.last_debug = [
-            row for row in (response.get("debug") or []) if isinstance(row, dict)
-        ]
+        self.last_debug = [row for row in (response.get("debug") or []) if isinstance(row, dict)]
         items = self._premise_check(query, items)
         return [
             {"type": item["type"], "value": item["value"]}
@@ -1070,9 +1027,7 @@ class MemosMemory(Memory):
         queries = [str(item).strip() for item in raw if str(item).strip()]
         return queries[:3]
 
-    def _premise_check(
-        self, query: str, items: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _premise_check(self, query: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Prepend a support verdict when the evidence contradicts the premise.
 
         AgentRunbook's error analysis found RAG-style memory *hurts* abstention
@@ -1083,9 +1038,7 @@ class MemosMemory(Memory):
             return items
         self.last_premise = {}
         evidence = "\n".join(
-            str(item.get("value") or "")
-            for item in items
-            if item.get("type") == "text"
+            str(item.get("value") or "") for item in items if item.get("type") == "text"
         )[:8_000]
         if not evidence.strip():
             return items

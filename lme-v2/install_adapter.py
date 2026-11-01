@@ -43,7 +43,7 @@ def main() -> None:
         "  export DATA_ROOT=/path/to/longmemeval-v2/data/longmemeval-v2\n"
         "  export MEMOS_SDK_PATH=/path/to/memos/dist/index.js   # or npm i @mem-os/sdk\n"
         "  python /path/to/memos/lme-v2/run_memos.py --lme-root . "
-        "--data-root \"$DATA_ROOT\" --domain web --tier small --profile balanced "
+        '--data-root "$DATA_ROOT" --domain web --tier small --profile balanced '
         "--output-dir runs/memos_web_small\n"
     )
 

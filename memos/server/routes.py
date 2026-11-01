@@ -704,8 +704,7 @@ def _safe_ingest_path(path: str) -> str:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Ingest path must stay inside the server root. "
-                "Set MEMOS_INGEST_ROOT to widen it."
+                "Ingest path must stay inside the server root. Set MEMOS_INGEST_ROOT to widen it."
             ),
         )
     return resolved

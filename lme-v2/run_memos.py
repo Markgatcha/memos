@@ -141,9 +141,7 @@ def main() -> None:
         help="Ask the controller whether the evidence supports the premise.",
     )
     parser.add_argument("--controller-model", default=os.getenv("MEMOS_CONTROLLER_MODEL", ""))
-    parser.add_argument(
-        "--controller-base-url", default=os.getenv("MEMOS_CONTROLLER_BASE_URL", "")
-    )
+    parser.add_argument("--controller-base-url", default=os.getenv("MEMOS_CONTROLLER_BASE_URL", ""))
     parser.add_argument(
         "--checkpoint-every",
         type=int,
@@ -168,9 +166,7 @@ def main() -> None:
         type=int,
         default=int(os.getenv("MEMOS_EMBEDDING_DIMENSIONS", "4096")),
     )
-    parser.add_argument(
-        "--reader-model", default=os.getenv("READER_MODEL", "Qwen/Qwen3.5-9B")
-    )
+    parser.add_argument("--reader-model", default=os.getenv("READER_MODEL", "Qwen/Qwen3.5-9B"))
     parser.add_argument(
         "--reader-base-url",
         default=os.getenv("READER_BASE_URL", "http://localhost:8023/v1"),
@@ -235,9 +231,7 @@ def main() -> None:
     token_budget = args.token_budget or profile["token_budget"]
     top_k = args.top_k or profile["top_k"]
     state_chars = args.state_chars or profile["state_chars"]
-    ui_elements = (
-        args.ui_elements if args.ui_elements is not None else args.domain == "web"
-    )
+    ui_elements = args.ui_elements if args.ui_elements is not None else args.domain == "web"
     memory_params = {
         "workspace_dir": str(output_dir / "memory_workspace"),
         "namespace": f"lme-v2:{args.domain}:{args.tier}",

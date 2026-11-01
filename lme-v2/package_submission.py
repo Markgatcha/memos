@@ -73,12 +73,7 @@ def main() -> None:
             cwd=lme,
         )
         operating_points.append(
-            lme
-            / "leaderboard"
-            / "submissions"
-            / args.submission
-            / "operating_points"
-            / profile
+            lme / "leaderboard" / "submissions" / args.submission / "operating_points" / profile
         )
 
     run(

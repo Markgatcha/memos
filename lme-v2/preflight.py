@@ -111,10 +111,7 @@ def main() -> None:
             print(f"     reader models: {', '.join(models[:5])}")
             if models and not args.skip_model_name_check:
                 check(
-                    any(
-                        args.expect_reader_model.lower() in model.lower()
-                        for model in models
-                    ),
+                    any(args.expect_reader_model.lower() in model.lower() for model in models),
                     f"reader serves {args.expect_reader_model}",
                     failures,
                 )
@@ -130,13 +127,11 @@ def main() -> None:
             print(f"     embedding models: {', '.join(models[:5])}")
             if models and not args.skip_model_name_check:
                 matches = any(
-                    args.expect_embedding_model.lower() in model.lower()
-                    for model in models
+                    args.expect_embedding_model.lower() in model.lower() for model in models
                 )
                 if matches:
                     print(
-                        f"PASS embedding endpoint serves the baseline "
-                        f"{args.expect_embedding_model}"
+                        f"PASS embedding endpoint serves the baseline {args.expect_embedding_model}"
                     )
                 else:
                     print(
@@ -172,10 +167,7 @@ def main() -> None:
                 args.judge_base_url,
                 api_key=os.getenv(judge_key_env, ""),
             )
-            served = any(
-                args.expect_judge_model.lower() in model.lower()
-                for model in judge_models
-            )
+            served = any(args.expect_judge_model.lower() in model.lower() for model in judge_models)
             check(
                 served,
                 f"judge endpoint serves a {args.expect_judge_model} model",

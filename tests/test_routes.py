@@ -71,6 +71,7 @@ def test_bridge_exposes_new_methods() -> None:
     ):
         assert f"case '{method}'" in _BRIDGE_SCRIPT
 
+
 def test_ingest_path_guard(tmp_path, monkeypatch) -> None:
     from fastapi import HTTPException
 

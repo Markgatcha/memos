@@ -41,8 +41,12 @@ def main() -> None:
     abst = [row["top_score"] for row in rows if row["type"].endswith("-abs")]
     answerable = [row["top_score"] for row in rows if not row["type"].endswith("-abs")]
     print(f"{path.name}: {len(abst)} abstention, {len(answerable)} answerable")
-    print(f"mean top score  abstention {sum(abst)/len(abst):.3f}  answerable {sum(answerable)/len(answerable):.3f}")
-    print(f"AUC (inverted score predicts abstention): {auc([-a for a in abst], [-a for a in answerable]):.3f}")
+    print(
+        f"mean top score  abstention {sum(abst) / len(abst):.3f}  answerable {sum(answerable) / len(answerable):.3f}"
+    )
+    print(
+        f"AUC (inverted score predicts abstention): {auc([-a for a in abst], [-a for a in answerable]):.3f}"
+    )
 
     for threshold in (0.35, 0.40, 0.45, 0.50, 0.55, 0.60):
         fired_abst = sum(1 for s in abst if s < threshold) / len(abst)

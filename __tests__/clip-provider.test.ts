@@ -109,7 +109,7 @@ describe("FakeClipProvider (the offline test seam)", () => {
 
 describe("ClipEmbeddingProvider", () => {
   test("reports id, default model, and default dimensions", () => {
-    const clip = new ClipEmbeddingProvider();
+    const clip = new ClipEmbeddingProvider({ offline: true });
     expect(clip.id).toBe("clip");
     expect(clip.model).toBe(DEFAULT_CLIP_MODEL);
     expect(clip.model).toBe("Xenova/clip-vit-base-patch32");
@@ -119,6 +119,7 @@ describe("ClipEmbeddingProvider", () => {
 
   test("accepts custom model and dimensions", () => {
     const clip = new ClipEmbeddingProvider({
+      offline: true,
       model: "Xenova/clip-vit-base-patch16",
       dimensions: 512,
     });
@@ -126,7 +127,7 @@ describe("ClipEmbeddingProvider", () => {
   });
 
   test("is not available before any embed call", () => {
-    const clip = new ClipEmbeddingProvider();
+    const clip = new ClipEmbeddingProvider({ offline: true });
     expect(clip.available).toBe(false);
     expect(clip.fallbackReason).toBe(null);
   });
@@ -138,7 +139,7 @@ describe("ClipEmbeddingProvider", () => {
     // returns a bogus/placeholder vector. If the real pipeline happens to
     // be available in this environment, embedImage succeeds with a
     // genuine 512-d vector — both outcomes satisfy the invariant.
-    const clip = new ClipEmbeddingProvider();
+    const clip = new ClipEmbeddingProvider({ offline: true });
     let threw = false;
     try {
       const v = await clip.embedImage(Buffer.from([1, 2, 3, 4]));
@@ -165,7 +166,7 @@ describe("ClipEmbeddingProvider", () => {
   }, 120_000);
 
   test("a failed resolve is sticky — repeat calls fail fast, same reason", async () => {
-    const clip = new ClipEmbeddingProvider();
+    const clip = new ClipEmbeddingProvider({ offline: true });
     try {
       await clip.embedImage(Buffer.from([1]));
     } catch {
@@ -188,7 +189,7 @@ describe("ClipEmbeddingProvider", () => {
     // querySimilarImages would filter out (or worse, score in the wrong
     // space). With no model loadable this is the unavailable path; the
     // guard exists for when one IS loadable.
-    const clip = new ClipEmbeddingProvider({ dimensions: 999 });
+    const clip = new ClipEmbeddingProvider({ offline: true, dimensions: 999 });
     try {
       const v = await clip.embedImage(Buffer.from([1, 2]));
       expect(v).toHaveLength(999);

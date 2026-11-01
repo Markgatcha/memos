@@ -105,9 +105,7 @@ def _better_sqlite3_in(node_modules: Path) -> bool:
 
 def _potion_in(node_modules: Path) -> bool:
     """True if the default Model2Vec embedding package is staged."""
-    return (
-        node_modules / "@yarflam" / "potion-base-8m" / "package.json"
-    ).is_file()
+    return (node_modules / "@yarflam" / "potion-base-8m" / "package.json").is_file()
 
 
 def _runtime_deps_present(node_modules: Path) -> bool:
@@ -132,9 +130,7 @@ def _ensure_runtime_sdk() -> Path:
 
     # Layout 1: source checkout with a working repo-level better-sqlite3
     checkout_dist = repo_root / "dist"
-    if (checkout_dist / "index.js").is_file() and _runtime_deps_present(
-        repo_root / "node_modules"
-    ):
+    if (checkout_dist / "index.js").is_file() and _runtime_deps_present(repo_root / "node_modules"):
         return checkout_dist
 
     # Layout 2: bundled wheel SDK
@@ -198,8 +194,7 @@ def _ensure_runtime_sdk() -> Path:
                 encoding="utf-8",
             )
         print(
-            f"  First run: installing {_BETTER_SQLITE3_SPEC} and "
-            f"{_POTION_SPEC} into {runtime} ..."
+            f"  First run: installing {_BETTER_SQLITE3_SPEC} and {_POTION_SPEC} into {runtime} ..."
         )
         subprocess.run(
             [
@@ -303,9 +298,7 @@ async def require_api_key(request, call_next):
     network interface would expose the filesystem. Health and the generated
     docs stay public so probes and the Swagger UI keep working.
     """
-    if not _is_authorized(
-        request.url.path, request.headers.get("authorization", "")
-    ):
+    if not _is_authorized(request.url.path, request.headers.get("authorization", "")):
         return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
     return await call_next(request)
 

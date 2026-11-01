@@ -59,6 +59,7 @@ except ImportError:  # pragma: no cover - only for direct script tests
         if not condition:
             raise RuntimeError(message)
 
+
 BRIDGE_JS = '#!/usr/bin/env node\n/**\n * Persistent JSON-lines bridge between the LongMemEval-V2 Python harness and\n * the MemOS TypeScript SDK.\n *\n * One process owns one SQLite database. Python sends:\n *   {"op":"init","dbPath":..., "namespace":..., "embeddings":{...}}\n *   {"op":"insert","nodes":[{content,pool,type,metadata}, ...]}\n *   {"op":"query","query":"...", "tokenBudget":..., "topK":...}\n *   {"op":"save","path":"/abs/output/memos.db"}\n *   {"op":"close"}\n *\n * and receives one JSON object per line. Keeping the process alive matters:\n * spawning Node per trajectory would dominate LME-V2 latency.\n */\n\nimport readline from "node:readline";\nimport { copyFileSync, existsSync, unlinkSync } from "node:fs";\nimport { pathToFileURL } from "node:url";\n\nconst sdkSpec = process.env.MEMOS_SDK_PATH\n  ? pathToFileURL(process.env.MEMOS_SDK_PATH).href\n  : process.env.MEMOS_SDK_SPEC || "@mem-os/sdk";\n\nconst { MemOS } = await import(sdkSpec);\n\nlet memos = null;\nlet dbPath = null;\nlet namespace = "lme-v2";\nlet defaultTokenBudget = 120_000;\nlet defaultTopK = 20;\n\nfunction send(payload) {\n  process.stdout.write(`${JSON.stringify(payload)}\\n`);\n}\n\nfunction cite(id) {\n  const compact = String(id || "").replace(/[^a-z0-9]/gi, "");\n  return `[mem:${compact.slice(-4) || "????"}]`;\n}\n\nasync function init(message) {\n  if (memos) {\n    await memos.close().catch(() => {});\n    memos = null;\n  }\n  dbPath = message.dbPath;\n  namespace = message.namespace || "lme-v2";\n  defaultTokenBudget = Number(message.tokenBudget) || 120_000;\n  defaultTopK = Number(message.topK) || 20;\n  const embeddings = message.embeddings || { provider: "model2vec" };\n  memos = new MemOS({\n    dbPath,\n    // LME-V2 corpora are trusted benchmark data. The write gate is for\n    // agent output; it must not silently quarantine evidence here.\n    autoLinkThreshold: 0,\n    embeddingQueue: {\n      concurrency: 4,\n      batchSize: 16,\n      maxQueueSize: 250_000,\n    },\n    embeddings,\n  });\n  await memos.init();\n}\n\nasync function insert(message) {\n  if (!memos) throw new Error("bridge not initialised");\n  const nodes = Array.isArray(message.nodes) ? message.nodes : [];\n  let inserted = 0;\n  let skipped = 0;\n  const concurrency = Math.max(1, Number(message.concurrency) || 8);\n  for (let start = 0; start < nodes.length; start += concurrency) {\n    const batch = nodes.slice(start, start + concurrency);\n    await Promise.all(\n      batch.map(async (node) => {\n        const content = String(node.content ?? "");\n        const common = {\n          namespace: node.namespace || namespace,\n          pool: node.pool || "event",\n          type: node.type || "fact",\n          // The benchmark corpus is trusted evidence, not untrusted web\n          // output. external_data (the importRecord default) carries a\n          // 0.5 trust score and a provenance multiplier that can demote\n          // correct evidence during fusion.\n          source: "user_input",\n          ...(Array.isArray(node.tags) && node.tags.length > 0\n            ? { tags: node.tags.map(String) }\n            : {}),\n          ...(node.metadata ? { metadata: node.metadata } : {}),\n          contradictionScan: false,\n          harness: "lme-v2",\n        };\n        try {\n          if (node.id) {\n            // Deterministic id + empty summary skips extractive work on a\n            // 25M-token corpus while keeping the normal embedding queue.\n            await memos.importRecord({\n              id: String(node.id),\n              content,\n              summary: "",\n              createdAt: Date.now(),\n              updatedAt: Date.now(),\n              ...common,\n            });\n          } else {\n            await memos.store(content, {\n              ...common,\n              eventUpdate: false,\n              quarantineScreen: false,\n            });\n          }\n          inserted += 1;\n        } catch (error) {\n          // A resumed/retried run re-sends deterministic ids. Treat an\n          // existing id as already indexed instead of aborting the run.\n          if (node.id && isDuplicateId(error)) {\n            skipped += 1;\n            return;\n          }\n          throw error;\n        }\n      }),\n    );\n  }\n  return { inserted, skipped };\n}\n\nfunction isDuplicateId(error) {\n  const text = String(error?.message ?? error).toLowerCase();\n  return (\n    text.includes("unique constraint failed") ||\n    text.includes("primary key") ||\n    text.includes("already exists")\n  );\n}\n\nasync function query(message) {\n  if (!memos) throw new Error("bridge not initialised");\n  const rawQuery = String(message.query ?? "").trim();\n  if (!rawQuery) return { items: [] };\n  const queryText = message.stripPreamble\n    ? stripQuestionPreamble(rawQuery)\n    : rawQuery;\n  const tokenBudget = Math.max(\n    512,\n    Number(message.tokenBudget) || defaultTokenBudget,\n  );\n  const topK = Math.max(1, Number(message.topK) || defaultTopK);\n  const neighborRadius = Math.max(0, Number(message.neighborRadius) || 0);\n  const usedTokens = { value: 0 };\n  // One environment per question: the corpus mixes three web sites and one\n  // enterprise portal, so unfiltered retrieval spends most of its budget on\n  // pages the question is not about. The question text names the site\n  // reliably, so the partition is deterministic rather than learned.\n  // Detect on the raw question: the stripped preamble is exactly where the\n  // site name lives.\n  // One site per question: the web corpus mixes three WebArena sites (forum,\n  // shop, admin) and unfiltered retrieval spends most of its budget on pages\n  // the question is not about. The question text names the site reliably.\n  const environment = message.envFilter ? detectSite(rawQuery) : null;\n  const tagFilter = environment ? [`site:${environment}`] : [];\n\n  let packItems = [];\n  const buildPack = (tags, query) =>\n    memos.contextPack({\n      query,\n      tokenBudget,\n      // Without an explicit limit the pack derives up to 500 items from the\n      // budget, which the adapter then threw away by slicing to topK. Here\n      // topK means "seeds"; the budget is reserved for the seeds plus their\n      // neighbouring steps.\n      limit: topK,\n      namespace,\n      format: "json",\n      citations: true,\n      multiStream: true,\n      // Semantic dedup pulls every stored embedding for the candidate set on\n      // each query. That is a real latency cost, so it is switchable for\n      // latency A/Bs; it stays on by default.\n      semanticDedup: process.env.MEMOS_LME_DEDUP !== "0",\n      ...(tags.length > 0 ? { tags } : {}),\n      // LME-V2 scores the accuracy-latency frontier; rerank is opt-in and\n      // only runs when a reranker is configured in the SDK. It degrades to\n      // fused order when absent.\n      rerank: process.env.MEMOS_LME_RERANK === "1",\n    });\n  try {\n    // Multiple deterministic query variants, fused by reciprocal rank. The\n    // official multi-query RAG variant gains several points by asking the\n    // same question several ways; that does not require a generator model,\n    // only a lexical variant and rank fusion.\n    const controllerQueries = Array.isArray(message.queries)\n      ? message.queries.map((item) => String(item || "").trim()).filter(Boolean)\n      : [];\n    const variants =\n      controllerQueries.length > 0\n        ? uniqueQueries(controllerQueries.slice(0, 3))\n        : message.multiQuery\n          ? uniqueQueries([queryText, keywordQuery(rawQuery)])\n          : message.queryMode === "keywords"\n            ? uniqueQueries([keywordQuery(rawQuery), queryText]).slice(0, 1)\n            : [queryText];\n    const packs = await Promise.all(\n      variants.map((variant) =>\n        buildPack(tagFilter, variant).catch(() => null),\n      ),\n    );\n    packItems = fuseByRank(packs);\n    // A partition that matches nothing (a misread site name, or a corpus\n    // without tags) must degrade to unpartitioned retrieval rather than\n    // answer from an empty context.\n    if (packItems.length === 0 && tagFilter.length > 0) {\n      packItems = fuseByRank([await buildPack([], queryText)]);\n    }\n  } catch (error) {\n    // Fall through to plain search; a pack failure must not lose evidence.\n    packItems = [];\n  }\n\n  const items = [];\n  const debug = [];\n  const images = new Set();\n  const seen = new Set();\n  let topScore = 0;\n\n  const pushText = (id, content, score) => {\n    const text = String(content ?? "").trim();\n    if (!text || seen.has(id)) return false;\n    const tokens = Math.ceil(text.length / 4);\n    if (usedTokens.value + tokens > tokenBudget) return false;\n    seen.add(id);\n    usedTokens.value += tokens;\n    const citation = id ? cite(id) : "";\n    items.push({\n      type: "text",\n      value: citation ? `${text} ${citation}` : text,\n    });\n    debug.push({\n      id,\n      type: "text",\n      tokens,\n      score: typeof score === "number" ? score : undefined,\n    });\n    return true;\n  };\n\n  const maybeAddImage = async (id) => {\n    try {\n      const node = await memos.retrieve(id);\n      const screenshot = node?.metadata?.screenshot;\n      if (typeof screenshot === "string" && existsSync(screenshot)) {\n        images.add(screenshot);\n      }\n    } catch {\n      // Image evidence is additive; text still counts.\n    }\n  };\n\n  const seeds = packItems.slice(0, topK);\n  for (const item of seeds) {\n    const content = String(item.content ?? item.summary ?? "").trim();\n    if (typeof item.score === "number" && item.score > topScore) {\n      topScore = item.score;\n    }\n    pushText(item.id, content, item.score);\n    await maybeAddImage(item.id);\n  }\n\n  // The dominant retrievable loss is not the wrong trajectory, it is the\n  // wrong state inside the right trajectory (16% of scorable questions on the\n  // small tier). Once a trajectory is a top seed, its other states are cheap\n  // primary-key reads, so score them lexically against the question and add\n  // the best few. No model, no extra embedding work.\n  if (message.withinTrajectoryRescue) {\n    await rescueWithinTrajectories(seeds, rawQuery, pushText, maybeAddImage);\n  }\n\n  // The official RAG baseline indexes raw states with slice radius 1: an\n  // answer often sits in the step before or after the matching one (open a\n  // form, then the confirmation page). Seed-then-neighbour keeps the precise\n  // hit first and spends the remaining budget on its context.\n  if (neighborRadius > 0) {\n    for (const item of seeds) {\n      for (const neighborId of neighbourIds(item.id, neighborRadius)) {\n        try {\n          const node = await memos.retrieve(neighborId);\n          if (node) {\n            pushText(node.id, node.content);\n            await maybeAddImage(node.id);\n          }\n        } catch {\n          // Neighbours are additive; a missing step is normal at edges.\n        }\n      }\n    }\n  }\n\n  if (items.length === 0) {\n    const hits = await memos.search({\n      query: queryText,\n      limit: topK,\n      namespace,\n    });\n    for (const hit of hits) {\n      pushText(hit.node.id, hit.node.summary || hit.node.content, hit.score);\n      const screenshot = hit.node.metadata?.screenshot;\n      if (typeof screenshot === "string" && existsSync(screenshot)) {\n        images.add(screenshot);\n      }\n    }\n  }\n\n  // The question image is evidence too. Without CLIP we cannot search pixels,\n  // but returning it ensures a multimodal reader sees the query state.\n  if (\n    typeof message.queryImage === "string" &&\n    message.queryImage &&\n    existsSync(message.queryImage)\n  ) {\n    images.add(message.queryImage);\n  }\n\n  const maxImages = Math.max(0, Number(message.maxImages ?? 4));\n  for (const image of [...images].slice(0, maxImages)) {\n    items.push({ type: "image", value: image });\n    debug.push({ id: image, type: "image", tokens: 0 });\n  }\n  // Optional, off by default. Calibration on the small tier found the fused\n  // score does not separate abstention questions from answerable ones\n  // (AUC 0.55), so enabling this without re-calibrating on your own corpus\n  // would add noise rather than signal.\n  if (\n    message.lowConfidenceNote &&\n    items.length > 0 &&\n    topScore < Number(message.confidenceThreshold || 0)\n  ) {\n    items.unshift({\n      type: "text",\n      value:\n        "Retrieval note: no memory directly addresses this question. " +\n        "The evidence below is the closest available match.",\n    });\n  }\n  return {\n    items,\n    packItems: packItems.length,\n    contextTokens: usedTokens.value,\n    topScore,\n    debug,\n  };\n}\n\n/**\n * Node ids are deterministic (`lme_<trajectory>_state_<index>`), so adjacent\n * steps can be fetched by primary key without another search.\n */\nfunction neighbourIds(id, radius) {\n  const match = /^(lme_.+)_state_(\\d+)$/.exec(String(id || ""));\n  if (!match) return [];\n  const [, prefix, indexText] = match;\n  const index = Number(indexText);\n  const ids = [];\n  for (let offset = 1; offset <= radius; offset += 1) {\n    if (index - offset >= 0) ids.push(`${prefix}_state_${index - offset}`);\n    ids.push(`${prefix}_state_${index + offset}`);\n  }\n  return ids;\n}\n\n/**\n * Questions open with environment boilerplate ("I am working with our\n * ServiceNow portal."). It is identical across dozens of questions and\n * dilutes the embedding, so the optional mode drops the leading sentence\n * when the remainder is still substantive.\n */\nfunction stripQuestionPreamble(text) {\n  const match =\n    /^I(?:\'m| am) (?:working|using|currently working)[^.!?]*[.!?]+\\s*/i.exec(\n      text,\n    );\n  if (!match) return text;\n  const rest = text.slice(match[0].length).trim();\n  return rest.length >= 40 ? rest : text;\n}\n\n/**\n * Same rules as the Python diagnostics: the dataset\'s questions open with a\n * formulaic sentence naming their site. Returns null when nothing matches, in\n * which case retrieval stays unfiltered.\n */\nconst QUERY_STOPWORDS = new Set(\n  (\n    "the a an and or of to in on for with at by from is are was were be been " +\n    "what which who how why when where do does did done i we you they it this " +\n    "that these those my our your their there here please tell give show me " +\n    "using working portal website site page magento reddit forum admin " +\n    "servicenow would like want need can could should"\n  ).split(" "),\n);\n\n/**\n * Lexical variant of the question: quoted UI labels first (they are the\n * highest-signal tokens in this benchmark), then content words with the\n * boilerplate and question words removed.\n */\nfunction keywordQuery(text) {\n  const source = String(text || "");\n  const quoted = [...source.matchAll(/["\'\\u201c\\u201d\\u2018\\u2019]([^"\'\\u201c\\u201d\\u2018\\u2019]{2,48})["\'\\u201c\\u201d\\u2018\\u2019]/g)]\n    .map((match) => match[1].trim())\n    .filter(Boolean);\n  const words = source\n    .toLowerCase()\n    .replace(/[^a-z0-9\\s]/g, " ")\n    .split(/\\s+/)\n    .filter((word) => word.length > 3 && !QUERY_STOPWORDS.has(word));\n  const parts = [...new Set([...quoted, ...words])].slice(0, 14);\n  return parts.join(" ");\n}\n\nfunction uniqueQueries(variants) {\n  const seen = new Set();\n  const out = [];\n  for (const variant of variants) {\n    const text = String(variant || "").trim();\n    if (!text) continue;\n    const key = text.toLowerCase();\n    if (seen.has(key)) continue;\n    seen.add(key);\n    out.push(text);\n  }\n  return out.length > 0 ? out : [""];\n}\n\n/** Reciprocal rank fusion across packs; rank-based, so scales do not matter. */\nfunction fuseByRank(packs) {\n  const scores = new Map();\n  const items = new Map();\n  for (const pack of packs) {\n    const list = pack && Array.isArray(pack.items) ? pack.items : [];\n    list.forEach((item, index) => {\n      const id = item.id ?? `anon:${index}`;\n      scores.set(id, (scores.get(id) ?? 0) + 1 / (60 + index + 1));\n      if (!items.has(id)) items.set(id, item);\n    });\n  }\n  return [...items.values()]\n    .map((item) => ({ item, score: scores.get(item.id) ?? 0 }))\n    .sort((a, b) => b.score - a.score)\n    .map((row) => row.item);\n}\n\n/**\n * Once a trajectory is a top seed, its other states are cheap primary-key\n * reads. Rank them lexically against the question and add the best few: this\n * targets the dominant loss mode (right trajectory, wrong state) without a\n * model or another embedding pass.\n */\nasync function rescueWithinTrajectories(\n  seeds,\n  query,\n  pushText,\n  maybeAddImage,\n  { maxTrajectories = 2, perTrajectory = 3 } = {},\n) {\n  const roots = [];\n  const seen = new Set();\n  for (const seed of seeds) {\n    const root = trajectoryRoot(seed.id);\n    if (!root || seen.has(root)) continue;\n    seen.add(root);\n    roots.push(root);\n    if (roots.length >= maxTrajectories) break;\n  }\n  if (roots.length === 0) return;\n\n  for (const root of roots) {\n    // One tag-filtered search per trajectory: the tag narrows the candidate\n    // set to a few dozen nodes, so this is far cheaper than walking state\n    // ids until they run out.\n    let hits = [];\n    try {\n      hits = await memos.search({\n        query,\n        namespace,\n        tags: [`traj:${root}`],\n        limit: perTrajectory,\n      });\n    } catch {\n      hits = [];\n    }\n    for (const hit of hits.slice(0, perTrajectory)) {\n      if (pushText(hit.node.id, hit.node.content, hit.score)) {\n        await maybeAddImage(hit.node.id);\n      }\n    }\n  }\n}\n\nfunction trajectoryRoot(id) {\n  const match = /^lme_(.+)_(?:state|elements|procedure|gotcha|note)(?:_\\d+)?$/.exec(\n    String(id || ""),\n  );\n  return match ? match[1] : null;\n}\n\nfunction detectSite(text) {\n  const lowered = String(text || "").toLowerCase();\n  // Enterprise questions name ServiceNow; that corpus is one environment and\n  // carries no site tag, so it must never be routed to a web site filter.\n  if (lowered.includes("servicenow")) return null;\n  if (lowered.includes("reddit") || lowered.includes("forum")) {\n    return "forum";\n  }\n  if (\n    lowered.includes("shopping admin") ||\n    lowered.includes("admin dashboard")\n  ) {\n    return "admin";\n  }\n  if (\n    lowered.includes("shopping website") ||\n    lowered.includes("shopping site")\n  ) {\n    return "shop";\n  }\n  // Enterprise questions name ServiceNow; that corpus is one environment, so\n  // no site tag exists and the filter is skipped.\n  return null;\n}\n\nasync function save(message) {\n  if (!memos) throw new Error("bridge not initialised");\n  await memos.flushEmbeddings();\n  await memos.close();\n  memos = null;\n  const target = String(message.path);\n  copyFileSync(dbPath, target);\n  // A snapshot should not leave WAL sidecars pointing at the old path.\n  for (const suffix of ["-wal", "-shm"]) {\n    const sidecar = `${dbPath}${suffix}`;\n    if (existsSync(sidecar)) {\n      try {\n        unlinkSync(sidecar);\n      } catch {\n        // The main DB is already checkpointed by close().\n      }\n    }\n  }\n  return { path: target };\n}\n\nconst rl = readline.createInterface({ input: process.stdin });\nfor await (const line of rl) {\n  if (!line.trim()) continue;\n  let message;\n  try {\n    message = JSON.parse(line);\n  } catch (error) {\n    send({ ok: false, error: `bad json: ${String(error)}` });\n    continue;\n  }\n  try {\n    switch (message.op) {\n      case "init":\n        await init(message);\n        send({ ok: true });\n        break;\n      case "insert":\n        send({ ok: true, ...(await insert(message)) });\n        break;\n      case "query":\n        send({ ok: true, ...(await query(message)) });\n        break;\n      case "search": {\n        // Inspection only: the harness never calls this. Returns ranked hits\n        // with pool/score so the adapter\'s pool balance is measurable.\n        const hits = await memos.search({\n          query: String(message.query ?? ""),\n          limit: Math.max(1, Number(message.limit) || 20),\n          namespace,\n          ...(message.pool ? { pool: message.pool } : {}),\n          ...(Array.isArray(message.tags) && message.tags.length\n            ? { tags: message.tags }\n            : {}),\n        });\n        send({\n          ok: true,\n          hits: hits.map((hit) => ({\n            id: hit.node.id,\n            pool: hit.node.pool,\n            score: hit.score,\n            preview: String(hit.node.content ?? "").slice(0, 160),\n          })),\n        });\n        break;\n      }\n      case "save": {\n        const result = await save(message);\n        send({ ok: true, ...result });\n        // A snapshot is terminal; exit so the Python side can join the\n        // process and safely copy/clean the database directory. Give stdout\n        // a tick to flush before exiting.\n        setTimeout(() => process.exit(0), 25);\n        break;\n      }\n      case "close":\n        await memos?.close().catch(() => {});\n        memos = null;\n        send({ ok: true });\n        process.exit(0);\n        break;\n      default:\n        send({ ok: false, error: `unknown op: ${String(message.op)}` });\n    }\n  } catch (error) {\n    send({\n      ok: false,\n      error: error instanceof Error ? error.message : String(error),\n      stack: error instanceof Error ? error.stack : undefined,\n    });\n  }\n}\n'
 
 DEFAULT_TOKEN_BUDGET = 120_000
@@ -86,7 +87,7 @@ NOTE_SYSTEM_PROMPT = (
 
 DECOMPOSE_SYSTEM_PROMPT = (
     "You write retrieval queries for a memory of web-agent trajectories. "
-    "Return JSON only: {\"queries\":[\"...\"]}. "
+    'Return JSON only: {"queries":["..."]}. '
     "Emit at most 3 short, concrete queries. Target distinct surfaces or "
     "entities when the question compares things; otherwise one query is "
     "enough. Keep exact UI labels, module names and entity names from the "
@@ -95,8 +96,8 @@ DECOMPOSE_SYSTEM_PROMPT = (
 
 PREMISE_SYSTEM_PROMPT = (
     "You check whether retrieved memory evidence supports the premise of a "
-    "question. Return JSON only: {\"verdict\":\"supported\"|\"unsupported\"|"
-    "\"contradicted\",\"reason\":\"...\"}. "
+    'question. Return JSON only: {"verdict":"supported"|"unsupported"|'
+    '"contradicted","reason":"..."}. '
     "Use 'contradicted' only when the evidence shows the premise is false "
     "(a claimed control, field or step does not exist). Use 'unsupported' "
     "when the evidence is silent. Use 'supported' when the evidence confirms "
@@ -124,9 +125,7 @@ def _truncate(text: str, limit: int) -> str:
 
 
 def _node_id(trajectory_id: str, kind: str, index: int | None = None) -> str:
-    safe = "".join(
-        ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in trajectory_id
-    )[:96]
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in trajectory_id)[:96]
     suffix = f"_{index}" if index is not None else ""
     return f"lme_{safe}_{kind}{suffix}"
 
@@ -175,9 +174,7 @@ def _extract_affordances(text: str, limit: int = 80) -> list[str]:
     return items
 
 
-def _collect_actions(
-    trajectory: dict[str, Any], states: list[dict[str, Any]]
-) -> list[str]:
+def _collect_actions(trajectory: dict[str, Any], states: list[dict[str, Any]]) -> list[str]:
     explicit = [
         str(action)
         for action in trajectory.get("actions") or []
@@ -204,9 +201,7 @@ def _simplify_trajectory(trajectory: dict[str, Any]) -> dict[str, Any]:
                     "url": _as_text(state.get("url")),
                     "action": state.get("action"),
                     "thoughts": state.get("thought", state.get("thoughts")),
-                    "text": _as_text(
-                        state.get("accessibility_tree", state.get("text"))
-                    ),
+                    "text": _as_text(state.get("accessibility_tree", state.get("text"))),
                     "screenshot": _as_text(state.get("screenshot")),
                 }
             )
@@ -283,8 +278,7 @@ def _prepare_trajectory(
             # relative paths.
             if os.getenv("MEMOS_LME_ALLOW_LOOSE") != "1":
                 raise RuntimeError(
-                    f"official trajectory normalization failed for "
-                    f"{trajectory.get('id')!r}: {exc}"
+                    f"official trajectory normalization failed for {trajectory.get('id')!r}: {exc}"
                 ) from exc
     simplified = _simplify_trajectory(trajectory)
     screenshots = [state["screenshot"] for state in simplified["states"]]
@@ -314,9 +308,7 @@ def trajectory_to_nodes(
     if prepared is not None:
         simplified, screenshots = prepared
     else:
-        simplified, screenshots = _prepare_trajectory(
-            trajectory, trajectories_root_dir
-        )
+        simplified, screenshots = _prepare_trajectory(trajectory, trajectories_root_dir)
     trajectory_id = simplified["id"]
     require(bool(trajectory_id), "trajectory id must be non-empty")
     goal = simplified.get("goal") or "<goal not found>"
@@ -471,9 +463,7 @@ def trajectory_to_nodes(
                 nodes.append(
                     {
                         "id": _node_id(trajectory_id, "elements", index),
-                        "content": _truncate(
-                            "\n".join([header, *elements]), elements_chars
-                        ),
+                        "content": _truncate("\n".join([header, *elements]), elements_chars),
                         "pool": "note",
                         "type": "context",
                         "namespace": namespace,
@@ -548,14 +538,10 @@ class Controller:
         max_tokens: int = 1_200,
     ) -> None:
         self.base_url = (
-            base_url
-            or os.getenv("MEMOS_CONTROLLER_BASE_URL")
-            or "https://api.river.ai/v1"
+            base_url or os.getenv("MEMOS_CONTROLLER_BASE_URL") or "https://api.river.ai/v1"
         ).rstrip("/")
         self.model = (
-            model
-            or os.getenv("MEMOS_CONTROLLER_MODEL")
-            or "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+            model or os.getenv("MEMOS_CONTROLLER_MODEL") or "deepseek-ai/DeepSeek-V4.1-Flash-1017"
         )
         self.api_key = api_key or _controller_key()
         self.timeout = float(os.getenv("MEMOS_CONTROLLER_TIMEOUT", timeout))
@@ -598,9 +584,7 @@ class Controller:
             self.failures += 1
             return None
 
-    def json_chat(
-        self, messages: list[dict[str, str]], **overrides: Any
-    ) -> dict[str, Any] | None:
+    def json_chat(self, messages: list[dict[str, str]], **overrides: Any) -> dict[str, Any] | None:
         text = self.chat(messages, **overrides)
         return _parse_json_object(text) if text else None
 
@@ -660,16 +644,11 @@ def _note_digest(
     for index in range(0, len(states), step):
         state = states[index]
         text = str(state.get("text") or "").replace("\n", " ")[:state_chars]
-        lines.append(
-            f"[{index}] {state.get('url', '')} | action={state.get('action')}"
-            f"\n{text}"
-        )
+        lines.append(f"[{index}] {state.get('url', '')} | action={state.get('action')}\n{text}")
     return "\n".join(lines)[:16_000]
 
 
-def _controller_notes(
-    controller: Any, simplified: dict[str, Any]
-) -> list[dict[str, Any]]:
+def _controller_notes(controller: Any, simplified: dict[str, Any]) -> list[dict[str, Any]]:
     """Ask the controller for procedure/hint notes; [] on any failure."""
     reply = controller.json_chat(
         [
@@ -692,9 +671,7 @@ def _controller_notes(
         content = str(note.get("content") or "").strip()
         if not content:
             continue
-        body = "\n".join(
-            part for part in (title, description, content) if part
-        )
+        body = "\n".join(part for part in (title, description, content) if part)
         notes.append(
             {
                 "id": _node_id(trajectory_id, kind),
@@ -738,13 +715,9 @@ class MemosMemory(Memory):
         self.top_k = int(params.get("top_k") or DEFAULT_TOP_K)
         self.state_chars = int(params.get("state_chars") or DEFAULT_STATE_CHARS)
         self.note_chars = int(params.get("note_chars") or DEFAULT_NOTE_CHARS)
-        self.procedure_chars = int(
-            params.get("procedure_chars") or DEFAULT_PROCEDURE_CHARS
-        )
+        self.procedure_chars = int(params.get("procedure_chars") or DEFAULT_PROCEDURE_CHARS)
         self.gotcha_chars = int(params.get("gotcha_chars") or DEFAULT_GOTCHA_CHARS)
-        self.elements_chars = int(
-            params.get("elements_chars") or DEFAULT_ELEMENTS_CHARS
-        )
+        self.elements_chars = int(params.get("elements_chars") or DEFAULT_ELEMENTS_CHARS)
         ui = params.get("ui_elements")
         if ui is None:
             ui = os.getenv("MEMOS_LME_UI_ELEMENTS", "1")
@@ -772,22 +745,17 @@ class MemosMemory(Memory):
         if rescue is None:
             rescue = os.getenv("MEMOS_LME_RESCUE", "0")
         self.within_trajectory_rescue = _as_flag(rescue)
-        self.query_mode = str(
-            params.get("query_mode") or os.getenv("MEMOS_LME_QUERY_MODE", "full")
-        )
+        self.query_mode = str(params.get("query_mode") or os.getenv("MEMOS_LME_QUERY_MODE", "full"))
         self.low_confidence_note = _as_flag(
             params.get("low_confidence_note")
             if params.get("low_confidence_note") is not None
             else os.getenv("MEMOS_LME_LOW_CONFIDENCE_NOTE", "0")
         )
         self.confidence_threshold = float(
-            params.get("confidence_threshold")
-            or os.getenv("MEMOS_LME_CONFIDENCE_THRESHOLD", "0")
+            params.get("confidence_threshold") or os.getenv("MEMOS_LME_CONFIDENCE_THRESHOLD", "0")
         )
         self.checkpoint_every = int(
-            params.get("checkpoint_every")
-            or os.getenv("MEMOS_LME_CHECKPOINT_EVERY")
-            or 25
+            params.get("checkpoint_every") or os.getenv("MEMOS_LME_CHECKPOINT_EVERY") or 25
         )
         self.checkpoint_path = self.workspace_dir / "checkpoint.db"
         # A checkpoint is a recovery copy, not the primary store. If the main
@@ -795,18 +763,12 @@ class MemosMemory(Memory):
         if not self.db_path.exists() and self.checkpoint_path.exists():
             shutil.copy2(self.checkpoint_path, self.db_path)
         root = params.get("trajectories_root_dir")
-        self.trajectories_root_dir = (
-            Path(str(root)).expanduser().resolve() if root else None
-        )
+        self.trajectories_root_dir = Path(str(root)).expanduser().resolve() if root else None
         self.embedding_base_url = str(
-            params.get("embedding_base_url")
-            or os.getenv("LME_EMBEDDING_BASE_URL")
-            or ""
+            params.get("embedding_base_url") or os.getenv("LME_EMBEDDING_BASE_URL") or ""
         ).strip()
         self.embedding_provider = str(
-            params.get("embedding_provider")
-            or os.getenv("MEMOS_EMBEDDING_PROVIDER")
-            or "model2vec"
+            params.get("embedding_provider") or os.getenv("MEMOS_EMBEDDING_PROVIDER") or "model2vec"
         ).strip()
         self.embedding_model = str(
             params.get("embedding_model")
@@ -814,9 +776,7 @@ class MemosMemory(Memory):
             or "Qwen/Qwen3-Embedding-8B"
         ).strip()
         self.embedding_dimensions = int(
-            params.get("embedding_dimensions")
-            or os.getenv("MEMOS_EMBEDDING_DIMENSIONS")
-            or 4096
+            params.get("embedding_dimensions") or os.getenv("MEMOS_EMBEDDING_DIMENSIONS") or 4096
         )
         self.node_binary = str(os.getenv("MEMOS_NODE_BINARY", "node"))
         self._proc: subprocess.Popen[str] | None = None
@@ -836,21 +796,30 @@ class MemosMemory(Memory):
             model=str(params.get("controller_model") or ""),
             api_key=str(params.get("controller_api_key") or ""),
         )
-        self.controller_notes = _as_flag(
-            params.get("controller_notes")
-            if params.get("controller_notes") is not None
-            else os.getenv("MEMOS_LME_CONTROLLER_NOTES", "0")
-        ) and self.controller.enabled
-        self.controller_decompose = _as_flag(
-            params.get("controller_decompose")
-            if params.get("controller_decompose") is not None
-            else os.getenv("MEMOS_LME_CONTROLLER_DECOMPOSE", "0")
-        ) and self.controller.enabled
-        self.controller_premise = _as_flag(
-            params.get("controller_premise")
-            if params.get("controller_premise") is not None
-            else os.getenv("MEMOS_LME_CONTROLLER_PREMISE", "0")
-        ) and self.controller.enabled
+        self.controller_notes = (
+            _as_flag(
+                params.get("controller_notes")
+                if params.get("controller_notes") is not None
+                else os.getenv("MEMOS_LME_CONTROLLER_NOTES", "0")
+            )
+            and self.controller.enabled
+        )
+        self.controller_decompose = (
+            _as_flag(
+                params.get("controller_decompose")
+                if params.get("controller_decompose") is not None
+                else os.getenv("MEMOS_LME_CONTROLLER_DECOMPOSE", "0")
+            )
+            and self.controller.enabled
+        )
+        self.controller_premise = (
+            _as_flag(
+                params.get("controller_premise")
+                if params.get("controller_premise") is not None
+                else os.getenv("MEMOS_LME_CONTROLLER_PREMISE", "0")
+            )
+            and self.controller.enabled
+        )
 
     # ---- process lifecycle -------------------------------------------------
 
@@ -916,14 +885,10 @@ class MemosMemory(Memory):
             if os.getenv("MEMOS_LME_DEBUG") == "1":
                 print(f"[memos-bridge] {line}", file=sys.stderr)
 
-    def _call(
-        self, payload: dict[str, Any], *, timeout: float | None = None
-    ) -> dict[str, Any]:
+    def _call(self, payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
         with self._lock:
             if self._proc is None or self._proc.poll() is not None:
-                raise RuntimeError(
-                    "MemOS bridge is not running. Check `node` and @mem-os/sdk."
-                )
+                raise RuntimeError("MemOS bridge is not running. Check `node` and @mem-os/sdk.")
             require(self._proc.stdin is not None, "bridge stdin unavailable")
             require(self._proc.stdout is not None, "bridge stdout unavailable")
             self._proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -933,8 +898,7 @@ class MemosMemory(Memory):
             if line == "":
                 tail = "\n".join(self._stderr_tail)
                 raise RuntimeError(
-                    "MemOS bridge exited unexpectedly."
-                    + (f"\n{tail}" if tail else "")
+                    "MemOS bridge exited unexpectedly." + (f"\n{tail}" if tail else "")
                 )
             response = json.loads(line)
             if response.get("ok"):
@@ -989,9 +953,7 @@ class MemosMemory(Memory):
             generated = _controller_notes(self.controller, prepared[0])
             extra_tags = _partition_tags(trajectory)
             for note in generated:
-                note["tags"] = list(
-                    dict.fromkeys([*note.get("tags", []), *extra_tags])
-                )
+                note["tags"] = list(dict.fromkeys([*note.get("tags", []), *extra_tags]))
             nodes.extend(generated)
         for start in range(0, len(nodes), 100):
             self._call(
@@ -1003,10 +965,7 @@ class MemosMemory(Memory):
                 timeout=600.0,
             )
         self._inserted += 1
-        if (
-            self.checkpoint_every > 0
-            and self._inserted % self.checkpoint_every == 0
-        ):
+        if self.checkpoint_every > 0 and self._inserted % self.checkpoint_every == 0:
             self._checkpoint()
 
     def query(
@@ -1038,9 +997,7 @@ class MemosMemory(Memory):
             timeout=300.0,
         )
         items = response.get("items") or []
-        self.last_debug = [
-            row for row in (response.get("debug") or []) if isinstance(row, dict)
-        ]
+        self.last_debug = [row for row in (response.get("debug") or []) if isinstance(row, dict)]
         items = self._premise_check(query, items)
         return [
             {"type": item["type"], "value": item["value"]}
@@ -1070,9 +1027,7 @@ class MemosMemory(Memory):
         queries = [str(item).strip() for item in raw if str(item).strip()]
         return queries[:3]
 
-    def _premise_check(
-        self, query: str, items: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _premise_check(self, query: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Prepend a support verdict when the evidence contradicts the premise.
 
         AgentRunbook's error analysis found RAG-style memory *hurts* abstention
@@ -1083,9 +1038,7 @@ class MemosMemory(Memory):
             return items
         self.last_premise = {}
         evidence = "\n".join(
-            str(item.get("value") or "")
-            for item in items
-            if item.get("type") == "text"
+            str(item.get("value") or "") for item in items if item.get("type") == "text"
         )[:8_000]
         if not evidence.strip():
             return items

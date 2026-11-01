@@ -62,9 +62,7 @@ def main() -> None:
             print(f"items={len(items)}")
             for item in items[:5]:
                 print(f"- {item['type']}: {item['value'][:240]}")
-            text = "\n".join(
-                item["value"] for item in items if item["type"] == "text"
-            ).lower()
+            text = "\n".join(item["value"] for item in items if item["type"] == "text").lower()
             if "reset" not in text:
                 raise SystemExit("smoke test failed: retrieval did not return reset evidence")
             print("OK")

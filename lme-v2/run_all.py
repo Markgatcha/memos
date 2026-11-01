@@ -109,8 +109,7 @@ def main() -> None:
     )
     if not code_file.exists():
         raise SystemExit(
-            f"code file not found: {code_file}\n"
-            "Run install_adapter.py first or pass --code-file."
+            f"code file not found: {code_file}\nRun install_adapter.py first or pass --code-file."
         )
     if code_file.is_dir():
         raise SystemExit("code file must be a single file, not a directory")
