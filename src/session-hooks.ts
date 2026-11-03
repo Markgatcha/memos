@@ -29,6 +29,7 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { LOW_TRUST_TIERS } from "./provenance.js";
 import type { ConversationMessage, ProvenanceTier } from "./types.js";
 
 /** Hook input JSON (Claude Code SessionEnd format). */
@@ -454,10 +455,9 @@ export interface SessionStartRenderOptions {
   maxChars?: number;
 }
 
-const LOW_TRUST_PROVENANCE: ReadonlySet<string> = new Set([
-  "tool-output",
-  "imported",
-]);
+function isLowTrust(memory: SessionStartMemory): boolean {
+  return memory.provenance ? LOW_TRUST_TIERS.has(memory.provenance) : false;
+}
 
 function cleanMemoryText(text: string): string {
   return text
@@ -506,16 +506,10 @@ export function renderSessionStartContext(
   };
 
   for (const memory of profile.static) {
-    add(
-      memory,
-      LOW_TRUST_PROVENANCE.has(memory.provenance ?? "") ? unverified : durable,
-    );
+    add(memory, isLowTrust(memory) ? unverified : durable);
   }
   for (const memory of profile.dynamic) {
-    add(
-      memory,
-      LOW_TRUST_PROVENANCE.has(memory.provenance ?? "") ? unverified : recent,
-    );
+    add(memory, isLowTrust(memory) ? unverified : recent);
   }
 
   const header = [
