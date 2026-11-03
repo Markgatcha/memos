@@ -281,6 +281,42 @@ app = FastAPI(
 
 PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
 
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "localhost.localdomain"}
+
+
+def _resolve_cors_origins() -> list[str]:
+    """Browser origins allowed to call the API.
+
+    Default is no cross-origin access. Swagger UI is same-origin and does
+    not need CORS. Set MEMOS_CORS_ORIGINS to a comma-separated allowlist
+    when a local frontend on another port needs to call the API.
+    """
+    raw = os.environ.get("MEMOS_CORS_ORIGINS", "")
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    return normalized in LOOPBACK_HOSTS
+
+
+def _validate_bind_security(host: str, api_key: str) -> None:
+    """Refuse an unauthenticated memory API on a network interface.
+
+    The default bind is 127.0.0.1, where the OS user boundary is the
+    protection. A non-loopback bind exposes ingest, search, and delete to
+    the network, so it must carry a bearer key.
+    """
+    if _is_loopback_host(host):
+        return
+    if not api_key.strip():
+        raise RuntimeError(
+            "Refusing to bind MemOS to a non-loopback host without "
+            "MEMOS_API_KEY. Set MEMOS_API_KEY, or bind 127.0.0.1."
+        )
+
 
 def _is_authorized(path: str, authorization: str) -> bool:
     """Bearer check used by the HTTP middleware (unit-testable)."""
@@ -305,10 +341,10 @@ async def require_api_key(request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_resolve_cors_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(router, prefix="/api/mem")
@@ -450,6 +486,8 @@ def main():
                 sys.exit(1)
             _cli_restore(sys.argv[2])
             return
+
+    _validate_bind_security(MEMOS_HOST, os.environ.get("MEMOS_API_KEY", ""))
 
     import uvicorn
 

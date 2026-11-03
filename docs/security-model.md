@@ -10,7 +10,8 @@ page states what is protected by default and what the operator must do.
 | Storage | SQLite at `~/.memos/memos.db`, owned by the current user |
 | Network | None for SDK, CLI, and stdio MCP |
 | HTTP server | Binds `127.0.0.1:7400` |
-| HTTP auth | `MEMOS_API_KEY` bearer token, when set |
+| HTTP auth | `MEMOS_API_KEY` bearer token; required for a non-loopback bind |
+| Browser CORS | Deny by default; opt in with `MEMOS_CORS_ORIGINS` |
 | Public HTTP routes | `/health`, `/docs`, `/redoc`, `/openapi.json` |
 | Telemetry | None |
 | Encryption | Off unless `MEMOS_KEY` / `cipherKey` is set |
@@ -39,6 +40,32 @@ The host should confirm low-trust rows before acting on them. An MCP annotation
 of `readOnlyHint` is a hint, not a security boundary; a malicious server can
 lie about it.
 
+## Browser access and CORS
+
+The HTTP API answers no cross-origin browser requests by default. Swagger UI
+is same-origin and does not need CORS. If a local frontend on another port
+must call the API, name the exact origin:
+
+```bash
+MEMOS_CORS_ORIGINS="http://localhost:3000,http://127.0.0.1:3000" memos-server
+```
+
+Wildcards are not supported. Credentials are disabled because MemOS uses a
+bearer header, not cookies. This prevents the pattern behind CVE-2026-33010,
+where wildcard CORS plus anonymous access let any website read, rewrite, and
+delete an agent's memory.
+
+## Bind guard
+
+`memos-server` refuses to bind a non-loopback host unless `MEMOS_API_KEY` is
+set. This is a startup check, not a warning: an unauthenticated memory API on
+a LAN or public interface exposes ingest, search, and delete to everyone who
+can reach the port.
+
+If you launch uvicorn directly instead of `memos-server`, the guard is
+bypassed. Pass `--host 127.0.0.1` unless you have set a key and a reverse
+proxy.
+
 ## HTTP deployment
 
 If you bind beyond loopback:
@@ -48,6 +75,7 @@ If you bind beyond loopback:
 3. Strip incoming `X-Forwarded-*` and identity headers at the edge.
 4. Rate-limit at the proxy.
 5. Keep the SQLite file readable only by the service user.
+6. Set `MEMOS_CORS_ORIGINS` to the exact frontend origins, if any.
 
 See [Remote MCP and OAuth](remote-mcp.md) for a Caddy/Nginx example and the
 OAuth-proxy pattern. MemOS does not ship an OAuth resource server today.
