@@ -9,7 +9,7 @@ command without explaining it.
 
 | Surface | Documented | Total | Coverage |
 | --- | ---: | ---: | ---: |
-| CLI commands | 60 | 60 | 100% |
+| CLI commands | 61 | 61 | 100% |
 | MCP tools | 40 | 40 | 100% |
 | HTTP routes | 34 | 34 | 100% |
 
@@ -23,6 +23,7 @@ command without explaining it.
 | `memos ingest` | yes |
 | `memos retrieve` | yes |
 | `memos search` | yes |
+| `memos inject` | yes |
 | `memos profile` | yes |
 | `memos handoff` | yes |
 | `memos forget` | yes |

@@ -617,10 +617,13 @@ function connectTarget(
           "",
           `  Manual one-liner equivalent: claude mcp add memos -s user -- ${args}`,
           "",
-          "  # Session hook (auto-extract facts at session end):",
+          "  # Session hooks (inject memory at start, extract facts at end):",
+          "  # If you installed the MemOS plugin, it already injects at",
+          "  # SessionStart; add only the SessionEnd block in that case.",
           "  # Add to .claude/settings.json:",
           "  {",
           '    "hooks": {',
+          '      "SessionStart": [{ "hooks": [{ "type": "command", "command": "memos inject --format claude" }] }],',
           '      "SessionEnd": [{ "hooks": [{ "type": "command", "command": "memos session-hook" }] }]',
           "    }",
           "  }",
@@ -920,6 +923,10 @@ Commands:
   retrieve <id>           Retrieve a memory by ID
   search <query>          Search memories by text (--pool event|note|procedure,
                           --scope user:alice[,...])
+  inject                  Emit a session-start memory block for a hook
+                          (--format text|claude|json, --max-items <n>)
+  profile                 One-call user profile: durable facts + recent
+                          activity (--query, --max-static, --max-dynamic)
   handoff "<task>"        Compact continue-here brief for another harness
                           (--to <harness>, --token-budget <n>, --json)
   forget <id>             Delete a memory by ID
@@ -1692,6 +1699,74 @@ async function main(): Promise<void> {
           console.log(JSON.stringify({ summary }));
         } else {
           console.log(summary);
+        }
+        break;
+      }
+
+      case "inject": {
+        // Session-start memory delivery. Renders a small, labelled
+        // reference block from `profile()` and emits it in the shape the
+        // host harness expects. Fail-open: an empty store prints nothing.
+        if (process.env.MEMOS_SKIP_SESSION_START === "1") break;
+
+        const formatIdx = args.indexOf("--format");
+        const format = (
+          formatIdx !== -1 ? (args[formatIdx + 1] ?? "text") : "text"
+        ).toLowerCase();
+        if (!["text", "claude", "json"].includes(format)) {
+          console.error("Error: --format must be one of: text, claude, json.");
+          process.exit(1);
+        }
+
+        const intFlag = (name: string): number | undefined => {
+          const eq = args.find((arg) => arg.startsWith(`${name}=`));
+          const raw =
+            eq?.split("=")[1] ??
+            (args.indexOf(name) !== -1
+              ? args[args.indexOf(name) + 1]
+              : undefined);
+          const parsed = raw === undefined ? NaN : parseInt(raw, 10);
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+        const stringFlag = (name: string): string | undefined => {
+          const eq = args.find((arg) => arg.startsWith(`${name}=`));
+          const idx = args.indexOf(name);
+          return eq?.split("=")[1] ?? (idx !== -1 ? args[idx + 1] : undefined);
+        };
+
+        const maxItems = intFlag("--max-items") ?? 12;
+        const maxChars = intFlag("--max-chars") ?? 2400;
+        const query = stringFlag("--query");
+        const namespace = stringFlag("--namespace");
+        const scopeArg = stringFlag("--scope");
+
+        const profile = await memos.profile({
+          maxStatic: maxItems,
+          maxDynamic: Math.max(2, Math.floor(maxItems / 2)),
+          ...(query ? { query } : {}),
+          ...(namespace ? { namespace } : {}),
+          ...(scopeArg ? { scope: parseScopeArg(scopeArg) } : {}),
+        });
+        const { renderSessionStartContext, claudeSessionStartOutput } =
+          await import("./session-hooks.js");
+        const context = renderSessionStartContext(profile, {
+          maxItems,
+          maxChars,
+        });
+        if (!context) break;
+
+        if (format === "claude") {
+          console.log(claudeSessionStartOutput(context));
+        } else if (format === "json") {
+          console.log(
+            JSON.stringify(
+              { context, generatedAt: profile.generatedAt },
+              null,
+              2,
+            ),
+          );
+        } else {
+          console.log(context);
         }
         break;
       }

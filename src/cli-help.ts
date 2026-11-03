@@ -15,6 +15,7 @@ export const CLI_COMMANDS: readonly string[] = [
   "ingest",
   "retrieve",
   "search",
+  "inject",
   "profile",
   "handoff",
   "forget",
@@ -151,6 +152,16 @@ Retrieve a single memory by its ID.`,
 Search memories by text (full-text + semantic when embeddings are on).
 Example:
   memos search "dark mode" --limit 5`,
+  inject: `memos inject [--format text|claude|json] [--max-items <n>]
+  [--max-chars <n>] [--query <text>] [--namespace <ns>]
+  [--scope user:alice[,...]]
+
+Emit a small, labelled reference block for a session-start hook. The block
+is data, not instructions: low-trust memories are separated and labelled.
+--format claude wraps it in the Claude Code SessionStart JSON envelope.
+Set MEMOS_SKIP_SESSION_START=1 to make the command a no-op.
+Example:
+  memos inject --format claude --max-items 10`,
   profile: `memos profile [--query <text>] [--max-static <n>] [--max-dynamic <n>]
   [--recent-days <n>] [--scope user:alice[,...]] [--json]
 

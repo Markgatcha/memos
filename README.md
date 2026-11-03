@@ -38,6 +38,8 @@
 
 > **Reference:** [CLI commands](docs/reference/cli.md) · [MCP tools](docs/reference/mcp-tools.md) · [HTTP API](docs/reference/http-api.md) · [docs coverage](docs/coverage.md)
 
+> **Session hooks:** `memos inject --format claude` adds a small memory block at session start; `memos session-hook` extracts durable facts at session end. See the [harness matrix](docs/harness-matrix.md).
+
 > **Agent Plugins:** the repo root ships `plugin.json`, `mcp.json`, and `skills/` for Hermes Agent and OpenClaw, alongside the Claude, Cursor, and Gemini manifests.
 
 > **Release status:** The GitHub source is the canonical, always-current build (v1.6.27). The npm package (`@mem-os/sdk`) and PyPI package (`mem-os-python`) are updated on each tagged release but may briefly lag the source. For unreleased changes, install from source.

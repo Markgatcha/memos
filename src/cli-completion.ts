@@ -33,6 +33,7 @@ const COMMAND_DESCS: Record<string, string> = {
   store: "Store a new memory",
   retrieve: "Retrieve a memory by ID",
   search: "Search memories by text",
+  inject: "Emit a session-start memory block",
   profile: "One-call user profile (durable facts + recent activity)",
   forget: "Delete a memory by ID",
   summarize: "Summarize all memories",
@@ -83,6 +84,14 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   store: ["--type", "--ttl", "--pool", "--context", "--scope", "--tags"],
   retrieve: [],
   search: ["--limit", "--pool", "--scope", "--harness"],
+  inject: [
+    "--format",
+    "--max-items",
+    "--max-chars",
+    "--query",
+    "--namespace",
+    "--scope",
+  ],
   profile: [
     "--query",
     "--max-static",

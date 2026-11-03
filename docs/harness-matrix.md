@@ -65,6 +65,57 @@ prints the block instead:
 - goose: `~/.config/goose/config.yaml`
 - Cline / Roo: the VS Code globalStorage `mcp_settings.json`
 
+## Make the agent use memory
+
+An MCP server makes memory available; it does not make the agent call it.
+Install a session-start hook so the first prompt already carries a small
+reference block.
+
+Claude Code, in `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memos inject --format claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "memos session-hook" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`memos inject --format claude` emits the `SessionStart` `additionalContext`
+payload. The block is labelled as reference data, and low-trust memories are
+kept in a separate, capped section. Set `MEMOS_SKIP_SESSION_START=1` to skip
+injection for one session, or `MEMOS_SKIP_SESSION_HOOK=1` to skip fact
+extraction.
+
+If you installed the MemOS Claude Code plugin, it already injects a handoff
+brief at `SessionStart`. Add only the `SessionEnd` block in that case to avoid
+duplicate context.
+
+OpenCode: run `memos connect opencode` for the generated plugin. It injects a
+cached memory block through the experimental system-prompt transform and
+extracts facts on `session.deleted`.
+
+Other harnesses: run `memos inject --format text` at session start and prepend
+the output to the system prompt, or add it to `AGENTS.md`. The command is
+read-only and prints nothing when the store is empty.
+
 ## Hermes Agent
 
 Hermes ships MCP in the standard install and also loads portable Agent Plugins.
