@@ -48,6 +48,7 @@ nav:
       - Installation: installation.md
       - Your first memory: quickstart-ingest.md
       - Harness matrix: harness-matrix.md
+      - Memory improvement scan: research/2026-11-memory-improvement-scan.md
       - Website and harness audit: research/2026-11-website-harness-audit.md
   - Concepts:
       - Memory model: concepts.md
