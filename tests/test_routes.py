@@ -52,6 +52,36 @@ def test_native_binding_detects_flat_prebuild_layout(tmp_path) -> None:
     assert _native_binding_present(pkg) is True
 
 
+def test_bridge_forwards_structured_error_explainers() -> None:
+    """The bridge must forward MemOS error codes and explainers, not raw strings."""
+    for fragment in (
+        "errorCode: code",
+        "errorHint = err.hint",
+        "out.errorExplanation = err.explanation",
+    ):
+        assert fragment in _BRIDGE_SCRIPT
+
+
+def test_bridge_transport_failures_carry_explainers() -> None:
+    from memos.server.routes import _structured_error_detail
+
+    detail = _structured_error_detail(
+        "MEMOS_BRIDGE_CRASHED", "No response from MemOS bridge."
+    )
+    assert detail["code"] == "MEMOS_BRIDGE_CRASHED"
+    assert detail["hint"]
+    assert "crashed" in detail["explanation"] or "stdout" in detail["explanation"]
+
+    # Bridge-reported (TS-side) explainers win over the local fallbacks.
+    forwarded = _structured_error_detail(
+        "MEMOS_DB_LOCKED",
+        "database is locked",
+        {"errorHint": "custom hint", "errorExplanation": "custom explainer"},
+    )
+    assert forwarded["hint"] == "custom hint"
+    assert forwarded["explanation"] == "custom explainer"
+
+
 def test_bridge_exposes_new_methods() -> None:
     for method in (
         "profile",

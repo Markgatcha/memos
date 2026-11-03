@@ -47,7 +47,10 @@ import { renderAuditMarkdown } from "./compliance.js";
 import {
   asMemOSError,
   errorPayload,
+  explainErrorCode,
   formatErrorCard,
+  formatErrorExplainer,
+  listErrorExplainers,
   readLatestCrashReport,
   writeCrashReport,
 } from "./errors.js";
@@ -1005,6 +1008,9 @@ Commands:
                           --k <n>, --limit <n>, --json)
   explain "<query>"       Explain a ranking; --id <memoryId> diagnoses one
                           memory that should have matched but did not
+  explain-error [code]    Explain an error code: what probably went wrong,
+                          likely causes, and how to fix it (no code lists
+                          every MemOS error code)
   feedback                Record which recalled memories were used and whether
                           the task succeeded (--query, --used, --outcome)
   compact                 Fidelity backfill: generate missing L1/L2 levels
@@ -3491,6 +3497,44 @@ async function main(): Promise<void> {
         break;
       }
 
+      case "explain-error": {
+        // Flags may legally come first; only a bare positional is a code.
+        const code = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+        if (!code) {
+          const explainers = listErrorExplainers();
+          if (jsonFlag) {
+            console.log(JSON.stringify(explainers, null, 2));
+            break;
+          }
+          console.log(`Known MemOS error codes (${explainers.length}):`);
+          for (const explainer of explainers) {
+            console.log(`  ${explainer.code.padEnd(30)} ${explainer.summary}`);
+          }
+          console.log("");
+          console.log(
+            "Run `memos explain-error <code>` for what probably went wrong, " +
+              "likely causes, and how to fix it.",
+          );
+          break;
+        }
+        const explainer = explainErrorCode(code);
+        if (!explainer) {
+          console.error(
+            `Unknown error code: ${code}` +
+              `\nKnown codes: ${listErrorExplainers()
+                .map((entry) => entry.code)
+                .join(", ")}`,
+          );
+          process.exit(1);
+        }
+        if (jsonFlag) {
+          console.log(JSON.stringify(explainer, null, 2));
+        } else {
+          console.log(formatErrorExplainer(explainer));
+        }
+        break;
+      }
+
       case "doctor": {
         const jsonOut = jsonFlag;
         const report: Record<string, unknown> = {};
@@ -3725,12 +3769,23 @@ async function main(): Promise<void> {
         const lastCrash = readLatestCrashReport();
         if (lastCrash) {
           report.lastCrash = lastCrash;
+          const crashCode = String(lastCrash.code ?? "");
+          const explainer = crashCode ? explainErrorCode(crashCode) : null;
+          if (explainer) report.lastCrashExplainer = explainer;
           if (!jsonOut) {
             console.log(
               `Last crash report: [${String(lastCrash.code ?? "?")}] ` +
                 `${String(lastCrash.message ?? "").slice(0, 160)} ` +
                 `(${String(lastCrash.at ?? "unknown")})`,
             );
+            if (explainer) {
+              console.log(
+                `  what probably went wrong: ${explainer.explanation}`,
+              );
+              console.log(
+                `  run \`memos explain-error ${explainer.code}\` for causes and fixes`,
+              );
+            }
           }
         }
 
@@ -4549,7 +4604,14 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+/**
+ * Last-resort crash handler. Every unexpected failure — a rejected main(), an
+ * uncaught exception in a callback, or an unhandled rejection anywhere in the
+ * CLI (including the MCP stdio server) — renders the same structured card:
+ * error code, what probably went wrong, what to do, and the redacted crash
+ * report path. `--json` prints the machine-readable payload instead.
+ */
+function renderFatalCrash(err: unknown): void {
   const error = asMemOSError(err, "MEMOS_UNKNOWN", {
     command,
     dbPath: args.find((arg) => arg === "--db")
@@ -4577,4 +4639,9 @@ main().catch((err) => {
     );
   }
   process.exit(1);
-});
+}
+
+process.on("uncaughtException", renderFatalCrash);
+process.on("unhandledRejection", renderFatalCrash);
+
+main().catch(renderFatalCrash);

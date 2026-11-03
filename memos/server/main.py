@@ -19,6 +19,7 @@ import contextlib
 import hmac
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -314,6 +315,46 @@ app.add_middleware(
 app.include_router(router, prefix="/api/mem")
 
 
+_SECRET_PATTERN = re.compile(
+    r"(?i)(token|api[-_]?key|secret|password|passwd|authorization)"
+    r"(\s*[=:]\s*|\s+bearer\s+)(['\"]?)[^\s'\",}&]{4,}",
+)
+
+
+def _redact_secrets(text: str) -> str:
+    return _SECRET_PATTERN.sub(r"\1\2[redacted]", text)
+
+
+@app.exception_handler(Exception)
+async def _memos_unhandled_exception(request, exc):  # noqa: ANN001 - FastAPI handler signature
+    """Last-resort bug explainer for anything that escapes request handling.
+
+    Malformed client input does not reach here (FastAPI's own handlers answer
+    4xx). What lands in this handler is an unexpected server-side failure:
+    the response always carries a MEMOS_SERVER_ERROR code plus what probably
+    went wrong, so a user staring at a 500 knows what to do next.
+    """
+    message = _redact_secrets(str(exc) or exc.__class__.__name__)[:300]
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "code": "MEMOS_SERVER_ERROR",
+                "message": message,
+                "hint": (
+                    "Set MEMOS_LOG_LEVEL=debug for a fuller server-side "
+                    "traceback, or include this payload in a bug report."
+                ),
+                "explanation": (
+                    "An unexpected exception escaped request handling - a bug "
+                    "or environment problem, not a malformed request. The "
+                    "store was not modified by this failed request."
+                ),
+            },
+        },
+    )
+
+
 @app.get("/health")
 async def health():
     """Health check endpoint."""
@@ -486,6 +527,16 @@ import { MemOS } from './index.js';
 import { buildSelfEvalCases, runRetrievalEval } from './eval.js';
 import { ingestPath } from './ingest.js';
 
+// Optional: classify raw SDK errors into MEMOS_* codes and attach their
+// explainers. Guarded so older bundled SDK copies without errors.js still boot.
+let classifyError = null;
+let explainErrorCode = null;
+try {
+  ({ classifyError, explainErrorCode } = await import('./errors.js'));
+} catch {
+  // errors.js missing or unloadable — duck-type MemOSErrors only.
+}
+
 const dbPath = process.argv[2] || undefined;
 
 // Embedding configuration via MEMOS_EMBEDDING_* environment variables.
@@ -536,7 +587,7 @@ rl.on('line', async (line) => {
   try {
     msg = JSON.parse(line);
   } catch {
-    writeResponse({ error: 'Invalid JSON' });
+    writeResponse({ error: 'Invalid JSON', errorCode: 'MEMOS_INVALID_INPUT' });
     return;
   }
 
@@ -709,12 +760,62 @@ rl.on('line', async (line) => {
         break;
       }
       default:
-        writeResponse({ id, error: `Unknown method: ${method}` });
+        writeResponse({
+          id,
+          error: `Unknown method: ${method}`,
+          errorCode: 'MEMOS_INVALID_INPUT',
+          errorExplanation:
+            'The bridge received a method it does not implement. The HTTP routes and the bundled SDK are out of sync — reinstall the Python package or rebuild the TypeScript SDK (npm run build).',
+        });
         return;
     }
     writeResponse({ id, result });
   } catch (err) {
-    writeResponse({ id, error: err.message || String(err) });
+    // MemOSError carries a stable MEMOS_* code plus an explainer; forward all
+    // three so the Python layer can surface a useful bug explainer instead of
+    // a bare message string. Raw SDK errors are classified best-effort.
+    const raw = (err && err.message) || String(err);
+    let code =
+      err &&
+      typeof err === 'object' &&
+      typeof err.code === 'string' &&
+      err.code.startsWith('MEMOS_')
+        ? err.code
+        : null;
+    if (!code && typeof classifyError === 'function') {
+      try {
+        code = classifyError(raw);
+      } catch {
+        code = null;
+      }
+    }
+    if (!code) code = 'MEMOS_UNKNOWN';
+    const out = {
+      id,
+      error: raw,
+      errorCode: code,
+    };
+    if (err && typeof err === 'object') {
+      if (typeof err.hint === 'string') out.errorHint = err.hint;
+      if (typeof err.explanation === 'string')
+        out.errorExplanation = err.explanation;
+    }
+    if (
+      (out.errorHint === undefined || out.errorExplanation === undefined) &&
+      typeof explainErrorCode === 'function'
+    ) {
+      try {
+        const explainer = explainErrorCode(code);
+        if (explainer) {
+          if (out.errorHint === undefined) out.errorHint = explainer.hint;
+          if (out.errorExplanation === undefined)
+            out.errorExplanation = explainer.explanation;
+        }
+      } catch {
+        // explainer lookup is best-effort only
+      }
+    }
+    writeResponse(out);
   }
 });
 
