@@ -1,0 +1,129 @@
+The `umt` CLI is the whole product surface. Every command has `--help`.
+
+```bash
+npx -y universal-mcp-toolkit --help
+npx -y universal-mcp-toolkit <command> --help
+```
+
+## Discovery
+
+| Command | What it does |
+| --- | --- |
+| `umt list` | Every available server, grouped by category, with env vars |
+| `umt search <query>` | Search by name, description, and tags |
+| `umt discover --registry` | Include official or private MCP Registry entries |
+| `umt status` | Running UMT server processes and PIDs |
+| `umt logs <server>` | Tail a server's log file |
+
+## Configuration
+
+```bash
+# Preview a snippet
+umt config -s github hackernews -t claude-code
+
+# Write into three harnesses at once
+umt config -s github hackernews -t claude-code,cursor,codex --write
+
+# Document installed servers for coding agents
+umt config -s github filesystem -t agents-md --write
+```
+
+Supported targets: `claude-desktop`, `claude-code`, `cursor`, `codex`,
+`gemini-cli`, `vscode`, `windsurf`, `zed`, `opencode`, `cline`, `agents-md`,
+and `json` for manual copy.
+
+`--write` merges into the real config file, preserves existing settings, and
+keeps a `<file>.umt-bak` backup.
+
+## Guided setup
+
+```bash
+umt connect        # pick servers, pick a harness, confirm, write
+umt install        # classic interactive flow, saves a profile
+umt init           # first-run setup wizard
+```
+
+`connect` is the recommended path. It ends with the env vars and restart hints
+for the harness you chose.
+
+## Run a server
+
+```bash
+umt run github --transport stdio
+umt run github --transport http --port 3000
+umt run github --transport stdio --supervise
+```
+
+`--supervise` restarts a crashed server. If it crashes five times within sixty
+seconds, UMT stops and writes the cause to `logs/<serverId>.log`.
+
+## Diagnose
+
+```bash
+umt doctor          # build output, config state, required env
+umt test github     # live end-to-end MCP handshake
+umt conformance     # registry config + local handshakes
+```
+
+`doctor` is the first command to run when a harness cannot see a server. It
+checks the three common failures: missing `dist`, missing env var, and a config
+file in the wrong place.
+
+## Workflows
+
+A workflow is a versioned JSON file that runs several MCP calls in order and
+disconnects each step safely.
+
+```bash
+umt workflow validate ./workflow.json
+umt workflow run ./workflow.json --input '{"query":"release notes"}'
+```
+
+Validation does not start a server, so it is safe in CI.
+
+## Skills and completions
+
+```bash
+umt skill github filesystem
+# writes .agents/skills/umt-<id>/SKILL.md
+```
+
+Agent Skills in `.agents/skills/` are discovered by Claude Code, ZCode, and
+other harnesses that support the open format.
+
+```bash
+umt completions bash >> ~/.bashrc
+umt completions zsh
+umt completions fish
+umt completions powershell
+```
+
+## Profiles and export
+
+| Command | What it does |
+| --- | --- |
+| `umt profile create <name>` | Create a named profile |
+| `umt profile show [name]` | Show its configuration |
+| `umt profile export <name>` | Export to JSON |
+| `umt profile import <path>` | Import from JSON |
+| `umt export` | Export install profiles (no secrets) |
+| `umt export-config` | Export config in a specific client format |
+| `umt link` | Link a local MemOS SQLite database |
+
+## Maintenance
+
+```bash
+umt update            # update the CLI
+umt update --check    # check without installing
+umt upgrade           # update individual server packages
+```
+
+## Common failures
+
+| Symptom | Fix |
+| --- | --- |
+| Harness cannot see the server | `umt doctor`; restart the harness |
+| `dist` missing | Build the workspace, or use `npx` mode |
+| Wrong env var | `umt list` shows the required name |
+| Server exits immediately | `umt logs <server>`; run `umt test <server>` |
+| Config overwritten | Restore `<file>.umt-bak` |

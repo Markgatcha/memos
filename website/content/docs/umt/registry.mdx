@@ -1,0 +1,71 @@
+UMT is discoverable through three complementary manifest paths. Each serves a
+different crawler.
+
+## 1. Official MCP Registry
+
+`registry-server.json` at the repo root uses the reverse-DNS name
+`io.github.markgatcha.universal-mcp-toolkit` and lists the tool surface,
+transports, and environment variables.
+
+Submit it to the
+[official registry](https://github.com/modelcontextprotocol/registry) to appear
+in `mcp-cli search` results.
+
+## 2. Smithery well-known card
+
+`.well-known/mcp/server-card.json` is the server card Smithery and other
+RFC-style crawlers fetch to build a live profile.
+
+Keep `version` and `description` in sync with `packages/cli/package.json`.
+
+## 3. Runtime discovery document
+
+A running server serves `.well-known/mcp-server.json`. This is the discovery
+document a client can fetch after connecting.
+
+Verify it:
+
+```bash
+curl http://localhost:3000/.well-known/mcp/server-card.json | jq .name
+```
+
+## Search registries from the CLI
+
+```bash
+# Official registry + local discoveries
+umt discover --registry
+
+# Private or alternate compatible endpoint
+umt discover --registry https://registry.example.com/v0.1/servers
+```
+
+`umt search <query>` searches the local catalog. `umt discover --registry`
+adds remote entries to discovery.
+
+## Publishing checklist
+
+If you maintain an MCP server, these are the fields registries actually read:
+
+- [ ] Reverse-DNS name (`io.github.<owner>.<project>`)
+- [ ] Version matching the package
+- [ ] Description that says what the server does, not what it is
+- [ ] Transport list (`stdio`, `streamable-http`)
+- [ ] Environment variables with `required` flags
+- [ ] Tool names and one-line descriptions
+- [ ] A public repository URL
+- [ ] A license
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Registry search misses the server | Is `registry-server.json` at the repo root? |
+| Smithery shows stale metadata | Sync `version` and `description` with the CLI package |
+| Well-known card 404s | Start the server and check the port |
+| Private registry rejects the entry | Confirm the endpoint expects the same schema version |
+
+## Related
+
+- [CLI reference](/docs/umt/cli)
+- [Configuration](/docs/umt/config)
+- [Server catalog](/docs/umt/servers)

@@ -1,0 +1,104 @@
+The AI Trio is not a bundle. It is three tools that meet at three interfaces:
+transport, memory, and cost.
+
+## The three layers
+
+| Layer | Tool | Responsibility |
+| --- | --- | --- |
+| Transport | UMT | Config, server lifecycle, stdio/HTTP, registry |
+| Memory | MemOS | Store, retrieval, context packs, provenance |
+| Cost | Guardian | Folding, budgets, provider proxy |
+
+Each one works alone. The composition is optional and env-gated.
+
+## Data flow
+
+```text
+coding agent
+   │  MCP (stdio or Streamable HTTP)
+   ▼
+UMT ──────────────► MCP servers (GitHub, Postgres, Slack, ...)
+   │
+   │  link memos
+   ▼
+MemOS (SQLite) ──► context pack ──► Guardian ──► model provider
+                                      │
+                                      └─ folding, budgets, cache
+```
+
+1. The agent asks for a tool. UMT routes it to the right server.
+2. The agent asks for memory. MemOS retrieves a token-budgeted pack.
+3. The agent calls the model. Guardian folds the prompt, enforces the budget,
+   and forwards it.
+
+## Contracts
+
+The tools compose through versioned contracts, not imports:
+
+| Contract | Producer | Consumer |
+| --- | --- | --- |
+| `ai.trio.memos.context-pack.v1` | MemOS | Guardian, UMT, agents |
+| `ai.trio.umt.tool-manifest.v1` | UMT | MemOS, agents |
+| `ai.trio.guardian.folded-pack.v1` | Guardian | MemOS, agents |
+
+A contract is a JSON shape plus a version. That keeps the repos independently
+releasable.
+
+## Ports
+
+| Service | Default |
+| --- | --- |
+| MemOS HTTP | `7400` |
+| MemOS MCP (Streamable HTTP) | `8788` |
+| Guardian proxy | `3000` |
+| UMT server (HTTP mode) | command-specific |
+
+All bind to loopback by default.
+
+## Run all three
+
+```bash
+# Show status, or launch the full trio
+memos trio
+memos trio --up
+```
+
+`memos trio` reports which siblings are present, which are running, and which
+ports they own.
+
+## Failure isolation
+
+- If MemOS is down, Guardian serves requests without memory injection.
+- If Guardian is down, the agent can still use MemOS and UMT directly.
+- If UMT is down, the harness can still read MemOS over MCP.
+
+The composition is designed to degrade, not cascade.
+
+## Why local-first matters here
+
+A hosted memory API plus a hosted gateway plus a hosted tool router is three
+accounts, three keys, and three places your context can leak. The trio replaces
+that with:
+
+- one SQLite file for memory,
+- one local process for folding,
+- one config file for tools.
+
+You can inspect every hop. That is the point.
+
+## Next
+
+<Cards cols={2}>
+  <Card title="MemOS quickstart" href="/docs/memos/quickstart">
+    Start with the memory layer.
+  </Card>
+  <Card title="UMT quickstart" href="/docs/umt">
+    Connect the tools.
+  </Card>
+  <Card title="Guardian quickstart" href="/docs/guardian">
+    Put a budget and a folding layer in front of the model.
+  </Card>
+  <Card title="Contracts" href="/docs/memos/concepts">
+    The memory model behind the pack format.
+  </Card>
+</Cards>

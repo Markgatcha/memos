@@ -1,0 +1,91 @@
+Guardian routes to a provider you choose. The default is OpenRouter; direct
+Anthropic, Gemini, and local OpenAI-compatible runtimes are also supported.
+
+## Providers
+
+| Provider | When to use | Setup |
+| --- | --- | --- |
+| OpenRouter | One key, many models, cheapest-model routing | `OPENROUTER_API_KEY` |
+| Anthropic direct | Lower latency for Claude models | `ANTHROPIC_API_KEY` |
+| Google Gemini | Gemini models | `GEMINI_API_KEY` |
+| LM Studio | Local models on port 1234 | `guardian --lm-studio` |
+| Ollama | Local models on port 11434 | `GUARDIAN_OLLAMA_BASE_URL` |
+| llama.cpp | Local server on port 8080 | `GUARDIAN_LLAMA_CPP_BASE_URL` |
+| Any OpenAI-compatible | vLLM, TGI, a gateway | `guardian --base-url ... --api-key ...` |
+
+## Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OPENROUTER_API_KEY` | — | OpenRouter routing |
+| `ANTHROPIC_API_KEY` | — | Direct Anthropic routing |
+| `GEMINI_API_KEY` | — | Gemini routing |
+| `GUARDIAN_LOCAL_API_KEY` | — | Key for a custom local gateway |
+| `GUARDIAN_LOCAL_BASE_URL` | `http://127.0.0.1:8080/v1` | Custom local endpoint |
+| `OLLAMA_API_KEY` | — | Optional Ollama gateway key |
+| `GUARDIAN_OLLAMA_BASE_URL` | `http://127.0.0.1:11434/v1` | Ollama endpoint |
+| `LLAMA_CPP_API_KEY` | — | Optional llama.cpp key |
+| `GUARDIAN_LLAMA_CPP_BASE_URL` | `http://127.0.0.1:8080/v1` | llama.cpp endpoint |
+| `LMSTUDIO_API_KEY` | — | Optional LM Studio key |
+| `GUARDIAN_LMSTUDIO_BASE_URL` | `http://127.0.0.1:1234/v1` | LM Studio endpoint |
+| `GUARDIAN_PORT` | `3000` | Server port |
+| `DAILY_BUDGET_USD` | `50` | Daily cap |
+| `MONTHLY_BUDGET_USD` | `500` | Monthly cap |
+| `MAX_REQUEST_COST_USD` | `1.0` | Per-request cap |
+| `MEMOS_NAMESPACE` | — | Enables MemOS memory injection |
+| `MEMOS_STORAGE_PATH` | `~/.memos/memos.db` | MemOS database path |
+
+## Budgets
+
+Budgets are hard caps, not warnings. A request that would exceed a cap fails
+before it is sent.
+
+```bash
+guardian start -p 3000 --daily-budget 50 --monthly-budget 500
+```
+
+Check the current state:
+
+```bash
+curl -s http://localhost:3000/api/v1/budget
+```
+
+## Precedence
+
+1. CLI flags (`--model`, `--base-url`, `--api-key`).
+2. Environment variables.
+3. Built-in defaults.
+
+That means a one-off `--base-url` does not permanently change your config.
+
+## Local models
+
+```bash
+# LM Studio
+guardian --lm-studio
+
+# Any OpenAI-compatible server
+guardian --base-url http://127.0.0.1:8000/v1 --api-key local
+```
+
+Local providers do not need an API key unless your gateway enforces one. Folding
+and budgets work the same way; only the model call changes.
+
+## Safety
+
+- **Privacy shield** redacts PII and blocks prompt-injection patterns before the
+  request leaves the process.
+- **Tool gating** keeps tools the current turn cannot use out of the prompt.
+- **Budget enforcement** prevents runaway spend.
+- **No implicit network calls** beyond the provider you configured.
+
+<Callout type="warn" title="Local does not mean private">
+If you route to a hosted provider, the prompt leaves your machine. Folding
+reduces what is sent, but it does not make a hosted call local.
+</Callout>
+
+## Related
+
+- [Proxy and API](/docs/guardian/api)
+- [TUI and CLI](/docs/guardian/cli)
+- [Folding](/docs/guardian/folding)

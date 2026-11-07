@@ -1,0 +1,106 @@
+MemOS ships a plain stdio MCP server, so it works with any MCP-capable client.
+`memos connect <target>` writes the right config into the right file for the
+harnesses that need help.
+
+## Supported harnesses
+
+| Harness | Support | Command |
+| --- | --- | --- |
+| Claude Code | Native plugin + MCP | `/plugin install memos@memos-marketplace` or `memos connect claude-code --write` |
+| Cursor | Plugin manifest + MCP | `memos connect cursor --write` |
+| Codex | MCP | `memos connect codex --write` |
+| Gemini CLI | Extension + MCP | `memos connect gemini --write` |
+| Hermes Agent | Agent Plugin + MCP | `hermes plugins install Markgatcha/memos --no-enable` or `memos connect hermes` |
+| OpenClaw | Agent Plugin bundle + MCP | `memos connect openclaw` |
+| Cline | MCP | `memos connect cline --write` |
+| Zed | MCP (`context_servers`) | `memos connect zed --write` |
+| Goose | MCP extension | `memos connect goose` |
+| Kilo Code | MCP | `memos connect kilo` |
+| pi | MCP | `memos connect pi` |
+| OpenCode | MCP + plugin system | `memos connect opencode --write` |
+| Windsurf | MCP | `memos connect windsurf --write` |
+| Any MCP client | MCP | `memos connect generic` |
+
+<Callout type="tip" title="Use --write">
+Without `--write`, `connect` prints a snippet and changes nothing. With it,
+MemOS merges into the real config file and keeps a backup.
+</Callout>
+
+## Manual config
+
+If your harness is not in the list, point it at the stdio server:
+
+```json
+{
+  "mcpServers": {
+    "memos": {
+      "command": "npx",
+      "args": ["-y", "@mem-os/sdk", "mcp"]
+    }
+  }
+}
+```
+
+For a specific store, add the path:
+
+```json
+{
+  "mcpServers": {
+    "memos": {
+      "command": "npx",
+      "args": ["-y", "@mem-os/sdk", "mcp", "--db", "/absolute/path/memos.db"]
+    }
+  }
+}
+```
+
+For remote clients, run Streamable HTTP:
+
+```bash
+npx -y @mem-os/sdk mcp --http --port 8788 --host 127.0.0.1
+```
+
+See [Remote MCP and OAuth](https://github.com/Markgatcha/memos/blob/main/docs/remote-mcp.md)
+for auth and deployment.
+
+## What the agent gets
+
+Once connected, the harness sees the MCP tools, including:
+
+- `memos_store`, `memos_search`, `memos_retrieve`, `memos_forget`
+- `memos_context_pack`, `memos_profile`, `memos_graph`
+- `memos_search_temporal`, `memos_set_validity`, `memos_supersede`
+- `memos_consolidate`, `memos_history`, `memos_revert`
+- `memos_image_add`, `memos_image_search`
+- `memos_explain`, `memos_diagnostics`
+
+The exact list depends on your build and tool profile. The
+[MCP reference](https://github.com/Markgatcha/memos/blob/main/docs/reference/mcp-tools.md)
+is exhaustive.
+
+## Verify the connection
+
+1. Restart the harness after writing config.
+2. Ask it to store a fact: "Remember that this project uses pnpm."
+3. Open a new session and ask what package manager the project uses.
+4. If it cannot recall, run `memos doctor` and check the DB path the harness is
+   using.
+
+## Harness-specific notes
+
+**Claude Code** loads the plugin marketplace automatically. The plugin adds
+auto-recall and session-end consolidation hooks on top of the MCP tools.
+
+**Hermes and OpenClaw** use the Agent Plugins 1.0.0 layout: the repo root ships
+`plugin.json`, `mcp.json`, and `skills/`. That gives them commands and skills,
+not just tools.
+
+**Cursor, Cline, Zed, Goose, and Kilo** are MCP-only. There is no custom plugin
+to maintain.
+
+**Codex** uses `~/.codex/config.toml`. `memos connect codex --write` edits the
+`[mcp_servers.memos]` table.
+
+For the full matrix, including which harnesses support native plugins versus
+MCP only, see
+[the harness matrix](https://github.com/Markgatcha/memos/blob/main/docs/harness-matrix.md).

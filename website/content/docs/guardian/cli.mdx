@@ -1,0 +1,108 @@
+Guardian has two interfaces: a one-shot CLI and an interactive TUI. Both use
+the same engine and the same provider configuration.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `guardian` | Open the interactive chat TUI |
+| `guardian start` | Start the proxy server |
+| `guardian dash` | Serve the analytics dashboard |
+| `guardian optimize "text"` | Fold text and print the stats |
+| `guardian run "prompt"` | One-shot prompt; streams to stdout |
+| `guardian --model <id>` | Start the TUI with a specific model |
+| `guardian --lm-studio` | Point at a local LM Studio server |
+| `guardian --base-url <url> --api-key <key>` | Any OpenAI-compatible endpoint |
+
+```bash
+guardian run "summarise the failing tests"
+guardian run "explain src/core/prompt-cache.ts" --json
+guardian run "hello" --base-url http://127.0.0.1:1234/v1 --model local-model
+guardian run "run the focused tests and explain failures" --agent --exec
+```
+
+`--agent` enables the agent loop; `--exec` allows it to run commands. Use `--exec`
+only in a sandbox or a repository you trust.
+
+## TUI
+
+Type `/` to open the command palette. It filters as you type; `Tab` completes,
+`Enter` runs, `Esc` dismisses. `Ctrl+P` opens it from anywhere.
+
+### Session
+
+| Command | Effect |
+| --- | --- |
+| `/clear` | Clear the conversation and session ledger |
+| `/history` | Turn count and token totals |
+| `/retry` | Re-send the last message |
+| `/undo` | Drop the last turn |
+| `/export [file]` | Write the conversation to Markdown |
+
+### Model and provider
+
+| Command | Effect |
+| --- | --- |
+| `/models` | Interactive model picker |
+| `/model [id]` | Show or switch the active model |
+| `/providers` | List configured providers |
+| `/connect [url] [key]` | Connect an OpenAI-compatible provider |
+| `/disconnect` | Return to the shared gateway |
+| `/provider` | Show which provider the model routes to |
+
+### Context and cost
+
+| Command | Effect |
+| --- | --- |
+| `/system [text]` | Show or set the system prompt |
+| `/context` | Context size and optimization state |
+| `/temp [value]` | Sampling temperature |
+| `/maxtokens [value]` | Per-turn output cap |
+| `/tokens` | Token breakdown |
+| `/compact` | Fold and shard the current history |
+| `/cost` | Session cost and savings |
+| `/stats` | Per-turn table |
+| `/budget` | Budget guard status |
+
+### Features
+
+| Command | Effect |
+| --- | --- |
+| `/fold <text>` | Fold and show the saving |
+| `/shard <text>` | Shard and show the saving |
+| `/tools` | Tool-gating configuration |
+| `/cache` | Prompt and response cache status |
+| `/prewarm` | Write the provider prompt cache |
+| `/setup` | Provider setup status |
+| `/tour` | 60-second command tour |
+| `/trio` | AI Trio status and scorecard |
+| `/doctor` | Environment diagnostics |
+| `/surface` | Multi-surface runtime configuration |
+
+## Dashboard
+
+```bash
+# Build once
+bun run build:dashboard
+
+# Serve
+guardian dash
+```
+
+The dashboard reads `/api/v1/stats/*` and shows savings, compression, request
+logs, and budget headroom.
+
+## Scripting
+
+`--json` makes `run` emit machine-readable output. Exit codes are non-zero on
+provider, budget, or validation failures, so it composes in CI.
+
+```bash
+guardian run "check the changelog" --json | jq -r '.text'
+```
+
+## Related
+
+- [Proxy and API](/docs/guardian/api)
+- [Providers](/docs/guardian/config)
+- [Folding](/docs/guardian/folding)

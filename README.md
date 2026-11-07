@@ -5,8 +5,9 @@
 <h1 align="center">MemOS</h1>
 
 <p align="center">
-  <strong>Universal, local-first, persistent memory layer for AI agents.</strong><br>
-  Give any LLM a memory that survives restarts — no cloud, no API keys, no vendor lock-in.
+  <strong>Local-first, persistent memory for AI agents — in a file you own.</strong><br>
+  Give Claude Code, Cursor, Codex, or any MCP client a memory that survives restarts.<br>
+  One SQLite file. No cloud, no API keys, no vendor lock-in.
 </p>
 
 <p align="center">
@@ -27,16 +28,48 @@
 
 <p align="center">
   <a href="https://context-core.dev/memos/"><strong>Website</strong></a> ·
+  <a href="https://context-core.dev/docs/"><strong>Handbook</strong></a> ·
   <a href="https://memos.readthedocs.io"><strong>Docs</strong></a> ·
   <a href="https://discord.gg/DyQGgPuueu"><strong>Discord</strong></a> ·
   <a href="https://x.com/Context_Core"><strong>Twitter/X</strong></a>
 </p>
+
+## Start here
+
+```bash
+npx -y @mem-os/sdk store "Prefers pnpm over npm" --db ./memos.db   # store
+npx -y @mem-os/sdk search "package manager" --db ./memos.db        # recall
+```
+
+```ts
+import { MemOS } from "@mem-os/sdk";
+
+const memos = new MemOS();                          // one SQLite file, zero config
+await memos.store("Prefers pnpm over npm");
+const hits = await memos.search("package manager");
+```
+
+**Works with** Claude Code · Cursor · Codex · Gemini CLI · Hermes · OpenClaw · Cline · Zed · Goose · Kilo · Ollama · LangChain · CrewAI · any MCP client. `memos connect <harness>` writes the config for you — see the [harness matrix](docs/harness-matrix.md).
+
+**Why it is different:** the memory is a single SQLite file on your disk (export it, back it up, delete it) · no network calls required · typed graph edges, temporal validity, trust scores, and provenance · MIT, no paid tier.
+
+### Reproducible retrieval
+
+| Benchmark | Score |
+| --- | --- |
+| LongMemEval-S, full 500 | **99.4% Hit@20** · 97.8% all-evidence@20 |
+| ConvoMem, 387 scored | **91.0% Hit@10** · 89.4% evidence recall@10 |
+| LoCoMo, convs 0–1 | **79.8% Hit@10** · 75.9% evidence recall@10 |
+
+Evidence-ID scored, no LLM judge. Commands, artifacts, and caveats: [`benchmarks/README.md`](benchmarks/README.md).
 
 > **New here?** [Ingest your notes in 60 seconds](docs/quickstart-ingest.md) — install, point at a folder, search it.
 
 > **Installing?** [Agent-readable install contract](llms-install.md) · [Harness matrix](docs/harness-matrix.md) · [MCP compatibility policy](docs/mcp-compatibility.md) · [per-harness snippets](https://context-core.dev/docs/install)
 
 > **Reference:** [CLI commands](docs/reference/cli.md) · [MCP tools](docs/reference/mcp-tools.md) · [HTTP API](docs/reference/http-api.md) · [docs coverage](docs/coverage.md)
+
+> **Contributing?** [Good first issues](https://github.com/Markgatcha/memos/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) · [CONTRIBUTING.md](CONTRIBUTING.md) · [open benchmark leaderboard](docs/benchmark-leaderboard.md)
 
 > **Agent Plugins:** the repo root ships `plugin.json`, `mcp.json`, and `skills/` for Hermes Agent and OpenClaw, alongside the Claude, Cursor, and Gemini manifests.
 

@@ -1,0 +1,77 @@
+Universal MCP Toolkit (UMT) is one CLI and runtime for 28 curated MCP
+servers. It writes the config each harness expects, starts servers over stdio
+or HTTP, and checks the environment before you waste time debugging a missing
+token.
+
+## Why it exists
+
+MCP is a good protocol with a bad onboarding story. Every server has its own
+package, its own environment variables, and its own config shape. Every host
+expects a different file. UMT collapses that into one workflow:
+
+1. `umt list` shows what is available.
+2. `umt connect` picks servers and a harness.
+3. UMT writes the real config file, with a backup.
+4. `umt run` starts a server locally.
+5. `umt doctor` explains what is broken.
+
+## 60-second quickstart
+
+```bash
+# See every server, grouped by category
+npx -y universal-mcp-toolkit list
+
+# Preview a Claude Code config for two servers
+npx -y universal-mcp-toolkit config -s github hackernews -t claude-code
+
+# Guided flow: pick servers, pick a harness, write the config
+npx -y universal-mcp-toolkit connect
+
+# Run one server locally
+npx -y universal-mcp-toolkit run github --transport stdio
+
+# Check build output, config, and env vars
+npx -y universal-mcp-toolkit doctor
+```
+
+## What is in the box
+
+| Package | Role |
+| --- | --- |
+| `packages/cli` | The `umt` command |
+| `packages/core` | Shared server runtime, logging, env loading, tool registration |
+| `packages/bridge` | Transport and host integration |
+| `packages/ai-sdk` | AI SDK integration |
+| `servers/*` | 28 curated MCP servers |
+
+The shared core is why every server behaves the same way: one bootstrap path,
+one logging format, one env loader, one registration pattern.
+
+## What makes it different
+
+| Capability | UMT | Typical alternative |
+| --- | --- | --- |
+| One command for 28 servers | Yes | One package per server |
+| Writes harness config | Yes, with backups | Copy-paste JSON |
+| Environment diagnostics | `umt doctor` | Read the stack trace |
+| Local process supervision | `umt run --supervise` | Your own wrapper |
+| Workflow validation | `umt workflow` | None |
+| Registry discovery | `umt discover --registry` | Separate tooling |
+| Agent Skills scaffolding | `umt skill` | Hand-written prompts |
+
+## Next
+
+<Cards cols={2}>
+  <Card title="Server catalog" href="/docs/umt/servers">
+    All 28 servers, what they do, and the env var each needs.
+  </Card>
+  <Card title="CLI reference" href="/docs/umt/cli">
+    list, config, connect, run, doctor, workflows, and profiles.
+  </Card>
+  <Card title="Configuration" href="/docs/umt/config">
+    Claude Desktop, Cursor, Claude Code, and the transport model.
+  </Card>
+  <Card title="Registry" href="/docs/umt/registry">
+    Official MCP Registry, Smithery, and private endpoints.
+  </Card>
+</Cards>

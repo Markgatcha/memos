@@ -1,0 +1,95 @@
+The current release ships **28 servers**. This is the authoritative list from
+`umt list`; run it in your build to confirm.
+
+## Collaboration
+
+| Server | What it does | Required env |
+| --- | --- | --- |
+| GitHub | Repository search, pull requests, workflows, issue triage | `GITHUB_TOKEN` |
+| Notion | Search pages and databases, read docs, publish notes | `NOTION_TOKEN` |
+| Slack | Channels, threads, and workspace updates | `SLACK_BOT_TOKEN` |
+| Linear | Issue search, workflow state, new work items | `LINEAR_API_KEY` |
+| Jira | Issues, tickets, incident triage | `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
+| Discord | Guild discovery, channels, message history, messaging | `DISCORD_BOT_TOKEN` |
+| Trello | Board and list discovery, card CRUD, archiving | `TRELLO_API_KEY`, `TRELLO_TOKEN` |
+| Notion (MCP) | Full workspace integration with page and database CRUD | `NOTION_API_KEY` |
+| Slack (MCP) | Channels, messages, users, and files | `SLACK_BOT_TOKEN` |
+
+## Productivity
+
+| Server | What it does | Required env |
+| --- | --- | --- |
+| Google Calendar | Calendars, events, meeting scheduling | `GOOGLE_CALENDAR_ACCESS_TOKEN` |
+| Google Drive | Search, metadata, file export | `GOOGLE_DRIVE_ACCESS_TOKEN` |
+
+## Data
+
+| Server | What it does | Required env |
+| --- | --- | --- |
+| PostgreSQL | Schema inspection and guarded SQL | `POSTGRESQL_URL` |
+| MongoDB | Collections and filtered document queries | `MONGODB_URI` |
+| Redis | Keys, TTLs, cache diagnostics | `REDIS_URL` |
+| Supabase | Tables, storage, project metadata | `SUPABASE_URL`, `SUPABASE_KEY` |
+| Airtable | Table listing, record CRUD, filtering | `AIRTABLE_API_KEY`, `AIRTABLE_BASE_ID` |
+
+## Platform
+
+| Server | What it does | Required env |
+| --- | --- | --- |
+| Vercel | Projects, deployments, environment settings | `VERCEL_TOKEN` |
+| Cloudflare Workers | Workers, routes, edge rollout state | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
+| Docker | Containers, images, daemon state | none |
+| npm Registry | Package search, versions, release metadata | none |
+
+## Research and media
+
+| Server | What it does | Required env |
+| --- | --- | --- |
+| Hacker News | Top stories, search, discussion threads | none |
+| arXiv | Paper search and literature digests (experimental) | none |
+| Spotify | Search tracks, playback, playlists | `SPOTIFY_ACCESS_TOKEN` |
+| Stripe | Customers, invoices, subscriptions | `STRIPE_SECRET_KEY` |
+
+## Local, memory, automation, AI
+
+| Server | What it does | Required env |
+| --- | --- | --- |
+| FileSystem | Read and write inside explicitly allowed roots | `FILESYSTEM_ROOTS` |
+| MemOS | Local-first persistent memory over MCP | none |
+| Playwright (MCP) | Browser automation and scraping | none |
+| OpenAI (MCP) | Chat, completions, embeddings | `OPENAI_API_KEY` |
+
+## Safety knobs
+
+Several servers expose write controls. Keep them off unless you need writes:
+
+| Variable | Effect |
+| --- | --- |
+| `POSTGRESQL_ALLOW_WRITES` | Enable write queries |
+| `REDIS_ALLOW_WRITES` | Enable key mutation |
+| `MONGODB_ALLOW_WRITE_PIPELINES` | Enable aggregation writes |
+| `FILESYSTEM_ROOTS` | Sandbox the filesystem server |
+| `FILESYSTEM_MAX_READ_BYTES` | Cap read size |
+| `VERCEL_TEAM_ID` | Scope Vercel access to a team |
+
+The root `.env.example` has the full set.
+
+## Experimental and opt-in
+
+`umt list` marks experimental servers explicitly; they may change or be removed.
+Third-party MCP servers can be added as opt-in entries using the same
+`mcpServers` shape. They are not part of the default bundle. One example is
+Vynly (`@vynly/mcp`), a social network for AI-generated images and short video
+with a free demo token on first call.
+
+## Verify
+
+```bash
+umt list
+umt search postgres
+umt test github        # live MCP handshake
+umt conformance        # registry config + local handshakes
+```
+
+If a server is missing, check whether it is disabled in this build and whether
+its package is installed in workspace mode.

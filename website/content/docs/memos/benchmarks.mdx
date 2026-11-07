@@ -1,0 +1,90 @@
+Memory benchmarks are easy to misread. This page separates what MemOS measures
+from what it does not, and gives the exact numbers with their caveats.
+
+## Two tracks
+
+| Track | What it measures | Judge |
+| --- | --- | --- |
+| Retrieval-only | Did the right evidence come back? | None; evidence IDs |
+| End-to-end | Did the model answer correctly? | An LLM judge |
+
+MemOS publishes retrieval-only numbers by default. They are deterministic and
+reproducible. End-to-end numbers depend on the reader model, the judge model,
+and the judge prompt, so they are reported separately and never merged into the
+retrieval table.
+
+## Retrieval results
+
+| Benchmark | Score | Conditions |
+| --- | --- | --- |
+| LongMemEval-S, full 500 | **99.4% Hit@20** · 97.8% all-evidence@20 | one node per session, `nomic-embed-text`, contextual header, no reranker |
+| ConvoMem, 387 scored | **91.0% Hit@10** · 89.4% evidence recall@10 | message evidence, `all-minilm`, contextual header |
+| LoCoMo, convs 0–1 | **79.8% Hit@10** · 75.9% evidence recall@10 | 304 questions, same embedder, previous-turn context |
+| LoCoMo, 1,986 questions | **64.1% Hit@10** | full set, retrieval-only |
+| HotPotQA distractor | **100% Hit@10** · 96.3% evidence recall@10 | 500 validation questions |
+
+Every number is scored by evidence-ID matching. No LLM judge is in the loop.
+
+End-to-end is reported separately: **78%** on a 50-question LongMemEval-S
+sample, self-judged with the same model. That is not comparable to vendor
+numbers produced with a gpt-4o judge.
+
+## Why the numbers are not directly comparable
+
+- **Recall is not accuracy.** A system can retrieve the right evidence and
+  still answer wrong. MemOS reports both retrieval and, separately, a small
+  self-judged end-to-end sample.
+- **LoCoMo has a ceiling.** An independent audit found 6.4% of the answer key
+  is wrong, so a perfect system caps out near 93.6%, not 100%.
+- **The judge is lenient.** The standard LoCoMo judge accepts a large share of
+  intentionally wrong but topically adjacent answers. Judge-prompt changes
+  alone have moved scores by 40 points.
+- **`top_k` can bypass retrieval.** If `top_k` is larger than the number of
+  sessions, the whole corpus is in the candidate pool. MemOS reports the
+  session granularity and the exact command.
+
+<Callout type="note" title="What we do not claim">
+MemOS does not claim a state-of-the-art end-to-end QA score. The retrieval
+numbers are strong and reproducible; the end-to-end measurement is a separate,
+smaller sample. Treat vendor numbers that do not disclose the harness as
+marketing.
+</Callout>
+
+## Reproduce it
+
+The harness lives in the repository:
+
+```bash
+# Retrieval-only, no API key
+pnpm bench:longmemeval:retrieve
+pnpm bench:locomo:retrieve
+pnpm bench:convomem
+
+# End-to-end, needs a reader and judge
+pnpm bench:longmemeval
+pnpm bench:locomo
+```
+
+Artifacts and per-category breakdowns are committed under `docs/artifacts/`.
+The commands, caveats, and retractions are in
+[`benchmarks/README.md`](https://github.com/Markgatcha/memos/blob/main/benchmarks/README.md).
+
+## The open leaderboard
+
+The [leaderboard spec](/docs/memos/leaderboard) defines a submission format
+that requires:
+
+- the harness and dataset version,
+- the judge model and prompt hash for end-to-end runs,
+- at least three runs with standard deviation,
+- per-question artifacts,
+- and a reproduction command.
+
+The goal is not to declare a winner. It is to make every published number
+checkable.
+
+## Related
+
+- [Benchmark results in plain English](https://github.com/Markgatcha/memos/blob/main/docs/benchmark-results.md)
+- [Comparison table](https://github.com/Markgatcha/memos/blob/main/docs/benchmark-comparison.md)
+- [Open leaderboard spec](/docs/memos/leaderboard)

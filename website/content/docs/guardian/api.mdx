@@ -1,0 +1,98 @@
+Guardian exposes the same HTTP surface it uses internally. Point an existing
+client at it, or call the endpoints directly.
+
+## Start the server
+
+```bash
+guardian start
+guardian start -p 3000 --daily-budget 50 --monthly-budget 500
+guardian start --lm-studio            # local runtime, no API key
+guardian start --no-reasoning         # disable chain-of-thought
+```
+
+Default port: `3000`.
+
+## Endpoints
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/v1/chat/completions` | POST | OpenAI-compatible proxy |
+| `/v1/messages` | POST | Anthropic Messages-compatible proxy |
+| `/api/v1/stats/summary` | GET | Aggregated stats |
+| `/api/v1/stats/savings` | GET | Savings analytics |
+| `/api/v1/stats/compression` | GET | Compression metrics |
+| `/api/v1/logs` | GET | Paginated request logs |
+| `/api/v1/providers` | GET | Model catalog |
+| `/api/v1/budget` | GET | Budget status |
+| `/api/v1/fold` | POST | Standalone folding |
+| `/health` | GET | Health check |
+
+## OpenAI client
+
+```ts
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "http://localhost:3000/v1",
+  apiKey: "guardian-local-key",
+});
+
+const response = await client.chat.completions.create({
+  model: "auto", // Guardian picks the cheapest capable model
+  messages: [{ role: "user", content: "Explain semantic folding" }],
+});
+```
+
+## Anthropic client
+
+```bash
+export ANTHROPIC_BASE_URL="http://localhost:3000"
+```
+
+`POST /v1/messages` supports content blocks, multi-turn `tool_use` history, and
+the named SSE lifecycle. Set `ANTHROPIC_API_KEY` to route `anthropic/*` models
+directly to `api.anthropic.com` instead of through OpenRouter.
+
+## Standalone folding
+
+```bash
+curl -s http://localhost:3000/api/v1/fold \
+  -H 'content-type: application/json' \
+  -d '{"text":"a very long context","maxTokens":200}'
+```
+
+## Budgets
+
+Guardian enforces three caps:
+
+| Variable | Default | Scope |
+| --- | --- | --- |
+| `MAX_REQUEST_COST_USD` | `1.0` | One request |
+| `DAILY_BUDGET_USD` | `50` | Per day |
+| `MONTHLY_BUDGET_USD` | `500` | Per month |
+
+When a cap is hit, the request fails with a budget error rather than silently
+spending. Check remaining headroom with `GET /api/v1/budget` or `/budget` in the
+TUI.
+
+## Health and metrics
+
+```bash
+curl -s http://localhost:3000/health
+curl -s http://localhost:3000/api/v1/stats/summary
+curl -s http://localhost:3000/api/v1/stats/compression
+```
+
+The dashboard (`guardian dash`) reads the same endpoints.
+
+## Memory pack injection
+
+Set `MEMOS_NAMESPACE` on the server and Guardian injects a MemOS pack ahead of
+the conversation. You can override it per request with `memory_pack` in the
+body. Errors are soft: a failed pack does not fail the request.
+
+## Related
+
+- [Folding and sharding](/docs/guardian/folding)
+- [TUI and CLI](/docs/guardian/cli)
+- [Providers and configuration](/docs/guardian/config)

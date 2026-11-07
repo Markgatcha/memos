@@ -1,0 +1,117 @@
+This page is the working reference: the commands, tools, and routes you will
+actually use. The exhaustive generated lists live in the repository.
+
+## CLI
+
+```bash
+npx -y @mem-os/sdk --help
+npx -y @mem-os/sdk <command> --help
+```
+
+| Command | What it does |
+| --- | --- |
+| `init` | Interactive setup; writes `~/.memos/config.json` |
+| `demo` | 30-second store, restart, recall proof |
+| `store <content>` | Store a memory (`--pool`, `--scope`, `--type`, `--ttl`) |
+| `search <query>` | Search (`--pool`, `--namespace`, `--limit`, `--temporal`) |
+| `retrieve <id>` | Fetch one memory by ID |
+| `forget <id>` | Delete with a certificate |
+| `graph` | Print the graph; `--mermaid` for a diagram |
+| `browse` | Interactive terminal browser |
+| `ingest <path>` | Ingest Markdown, HTML, or PDF (`--watch`) |
+| `import-external <file>` | Import ChatGPT or Claude memory (`--source`) |
+| `import <file>` | Import a chat export (`--from chatgpt\|claude\|slack`) |
+| `learn "<lesson>"` | Capture procedural guidance |
+| `consolidate` | Merge, archive, decay (`--dry-run`, `--watch`) |
+| `dream` | Consolidation with a report (`--json`) |
+| `encrypt` / `decrypt` | Encryption at rest |
+| `stats` | Token-savings telemetry |
+| `health` | Hygiene and usefulness report |
+| `audit` | Tamper chain, provenance, deletion certificates |
+| `eval` | Retrieval eval on your own corpus |
+| `explain "<query>"` | Show ranking candidates and scores |
+| `doctor` | Store, embedder, and endpoint diagnostics |
+| `connect <target>` | Write MCP config for a harness |
+| `mcp` | Start the MCP server (`--http` for Streamable HTTP) |
+| `trio` | Show or launch the full AI Trio |
+
+The CLI has more than 50 commands, including tags, TTL, reminders, image
+memory, profiles, handoff, sync, and shell completion. Run `--help` for the
+current build.
+
+## MCP tools
+
+| Group | Tools |
+| --- | --- |
+| Core | `memos_store`, `memos_search`, `memos_retrieve`, `memos_forget` |
+| Context | `memos_context`, `memos_context_pack`, `memos_profile`, `memos_handoff` |
+| Graph | `memos_graph`, `memos_link`, `memos_history`, `memos_revert` |
+| Time | `memos_search_temporal`, `memos_set_validity`, `memos_supersede`, `memos_reminders` |
+| Trust | `memos_set_trust`, `memos_review`, `memos_quarantine_release` |
+| Ingestion | `memos_ingest`, `memos_forget_source`, `memos_deletion_status` |
+| Maintenance | `memos_consolidate`, `memos_reindex`, `memos_diagnostics`, `memos_usage` |
+| Images | `memos_image_add`, `memos_image_recall`, `memos_image_search` |
+| Explain | `memos_explain` |
+
+The tool profile can be trimmed per harness, so not every client sees every
+tool. See the
+[MCP tools reference](https://github.com/Markgatcha/memos/blob/main/docs/reference/mcp-tools.md).
+
+## HTTP API
+
+Start the server:
+
+```bash
+pip install mem-os-python
+memos-server
+# http://localhost:7400
+```
+
+| Group | Routes |
+| --- | --- |
+| Memory | `POST /api/mem/store`, `/retrieve`, `/search`, `/forget`, `/update` |
+| Graph | `GET /api/mem/graph`, `POST /api/mem/neighbours`, `/link` |
+| Context | `POST /api/mem/context-pack`, `/profile`, `/overview`, `/brief` |
+| Time | `PATCH /api/mem/mem/{id}/ttl`, `DELETE` the same path |
+| Tags | `POST /api/mem/mem/{id}/tags`, `GET /api/mem/tags/{tag}` |
+| Ingestion | `POST /api/mem/ingest`, `/forget-source`, `GET /deletion-status/{id}` |
+| Audit | `POST /api/mem/audit`, `GET /api/mem/export` |
+
+The full route list, request bodies, and status codes are in the
+[HTTP API reference](https://github.com/Markgatcha/memos/blob/main/docs/reference/http-api.md).
+
+## TypeScript SDK
+
+```ts
+import { MemOS } from "@mem-os/sdk";
+
+const memos = new MemOS({
+  dbPath: "./memos.db",
+  namespace: "project:app",
+});
+
+await memos.store("Deploys go through the staging cluster first");
+const hits = await memos.search("deploy process");
+const pack = await memos.contextPack("how do we deploy?", { tokenBudget: 800 });
+```
+
+The SDK exposes the same operations as the CLI and MCP server. See the
+[TypeScript API](https://github.com/Markgatcha/memos/blob/main/docs/api-reference.md).
+
+## Errors
+
+Every failure has a stable code and a remediation hint:
+
+```bash
+memos explain-error            # list all codes
+memos explain-error MEM-1001   # explain one
+```
+
+Common categories: store not found, embedding provider unavailable, invalid
+namespace, schema migration required, and MCP handshake failure.
+
+## Related
+
+- [Memory model](/docs/memos/concepts)
+- [Ingestion](/docs/memos/ingestion)
+- [Operations](/docs/memos/operations)

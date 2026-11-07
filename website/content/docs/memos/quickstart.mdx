@@ -1,0 +1,94 @@
+This is the shortest path from nothing to a working memory. You need Node 20
+or newer. Python 3.11 is only required for the HTTP server.
+
+## 1. Store and recall
+
+```bash
+npx -y @mem-os/sdk store "Prefers pnpm over npm" --db ./memos.db
+npx -y @mem-os/sdk search "package manager" --db ./memos.db
+```
+
+You should see the memory come back with an ID and a score. The database is a
+single file at `./memos.db`. That file is the whole store.
+
+<Callout type="note" title="Published package vs source">
+The npm package tracks tagged releases. If a feature is only on `main`, install
+from source. The docs call out unreleased features where relevant.
+</Callout>
+
+## 2. Connect a harness
+
+`memos connect` writes the MCP config into the harness's real location.
+
+```bash
+# Claude Code
+npx -y @mem-os/sdk connect claude-code --write
+
+# Cursor
+npx -y @mem-os/sdk connect cursor --write
+
+# Codex CLI
+npx -y @mem-os/sdk connect codex --write
+```
+
+Restart the harness, then ask it to remember something. The MCP tools appear as
+`memos_search`, `memos_store`, `memos_context_pack`, and others.
+
+For every supported target, see [Harnesses](/docs/memos/harnesses). For
+copy-paste configs for each harness, see the [per-harness install
+page](/docs/install).
+
+## 3. Use the SDK
+
+```ts
+import { MemOS } from "@mem-os/sdk";
+
+const memos = new MemOS(); // default: ~/.memos/memos.db
+await memos.store("Prefers pnpm over npm");
+
+const hits = await memos.search("package manager");
+console.log(hits);
+```
+
+The SDK and the CLI share the same database. Point both at a project file with
+`new MemOS({ dbPath: "./memos.db" })` and `--db ./memos.db`.
+
+## 4. Run the HTTP server
+
+```bash
+pip install mem-os-python
+memos-server
+# Listening on http://localhost:7400
+```
+
+The server exposes the same store over HTTP for Python services, Dify, n8n, or
+a shared local service. See the [HTTP reference](/docs/memos/reference).
+
+## 5. Verify
+
+```bash
+npx -y @mem-os/sdk doctor
+npx -y @mem-os/sdk count --db ./memos.db
+npx -y @mem-os/sdk health --db ./memos.db
+```
+
+`doctor` checks the store, embedding configuration, and endpoints. `health`
+reports contradictions, TTL issues, confidence, and recall outcomes.
+
+<Callout type="tip" title="Start with the default embedder">
+A bare `new MemOS()` uses Model2Vec's `potion-base-8M`, a 256-dimensional
+static embedding table that runs in pure JavaScript. It needs no ONNX runtime,
+no native addon, and no model download at runtime. Configure Ollama, FastEmbed,
+Voyage, or Cohere when you want higher accuracy.
+</Callout>
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `Unknown command` from npx | The published package may lag `main`; install from source |
+| Semantic search feels weak | Run `memos doctor`; the default embedder is intentionally small |
+| Harness does not see the tools | Restart it after `connect --write` |
+| Wrong database | Pass `--db` explicitly or set `MEMOS_DB_PATH` |
+
+More in [Operations and security](/docs/memos/operations).

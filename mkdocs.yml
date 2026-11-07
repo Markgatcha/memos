@@ -48,9 +48,9 @@ nav:
       - Installation: installation.md
       - Your first memory: quickstart-ingest.md
       - Harness matrix: harness-matrix.md
-      - Website and harness audit: research/2026-11-website-harness-audit.md
   - Concepts:
       - Memory model: concepts.md
+      - Provenance and trust: provenance-trust.md
       - Fidelity levels: fidelity-levels.md
       - Temporal events and reminders: temporal-events.md
       - Recall inspector, feedback, and health: recall-inspector.md
@@ -58,7 +58,10 @@ nav:
       - Memory operations: memory-guide.md
       - Document ingestion: ingestion.md
       - Preferences: preferences.md
+      - Session hooks: session-hooks.md
       - Cross-harness sync: cross-harness.md
+      - Cross-device sync: sync.md
+      - Dashboard: dashboard.md
       - Adapters: adapters.md
       - Integrations: integrations.md
       - UMT and MemOS config: umt-integration.md
@@ -71,9 +74,11 @@ nav:
       - TypeScript API: api-reference.md
       - MCP compatibility: mcp-compatibility.md
       - Memory Explorer (MCP App): mcp-apps-explorer.md
+      - Open benchmark leaderboard: benchmark-leaderboard.md
       - Documentation coverage: coverage.md
   - Operations:
       - Security model: security-model.md
+      - Tamper-evident log: tamper-log.md
       - Operations runbook: operations.md
       - Troubleshooting: troubleshooting.md
   - Benchmarks:
@@ -83,5 +88,6 @@ nav:
       - Benchmark quality: benchmark-quality.md
       - Accuracy roadmap: accuracy-roadmap.md
       - AI Trio contracts: ai-trio-contracts.md
+      - MemOS vs Supermemory: memos-vs-supermemory.md
   - Contributing: https://github.com/Markgatcha/memos/blob/main/CONTRIBUTING.md
   - Roadmap: https://github.com/Markgatcha/memos/blob/main/ROADMAP.md

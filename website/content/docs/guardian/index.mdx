@@ -1,0 +1,93 @@
+LLM Guardian sits between your app and a model provider. It folds long
+context, enforces budgets, and exposes an OpenAI- or Anthropic-compatible proxy
+so existing clients get the savings without code changes.
+
+## Why it exists
+
+Long agent sessions are mostly repetition: tool schemas, system prompts, and
+history that the model has already seen. Guardian removes the parts that do not
+change the answer, then reports exactly how much it saved.
+
+It is also the cost layer of the AI Trio. When MemOS is configured, Guardian
+injects a compact memory pack ahead of the conversation instead of making the
+model re-derive context from chat history.
+
+## 60-second quickstart
+
+```bash
+# Fold a long string and print the stats
+npx -y llm-guardian optimize "your long context here"
+
+# One-shot prompt
+npx -y llm-guardian run "summarise the failing tests"
+
+# Start the proxy server
+npx -y llm-guardian start
+
+# Open the interactive TUI
+npx -y llm-guardian
+```
+
+## Zero-code proxy
+
+```bash
+# Anthropic SDK, Claude Code, Claude Desktop
+export ANTHROPIC_BASE_URL="http://localhost:3000"
+
+# OpenAI SDK, Cursor, Codex CLI
+export OPENAI_BASE_URL="http://localhost:3000/v1"
+```
+
+Anthropic-style clients hit `POST /v1/messages`; OpenAI-style clients hit
+`POST /v1/chat/completions`. Both go through the same pipeline: folding,
+sharding, tool gating, prompt caching, budgets, and optional MemOS memory.
+
+## What it does
+
+| Feature | Effect |
+| --- | --- |
+| Semantic folding | Entity-dense compression of long context |
+| VCM sharding | Split very long context into coherent shards |
+| Retain pre-filter | Decide what to keep before folding |
+| Tool gating | Compress tool definitions and tool turns |
+| Prompt caching | Reuse provider cache across turns |
+| Budget enforcement | Per-request, daily, and monthly caps |
+| Smart routing | Pick the cheapest capable model via OpenRouter |
+| Privacy shield | PII redaction and prompt-injection blocking |
+| Cross-model fingerprinting | Reorder prompt components per model |
+| Memory packs | Inject MemOS context as compact TOON |
+
+## AI Trio memory
+
+Set any of these on the Guardian server and memory injection turns on:
+
+```bash
+MEMOS_NAMESPACE=default
+MEMOS_STORAGE_PATH=~/.memos/memos.db
+MEMOS_EMBEDDING_PROVIDER=...
+```
+
+Without them, Guardian runs standalone and never imports the SDK. Failures are
+soft: if MemOS is unavailable, the request proceeds without a pack.
+
+<Callout type="tip" title="Prefer the HTTP path">
+Importing the SDK pulls in a native SQLite module, which constrains the runtime.
+Pointing Guardian at a running MemOS HTTP or MCP server avoids that coupling.
+</Callout>
+
+## Next
+
+<Cards cols={2}>
+  <Card title="Folding and sharding" href="/docs/guardian/folding">
+    How compression works, and how to measure it without losing facts.
+  </Card>
+  <Card title="Proxy and API" href="/docs/guardian/api">
+    Drop-in endpoints for OpenAI and Anthropic clients.
+  </Card>
+  <Card title="TUI and CLI" href="/docs/guardian/cli">
+    Slash commands, dashboards, and one-shot runs.
+  </Card>
+  <Card title="Providers" href="/docs/guardian/config">
+    OpenRouter, Anthropic, Gemini, LM Studio, Ollama, and budgets.
+  </Card>
+</Cards>

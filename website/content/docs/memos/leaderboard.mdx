@@ -1,0 +1,98 @@
+Public memory benchmarks are easy to game: a lenient judge, an undisclosed
+prompt, or a `top_k` larger than the corpus can move a score by tens of points.
+The leaderboard exists to make every number checkable.
+
+## Two tracks
+
+| Track | What it measures | Judge |
+| --- | --- | --- |
+| Retrieval-only | Did the right evidence come back? | None; evidence IDs |
+| End-to-end | Did the model answer correctly? | A disclosed LLM judge |
+
+Track A is the honest floor. Track B is reported separately and never merged
+into Track A.
+
+## Rules
+
+1. Report the mean of at least three runs, with standard deviation.
+2. Disclose the judge model, the judge prompt, and a SHA-256 of that prompt.
+3. Disclose ingestion: chunking, embedder, reranker, and contextual headers.
+4. `top_k` must be smaller than the corpus. A submission with
+   `top_k >= sessions_in_corpus` is rejected.
+5. Publish per-question artifacts and the command that produced them.
+6. Declare any post-processing. Unexplained deltas are rejected.
+7. Retractions are permanent. The corrected row replaces the score, but the old
+   row stays visible with a `retracted` note.
+
+## Submission shape
+
+```json
+{
+  "schema_version": "1.0",
+  "system": "MemOS",
+  "system_version": "1.6.27",
+  "track": "retrieval",
+  "dataset": "longmemeval-s",
+  "split": "full-500",
+  "k": 20,
+  "runs": 3,
+  "metrics": {
+    "hit_at_k": 0.994,
+    "evidence_recall_at_k": 0.991,
+    "all_evidence_at_k": 0.978
+  },
+  "config": {
+    "embedder": "nomic-embed-text",
+    "reranker": null,
+    "chunking": "one node per session"
+  },
+  "disclosures": {
+    "judge_model": null,
+    "reader_model": null,
+    "post_processing": "none"
+  },
+  "artifacts_url": "https://github.com/Markgatcha/memos/tree/main/docs/artifacts",
+  "reproduction_command": "pnpm bench:longmemeval:retrieve --k=20"
+}
+```
+
+## Current entries
+
+| System | Track | Dataset | Score | Runs |
+| --- | --- | --- | ---: | ---: |
+| MemOS 1.6.27 | retrieval | LongMemEval-S, full 500 | 99.4% Hit@20 / 97.8% all-evidence@20 | 3 |
+| MemOS 1.6.27 | retrieval | ConvoMem, 387 scored | 91.0% Hit@10 / 89.4% evidence recall@10 | 1 |
+| MemOS 1.6.27 | retrieval | LoCoMo, convs 0–1 | 79.8% Hit@10 / 75.9% evidence recall@10 | 3 |
+
+Unverified vendor claims belong in the claims register, not in the table above.
+
+## Claims register
+
+Numbers published without a runnable harness are listed for context, not
+ranked:
+
+| System | Claim | Track | Harness disclosed? |
+| --- | --- | --- | --- |
+| Living Brain | 92.2% judged accuracy, LoCoMo 1,540 q | end-to-end | No — "internal evaluations" |
+| Mem0 | 68.5% LoCoMo (published) | end-to-end | Partial |
+| Supermemory | 97% Recall@20, LongMemEval-S | retrieval | Aggregation method disclosed |
+
+The LoCoMo answer key is roughly 6.4% wrong, so a perfect system caps out near
+93.6%. A 92.2% claim sits close to that ceiling; it is not evidence of a
+category lead.
+
+## Submit
+
+1. Add `benchmarks/leaderboard/<system>-<track>.json`.
+2. Add per-question artifacts under `benchmarks/leaderboard/artifacts/<system>/`.
+3. Open a PR titled `leaderboard: <system> <track> <dataset>`.
+4. Include the reproduction command and the hardware used.
+
+Corrections are welcome, including corrections to MemOS rows. The full spec
+lives in
+[`docs/benchmark-leaderboard.md`](https://github.com/Markgatcha/memos/blob/main/docs/benchmark-leaderboard.md).
+
+## Related
+
+- [Benchmarks and methodology](/docs/memos/benchmarks)
+- [Memory model](/docs/memos/concepts)
