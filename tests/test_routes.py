@@ -65,9 +65,7 @@ def test_bridge_forwards_structured_error_explainers() -> None:
 def test_bridge_transport_failures_carry_explainers() -> None:
     from memos.server.routes import _structured_error_detail
 
-    detail = _structured_error_detail(
-        "MEMOS_BRIDGE_CRASHED", "No response from MemOS bridge."
-    )
+    detail = _structured_error_detail("MEMOS_BRIDGE_CRASHED", "No response from MemOS bridge.")
     assert detail["code"] == "MEMOS_BRIDGE_CRASHED"
     assert detail["hint"]
     assert "crashed" in detail["explanation"] or "stdout" in detail["explanation"]
