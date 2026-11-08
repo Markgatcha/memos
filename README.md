@@ -83,7 +83,7 @@ pip install mem-os-python
 memos-server            # http://localhost:7400
 ```
 
-The npm package tracks tagged releases and can briefly lag `main`. For the latest source build, see [Installation](docs/installation.md).
+The npm package tracks tagged releases and can briefly lag `main`. The GitHub source is the canonical, always-current build (v1.6.27). For the latest source build, see [Installation](docs/installation.md).
 
 ## Connect a harness
 
