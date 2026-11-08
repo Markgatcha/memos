@@ -1,11 +1,11 @@
 const lines = [
   { prompt: true, cmd: "npm install @mem-os/sdk", note: "" },
-  { prompt: true, cmd: "npx memos init --local", note: "" },
+  { prompt: true, cmd: "npx -y @mem-os/sdk init --yes", note: "" },
   {
     check: true,
     product: "memos",
     text: "memory layer ready",
-    meta: "sqlite · 847 memories",
+    meta: "sqlite · ready",
   },
   {
     check: true,

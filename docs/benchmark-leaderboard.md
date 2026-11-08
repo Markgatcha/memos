@@ -137,9 +137,10 @@ auditable too.
 
 | System | Track | Dataset | Score | Runs | Artifacts |
 | --- | --- | --- | ---: | ---: | --- |
-| MemOS 1.6.27 | retrieval | LongMemEval-S, full 500 | 99.4% Hit@20 / 97.8% all-evidence@20 | 3 | `docs/artifacts/` |
+| MemOS 1.6.27 | retrieval | LongMemEval-S, full 500 | 99.4% Hit@20 / 96.4% all-evidence@20 | 3 | `docs/artifacts/` |
 | MemOS 1.6.27 | retrieval | ConvoMem, 387 scored | 91.0% Hit@10 / 89.4% evidence recall@10 | 1 | `docs/artifacts/` |
-| MemOS 1.6.27 | retrieval | LoCoMo, convs 0–1 | 79.8% Hit@10 / 75.9% evidence recall@10 | 3 | `docs/artifacts/` |
+| MemOS 1.6.27 | retrieval | LoCoMo, full 1,986 | 65.0% Hit@10 / 59.8% evidence recall@10 | 1 | `docs/artifacts/` |
+| MemOS 1.6.27 | retrieval | LoCoMo, convs 0–1 subset | 79.8% Hit@10 / 75.9% evidence recall@10 | 3 | `docs/artifacts/` |
 
 Unverified vendor claims belong in the [claims register](#claims-register),
 not in the table above.

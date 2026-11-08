@@ -11,22 +11,24 @@ the same answer.
 
 | Benchmark | What it asks | MemOS |
 | --- | --- | --- |
-| **LongMemEval-S** | "Find the conversation where this fact was mentioned." | **100%** of questions returned the right session in the top 20 |
-| **ConvoMem** | "Find the exact messages that justify this answer." | **89.4%** hit rate in the top 10 |
-| **LoCoMo** | "Find the right line of dialogue across a long chat history." | **64.1%** hit rate in the top 10 |
+| **LongMemEval-S** | "Find the conversation where this fact was mentioned." | **99.4%** of questions returned the right session in the top 20 (full 500) |
+| **ConvoMem** | "Find the exact messages that justify this answer." | **91.0%** hit rate and **89.4%** evidence recall in the top 10 |
+| **LoCoMo** | "Find the right line of dialogue across a long chat history." | **65.0%** hit rate in the top 10 (full 1,986 questions) |
 
 Same data, same scoring rules, no LLM in the loop.
 
 ## What each one means without jargon
 
-- **LongMemEval-S**: 100 questions, each with ~50 past conversations. We found
-  the right conversation every single time within the first 20 results, and in
-  99% of cases we found *all* the right conversations.
-- **ConvoMem**: 525 questions from six categories (facts, preferences, changed
-  facts, abstention...). 89.4% of the time the supporting messages were in the
-  top 10.
-- **LoCoMo**: 10 long conversations, ~2,000 questions. 64.1% of the time the
-  exact supporting line was in the top 10.
+- **LongMemEval-S**: 500 questions, each with ~50 past conversations. We found
+  the right conversation in the top 20 for 99.4% of questions, with 98.3%
+  evidence recall and 96.4% all-evidence@20.
+- **ConvoMem**: 387 scored questions from six categories (facts, preferences,
+  changed facts, abstention...). 91.0% of the time the supporting messages were
+  in the top 10; evidence recall was 89.4%.
+- **LoCoMo**: 10 long conversations, 1,986 questions. 65.0% of the time the
+  exact supporting line was in the top 10. On the conversations 0–1 subset
+  (304 questions) the same run reaches 79.8% Hit@10; that subset is not the
+  headline number.
 
 ## How that compares
 

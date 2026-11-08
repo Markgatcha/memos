@@ -99,7 +99,7 @@ export default function MemOSPage() {
               </div>
               <div>
                 <span className="text-zinc-600 select-none">$ </span>
-                <span className="text-zinc-100">npx memos init</span>
+                <span className="text-zinc-100">npx -y @mem-os/sdk init --yes</span>
               </div>
             </div>
           </div>
