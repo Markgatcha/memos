@@ -4,6 +4,10 @@
   "description": "Universal, local-first, persistent memory layer for AI agents, LLM apps, and chatbots.",
   "license": "MIT",
   "author": "Markgatcha",
+  "funding": {
+    "type": "ko-fi",
+    "url": "https://ko-fi.com/hitvdrs"
+  },
   "homepage": "https://github.com/Markgatcha/memos",
   "repository": {
     "type": "git",
