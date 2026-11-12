@@ -96,6 +96,32 @@ export type {
   RecallStage,
   TokenCapResult,
 } from "./recall-budget.js";
+export {
+  MEMFS_MANIFEST_FILENAME,
+  coerceMemoryType,
+  emptyMemFSSyncStats,
+  hashMemFSContent,
+  isMemFSConflictBackup,
+  listMemFSFiles,
+  memfsAbsolutePath,
+  memfsRelativePath,
+  parseMemFSFile,
+  readMemFSManifest,
+  sanitizeMemFSSegment,
+  serializeMemFSNode,
+  toMemFSPath,
+  writeMemFSFile,
+  writeMemFSManifest,
+} from "./memfs.js";
+export type {
+  MemFSConflictPolicy,
+  MemFSFileEntry,
+  MemFSManifest,
+  MemFSStatus,
+  MemFSSyncOptions,
+  MemFSSyncStats,
+  ParsedMemFSFile,
+} from "./memfs.js";
 export { getMcpTools, runMcpServer } from "./mcp.js";
 export {
   chunkText,

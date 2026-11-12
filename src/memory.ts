@@ -147,6 +147,7 @@ import type {
   FidelityRecallResult,
 } from "./fidelity.js";
 import { composeScope } from "./scope.js";
+import type { MemFSStatus, MemFSSyncOptions, MemFSSyncStats } from "./memfs.js";
 import {
   capResultsByTokens,
   createRecallPlan,
@@ -4152,6 +4153,299 @@ export class MemOS {
     }
 
     return { format, data: outputDir, count: nodes.length };
+  }
+
+  /**
+   * Materialize memories as a browsable Markdown tree.
+   *
+   * Layout: `<dir>/<namespace>/<YYYY>/<MM>/<slug>-<id>.md`, with YAML
+   * frontmatter carrying the memory identity and tags. Unlike `export()`,
+   * this writes a `.memfs-manifest.json` of content hashes so a later
+   * {@link memfsSync} can tell which side changed.
+   */
+  async memfsExport(
+    dir: string,
+    opts: { namespace?: string } = {},
+  ): Promise<MemFSSyncStats> {
+    this.assertInit();
+    const { existsSync, mkdirSync } = await import("node:fs");
+    const memfs = await import("./memfs.js");
+    const stats = memfs.emptyMemFSSyncStats();
+    mkdirSync(dir, { recursive: true });
+    const manifest = memfs.readMemFSManifest(dir);
+    const nodes = this.graph
+      .getAllNodes()
+      .filter(
+        (node) =>
+          opts.namespace === undefined || node.namespace === opts.namespace,
+      );
+
+    for (const node of nodes) {
+      const entry = manifest.files[node.id];
+      const relative = entry?.path ?? memfs.memfsRelativePath(node);
+      const text = memfs.serializeMemFSNode(node);
+      const hash = memfs.hashMemFSContent(text);
+      const abs = memfs.memfsAbsolutePath(dir, relative);
+      if (entry && entry.hash === hash && existsSync(abs)) {
+        stats.skipped++;
+        continue;
+      }
+      memfs.writeMemFSFile(dir, relative, text);
+      manifest.files[node.id] = {
+        id: node.id,
+        path: relative,
+        hash,
+        memoryUpdatedAt: node.updatedAt,
+      };
+      stats.written++;
+    }
+
+    manifest.syncedAt = Date.now();
+    memfs.writeMemFSManifest(dir, manifest);
+    return stats;
+  }
+
+  /**
+   * Summarize what `memfsSync` would change without writing anything.
+   */
+  async memfsStatus(
+    dir: string,
+    opts: { namespace?: string } = {},
+  ): Promise<MemFSStatus> {
+    this.assertInit();
+    const { existsSync, readFileSync } = await import("node:fs");
+    const memfs = await import("./memfs.js");
+    const manifest = memfs.readMemFSManifest(dir);
+    const nodes = this.graph
+      .getAllNodes()
+      .filter(
+        (node) =>
+          opts.namespace === undefined || node.namespace === opts.namespace,
+      );
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+
+    let pendingWrites = 0;
+    let pendingCreates = 0;
+    let pendingUpdates = 0;
+    let conflicts = 0;
+    const files = memfs.listMemFSFiles(dir);
+
+    for (const relative of files) {
+      const abs = memfs.memfsAbsolutePath(dir, relative);
+      let text: string;
+      try {
+        text = readFileSync(abs, "utf8");
+      } catch {
+        continue;
+      }
+      const parsed = memfs.parseMemFSFile(text);
+      const hash = memfs.hashMemFSContent(text);
+      const node = parsed.id ? byId.get(parsed.id) : undefined;
+      const entry = parsed.id ? manifest.files[parsed.id] : undefined;
+      if (!node) {
+        pendingCreates++;
+        continue;
+      }
+      if (!entry) {
+        pendingUpdates++;
+        continue;
+      }
+      const fileChanged = hash !== entry.hash;
+      const memoryChanged = node.updatedAt > entry.memoryUpdatedAt;
+      if (fileChanged && memoryChanged) conflicts++;
+      else if (fileChanged) pendingUpdates++;
+      else if (memoryChanged) pendingWrites++;
+    }
+
+    let pendingDeletes = 0;
+    for (const entry of Object.values(manifest.files)) {
+      if (!existsSync(memfs.memfsAbsolutePath(dir, entry.path))) {
+        pendingDeletes++;
+      }
+    }
+
+    return {
+      tracked: Object.keys(manifest.files).length,
+      files: files.length,
+      pendingWrites,
+      pendingCreates,
+      pendingUpdates,
+      pendingDeletes,
+      conflicts,
+    };
+  }
+
+  /**
+   * Bidirectional sync between the store and a MemFS directory.
+   *
+   * - Edited files update their memory (content + tags).
+   * - New files create memories and are renamed to the canonical path.
+   * - Memory-side changes rewrite the file.
+   * - When both sides changed, `conflict` decides: `"memory"` (default)
+   *   backs up the edited file and rewrites it, `"file"` updates the
+   *   memory, `"skip"` leaves both untouched and reports the conflict.
+   * - With `prune: true`, memories whose files were removed are deleted.
+   */
+  async memfsSync(
+    dir: string,
+    opts: MemFSSyncOptions = {},
+  ): Promise<MemFSSyncStats> {
+    this.assertInit();
+    const fs = await import("node:fs");
+    const memfs = await import("./memfs.js");
+    fs.mkdirSync(dir, { recursive: true });
+    const manifest = memfs.readMemFSManifest(dir);
+    const stats = memfs.emptyMemFSSyncStats();
+    const policy = opts.conflict ?? "memory";
+    const byId = new Map(
+      this.graph
+        .getAllNodes()
+        .filter(
+          (node) =>
+            opts.namespace === undefined || node.namespace === opts.namespace,
+        )
+        .map((node) => [node.id, node]),
+    );
+    const seen = new Set<string>();
+
+    // Pass 1: filesystem -> memory.
+    for (const relative of memfs.listMemFSFiles(dir)) {
+      const abs = memfs.memfsAbsolutePath(dir, relative);
+      let text: string;
+      try {
+        text = fs.readFileSync(abs, "utf8");
+      } catch (error) {
+        stats.errors.push(`${relative}: ${String(error)}`);
+        continue;
+      }
+      const parsed = memfs.parseMemFSFile(text);
+      const hash = memfs.hashMemFSContent(text);
+      const node = parsed.id ? byId.get(parsed.id) : undefined;
+      const entry = parsed.id ? manifest.files[parsed.id] : undefined;
+
+      if (!node) {
+        if (parsed.content.length === 0) {
+          stats.skipped++;
+          continue;
+        }
+        const { node: created } = await this.store(parsed.content, {
+          type: memfs.coerceMemoryType(parsed.type),
+          tags: parsed.tags,
+        });
+        const canonical = memfs.memfsRelativePath(created);
+        const serialized = memfs.serializeMemFSNode(created);
+        memfs.writeMemFSFile(dir, canonical, serialized);
+        if (canonical !== relative) fs.rmSync(abs, { force: true });
+        manifest.files[created.id] = {
+          id: created.id,
+          path: canonical,
+          hash: memfs.hashMemFSContent(serialized),
+          memoryUpdatedAt: created.updatedAt,
+        };
+        byId.set(created.id, created);
+        stats.created++;
+        continue;
+      }
+
+      const fileChanged = !entry || hash !== entry.hash;
+      if (!fileChanged) {
+        // File unchanged, but the memory may have changed since export.
+        seen.add(node.id);
+        if (entry && node.updatedAt > entry.memoryUpdatedAt) {
+          const serialized = memfs.serializeMemFSNode(node);
+          fs.writeFileSync(abs, serialized, "utf8");
+          manifest.files[node.id] = {
+            id: node.id,
+            path: relative,
+            hash: memfs.hashMemFSContent(serialized),
+            memoryUpdatedAt: node.updatedAt,
+          };
+          stats.written++;
+        } else {
+          stats.skipped++;
+        }
+        continue;
+      }
+      seen.add(node.id);
+      const memoryChanged = !entry || node.updatedAt > entry.memoryUpdatedAt;
+
+      if (memoryChanged && policy === "skip") {
+        stats.conflicts++;
+        stats.conflictPaths.push(relative);
+        continue;
+      }
+
+      if (memoryChanged && policy !== "file") {
+        const backup = abs.replace(/\.md$/i, `.conflict-${Date.now()}.md`);
+        fs.copyFileSync(abs, backup);
+        const serialized = memfs.serializeMemFSNode(node);
+        fs.writeFileSync(abs, serialized, "utf8");
+        manifest.files[node.id] = {
+          id: node.id,
+          path: relative,
+          hash: memfs.hashMemFSContent(serialized),
+          memoryUpdatedAt: node.updatedAt,
+        };
+        stats.conflicts++;
+        stats.conflictPaths.push(relative);
+        stats.written++;
+        continue;
+      }
+
+      const updated = await this.update(node.id, {
+        content: parsed.content,
+        tags: parsed.tags,
+      });
+      manifest.files[node.id] = {
+        id: node.id,
+        path: relative,
+        hash,
+        memoryUpdatedAt: updated?.updatedAt ?? Date.now(),
+      };
+      stats.updated++;
+    }
+
+    // Pass 2: memory -> filesystem for nodes the file pass did not see.
+    for (const node of byId.values()) {
+      if (seen.has(node.id)) continue;
+      const entry = manifest.files[node.id];
+      const relative = entry?.path ?? memfs.memfsRelativePath(node);
+      const abs = memfs.memfsAbsolutePath(dir, relative);
+      // With prune enabled, a missing file is a deletion request, not a
+      // reason to recreate it.
+      if (opts.prune && !fs.existsSync(abs)) continue;
+      const serialized = memfs.serializeMemFSNode(node);
+      const hash = memfs.hashMemFSContent(serialized);
+      if (entry && entry.hash === hash && fs.existsSync(abs)) {
+        stats.skipped++;
+        continue;
+      }
+      memfs.writeMemFSFile(dir, relative, serialized);
+      manifest.files[node.id] = {
+        id: node.id,
+        path: relative,
+        hash,
+        memoryUpdatedAt: node.updatedAt,
+      };
+      stats.written++;
+    }
+
+    // Pass 3: prune memories whose files were removed.
+    if (opts.prune) {
+      for (const [id, entry] of Object.entries(manifest.files)) {
+        const abs = memfs.memfsAbsolutePath(dir, entry.path);
+        if (fs.existsSync(abs)) continue;
+        const deleted = await this.forget(id);
+        if (deleted) {
+          delete manifest.files[id];
+          stats.deleted++;
+        }
+      }
+    }
+
+    manifest.syncedAt = Date.now();
+    memfs.writeMemFSManifest(dir, manifest);
+    return stats;
   }
 
   // -----------------------------------------------------------------------

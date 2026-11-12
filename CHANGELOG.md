@@ -24,6 +24,20 @@ result set with the context-pack token estimator.
   timing). Tracing takes precedence over budget degradation so traces keep
   the full pipeline.
 
+### Added - MemFS
+
+`memos mount <dir>` materializes memories as a browsable Markdown tree
+(`<namespace>/<YYYY>/<MM>/<slug>-<id>.md`) with YAML frontmatter and a
+`.memfs-manifest.json` of content hashes.
+
+- `memos mount <dir> --sync` applies edited files back to the store, creates
+  memories from new files, rewrites memory-side changes, and reports
+  conflicts (`--conflict memory|file|skip`; default `memory` keeps a backup
+  of the edited file).
+- `--status` reports pending changes without writing; `--prune` deletes
+  memories whose files were removed.
+- SDK: `memfsExport()`, `memfsStatus()`, `memfsSync()`.
+
 ### Changed - Faster Docker CI
 
 The Docker Build job is rebuilt around Buildx and the GitHub Actions layer

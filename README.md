@@ -787,6 +787,18 @@ const { results, receipt } = await memos.searchWithReceipt({
 
 The CLI takes `--budget-ms` / `--budget-tokens`; the MCP `memos_search` tool takes `budget_ms` / `budget_tokens`. Budgeted searches bypass the query cache because the tier depends on runtime timing. See [docs/recall-budget.md](docs/recall-budget.md).
 
+### MemFS — memory as a browsable Markdown tree
+
+`memos mount` writes memories to a stable tree (`<namespace>/<YYYY>/<MM>/<slug>-<id>.md`) with YAML frontmatter and a content-hash manifest, so an agent can use its native `ls`/`grep`/`cat` instead of a retrieval API. Edit files and sync them back:
+
+```bash
+memos mount ./memfs            # materialize
+memos mount ./memfs --status   # what would change
+memos mount ./memfs --sync     # apply file edits to the store
+```
+
+Sync detects memory-side and file-side changes separately, updates memories from edited files, creates memories from new files, and resolves conflicts (`--conflict memory|file|skip`). `--prune` deletes memories whose files were removed. See [docs/memfs.md](docs/memfs.md).
+
 ### Outcome-conditioned ranking — learn what actually helped
 
 Every other retrieval signal is a prediction. This one is evidence: tell

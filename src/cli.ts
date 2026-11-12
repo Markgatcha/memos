@@ -1727,6 +1727,69 @@ async function main(): Promise<void> {
         break;
       }
 
+      case "mount": {
+        const dir = args[1];
+        if (!dir) {
+          console.error(
+            "Error: directory is required.\n  Usage: memos mount <dir> [--sync] [--status] [--prune] [--namespace <ns>] [--conflict memory|file|skip]",
+          );
+          process.exit(1);
+        }
+        const namespaceIdx = args.indexOf("--namespace");
+        const namespaceArg =
+          namespaceIdx !== -1 ? args[namespaceIdx + 1] : undefined;
+        const conflictIdx = args.indexOf("--conflict");
+        const conflictArg =
+          conflictIdx !== -1 ? args[conflictIdx + 1] : undefined;
+        const conflict =
+          conflictArg === "memory" ||
+          conflictArg === "file" ||
+          conflictArg === "skip"
+            ? conflictArg
+            : "memory";
+        const statusOnly = args.includes("--status");
+        const syncFlag = args.includes("--sync");
+
+        if (statusOnly) {
+          const status = await memos.memfsStatus(dir, {
+            namespace: namespaceArg,
+          });
+          if (jsonFlag) {
+            console.log(JSON.stringify(status, null, 2));
+          } else {
+            console.log(`MemFS ${dir}`);
+            console.log(`  tracked: ${status.tracked}  files: ${status.files}`);
+            console.log(
+              `  pending: ${status.pendingWrites} write, ${status.pendingCreates} create, ${status.pendingUpdates} update, ${status.pendingDeletes} delete, ${status.conflicts} conflict`,
+            );
+          }
+          break;
+        }
+
+        const stats = syncFlag
+          ? await memos.memfsSync(dir, {
+              namespace: namespaceArg,
+              prune: args.includes("--prune"),
+              conflict,
+            })
+          : await memos.memfsExport(dir, { namespace: namespaceArg });
+
+        if (jsonFlag) {
+          console.log(JSON.stringify(stats, null, 2));
+        } else {
+          console.log(
+            `${syncFlag ? "Synced" : "Mounted"} ${dir}: ${stats.written} written, ${stats.updated} updated, ${stats.created} created, ${stats.deleted} deleted, ${stats.skipped} skipped, ${stats.conflicts} conflict(s)`,
+          );
+          for (const conflictPath of stats.conflictPaths) {
+            console.log(`  conflict: ${conflictPath}`);
+          }
+          for (const error of stats.errors) {
+            console.log(`  error: ${error}`);
+          }
+        }
+        break;
+      }
+
       case "forget": {
         const id = args[1];
         if (!id) {

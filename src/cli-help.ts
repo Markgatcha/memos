@@ -28,6 +28,7 @@ export const CLI_COMMANDS: readonly string[] = [
   "untag",
   "list",
   "export",
+  "mount",
   "backup",
   "restore",
   "import-external",
@@ -232,6 +233,20 @@ List memories carrying a tag.`,
 
 Export memories to a file. Example:
   memos export --format markdown --output ./my-export`,
+  mount: `memos mount <dir> [--sync] [--status] [--prune]
+  [--namespace <ns>] [--conflict memory|file|skip] [--json]
+
+Materialize memories as a browsable Markdown tree
+(<namespace>/<YYYY>/<MM>/<slug>-<id>.md) with a content-hash manifest.
+Without flags this writes the tree. --sync applies file edits back to the
+store, creates memories from new files, and reports conflicts. --status
+shows what a sync would change without writing. --prune deletes memories
+whose files were removed.
+
+Examples:
+  memos mount ./memfs
+  memos mount ./memfs --sync
+  memos mount ./memfs --status`,
   backup: `memos backup [--output <path>]
 
 Back up the database file (default: ./memos-backup-<timestamp>.db).`,

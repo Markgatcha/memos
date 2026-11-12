@@ -44,6 +44,7 @@ const COMMAND_DESCS: Record<string, string> = {
   untag: "Remove tags from a memory",
   list: "List memories by tag",
   export: "Export memories to file",
+  mount: "Materialize memories as a Markdown tree",
   backup: "Back up the database",
   restore: "Restore from a backup",
   "import-external": "Import a ChatGPT/Claude memory export",
