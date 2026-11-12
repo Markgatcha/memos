@@ -110,6 +110,17 @@ Budgeted searches bypass the query cache. The chosen tier depends on runtime
 timing, so replaying a cached full-pipeline result would silently defeat the
 budget.
 
+## Measuring
+
+Run the LAFS harness to see the frontier your budgets actually produce:
+
+```bash
+node --import tsx scripts/bench-lafs.ts
+```
+
+It reports recall@5 and p50/p95 per budget and marks Pareto-optimal rows.
+See [lafs-harness.md](lafs-harness.md).
+
 ## Extending
 
 Stage gating is pure and lives in `src/recall-budget.ts`:

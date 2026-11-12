@@ -38,6 +38,14 @@ result set with the context-pack token estimator.
   memories whose files were removed.
 - SDK: `memfsExport()`, `memfsStatus()`, `memfsSync()`.
 
+### Added - LAFS harness
+
+`scripts/bench-lafs.ts` runs the committed golden corpus at several
+`budget.maxMs` values and reports recall@5, MRR, p50/p95 wall-clock latency,
+tier distribution, and the Pareto frontier, plus a normalized frontier area
+(AUF). Budget order is rotated per query so cache warmth is spread evenly.
+`--json` and `--out` emit a reproducible artifact.
+
 ### Added - Query planner
 
 `search()` now classifies the query into `temporal`, `knowledge-update`,
