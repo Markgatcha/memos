@@ -46,6 +46,12 @@ contradiction via opposite negation, and reports per-claim status plus
 coverage. Exposed on the SDK (`auditAnswer`), CLI, and MCP
 (`memos_audit_answer`); the default scorer is deterministic and offline.
 
+Context packs can carry a deterministic `packId` (`audit: "metadata"`,
+zero text tokens; `audit: "line"`, ~10 tokens). `auditPackAnswer(packId,
+answer)` then reuses the pack's evidence with no retrieval or embeddings
+and returns a compact summary (~40–70 tokens). The last 32 packs are kept
+in a bounded in-memory LRU.
+
 ### Added - LAFS harness
 
 `scripts/bench-lafs.ts` runs the committed golden corpus at several

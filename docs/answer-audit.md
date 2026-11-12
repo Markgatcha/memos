@@ -74,6 +74,44 @@ Pure helpers (`src/answer-audit.ts`): `splitAnswerClaims`,
 `claimSupportScore`, `resolveClaimCitations`, `auditAnswerText`,
 `formatAnswerAudit`.
 
+## Auditing a pack (low-token)
+
+A pack can carry a deterministic id so the audit can reuse its evidence
+instead of searching again:
+
+```ts
+const pack = await memos.contextPack({
+  query: "deployment policy",
+  tokenBudget: 800,
+  audit: "metadata",          // or "line" for text-only hosts
+});
+
+// ... model answers ...
+
+const summary = await memos.auditPackAnswer(pack.packId!, answer);
+// { coverage, counts, issues, summary: "Audit 67% (2/3 supported, 1 unsupported). ..." }
+```
+
+| Mode | Cost | What you get |
+| --- | --- | --- |
+| `off` (default) | 0 tokens | Byte-identical pack; no id. |
+| `metadata` | 0 tokens | `pack.packId` on the returned JSON object. |
+| `line` | ~10 tokens | One `# audit-pack: <id>` comment line in serialized output. |
+
+`packId` is a SHA-256 of namespace + query + sorted item ids, so identical
+packs produce identical ids — prompt-prefix caching is unaffected. The
+evidence for the last 32 packs is kept in memory; auditing is pure lexical
+work with **no retrieval, no embeddings, and no search-cache traffic**.
+
+The compact summary is deliberately small: coverage, counts, and at most
+three flagged claims (~40–70 tokens), not a full per-claim dump.
+
+MCP callers can pass the id directly:
+
+```json
+{ "pack_id": "a1b2c3d4e5f6", "answer": "..." }
+```
+
 ## MCP
 
 `memos_audit_answer` takes `answer`, optional `query` / `memory_ids` /

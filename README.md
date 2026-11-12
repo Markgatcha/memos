@@ -813,7 +813,7 @@ Memories ingested from files carry `sourcePath` and `sourceHash`. `memos drift` 
 
 ### Answer audit — check the answer, not just the retrieval
 
-`memos audit-answer "<answer>" --query "<q>"` splits an answer into claims, scores each against memories, resolves `[mem:...]` citations, and reports coverage. Claims come back as `supported`, `partial`, `unsupported`, or `contradicted`. Also exposed as the `memos_audit_answer` MCP tool. See [docs/answer-audit.md](docs/answer-audit.md).
+`memos audit-answer "<answer>" --query "<q>"` splits an answer into claims, scores each against memories, resolves `[mem:...]` citations, and reports coverage. Claims come back as `supported`, `partial`, `unsupported`, or `contradicted`. Packs built with `audit: "metadata"` (or `"line"`, ~10 tokens) carry a deterministic id so `auditPackAnswer` can reuse their evidence with no new retrieval. Also exposed as the `memos_audit_answer` MCP tool. See [docs/answer-audit.md](docs/answer-audit.md).
 
 ### Outcome-conditioned ranking — learn what actually helped
 

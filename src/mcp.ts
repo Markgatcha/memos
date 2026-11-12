@@ -2798,10 +2798,18 @@ function registerTools(server: McpServer, memos: MemOS): void {
         description:
           "Split a generated answer into claims and check each against stored " +
           "memories. Resolves [mem:...] citations and reports supported, partial, " +
-          "unsupported, and contradicted counts plus coverage. Use `query` to " +
-          "select candidate evidence or `memory_ids` to pin it.",
+          "unsupported, and contradicted counts plus coverage. Pass `pack_id` to " +
+          "audit against a context pack's evidence (no new retrieval), or use " +
+          "`query` / `memory_ids` to choose candidates.",
         inputSchema: z.object({
           answer: z.string().min(1).describe("Generated answer to audit."),
+          pack_id: z
+            .string()
+            .optional()
+            .describe(
+              "Context pack id from a pack built with audit: metadata|line. " +
+                "Audits the pack's cached evidence without re-searching.",
+            ),
           query: z
             .string()
             .optional()
@@ -2820,20 +2828,42 @@ function registerTools(server: McpServer, memos: MemOS): void {
             .describe("Support threshold in [0,1] (default 0.55)."),
         }),
         outputSchema: z.object({
-          claims: z.array(z.unknown()),
-          counts: z.object({
-            supported: z.number(),
-            partial: z.number(),
-            unsupported: z.number(),
-            contradicted: z.number(),
-          }),
+          summary: z.string().optional(),
+          packId: z.string().optional(),
+          issues: z
+            .array(
+              z.object({
+                claim: z.string(),
+                status: z.string(),
+                score: z.number(),
+              }),
+            )
+            .optional(),
+          claims: z.array(z.unknown()).optional(),
+          counts: z
+            .object({
+              supported: z.number(),
+              partial: z.number(),
+              unsupported: z.number(),
+              contradicted: z.number(),
+            })
+            .optional(),
           coverage: z.number(),
           citationsResolved: z.number(),
           citationsUnresolved: z.number(),
-          threshold: z.number(),
+          threshold: z.number().optional(),
         }),
       },
-      async ({ answer, query, memory_ids, limit, threshold }) => {
+      async ({ answer, query, memory_ids, limit, threshold, pack_id }) => {
+        if (pack_id) {
+          const summary = await memos.auditPackAnswer(pack_id, answer, {
+            threshold,
+          });
+          return {
+            content: [{ type: "text" as const, text: summary.summary }],
+            structuredContent: summary,
+          };
+        }
         const report = await memos.auditAnswer(answer, {
           query,
           memoryIds: memory_ids,
@@ -4118,10 +4148,12 @@ const TOOL_METADATA: McpToolInfo[] = [
     annotations: TOOL_ANNOTATIONS.memos_audit_answer,
     description:
       "Audit an answer's claims against stored memories: resolves [mem:...] " +
-      "citations and reports support counts plus coverage.",
+      "citations and reports support counts plus coverage. Pass pack_id to " +
+      "audit a context pack's evidence without re-searching.",
     inputSchema: z.toJSONSchema(
       z.object({
         answer: z.string().min(1),
+        pack_id: z.string().optional(),
         query: z.string().optional(),
         memory_ids: z.array(z.string()).optional(),
         limit: z.number().optional(),
@@ -4130,17 +4162,30 @@ const TOOL_METADATA: McpToolInfo[] = [
     ) as Record<string, unknown>,
     outputSchema: z.toJSONSchema(
       z.object({
-        claims: z.array(z.unknown()),
-        counts: z.object({
-          supported: z.number(),
-          partial: z.number(),
-          unsupported: z.number(),
-          contradicted: z.number(),
-        }),
+        summary: z.string().optional(),
+        packId: z.string().optional(),
+        issues: z
+          .array(
+            z.object({
+              claim: z.string(),
+              status: z.string(),
+              score: z.number(),
+            }),
+          )
+          .optional(),
+        claims: z.array(z.unknown()).optional(),
+        counts: z
+          .object({
+            supported: z.number(),
+            partial: z.number(),
+            unsupported: z.number(),
+            contradicted: z.number(),
+          })
+          .optional(),
         coverage: z.number(),
         citationsResolved: z.number(),
         citationsUnresolved: z.number(),
-        threshold: z.number(),
+        threshold: z.number().optional(),
       }),
     ) as Record<string, unknown>,
   },

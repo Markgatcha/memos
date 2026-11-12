@@ -164,7 +164,8 @@ import {
   type QueryPlan,
 } from "./query-planner.js";
 import { auditAnswerText } from "./answer-audit.js";
-import type { AnswerAuditReport } from "./answer-audit.js";
+import type { AnswerAuditReport, PackAuditSummary } from "./answer-audit.js";
+import { summarizeAnswerAudit } from "./answer-audit.js";
 import { decideRetain } from "./retain-filter.js";
 import { appendTamperEntry, verifyTamperLog } from "./tamper-log.js";
 import type { TamperVerifyResult } from "./tamper-log.js";
@@ -913,6 +914,16 @@ export class MemOS {
   > = new Map();
   private searchCacheMaxEntries = 128;
   private searchCacheTtlMs = 5_000;
+  /**
+   * Packs kept for post-answer auditing, keyed by deterministic pack id.
+   * Bounded (oldest evicted) and content-only: no embeddings, no queries,
+   * so auditing costs zero retrieval and does not touch the search cache.
+   */
+  private packAuditCache = new Map<
+    string,
+    Array<{ id: string; content: string }>
+  >();
+  private packAuditCacheMaxEntries = 32;
   /**
    * Outcome-conditioned recall state, loaded once at `init()` and updated
    * by `recordRecallFeedback()`. Kept in memory so the ranking modulator
@@ -2712,6 +2723,32 @@ export class MemOS {
     return auditAnswerText(answer, candidates, {
       threshold: opts.threshold,
     });
+  }
+
+  /**
+   * Audit an answer against the evidence of a previously built context
+   * pack. Uses the pack's cached items — no search, no embeddings, no
+   * query-cache traffic — and returns the compact summary form.
+   */
+  async auditPackAnswer(
+    packId: string,
+    answer: string,
+    opts: { threshold?: number; maxIssues?: number } = {},
+  ): Promise<PackAuditSummary> {
+    this.assertInit();
+    const memories = this.packAuditCache.get(packId);
+    if (!memories) {
+      throw new Error(
+        `Unknown or expired pack id: ${packId}. Rebuild the pack with audit: "metadata" (JSON) or audit: "line" (serialized), or pass query/memoryIds to auditAnswer().`,
+      );
+    }
+    const report = auditAnswerText(answer, memories, {
+      threshold: opts.threshold,
+    });
+    return {
+      packId,
+      ...summarizeAnswerAudit(report, opts.maxIssues),
+    };
   }
 
   /**
@@ -6149,6 +6186,16 @@ export class MemOS {
      * are resolved separately via `memos.imageMemory(ref)`.
      */
     images?: boolean;
+    /**
+     * Post-answer audit wiring for this pack:
+     * - `"off"` (default): byte-identical output, no id.
+     * - `"metadata"`: attach a deterministic `packId` to the returned
+     *   object (JSON format only; no text tokens).
+     * - `"line"`: also append one `# audit-pack: <id>` line to serialized
+     *   output (~10 tokens) so a text-only host can call
+     *   `memos_audit_answer({ pack_id, answer })` after generating.
+     */
+    audit?: "off" | "metadata" | "line";
   }): Promise<ContextPack | string> {
     this.assertInit();
     const scopeFilter = this.resolveScopeFilter({
@@ -6235,6 +6282,7 @@ export class MemOS {
       ...(opts.wireFormat ? { wireFormat: opts.wireFormat } : {}),
       ...(packCompression ? { compression: packCompression } : {}),
       ...(await this.packLessons(opts, namespace)),
+      ...(opts.audit ? { audit: opts.audit } : {}),
     });
     // Telemetry: the naive baseline is what dumping the SAME candidates as
     // full raw node JSON would cost (the "no memory layer" approach) —
@@ -6243,6 +6291,20 @@ export class MemOS {
     const naiveBaselineTokens = estimateTokens(
       JSON.stringify(expandedItems.map((r) => r.node)),
     );
+
+    // Keep the pack's evidence for post-answer auditing. Bounded LRU,
+    // content-only: auditing later needs no retrieval and no embeddings.
+    if (pack.packId) {
+      this.packAuditCache.set(
+        pack.packId,
+        pack.items.map((item) => ({ id: item.id, content: item.content })),
+      );
+      while (this.packAuditCache.size > this.packAuditCacheMaxEntries) {
+        const oldest = this.packAuditCache.keys().next().value;
+        if (oldest === undefined) break;
+        this.packAuditCache.delete(oldest);
+      }
+    }
 
     // Serialize in the requested format if not "json"
     if (opts.format && opts.format !== "json") {
@@ -6256,13 +6318,17 @@ export class MemOS {
         undefined,
         opts.maxWireTokens,
       ) as string;
+      const withAudit =
+        opts.audit === "line" && pack.packId
+          ? `${serialized}\n# audit-pack: ${pack.packId}`
+          : serialized;
       this.trackPackUsage(
-        estimateTokens(serialized),
+        estimateTokens(withAudit),
         naiveBaselineTokens,
         pack.items.length,
         opts.format,
       );
-      return serialized;
+      return withAudit;
     }
 
     this.trackPackUsage(

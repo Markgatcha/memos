@@ -26,6 +26,7 @@
  * @module @memos/context-pack
  */
 
+import { createHash } from "node:crypto";
 import type {
   ContextPackCompressionOptions,
   ContextPackWireFormat,
@@ -162,6 +163,12 @@ export interface ContextPack {
    * (`MemOS.contextPack({ lessons })`).
    */
   lessons?: ProceduralLesson[];
+  /**
+   * Deterministic id for post-answer auditing. Present only when the pack
+   * was built with `audit: "metadata"` or `audit: "line"`. Stable for the
+   * same query + namespace + item set, so prompt caching is unaffected.
+   */
+  packId?: string;
 }
 
 /**
@@ -194,6 +201,16 @@ export interface BuildContextPackOptions {
    * exact budget enforcement.
    */
   tokenCounter?: (text: string) => number;
+  /**
+   * Post-answer audit wiring:
+   * - `"off"` (default): byte-identical to the pre-audit output.
+   * - `"metadata"`: attach a deterministic `packId` to the returned object
+   *   (JSON only; no text tokens).
+   * - `"line"`: also append one `# audit-pack: <id>` comment line to
+   *   serialized TOON output (~10 tokens) so a text-only host can call
+   *   `memos_audit_answer` after generating.
+   */
+  audit?: "off" | "metadata" | "line";
   /**
    * If true (default), strip redundant whitespace and collapse repeated
    * phrases from each item's content before packing.
@@ -893,6 +910,25 @@ const SUMMARY_ELISION_JACCARD = 0.45;
  */
 const DEFAULT_SEMANTIC_DEDUP_THRESHOLD = 0.9;
 
+/**
+ * Deterministic pack id used for post-answer auditing.
+ *
+ * Sorting the item ids makes the id independent of ranking order, so the
+ * same query over the same evidence always yields the same id. That keeps
+ * prompt-prefix caching stable across identical calls.
+ */
+export function contextPackId(
+  query: string,
+  namespace: string,
+  ids: string[],
+): string {
+  const joined = [...ids].sort().join(",");
+  return createHash("sha256")
+    .update(`${namespace}\u0000${query}\u0000${joined}`)
+    .digest("hex")
+    .slice(0, 12);
+}
+
 export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
   const {
     query,
@@ -1196,6 +1232,15 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
     tokenBudget,
     items: ordered,
     tokensSaved,
+    ...(opts.audit !== undefined && opts.audit !== "off"
+      ? {
+          packId: contextPackId(
+            query,
+            namespace,
+            ordered.map((item) => item.id),
+          ),
+        }
+      : {}),
     ...(lessons && lessons.length > 0 ? { lessons } : {}),
     // Fidelity metadata: contentTokens is what the packed contents cost
     // at the resolved level; verbatimTokens is what the same items would

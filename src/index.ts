@@ -117,6 +117,7 @@ export {
   hasNegation,
   resolveClaimCitations,
   splitAnswerClaims,
+  summarizeAnswerAudit,
 } from "./answer-audit.js";
 export type {
   AnswerAuditOptions,
@@ -124,6 +125,7 @@ export type {
   AnswerClaimAudit,
   AuditMemory,
   ClaimStatus,
+  PackAuditSummary,
 } from "./answer-audit.js";
 export {
   MEMFS_MANIFEST_FILENAME,
@@ -294,6 +296,7 @@ export {
 } from "./embedding-queue.js";
 export {
   buildContextPack,
+  contextPackId,
   CONTEXT_PACK_SCHEMA,
   packToToon,
   packToToonCompact,

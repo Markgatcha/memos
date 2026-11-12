@@ -367,6 +367,69 @@ export function auditAnswerText(
   };
 }
 
+/** Compact post-answer audit attached to a context pack. */
+export interface PackAuditSummary {
+  packId: string;
+  coverage: number;
+  counts: AnswerAuditReport["counts"];
+  citationsResolved: number;
+  citationsUnresolved: number;
+  /** Non-supported claims, truncated and capped. */
+  issues: Array<{ claim: string; status: ClaimStatus; score: number }>;
+  /** One-line gist, safe to log or attach to response metadata. */
+  summary: string;
+}
+
+/**
+ * Compress a full audit into the post-answer form: counts, coverage, and
+ * only the claims that need attention. This is what keeps automatic
+ * auditing cheap (~30-60 tokens) instead of echoing every claim.
+ */
+export function summarizeAnswerAudit(
+  report: AnswerAuditReport,
+  maxIssues = 3,
+): Omit<PackAuditSummary, "packId"> {
+  const issues = report.claims
+    .filter((claim) => claim.status !== "supported")
+    .slice(0, Math.max(0, maxIssues))
+    .map((claim) => ({
+      claim:
+        claim.claim.length > 120
+          ? `${claim.claim.slice(0, 119)}…`
+          : claim.claim,
+      status: claim.status,
+      score: claim.score,
+    }));
+
+  const parts = [
+    `Audit ${Math.round(report.coverage * 100)}% (${report.counts.supported}/${report.claims.length} supported`,
+  ];
+  if (report.counts.partial > 0)
+    parts.push(`, ${report.counts.partial} partial`);
+  if (report.counts.unsupported > 0) {
+    parts.push(`, ${report.counts.unsupported} unsupported`);
+  }
+  if (report.counts.contradicted > 0) {
+    parts.push(`, ${report.counts.contradicted} contradicted`);
+  }
+  parts.push(")");
+  let summary = parts.join("");
+  if (issues.length > 0) {
+    summary += `. Flagged: ${issues
+      .map((issue) => `"${issue.claim}" (${issue.status})`)
+      .join("; ")}`;
+  }
+
+  return {
+    coverage: report.coverage,
+    counts: report.counts,
+    citationsResolved: report.citationsResolved,
+    citationsUnresolved: report.citationsUnresolved,
+    issues,
+    summary,
+  };
+}
+
 /** Text rendering for the CLI. */
 export function formatAnswerAudit(report: AnswerAuditReport): string {
   const lines = [
