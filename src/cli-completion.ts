@@ -33,6 +33,8 @@ const COMMAND_DESCS: Record<string, string> = {
   store: "Store a new memory",
   retrieve: "Retrieve a memory by ID",
   search: "Search memories by text",
+  plan: "Explain the retrieval strategy for a query",
+  drift: "Check file sources for drift",
   profile: "One-call user profile (durable facts + recent activity)",
   forget: "Delete a memory by ID",
   summarize: "Summarize all memories",

@@ -148,6 +148,7 @@ import type {
 } from "./fidelity.js";
 import { composeScope } from "./scope.js";
 import type { MemFSStatus, MemFSSyncOptions, MemFSSyncStats } from "./memfs.js";
+import type { DriftReport } from "./drift.js";
 import {
   capResultsByTokens,
   createRecallPlan,
@@ -158,6 +159,10 @@ import {
   recordSkippedStage,
   type RecallPlan,
 } from "./recall-budget.js";
+import {
+  planQuery as buildQueryPlan,
+  type QueryPlan,
+} from "./query-planner.js";
 import { decideRetain } from "./retain-filter.js";
 import { appendTamperEntry, verifyTamperLog } from "./tamper-log.js";
 import type { TamperVerifyResult } from "./tamper-log.js";
@@ -2496,6 +2501,14 @@ export class MemOS {
     const plan = createRecallPlan(
       filter.budget ?? (searchOpts.receiptOut !== undefined ? {} : undefined),
     );
+    const queryPlan =
+      filter.query && filter.planner !== false
+        ? buildQueryPlan(filter.query)
+        : null;
+    if (plan && queryPlan) {
+      plan.receipt.intent = queryPlan.intent;
+      plan.receipt.planSignals = queryPlan.signals;
+    }
 
     // Rotation locality: a single-namespace query is about to touch only
     // that namespace's vectors, so drop every other namespace's copies
@@ -2602,7 +2615,10 @@ export class MemOS {
     }
 
     if (filter.query && this.canRunHybrid(filter)) {
-      const results = await this.hybridSearch(filter, { recallPlan: plan });
+      const results = await this.hybridSearch(filter, {
+        recallPlan: plan,
+        queryPlan,
+      });
       return finish(this.postSortResults(results, filter));
     }
 
@@ -2640,6 +2656,14 @@ export class MemOS {
       tokenCapped: false,
     };
     return { results, receipt };
+  }
+
+  /**
+   * Classify a query and return the retrieval strategy it implies.
+   * Pure and cheap; exposed for debugging and `memos plan`.
+   */
+  planQuery(query: string): QueryPlan {
+    return buildQueryPlan(query);
   }
 
   /**
@@ -4446,6 +4470,61 @@ export class MemOS {
     manifest.syncedAt = Date.now();
     memfs.writeMemFSManifest(dir, manifest);
     return stats;
+  }
+
+  /**
+   * Check whether local file sources still match the hash recorded when
+   * the memory was written.
+   *
+   * Groups memories by `metadata.sourcePath` (or `file://` URL), hashes each
+   * file once, and reports `unchanged`, `drifted`, `missing`, `unreadable`,
+   * or `unsupported` (remote URL / no recorded hash). With `stamp: true`,
+   * writes `metadata.drift` on every affected memory.
+   */
+  async detectDrift(
+    opts: {
+      /** Base directory for relative `sourcePath` values. Default cwd. */
+      root?: string;
+      namespace?: string;
+      stamp?: boolean;
+    } = {},
+  ): Promise<DriftReport> {
+    this.assertInit();
+    const drift = await import("./drift.js");
+    const root = opts.root ?? process.cwd();
+    const report = drift.emptyDriftReport();
+    const grouped = new Map<string, MemoryNode[]>();
+
+    for (const node of this.graph.getAllNodes()) {
+      if (opts.namespace !== undefined && node.namespace !== opts.namespace) {
+        continue;
+      }
+      const source = drift.sourceOf(node);
+      if (!source) continue;
+      report.scanned += 1;
+      const list = grouped.get(source) ?? [];
+      list.push(node);
+      grouped.set(source, list);
+    }
+
+    for (const [source, nodes] of grouped) {
+      const finding = await drift.checkSource(source, nodes, root);
+      drift.addDriftFinding(report, finding);
+      if (!opts.stamp) continue;
+      const stamp = {
+        status: finding.status,
+        checkedAt: report.checkedAt,
+        expectedHash: finding.expectedHash ?? null,
+        actualHash: finding.actualHash ?? null,
+      };
+      for (const node of nodes) {
+        await this.updateNodeLogged(node.id, {
+          metadata: { ...(node.metadata ?? {}), drift: stamp },
+        });
+      }
+    }
+
+    return report;
   }
 
   // -----------------------------------------------------------------------
@@ -9392,12 +9471,15 @@ export class MemOS {
       trace?: boolean;
       /** Recall budget plan (tier + deadline + receipt). */
       recallPlan?: RecallPlan | null;
+      /** Query planner output for this call. */
+      queryPlan?: QueryPlan | null;
     } = {},
   ): Promise<ScoredMemory[]> {
     if (opts.trace) {
       return this.hybridSearchTraced(filter, opts);
     }
     const plan = opts.recallPlan ?? null;
+    const planner = opts.queryPlan ?? null;
     const limit = filter.limit ?? 20;
     const offset = filter.offset ?? 0;
     // Pull a wider candidate set from all three retrieval legs, then merge.
@@ -9417,11 +9499,16 @@ export class MemOS {
       filter.candidateDepth === undefined
         ? Math.min(200, Math.max(20, Math.ceil(this.count / 50)))
         : 20;
-    const candidateLimit = Math.max(
+    const baseCandidateLimit = Math.max(
       limit + offset,
       filter.candidateDepth ?? limit * 4,
       corpusScaledFloor,
     );
+    // Aggregation questions ("how many", "total") need more evidence in
+    // the pool before ranking; everything else keeps the default depth.
+    const candidateLimit = planner?.widenCandidates
+      ? Math.min(400, baseCandidateLimit * 2)
+      : baseCandidateLimit;
 
     // ── item2: entity leg ── query entities are extracted once and feed
     // both the inverted-index candidate leg (recall: entity-matched
@@ -9664,13 +9751,20 @@ export class MemOS {
       ? diversified
       : [...diversified].sort(compareScoredMemories);
 
+    // The planner enables second-hop expansion for multi-session and
+    // aggregation questions unless the caller pinned `multiHop`.
+    const multiHopFilter =
+      planner?.multiHop && filter.multiHop === undefined
+        ? { ...filter, multiHop: true as const }
+        : filter;
+
     if (offset === 0 && !opts.internal && !gated.gate.abstained) {
       if (planAllowsStage(plan, "multihop")) {
         const started = performance.now();
         const expandedResults = await this.applyMultiHopExpansion(
           ordered,
           limit,
-          filter,
+          multiHopFilter,
         );
         recordRecallStage(plan, "multihop", performance.now() - started, true);
         return expandedResults;

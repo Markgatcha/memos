@@ -799,6 +799,14 @@ memos mount ./memfs --sync     # apply file edits to the store
 
 Sync detects memory-side and file-side changes separately, updates memories from edited files, creates memories from new files, and resolves conflicts (`--conflict memory|file|skip`). `--prune` deletes memories whose files were removed. See [docs/memfs.md](docs/memfs.md).
 
+### Query planner — route by intent
+
+`search()` classifies the query and enables only the stages it needs: aggregation doubles the candidate pool, multi-session and aggregation turn on second-hop expansion, knowledge-update records a recency signal. Inspect the decision with `memos plan "<query>"`; disable per call with `planner: false`. The chosen intent lands on `receipt.intent`. See [docs/query-planner.md](docs/query-planner.md).
+
+### Drift radar — know when a source went stale
+
+Memories ingested from files carry `sourcePath` and `sourceHash`. `memos drift` re-hashes each source once and reports `unchanged` / `drifted` / `missing` / `unreadable` / `unsupported` for every memory derived from it. `--stamp` records the verdict in `metadata.drift`. See [docs/drift-detection.md](docs/drift-detection.md).
+
 ### Outcome-conditioned ranking — learn what actually helped
 
 Every other retrieval signal is a prediction. This one is evidence: tell

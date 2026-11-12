@@ -38,6 +38,27 @@ result set with the context-pack token estimator.
   memories whose files were removed.
 - SDK: `memfsExport()`, `memfsStatus()`, `memfsSync()`.
 
+### Added - Query planner
+
+`search()` now classifies the query into `temporal`, `knowledge-update`,
+`aggregation`, `multi-session`, or `abstention` and routes retrieval:
+
+- aggregation doubles the candidate pool (capped at 400);
+- multi-session and aggregation enable second-hop expansion unless
+  `multiHop` was pinned;
+- the intent and matched signals are recorded on `RecallReceipt`.
+
+`memos plan "<query>"` prints the decision; `planner: false` disables it for
+one call. Rules are lexical — no model call.
+
+### Added - Drift radar
+
+`memos drift` re-hashes local file sources against the `sourceHash` recorded
+at ingest and reports `unchanged`, `drifted`, `missing`, `unreadable`, or
+`unsupported`. It groups by source so each file is hashed once, supports
+`--root` for relative paths, and `--stamp` writes `metadata.drift` on every
+affected memory. Remote URLs are reported, never fetched.
+
 ### Changed - Faster Docker CI
 
 The Docker Build job is rebuilt around Buildx and the GitHub Actions layer

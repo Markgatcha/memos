@@ -590,6 +590,15 @@ export interface RecallBudget {
  */
 export type RecallTier = 0 | 1 | 2 | 3;
 
+/** Query intents the planner can route. */
+export type QueryIntent =
+  | "general"
+  | "temporal"
+  | "knowledge-update"
+  | "aggregation"
+  | "multi-session"
+  | "abstention";
+
 /** Why a retrieval stage did not run. */
 export type RecallSkipReason = "budget" | "tier" | "empty" | "disabled";
 
@@ -621,6 +630,10 @@ export interface RecallReceipt {
   resultCount: number;
   estimatedTokens: number;
   tokenCapped: boolean;
+  /** Planned query intent (absent when the planner is disabled). */
+  intent?: QueryIntent;
+  /** Matched planner signal labels. */
+  planSignals?: string[];
 }
 
 /**
@@ -851,6 +864,12 @@ export interface SearchFilter {
    * `maxTokens`. See {@link RecallBudget}.
    */
   budget?: RecallBudget;
+  /**
+   * Enable the query planner (`src/query-planner.ts`). Default `true`:
+   * the query is classified and multi-hop / candidate depth are routed
+   * accordingly. Pass `false` to force the fixed pipeline.
+   */
+  planner?: boolean;
 }
 
 /**

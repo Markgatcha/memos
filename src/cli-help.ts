@@ -15,6 +15,8 @@ export const CLI_COMMANDS: readonly string[] = [
   "ingest",
   "retrieve",
   "search",
+  "plan",
+  "drift",
   "profile",
   "handoff",
   "forget",
@@ -160,6 +162,18 @@ multi-hop) are skipped as the deadline approaches, and a receipt is printed.
 Example:
   memos search "dark mode" --limit 5
   memos search "deploy runbook" --budget-ms 50 --budget-tokens 800`,
+  plan: `memos plan "<query>" [--json]
+
+Classify a query and show the retrieval strategy it implies
+(temporal, knowledge-update, aggregation, multi-session, abstention),
+plus which switches the search will enable. Example:
+  memos plan "how many deployments did we do across sessions?"`,
+  drift: `memos drift [--root <dir>] [--namespace <ns>] [--stamp] [--all] [--json]
+
+Check memories ingested from local files against the SHA-256 recorded at
+ingest. Reports unchanged, drifted, missing, unreadable, and unsupported
+sources. --stamp writes metadata.drift on every affected memory; --all
+includes unchanged sources in the text output.`,
   profile: `memos profile [--query <text>] [--max-static <n>] [--max-dynamic <n>]
   [--recent-days <n>] [--scope user:alice[,...]] [--json]
 

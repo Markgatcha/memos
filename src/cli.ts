@@ -63,6 +63,8 @@ import { CLI_COMMANDS, suggestCommand, getCommandHelp } from "./cli-help.js";
 import { getCompletionScript, COMPLETION_SHELLS } from "./cli-completion.js";
 import { formatExplainRecall, formatReplayRecall } from "./flight-recorder.js";
 import { formatRecallReceipt } from "./recall-budget.js";
+import { formatQueryPlan } from "./query-planner.js";
+import { formatDriftReport } from "./drift.js";
 import type {
   EmbeddingConfig,
   EmbeddingProviderKind,
@@ -1723,6 +1725,44 @@ async function main(): Promise<void> {
           if (outcome.receipt) {
             console.log(`\n${formatRecallReceipt(outcome.receipt)}`);
           }
+        }
+        break;
+      }
+
+      case "plan": {
+        const query = args[1];
+        if (!query) {
+          console.error(
+            'Error: query is required.\n  Usage: memos plan "<query>" [--json]',
+          );
+          process.exit(1);
+        }
+        const plan = memos.planQuery(query);
+        if (jsonFlag) {
+          console.log(JSON.stringify(plan, null, 2));
+        } else {
+          console.log(formatQueryPlan(plan));
+        }
+        break;
+      }
+
+      case "drift": {
+        const rootIdx = args.indexOf("--root");
+        const rootArg = rootIdx !== -1 ? args[rootIdx + 1] : undefined;
+        const namespaceIdx = args.indexOf("--namespace");
+        const namespaceArg =
+          namespaceIdx !== -1 ? args[namespaceIdx + 1] : undefined;
+        const report = await memos.detectDrift({
+          root: rootArg,
+          namespace: namespaceArg,
+          stamp: args.includes("--stamp"),
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          console.log(
+            formatDriftReport(report, { all: args.includes("--all") }),
+          );
         }
         break;
       }

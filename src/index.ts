@@ -96,6 +96,20 @@ export type {
   RecallStage,
   TokenCapResult,
 } from "./recall-budget.js";
+export { formatQueryPlan, planQuery } from "./query-planner.js";
+export type { QueryPlan } from "./query-planner.js";
+export {
+  addDriftFinding,
+  checkSource,
+  emptyDriftReport,
+  expectedSourceHash,
+  formatDriftReport,
+  hashSourceBytes,
+  isLocalSource,
+  resolveSourcePath,
+  sourceOf,
+} from "./drift.js";
+export type { DriftFinding, DriftReport, DriftStatus } from "./drift.js";
 export {
   MEMFS_MANIFEST_FILENAME,
   coerceMemoryType,
@@ -292,6 +306,7 @@ export type {
   SearchFilter,
   RecallBudget,
   RecallTier,
+  QueryIntent,
   RecallSkipReason,
   RecallStageTiming,
   RecallReceipt,
