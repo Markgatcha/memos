@@ -147,6 +147,16 @@ import type {
   FidelityRecallResult,
 } from "./fidelity.js";
 import { composeScope } from "./scope.js";
+import {
+  capResultsByTokens,
+  createRecallPlan,
+  estimateResultsTokens,
+  finishRecallPlan,
+  planAllowsStage,
+  recordRecallStage,
+  recordSkippedStage,
+  type RecallPlan,
+} from "./recall-budget.js";
 import { decideRetain } from "./retain-filter.js";
 import { appendTamperEntry, verifyTamperLog } from "./tamper-log.js";
 import type { TamperVerifyResult } from "./tamper-log.js";
@@ -165,6 +175,7 @@ import type {
   UpdateMemoryInput,
   ScoredMemory,
   SearchFilter,
+  RecallReceipt,
   SemanticSearchOptions,
   GraphSnapshot,
   MemOSConfig,
@@ -2443,7 +2454,10 @@ export class MemOS {
    * @param queryOrFilter — A plain text query string, or a full SearchFilter object.
    * @returns Array of scored memories, ordered by relevance.
    */
-  async search(queryOrFilter: string | SearchFilter): Promise<ScoredMemory[]> {
+  async search(
+    queryOrFilter: string | SearchFilter,
+    searchOpts: { receiptOut?: { value?: RecallReceipt } } = {},
+  ): Promise<ScoredMemory[]> {
     this.assertInit();
 
     // Drain pending embedding jobs first: the queue coalesces rapid
@@ -2475,6 +2489,13 @@ export class MemOS {
       filter.includeSharedScope = scopeFilter.includeSharedScope;
     }
 
+    // Recall budget: a budget (or an explicit receipt request) opts into
+    // tiered retrieval. Without either, `plan` is null and the pipeline is
+    // byte-identical to the pre-budget behaviour.
+    const plan = createRecallPlan(
+      filter.budget ?? (searchOpts.receiptOut !== undefined ? {} : undefined),
+    );
+
     // Rotation locality: a single-namespace query is about to touch only
     // that namespace's vectors, so drop every other namespace's copies
     // first (see `pruneVectorCacheForNamespace`). This is what makes a
@@ -2493,12 +2514,30 @@ export class MemOS {
       (filter.trace !== false &&
         (this.traceConfigEnabled || process.env.MEMOS_TRACE === "1"));
     if (trace) {
-      return this.searchTraced(filter);
+      // Tracing takes precedence over budget degradation: the Flight
+      // Recorder needs the full pipeline to record meaningful per-leg
+      // data. The receipt reports the tier that actually ran.
+      if (plan) {
+        plan.tier = 3;
+        plan.receipt.tier = 3;
+      }
+      const traced = await this.searchTraced(filter);
+      if (plan && searchOpts.receiptOut) {
+        searchOpts.receiptOut.value = finishRecallPlan(
+          plan,
+          traced.length,
+          estimateResultsTokens(traced),
+          false,
+        );
+      }
+      return traced;
     }
 
     // Check the search cache. Only cache text queries (not structured-only
-    // queries without a `query` field, since those are cheap).
-    if (filter.query) {
+    // queries without a `query` field, since those are cheap). Budgeted
+    // searches bypass the cache: the tier depends on runtime timing, so a
+    // cached full-pipeline result would silently defeat the budget.
+    if (filter.query && plan === null) {
       const cacheKey = `v2::${stableStringify(filter)}`;
       const cached = this.searchCache.get(cacheKey);
       if (cached && cached.expiry > Date.now()) {
@@ -2533,13 +2572,73 @@ export class MemOS {
       return sorted;
     }
 
-    if (filter.query && this.canRunHybrid(filter)) {
-      const results = await this.hybridSearch(filter);
-      return this.postSortResults(results, filter);
+    const finish = (results: ScoredMemory[]): ScoredMemory[] => {
+      if (!plan) return results;
+      const capped = capResultsByTokens(results, filter.budget?.maxTokens);
+      if (searchOpts.receiptOut) {
+        searchOpts.receiptOut.value = finishRecallPlan(
+          plan,
+          capped.results.length,
+          capped.tokens,
+          capped.capped,
+        );
+      }
+      return capped.results;
+    };
+
+    // Tier 0: keyword-only. Skip fusion and every optional stage.
+    if (plan && plan.tier === 0) {
+      const started = performance.now();
+      const results = await this.storage.queryNodes(filter);
+      recordRecallStage(plan, "fts", performance.now() - started, true);
+      recordSkippedStage(plan, "semantic");
+      recordSkippedStage(plan, "entity");
+      recordSkippedStage(plan, "graph");
+      recordSkippedStage(plan, "rerank");
+      recordSkippedStage(plan, "mmr");
+      recordSkippedStage(plan, "multihop");
+      return finish(this.postSortResults(results, filter));
     }
 
+    if (filter.query && this.canRunHybrid(filter)) {
+      const results = await this.hybridSearch(filter, { recallPlan: plan });
+      return finish(this.postSortResults(results, filter));
+    }
+
+    const storageStarted = performance.now();
     const results = await this.storage.queryNodes(filter);
-    return this.postSortResults(results, filter);
+    recordRecallStage(plan, "fts", performance.now() - storageStarted, true);
+    return finish(this.postSortResults(results, filter));
+  }
+
+  /**
+   * Search and return both the results and a {@link RecallReceipt}
+   * describing the tier, stages, elapsed time, and token estimate.
+   *
+   * Pass `budget` in the filter to cap latency and/or tokens; without a
+   * budget this runs the full pipeline and reports what it did.
+   */
+  async searchWithReceipt(
+    queryOrFilter: string | SearchFilter,
+  ): Promise<{ results: ScoredMemory[]; receipt: RecallReceipt }> {
+    const filter: SearchFilter =
+      typeof queryOrFilter === "string"
+        ? { query: queryOrFilter }
+        : { ...queryOrFilter };
+    const receiptOut: { value?: RecallReceipt } = {};
+    const results = await this.search(filter, { receiptOut });
+    const receipt: RecallReceipt = receiptOut.value ?? {
+      budget: filter.budget ?? null,
+      tier: 3,
+      elapsedMs: 0,
+      degraded: false,
+      stages: [],
+      skipped: [],
+      resultCount: results.length,
+      estimatedTokens: estimateResultsTokens(results),
+      tokenCapped: false,
+    };
+    return { results, receipt };
   }
 
   /**
@@ -8997,11 +9096,14 @@ export class MemOS {
       skipMmr?: boolean;
       /** Flight Recorder opt-in flag. */
       trace?: boolean;
+      /** Recall budget plan (tier + deadline + receipt). */
+      recallPlan?: RecallPlan | null;
     } = {},
   ): Promise<ScoredMemory[]> {
     if (opts.trace) {
       return this.hybridSearchTraced(filter, opts);
     }
+    const plan = opts.recallPlan ?? null;
     const limit = filter.limit ?? 20;
     const offset = filter.offset ?? 0;
     // Pull a wider candidate set from all three retrieval legs, then merge.
@@ -9040,29 +9142,63 @@ export class MemOS {
     // latency. The CLIP image leg is fetched first — it is the only leg
     // that can be entirely absent, and resolving it before the
     // Promise.all keeps the three text legs' dispatch unchanged.
-    const imageLeg = await this.fetchImageLeg(filter, candidateLimit);
+    let imageLeg: ScoredMemory[] = [];
+    if (planAllowsStage(plan, "clip")) {
+      const clipStart = performance.now();
+      imageLeg = await this.fetchImageLeg(filter, candidateLimit);
+      recordRecallStage(plan, "clip", performance.now() - clipStart, true);
+    } else {
+      recordSkippedStage(plan, "clip");
+    }
     const [semanticResults, keywordResults, entityResults] = await Promise.all([
-      // Threshold floor: cosine-0 memories are unrelated and must not
-      // vote in fusion (nor occupy candidate slots). A small positive
-      // floor keeps genuine paraphrase matches (typically >= 0.3 for real
-      // embedders) while dropping the unrelated tail.
-      this.semanticSearch(
-        filter.query ?? "",
-        candidateLimit,
-        SEMANTIC_FUSION_THRESHOLD,
-        {
+      (async (): Promise<ScoredMemory[]> => {
+        if (!planAllowsStage(plan, "semantic")) {
+          recordSkippedStage(plan, "semantic");
+          return [];
+        }
+        const started = performance.now();
+        // Threshold floor: cosine-0 memories are unrelated and must not
+        // vote in fusion (nor occupy candidate slots). A small positive
+        // floor keeps genuine paraphrase matches (typically >= 0.3 for real
+        // embedders) while dropping the unrelated tail.
+        const results = await this.semanticSearch(
+          filter.query ?? "",
+          candidateLimit,
+          SEMANTIC_FUSION_THRESHOLD,
+          {
+            ...filter,
+            limit: candidateLimit,
+            offset: 0,
+          },
+          { queryVector: opts.queryVector },
+        );
+        recordRecallStage(plan, "semantic", performance.now() - started, true);
+        return results;
+      })(),
+      (async (): Promise<ScoredMemory[]> => {
+        const started = performance.now();
+        const results = await this.storage.queryNodes({
           ...filter,
           limit: candidateLimit,
           offset: 0,
-        },
-        { queryVector: opts.queryVector },
-      ),
-      this.storage.queryNodes({
-        ...filter,
-        limit: candidateLimit,
-        offset: 0,
-      }),
-      this.fetchEntityLeg(queryEntities, filter, candidateLimit),
+        });
+        recordRecallStage(plan, "fts", performance.now() - started, true);
+        return results;
+      })(),
+      (async (): Promise<ScoredMemory[]> => {
+        if (!planAllowsStage(plan, "entity")) {
+          recordSkippedStage(plan, "entity");
+          return [];
+        }
+        const started = performance.now();
+        const results = await this.fetchEntityLeg(
+          queryEntities,
+          filter,
+          candidateLimit,
+        );
+        recordRecallStage(plan, "entity", performance.now() - started, true);
+        return results;
+      })(),
     ]);
 
     // Round 4: RM3-lite pseudo-relevance feedback (gated, opt-in).
@@ -9083,6 +9219,7 @@ export class MemOS {
     const queryTerms = filter.query ? prfTokenize(filter.query) : [];
     if (
       prfEnabled &&
+      planAllowsStage(plan, "prf") &&
       queryTerms.length > 0 &&
       queryTerms.length <= 3 &&
       keywordResults.length < 5 &&
@@ -9090,6 +9227,7 @@ export class MemOS {
     ) {
       const prfTerms = harvestPrfTerms(semanticResults.slice(0, 5), queryTerms);
       if (prfTerms.length > 0) {
+        const prfStart = performance.now();
         const prfResults = await this.storage.queryNodes({
           ...filter,
           query: prfTerms.join(" "),
@@ -9097,6 +9235,7 @@ export class MemOS {
           offset: 0,
         });
         fusedKeywordResults = mergeKeywordLegs(keywordResults, prfResults);
+        recordRecallStage(plan, "prf", performance.now() - prfStart, true);
       }
     }
 
@@ -9138,19 +9277,50 @@ export class MemOS {
     // is removed, and the lookup is bounded by the fused set size.
     const resolved = await this.applyContradictionResolution(anomalyScored);
 
-    const expanded = await this.applyGraphExpansion(
-      resolved,
-      // `undefined` = "resolve the default" (fusion-configured ⇒ off,
-      // `experimental.graphExpansion` if set, otherwise on). The pack
-      // path passes its own resolved config instead.
-      undefined,
-      filter,
-    );
-    const pprExpanded = await this.applyPprGraphExpansion(expanded, filter);
-    const withSessions = await this.applySessionExpansion(pprExpanded, filter);
-    const reranked = opts.internal
-      ? withSessions
-      : await this.applyRerank(withSessions, filter);
+    let expanded = resolved;
+    if (planAllowsStage(plan, "graph")) {
+      const started = performance.now();
+      expanded = await this.applyGraphExpansion(
+        resolved,
+        // `undefined` = "resolve the default" (fusion-configured ⇒ off,
+        // `experimental.graphExpansion` if set, otherwise on). The pack
+        // path passes its own resolved config instead.
+        undefined,
+        filter,
+      );
+      recordRecallStage(plan, "graph", performance.now() - started, true);
+    } else {
+      recordSkippedStage(plan, "graph");
+    }
+
+    let pprExpanded = expanded;
+    if (planAllowsStage(plan, "ppr")) {
+      const started = performance.now();
+      pprExpanded = await this.applyPprGraphExpansion(expanded, filter);
+      recordRecallStage(plan, "ppr", performance.now() - started, true);
+    } else {
+      recordSkippedStage(plan, "ppr");
+    }
+
+    let withSessions = pprExpanded;
+    if (planAllowsStage(plan, "session")) {
+      const started = performance.now();
+      withSessions = await this.applySessionExpansion(pprExpanded, filter);
+      recordRecallStage(plan, "session", performance.now() - started, true);
+    } else {
+      recordSkippedStage(plan, "session");
+    }
+
+    let reranked = withSessions;
+    if (!opts.internal) {
+      if (planAllowsStage(plan, "rerank")) {
+        const started = performance.now();
+        reranked = await this.applyRerank(withSessions, filter);
+        recordRecallStage(plan, "rerank", performance.now() - started, true);
+      } else {
+        recordSkippedStage(plan, "rerank");
+      }
+    }
     const deduped = await this.applySearchDedup(reranked, filter);
 
     // ── Ranking modulation ── effective importance (recency decay +
@@ -9177,9 +9347,16 @@ export class MemOS {
     // top-10 of ten paraphrases has hit@10 = 1 and precision@10 = 0.1).
     // Off by default; runs after the gate so it can never resurrect a
     // trimmed candidate.
-    const diversified = opts.skipMmr
-      ? gated.results
-      : this.applyMmrStage(gated.results, filter);
+    let diversified = gated.results;
+    if (!opts.skipMmr) {
+      if (planAllowsStage(plan, "mmr")) {
+        const started = performance.now();
+        diversified = this.applyMmrStage(gated.results, filter);
+        recordRecallStage(plan, "mmr", performance.now() - started, true);
+      } else {
+        recordSkippedStage(plan, "mmr");
+      }
+    }
 
     // With MMR off, enforce one canonical order before any expansion stage.
     // Fusion can preserve SQL row order for exact score ties, and a JOIN
@@ -9194,7 +9371,17 @@ export class MemOS {
       : [...diversified].sort(compareScoredMemories);
 
     if (offset === 0 && !opts.internal && !gated.gate.abstained) {
-      return this.applyMultiHopExpansion(ordered, limit, filter);
+      if (planAllowsStage(plan, "multihop")) {
+        const started = performance.now();
+        const expandedResults = await this.applyMultiHopExpansion(
+          ordered,
+          limit,
+          filter,
+        );
+        recordRecallStage(plan, "multihop", performance.now() - started, true);
+        return expandedResults;
+      }
+      recordSkippedStage(plan, "multihop");
     }
 
     return ordered.slice(offset, offset + limit);

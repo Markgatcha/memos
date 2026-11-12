@@ -640,9 +640,37 @@ function registerTools(server: McpServer, memos: MemOS): void {
               "Return trimmed results (id, content, score, type, tags) " +
                 "instead of full node objects — far fewer tokens.",
             ),
+          budget_ms: z
+            .number()
+            .optional()
+            .describe(
+              "Wall-clock budget in milliseconds. Later retrieval stages " +
+                "(graph expansion, rerank, multi-hop) are skipped as the " +
+                "deadline approaches; the response includes a receipt.",
+            ),
+          budget_tokens: z
+            .number()
+            .optional()
+            .describe(
+              "Approximate token cap for the returned results. The response " +
+                "includes a receipt with the estimated token count.",
+            ),
         }),
         outputSchema: z.union([
-          z.object({ results: z.array(scoredMemorySchema) }),
+          z.object({
+            results: z.array(scoredMemorySchema),
+            receipt: z
+              .object({
+                tier: z.number(),
+                elapsedMs: z.number(),
+                degraded: z.boolean(),
+                skipped: z.array(z.string()),
+                resultCount: z.number(),
+                estimatedTokens: z.number(),
+                tokenCapped: z.boolean(),
+              })
+              .optional(),
+          }),
           z.object({
             results: z.array(
               z.object({
@@ -658,6 +686,17 @@ function registerTools(server: McpServer, memos: MemOS): void {
               }),
             ),
             compact: z.literal(true),
+            receipt: z
+              .object({
+                tier: z.number(),
+                elapsedMs: z.number(),
+                degraded: z.boolean(),
+                skipped: z.array(z.string()),
+                resultCount: z.number(),
+                estimatedTokens: z.number(),
+                tokenCapped: z.boolean(),
+              })
+              .optional(),
           }),
         ]),
       },
@@ -673,8 +712,19 @@ function registerTools(server: McpServer, memos: MemOS): void {
         namespaces,
         harness,
         compact,
+        budget_ms,
+        budget_tokens,
       }) => {
-        const found = await memos.search({
+        const budget =
+          budget_ms !== undefined || budget_tokens !== undefined
+            ? {
+                ...(budget_ms !== undefined ? { maxMs: budget_ms } : {}),
+                ...(budget_tokens !== undefined
+                  ? { maxTokens: budget_tokens }
+                  : {}),
+              }
+            : undefined;
+        const filter = {
           query,
           limit: limit ?? 10,
           ...(tags ? { tags } : {}),
@@ -685,10 +735,19 @@ function registerTools(server: McpServer, memos: MemOS): void {
           ...(scope ? { scope } : {}),
           ...(namespaces && namespaces.length > 0 ? { namespaces } : {}),
           ...(harness ? { harness } : {}),
-        });
+          ...(budget ? { budget } : {}),
+        };
+        const outcome = budget
+          ? await memos.searchWithReceipt(filter)
+          : { results: await memos.search(filter), receipt: undefined };
+        const found = outcome.results;
+        const receipt = outcome.receipt;
         // Read-time trust policy: flag low-trust channels so the host
         // agent confirms instead of silently injecting them as context.
         const flagged = decorateTrustFlags(found);
+        const receiptText = receipt
+          ? `\n[budget tier ${receipt.tier}, ${receipt.elapsedMs.toFixed(1)}ms, ~${receipt.estimatedTokens} tokens${receipt.degraded ? ", degraded" : ""}]`
+          : "";
         if (compact) {
           const trimmed = flagged.map((r) => ({
             id: r.node.id,
@@ -706,25 +765,32 @@ function registerTools(server: McpServer, memos: MemOS): void {
               {
                 type: "text" as const,
                 text:
-                  trimmed
+                  (trimmed
                     .map(
                       (r) =>
                         `[${r.id.slice(0, 8)}] (${r.score}) ${r.type ?? "fact"}${r.untrusted_source ? ` [untrusted:${r.provenance}]` : ""}: ${r.content}`,
                     )
-                    .join("\n") || "No memories found.",
+                    .join("\n") || "No memories found.") + receiptText,
               },
             ],
-            structuredContent: { results: trimmed, compact: true },
+            structuredContent: {
+              results: trimmed,
+              compact: true,
+              ...(receipt ? { receipt } : {}),
+            },
           };
         }
         return {
           content: [
             {
               type: "text" as const,
-              text: `Found ${flagged.length} memories.`,
+              text: `Found ${flagged.length} memories.${receiptText}`,
             },
           ],
-          structuredContent: { results: flagged.map(toMcpResult) },
+          structuredContent: {
+            results: flagged.map(toMcpResult),
+            ...(receipt ? { receipt } : {}),
+          },
         };
       },
     );

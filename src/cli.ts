@@ -62,6 +62,7 @@ import {
 import { CLI_COMMANDS, suggestCommand, getCommandHelp } from "./cli-help.js";
 import { getCompletionScript, COMPLETION_SHELLS } from "./cli-completion.js";
 import { formatExplainRecall, formatReplayRecall } from "./flight-recorder.js";
+import { formatRecallReceipt } from "./recall-budget.js";
 import type {
   EmbeddingConfig,
   EmbeddingProviderKind,
@@ -1662,7 +1663,22 @@ async function main(): Promise<void> {
         const captureTextFlag = args.includes("--capture-text");
         const sessionIdx = args.indexOf("--session");
         const sessionArg = sessionIdx !== -1 ? args[sessionIdx + 1] : undefined;
-        const results = await memos.search({
+        // Positive integer flag parser for the recall budget. Returns
+        // undefined for missing, non-numeric, or non-positive values.
+        const parsePositive = (flag: string): number | undefined => {
+          const idx = args.indexOf(flag);
+          if (idx === -1) return undefined;
+          const value = Number.parseInt(args[idx + 1] ?? "", 10);
+          return Number.isFinite(value) && value > 0 ? value : undefined;
+        };
+        const budgetMs = parsePositive("--budget-ms");
+        const budgetTokens = parsePositive("--budget-tokens");
+        const hasBudget = budgetMs !== undefined || budgetTokens !== undefined;
+        const budget = {
+          ...(budgetMs !== undefined ? { maxMs: budgetMs } : {}),
+          ...(budgetTokens !== undefined ? { maxTokens: budgetTokens } : {}),
+        };
+        const searchFilter = {
           query,
           limit,
           tags: searchTags,
@@ -1673,9 +1689,20 @@ async function main(): Promise<void> {
           ...(traceFlag ? { trace: true } : {}),
           ...(captureTextFlag ? { captureText: true } : {}),
           ...(sessionArg ? { traceSessionId: sessionArg } : {}),
-        });
+          ...(hasBudget ? { budget } : {}),
+        };
+        const outcome = hasBudget
+          ? await memos.searchWithReceipt(searchFilter)
+          : { results: await memos.search(searchFilter), receipt: undefined };
+        const results = outcome.results;
         if (jsonFlag) {
-          console.log(JSON.stringify(results, null, 2));
+          console.log(
+            JSON.stringify(
+              hasBudget ? { results, receipt: outcome.receipt } : results,
+              null,
+              2,
+            ),
+          );
         } else {
           if (results.length === 0) {
             console.log("No memories found.");
@@ -1692,6 +1719,9 @@ async function main(): Promise<void> {
           const recordedTraceId = memos.getLastTraceId();
           if (recordedTraceId) {
             console.log(`\nTrace ID: ${recordedTraceId}`);
+          }
+          if (outcome.receipt) {
+            console.log(`\n${formatRecallReceipt(outcome.receipt)}`);
           }
         }
         break;

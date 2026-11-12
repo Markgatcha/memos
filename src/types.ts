@@ -554,6 +554,76 @@ export interface MultiHopOptions {
 }
 
 /**
+ * Per-query retrieval budget.
+ *
+ * `maxMs` is a wall-clock deadline for the whole search call. As the
+ * deadline approaches, later retrieval stages (graph/session expansion,
+ * rerank, MMR, multi-hop) are skipped and the best results so far are
+ * returned. `maxTokens` caps the returned result set by estimated tokens.
+ *
+ * Both fields are independent: a caller can set only `maxMs`, only
+ * `maxTokens`, or both.
+ */
+export interface RecallBudget {
+  /** Wall-clock budget in milliseconds for the entire search call. */
+  maxMs?: number;
+  /** Approximate token cap for the returned results. */
+  maxTokens?: number;
+  /**
+   * Floor for the retrieval tier, even when `maxMs` would choose a lower
+   * one. Useful for benchmarks that need a fixed pipeline.
+   */
+  minTier?: RecallTier;
+  /**
+   * Ceiling for the retrieval tier, even when `maxMs` would allow more.
+   * Useful for ablations.
+   */
+  maxTier?: RecallTier;
+}
+
+/**
+ * Retrieval depth tiers:
+ * - `0` keyword only
+ * - `1` parallel keyword + semantic + entity legs
+ * - `2` plus graph / PPR / session expansion
+ * - `3` plus rerank, MMR, and multi-hop (full pipeline)
+ */
+export type RecallTier = 0 | 1 | 2 | 3;
+
+/** Why a retrieval stage did not run. */
+export type RecallSkipReason = "budget" | "tier" | "empty" | "disabled";
+
+/** One retrieval stage in a {@link RecallReceipt}. */
+export interface RecallStageTiming {
+  /** Stage name (`fts`, `semantic`, `entity`, `graph`, `rerank`, …). */
+  stage: string;
+  /** Wall-clock time spent in the stage, in milliseconds. */
+  ms: number;
+  /** Whether the stage ran. */
+  ran: boolean;
+  /** Present when `ran` is false. */
+  skippedReason?: RecallSkipReason;
+}
+
+/**
+ * Per-call account of what the retrieval pipeline actually did under a
+ * {@link RecallBudget}: which tier ran, which stages were skipped and why,
+ * how long it took, and how many tokens the results cost.
+ */
+export interface RecallReceipt {
+  budget: RecallBudget | null;
+  tier: RecallTier;
+  elapsedMs: number;
+  /** True when any stage was skipped or the result set was token-capped. */
+  degraded: boolean;
+  stages: RecallStageTiming[];
+  skipped: string[];
+  resultCount: number;
+  estimatedTokens: number;
+  tokenCapped: boolean;
+}
+
+/**
  * Filter criteria for searching memories.
  */
 export interface SearchFilter {
@@ -775,6 +845,12 @@ export interface SearchFilter {
    * Optional session identifier stamped on the recorded `recall_traces` row.
    */
   traceSessionId?: string;
+  /**
+   * Per-query latency/token budget. When set, the retrieval pipeline may
+   * skip optional stages to meet `maxMs` and may trim results to fit
+   * `maxTokens`. See {@link RecallBudget}.
+   */
+  budget?: RecallBudget;
 }
 
 /**

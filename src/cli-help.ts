@@ -149,11 +149,16 @@ their old chunks, deleted files remove theirs.
 
 Retrieve a single memory by its ID.`,
   search: `memos search "<query>" [--limit <n>] [--pool event|note|procedure]
-  [--scope user:alice[,...]] [--harness <name|all>] [--json]
+  [--scope user:alice[,...]] [--harness <name|all>] [--budget-ms <n>]
+  [--budget-tokens <n>] [--json]
 
 Search memories by text (full-text + semantic when embeddings are on).
+--budget-ms caps wall-clock time: later stages (graph expansion, rerank,
+multi-hop) are skipped as the deadline approaches, and a receipt is printed.
+--budget-tokens caps the returned results by estimated token count.
 Example:
-  memos search "dark mode" --limit 5`,
+  memos search "dark mode" --limit 5
+  memos search "deploy runbook" --budget-ms 50 --budget-tokens 800`,
   profile: `memos profile [--query <text>] [--max-static <n>] [--max-dynamic <n>]
   [--recent-days <n>] [--scope user:alice[,...]] [--json]
 

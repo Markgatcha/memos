@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed — Faster Docker CI
+### Added - Recall budgets
+
+`search()` now accepts `budget: { maxMs, maxTokens }`. The pipeline picks a
+retrieval tier (keyword-only, parallel legs, expansions, full rerank) and
+drops optional stages as the deadline approaches; `maxTokens` trims the
+result set with the context-pack token estimator.
+
+- `searchWithReceipt()` returns `{ results, receipt }` with the tier that
+  ran, per-stage timings, skipped stages and reasons, elapsed time, and the
+  token estimate. `degraded` summarises whether anything was cut.
+- CLI: `memos search --budget-ms <n> --budget-tokens <n>` prints the receipt.
+- MCP: `memos_search` accepts `budget_ms` and `budget_tokens` and returns the
+  receipt in `structuredContent`.
+- Budgeted searches bypass the query cache (the tier depends on runtime
+  timing). Tracing takes precedence over budget degradation so traces keep
+  the full pipeline.
+
+### Changed - Faster Docker CI
 
 The Docker Build job is rebuilt around Buildx and the GitHub Actions layer
 cache. The image itself is unchanged — same Dockerfile, same layers, same

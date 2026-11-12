@@ -73,6 +73,29 @@ export {
   formatReplayRecall,
   serializeCanonicalJson,
 } from "./flight-recorder.js";
+export {
+  RECALL_TIER_LABELS,
+  capResultsByTokens,
+  createRecallClock,
+  createRecallPlan,
+  describeRecallTier,
+  estimateResultTokens,
+  estimateResultsTokens,
+  finishRecallPlan,
+  formatRecallReceipt,
+  isOverHardDeadline,
+  isOverSoftDeadline,
+  planAllowsStage,
+  recordRecallStage,
+  recordSkippedStage,
+  selectRecallTier,
+} from "./recall-budget.js";
+export type {
+  RecallClock,
+  RecallPlan,
+  RecallStage,
+  TokenCapResult,
+} from "./recall-budget.js";
 export { getMcpTools, runMcpServer } from "./mcp.js";
 export {
   chunkText,
@@ -241,6 +264,11 @@ export type {
   UpdateMemoryInput,
   CreateEdgeInput,
   SearchFilter,
+  RecallBudget,
+  RecallTier,
+  RecallSkipReason,
+  RecallStageTiming,
+  RecallReceipt,
   SemanticSearchOptions,
   ScoredMemory,
   GraphSnapshot,

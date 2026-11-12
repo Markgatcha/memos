@@ -773,6 +773,20 @@ memos replay <trace-id> --config ./rrf-override.json
 
 See [docs/retrieval-debugging.md](docs/retrieval-debugging.md) for the full guide and MCP `memos_explain_recall` tool usage.
 
+### Recall budgets — trade latency and tokens per query
+
+Set `budget.maxMs` and/or `budget.maxTokens` to bound a search. The pipeline picks a tier (keyword-only → parallel legs → expansions → full rerank) and drops optional stages as the deadline approaches, returning the best results it has:
+
+```ts
+const { results, receipt } = await memos.searchWithReceipt({
+  query: "deployment runbook",
+  budget: { maxMs: 50, maxTokens: 800 },
+});
+// receipt.tier, receipt.elapsedMs, receipt.skipped, receipt.estimatedTokens
+```
+
+The CLI takes `--budget-ms` / `--budget-tokens`; the MCP `memos_search` tool takes `budget_ms` / `budget_tokens`. Budgeted searches bypass the query cache because the tier depends on runtime timing. See [docs/recall-budget.md](docs/recall-budget.md).
+
 ### Outcome-conditioned ranking — learn what actually helped
 
 Every other retrieval signal is a prediction. This one is evidence: tell
