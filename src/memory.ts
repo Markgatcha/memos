@@ -163,6 +163,8 @@ import {
   planQuery as buildQueryPlan,
   type QueryPlan,
 } from "./query-planner.js";
+import { auditAnswerText } from "./answer-audit.js";
+import type { AnswerAuditReport } from "./answer-audit.js";
 import { decideRetain } from "./retain-filter.js";
 import { appendTamperEntry, verifyTamperLog } from "./tamper-log.js";
 import type { TamperVerifyResult } from "./tamper-log.js";
@@ -2664,6 +2666,52 @@ export class MemOS {
    */
   planQuery(query: string): QueryPlan {
     return buildQueryPlan(query);
+  }
+
+  /**
+   * Audit a generated answer against candidate memories.
+   *
+   * Splits the answer into claims, scores each against the candidate set,
+   * resolves `[mem:...]` citations, and reports coverage. Candidates come
+   * from `memoryIds` when given, otherwise from a `query` search, otherwise
+   * from the whole store (capped by `maxMemories`).
+   */
+  async auditAnswer(
+    answer: string,
+    opts: {
+      query?: string;
+      memoryIds?: string[];
+      limit?: number;
+      threshold?: number;
+      maxMemories?: number;
+    } = {},
+  ): Promise<AnswerAuditReport> {
+    this.assertInit();
+    const candidates: Array<{ id: string; content: string }> = [];
+
+    if (opts.memoryIds && opts.memoryIds.length > 0) {
+      for (const id of opts.memoryIds) {
+        const node = await this.retrieve(id);
+        if (node) candidates.push({ id: node.id, content: node.content });
+      }
+    } else if (opts.query) {
+      const results = await this.search({
+        query: opts.query,
+        limit: opts.limit ?? 10,
+      });
+      for (const result of results) {
+        candidates.push({ id: result.node.id, content: result.node.content });
+      }
+    } else {
+      const nodes = this.graph.getAllNodes().slice(0, opts.maxMemories ?? 2000);
+      for (const node of nodes) {
+        candidates.push({ id: node.id, content: node.content });
+      }
+    }
+
+    return auditAnswerText(answer, candidates, {
+      threshold: opts.threshold,
+    });
   }
 
   /**

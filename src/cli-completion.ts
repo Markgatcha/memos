@@ -34,6 +34,7 @@ const COMMAND_DESCS: Record<string, string> = {
   retrieve: "Retrieve a memory by ID",
   search: "Search memories by text",
   plan: "Explain the retrieval strategy for a query",
+  "audit-answer": "Check an answer's claims against memories",
   drift: "Check file sources for drift",
   profile: "One-call user profile (durable facts + recent activity)",
   forget: "Delete a memory by ID",

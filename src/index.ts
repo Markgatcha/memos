@@ -111,6 +111,21 @@ export {
 } from "./drift.js";
 export type { DriftFinding, DriftReport, DriftStatus } from "./drift.js";
 export {
+  auditAnswerText,
+  claimSupportScore,
+  formatAnswerAudit,
+  hasNegation,
+  resolveClaimCitations,
+  splitAnswerClaims,
+} from "./answer-audit.js";
+export type {
+  AnswerAuditOptions,
+  AnswerAuditReport,
+  AnswerClaimAudit,
+  AuditMemory,
+  ClaimStatus,
+} from "./answer-audit.js";
+export {
   MEMFS_MANIFEST_FILENAME,
   coerceMemoryType,
   emptyMemFSSyncStats,

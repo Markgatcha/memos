@@ -38,6 +38,14 @@ result set with the context-pack token estimator.
   memories whose files were removed.
 - SDK: `memfsExport()`, `memfsStatus()`, `memfsSync()`.
 
+### Added - Answer audit
+
+`memos audit-answer` splits a generated answer into claims and checks each
+against stored memories. It resolves `[mem:...]` citations, detects
+contradiction via opposite negation, and reports per-claim status plus
+coverage. Exposed on the SDK (`auditAnswer`), CLI, and MCP
+(`memos_audit_answer`); the default scorer is deterministic and offline.
+
 ### Added - LAFS harness
 
 `scripts/bench-lafs.ts` runs the committed golden corpus at several

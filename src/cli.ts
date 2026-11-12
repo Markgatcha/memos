@@ -65,6 +65,7 @@ import { formatExplainRecall, formatReplayRecall } from "./flight-recorder.js";
 import { formatRecallReceipt } from "./recall-budget.js";
 import { formatQueryPlan } from "./query-planner.js";
 import { formatDriftReport } from "./drift.js";
+import { formatAnswerAudit } from "./answer-audit.js";
 import type {
   EmbeddingConfig,
   EmbeddingProviderKind,
@@ -1742,6 +1743,51 @@ async function main(): Promise<void> {
           console.log(JSON.stringify(plan, null, 2));
         } else {
           console.log(formatQueryPlan(plan));
+        }
+        break;
+      }
+
+      case "audit-answer": {
+        const answer = args[1];
+        if (!answer) {
+          console.error(
+            'Error: answer is required.\n  Usage: memos audit-answer "<answer>" [--query <q>] [--ids <id,id>] [--limit <n>] [--threshold <0-1>] [--json]',
+          );
+          process.exit(1);
+        }
+        const queryIdx = args.indexOf("--query");
+        const queryArg = queryIdx !== -1 ? args[queryIdx + 1] : undefined;
+        const idsIdx = args.indexOf("--ids");
+        const idsArg =
+          idsIdx !== -1
+            ? args[idsIdx + 1]
+                ?.split(",")
+                .map((id) => id.trim())
+                .filter((id) => id.length > 0)
+            : undefined;
+        const limitIdx = args.indexOf("--limit");
+        const limitArg =
+          limitIdx !== -1
+            ? Number.parseInt(args[limitIdx + 1] ?? "", 10)
+            : undefined;
+        const thresholdIdx = args.indexOf("--threshold");
+        const thresholdArg =
+          thresholdIdx !== -1
+            ? Number.parseFloat(args[thresholdIdx + 1] ?? "")
+            : undefined;
+        const report = await memos.auditAnswer(answer, {
+          query: queryArg,
+          memoryIds: idsArg,
+          limit: Number.isFinite(limitArg) ? limitArg : undefined,
+          threshold:
+            thresholdArg !== undefined && Number.isFinite(thresholdArg)
+              ? thresholdArg
+              : undefined,
+        });
+        if (jsonFlag) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          console.log(formatAnswerAudit(report));
         }
         break;
       }

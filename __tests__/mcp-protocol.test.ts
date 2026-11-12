@@ -173,7 +173,7 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
     expect(response.error).toBeUndefined();
     const result = response.result!;
     const tools = result.tools as Array<Record<string, unknown>>;
-    expect(tools).toHaveLength(41);
+    expect(tools).toHaveLength(42);
     // Full-capability surface: core CRUD + context pack + temporal + trust +
     // extraction + operations.
     const names = tools.map((t) => t.name);
@@ -249,6 +249,7 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
       "memos_brief",
       "memos_page",
       "memos_explain_recall",
+      "memos_audit_answer",
     ];
     const toolNames = tools.map((t) => t.name);
     expect(toolNames).toEqual(expectedNames);
@@ -476,7 +477,7 @@ describe("MCP Protocol — legacy 2025-era backward compatibility", () => {
     expect(response.error).toBeUndefined();
     const result = response.result!;
     const tools = result.tools as Array<Record<string, unknown>>;
-    expect(tools).toHaveLength(41);
+    expect(tools).toHaveLength(42);
     // Full-capability surface: core CRUD + context pack + temporal + trust +
     // extraction + operations.
     const names = tools.map((t) => t.name);
@@ -515,7 +516,7 @@ describe("MCP Protocol — legacy 2025-era backward compatibility", () => {
 describe("getMcpTools static metadata", () => {
   test("returns the full tool surface with outputSchema", () => {
     const tools = getMcpTools();
-    expect(tools).toHaveLength(41);
+    expect(tools).toHaveLength(42);
     // Full-capability surface: core CRUD + context pack + temporal + trust +
     // extraction + operations.
     const names = tools.map((t) => t.name);
@@ -600,6 +601,7 @@ describe("getMcpTools static metadata", () => {
       "memos_brief",
       "memos_page",
       "memos_explain_recall",
+      "memos_audit_answer",
     ]);
   });
 });

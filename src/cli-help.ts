@@ -16,6 +16,7 @@ export const CLI_COMMANDS: readonly string[] = [
   "retrieve",
   "search",
   "plan",
+  "audit-answer",
   "drift",
   "profile",
   "handoff",
@@ -168,6 +169,14 @@ Classify a query and show the retrieval strategy it implies
 (temporal, knowledge-update, aggregation, multi-session, abstention),
 plus which switches the search will enable. Example:
   memos plan "how many deployments did we do across sessions?"`,
+  "audit-answer": `memos audit-answer "<answer>" [--query <q>] [--ids <id,id>]
+  [--limit <n>] [--threshold <0-1>] [--json]
+
+Split an answer into claims and check each against stored memories.
+--query searches for candidate evidence; --ids pins specific memories;
+with neither, the whole store (up to 2000 memories) is used. Resolves
+[mem:...] citations and reports per-claim status plus coverage. Example:
+  memos audit-answer "Deploys need two approvals." --query "deploy policy"`,
   drift: `memos drift [--root <dir>] [--namespace <ns>] [--stamp] [--all] [--json]
 
 Check memories ingested from local files against the SHA-256 recorded at

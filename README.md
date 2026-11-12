@@ -811,6 +811,10 @@ Memories ingested from files carry `sourcePath` and `sourceHash`. `memos drift` 
 
 `node --import tsx scripts/bench-lafs.ts` runs the golden corpus at several `maxMs` budgets and prints recall@5, MRR, p50/p95, tier distribution, and the Pareto frontier. On the committed corpus, 97.9% recall is available at 50ms and the full pipeline adds cost without accuracy — the kind of trade-off a single score hides. See [docs/lafs-harness.md](docs/lafs-harness.md).
 
+### Answer audit — check the answer, not just the retrieval
+
+`memos audit-answer "<answer>" --query "<q>"` splits an answer into claims, scores each against memories, resolves `[mem:...]` citations, and reports coverage. Claims come back as `supported`, `partial`, `unsupported`, or `contradicted`. Also exposed as the `memos_audit_answer` MCP tool. See [docs/answer-audit.md](docs/answer-audit.md).
+
 ### Outcome-conditioned ranking — learn what actually helped
 
 Every other retrieval signal is a prediction. This one is evidence: tell

@@ -42,6 +42,7 @@ import { decorateTrustFlags, isUntrustedForAgent } from "./provenance.js";
 import { buildSelfEvalCases, runRetrievalEval } from "./eval.js";
 import { asMemOSError, errorPayload, formatErrorCard } from "./errors.js";
 import { formatExplainRecall } from "./flight-recorder.js";
+import { formatAnswerAudit } from "./answer-audit.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas for MemoryNode / MemoryEdge / ScoredMemory (output validation)
@@ -308,6 +309,7 @@ export const TOOL_ANNOTATIONS: Record<string, McpToolAnnotations> = {
   },
   // Flight Recorder trace inspector: pure read over persisted recall_traces.
   memos_explain_recall: ANNOTATE_READ,
+  memos_audit_answer: ANNOTATE_READ,
 };
 
 // ---------------------------------------------------------------------------
@@ -2786,6 +2788,71 @@ function registerTools(server: McpServer, memos: MemOS): void {
         }
       },
     );
+
+  if (enabledTools === null || enabledTools.has("memos_audit_answer"))
+    server.registerTool(
+      "memos_audit_answer",
+      {
+        title: "Audit Answer Against Memory",
+        annotations: TOOL_ANNOTATIONS.memos_audit_answer,
+        description:
+          "Split a generated answer into claims and check each against stored " +
+          "memories. Resolves [mem:...] citations and reports supported, partial, " +
+          "unsupported, and contradicted counts plus coverage. Use `query` to " +
+          "select candidate evidence or `memory_ids` to pin it.",
+        inputSchema: z.object({
+          answer: z.string().min(1).describe("Generated answer to audit."),
+          query: z
+            .string()
+            .optional()
+            .describe("Query used to select candidate memories."),
+          memory_ids: z
+            .array(z.string())
+            .optional()
+            .describe("Explicit memory IDs to audit against."),
+          limit: z
+            .number()
+            .optional()
+            .describe("Candidate count when `query` is used (default 10)."),
+          threshold: z
+            .number()
+            .optional()
+            .describe("Support threshold in [0,1] (default 0.55)."),
+        }),
+        outputSchema: z.object({
+          claims: z.array(z.unknown()),
+          counts: z.object({
+            supported: z.number(),
+            partial: z.number(),
+            unsupported: z.number(),
+            contradicted: z.number(),
+          }),
+          coverage: z.number(),
+          citationsResolved: z.number(),
+          citationsUnresolved: z.number(),
+          threshold: z.number(),
+        }),
+      },
+      async ({ answer, query, memory_ids, limit, threshold }) => {
+        const report = await memos.auditAnswer(answer, {
+          query,
+          memoryIds: memory_ids,
+          limit,
+          threshold,
+        });
+        return {
+          content: [{ type: "text" as const, text: formatAnswerAudit(report) }],
+          structuredContent: {
+            claims: report.claims,
+            counts: report.counts,
+            coverage: report.coverage,
+            citationsResolved: report.citationsResolved,
+            citationsUnresolved: report.citationsUnresolved,
+            threshold: report.threshold,
+          },
+        };
+      },
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4044,6 +4111,37 @@ const TOOL_METADATA: McpToolInfo[] = [
     ) as Record<string, unknown>,
     outputSchema: z.toJSONSchema(
       z.object({ explanation: z.unknown() }),
+    ) as Record<string, unknown>,
+  },
+  {
+    name: "memos_audit_answer",
+    annotations: TOOL_ANNOTATIONS.memos_audit_answer,
+    description:
+      "Audit an answer's claims against stored memories: resolves [mem:...] " +
+      "citations and reports support counts plus coverage.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        answer: z.string().min(1),
+        query: z.string().optional(),
+        memory_ids: z.array(z.string()).optional(),
+        limit: z.number().optional(),
+        threshold: z.number().optional(),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({
+        claims: z.array(z.unknown()),
+        counts: z.object({
+          supported: z.number(),
+          partial: z.number(),
+          unsupported: z.number(),
+          contradicted: z.number(),
+        }),
+        coverage: z.number(),
+        citationsResolved: z.number(),
+        citationsUnresolved: z.number(),
+        threshold: z.number(),
+      }),
     ) as Record<string, unknown>,
   },
 ];

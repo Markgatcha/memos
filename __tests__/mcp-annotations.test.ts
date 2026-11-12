@@ -39,9 +39,9 @@ afterAll(() => {
 });
 
 describe("getMcpTools() annotations", () => {
-  test("all 41 tools carry all four annotation hints", () => {
+  test("all 42 tools carry all four annotation hints", () => {
     const tools = getMcpTools();
-    expect(tools).toHaveLength(41);
+    expect(tools).toHaveLength(42);
     const failures: string[] = [];
     for (const tool of tools) {
       if (!tool.annotations || typeof tool.annotations !== "object") {
@@ -164,6 +164,7 @@ describe("getMcpTools() annotations", () => {
       "memos_brief",
       "memos_page",
       "memos_explain_recall",
+      "memos_audit_answer",
     ]);
   });
 });
@@ -228,7 +229,7 @@ describe("tools/list wire annotations", () => {
     const result = response.result as {
       tools: Array<{ name: string; annotations?: Record<string, unknown> }>;
     };
-    expect(result.tools).toHaveLength(41);
+    expect(result.tools).toHaveLength(42);
     const byName = new Map(getMcpTools().map((t) => [t.name, t.annotations]));
     const failures: string[] = [];
     for (const tool of result.tools) {

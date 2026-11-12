@@ -447,7 +447,7 @@ describe("memos_revert MCP tool", () => {
       const revert = tools.find((t) => t.name === "memos_revert");
       expect(revert).toBeDefined();
       expect(revert!.description).toMatch(/dryRun/i);
-      expect(tools).toHaveLength(41);
+      expect(tools).toHaveLength(42);
     } finally {
       if (previous === undefined) delete process.env.MEMOS_MCP_TOOLS;
       else process.env.MEMOS_MCP_TOOLS = previous;
