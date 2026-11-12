@@ -81,6 +81,7 @@ interface LafsReport {
     gitSha: string | null;
     embedder: string;
     corpus: string;
+    repeat: number;
   };
   queries: number;
   facts: number;
@@ -111,7 +112,11 @@ function round(value: number, digits = 2): number {
   return Number(value.toFixed(digits));
 }
 
-async function run(budgets: number[], corpusPath: string): Promise<LafsReport> {
+async function run(
+  budgets: number[],
+  corpusPath: string,
+  repeat: number,
+): Promise<LafsReport> {
   const corpus: Corpus = JSON.parse(readFileSync(corpusPath, "utf8"));
   const provider = createEmbeddingProvider({
     provider: "local-hash",
@@ -167,36 +172,41 @@ async function run(budgets: number[], corpusPath: string): Promise<LafsReport> {
     >();
     for (const budget of budgets) samples.set(budget, []);
 
-    // Rotate budget order per query so cache warmth is spread evenly
-    // instead of favouring whichever budget runs last.
-    for (let qi = 0; qi < corpus.queries.length; qi += 1) {
-      const q = corpus.queries[qi]!;
-      const expectedIds = expectedByQuery[qi]!;
-      for (let offset = 0; offset < budgets.length; offset += 1) {
-        const budget = budgets[(qi + offset) % budgets.length]!;
-        const started = performance.now();
-        const { results, receipt } = await memos.searchWithReceipt({
-          query: q.query,
-          limit: TOP_K,
-          ...(budget > 0 ? { budget: { maxMs: budget } } : {}),
-        });
-        const wallMs = performance.now() - started;
-        const rankOfFirst = results.findIndex((r) =>
-          expectedIds.includes(r.node.id),
-        );
-        const found = results.filter((r) =>
-          expectedIds.includes(r.node.id),
-        ).length;
-        samples.get(budget)!.push({
-          recall: expectedIds.length > 0 ? found / expectedIds.length : 1,
-          mrr: rankOfFirst === -1 ? 0 : 1 / (rankOfFirst + 1),
-          hitAt1: rankOfFirst === 0 ? 1 : 0,
-          wallMs,
-          pipelineMs: receipt.elapsedMs,
-          tokens: receipt.estimatedTokens,
-          degraded: receipt.degraded,
-          tier: receipt.tier,
-        });
+    // Rotate budget order per query and repetition so cache warmth is
+    // spread evenly instead of favouring whichever budget runs last.
+    // `budget: {}` (not omitted) matters for the "no budget" row: a budget
+    // object bypasses the query cache, so repeats measure retrieval rather
+    // than a cached result array.
+    for (let rep = 0; rep < repeat; rep += 1) {
+      for (let qi = 0; qi < corpus.queries.length; qi += 1) {
+        const q = corpus.queries[qi]!;
+        const expectedIds = expectedByQuery[qi]!;
+        for (let offset = 0; offset < budgets.length; offset += 1) {
+          const budget = budgets[(qi + offset + rep) % budgets.length]!;
+          const started = performance.now();
+          const { results, receipt } = await memos.searchWithReceipt({
+            query: q.query,
+            limit: TOP_K,
+            budget: budget > 0 ? { maxMs: budget } : {},
+          });
+          const wallMs = performance.now() - started;
+          const rankOfFirst = results.findIndex((r) =>
+            expectedIds.includes(r.node.id),
+          );
+          const found = results.filter((r) =>
+            expectedIds.includes(r.node.id),
+          ).length;
+          samples.get(budget)!.push({
+            recall: expectedIds.length > 0 ? found / expectedIds.length : 1,
+            mrr: rankOfFirst === -1 ? 0 : 1 / (rankOfFirst + 1),
+            hitAt1: rankOfFirst === 0 ? 1 : 0,
+            wallMs,
+            pipelineMs: receipt.elapsedMs,
+            tokens: receipt.estimatedTokens,
+            degraded: receipt.degraded,
+            tier: receipt.tier,
+          });
+        }
       }
     }
 
@@ -287,6 +297,7 @@ async function run(budgets: number[], corpusPath: string): Promise<LafsReport> {
         gitSha: gitSha(),
         embedder: provider.model,
         corpus: corpusPath,
+        repeat,
       },
       queries: corpus.queries.length,
       facts: corpus.facts.length,
@@ -306,7 +317,7 @@ async function run(budgets: number[], corpusPath: string): Promise<LafsReport> {
 
 function formatReport(report: LafsReport): string {
   const lines: string[] = [
-    `LAFS harness — ${report.queries} queries / ${report.facts} facts · ${report.provenance.embedder} · ${report.provenance.gitSha ?? "no-git"}`,
+    `LAFS harness — ${report.queries} queries / ${report.facts} facts · ${report.provenance.embedder} · ${report.provenance.repeat}× · ${report.provenance.gitSha ?? "no-git"}`,
     "",
     "| budget | tier(s) | recall@5 | mrr | hit@1 | p50 ms | p95 ms | pipe p50 | tokens | degraded | frontier |",
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: |",
@@ -325,7 +336,7 @@ function formatReport(report: LafsReport): string {
     `Frontier area (AUF, log-latency): ${report.frontierArea.toFixed(4)}`,
   );
   lines.push(
-    "Notes: budget 0 = unbudgeted. Latency is wall-clock around searchWithReceipt.",
+    "Notes: budget 0 = unbudgeted. Latency is wall-clock around searchWithReceipt, medians over repeated runs.",
   );
   lines.push(
     "AUF is this harness's summary of the frontier, not the official LongMemEval-V2 LAFS metric.",
@@ -338,6 +349,7 @@ function parseArgs(argv: string[]): {
   corpus: string;
   json: boolean;
   out?: string;
+  repeat: number;
 } {
   const budgetsArg = argv
     .find((arg) => arg.startsWith("--budgets="))
@@ -352,23 +364,32 @@ function parseArgs(argv: string[]): {
     .find((arg) => arg.startsWith("--corpus="))
     ?.split("=")[1];
   const outArg = argv.find((arg) => arg.startsWith("--out="))?.split("=")[1];
+  const repeatArg = argv
+    .find((arg) => arg.startsWith("--repeat="))
+    ?.split("=")[1];
+  const parsedRepeat = repeatArg ? Number.parseInt(repeatArg, 10) : 3;
+  const repeat =
+    Number.isFinite(parsedRepeat) && parsedRepeat > 0
+      ? Math.min(20, parsedRepeat)
+      : 3;
   return {
     budgets: budgets.length > 0 ? budgets : DEFAULT_BUDGETS,
     corpus: corpusArg ? resolve(corpusArg) : DEFAULT_CORPUS,
     json: argv.includes("--json"),
     out: outArg ? resolve(outArg) : undefined,
+    repeat,
   };
 }
 
 async function main(): Promise<void> {
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
     console.log(
-      "Usage: node --import tsx scripts/bench-lafs.ts [--budgets=5,25,50,100,250,0] [--corpus=<path>] [--json] [--out=<path>]",
+      "Usage: node --import tsx scripts/bench-lafs.ts [--budgets=5,25,50,100,250,0] [--repeat=3] [--corpus=<path>] [--json] [--out=<path>]",
     );
     return;
   }
   const args = parseArgs(process.argv.slice(2));
-  const report = await run(args.budgets, args.corpus);
+  const report = await run(args.budgets, args.corpus, args.repeat);
   if (args.out) {
     mkdirSync(dirname(args.out), { recursive: true });
     writeFileSync(args.out, `${JSON.stringify(report, null, 2)}\n`, "utf8");

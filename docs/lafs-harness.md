@@ -12,18 +12,21 @@ node --import tsx scripts/bench-lafs.ts --json --out=scripts/eval/lafs-results.j
 ## Output
 
 ```text
-LAFS harness — 24 queries / 36 facts · local-hash-384 · 11e6dfb
+LAFS harness — 24 queries / 36 facts · local-hash-384 · 3× · 11e6dfb
 
 | budget | tier(s) | recall@5 | mrr | hit@1 | p50 ms | p95 ms | pipe p50 | tokens | degraded | frontier |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: |
-| 5ms | 0×24 | 0.9583 | 0.9722 | 0.958 | 1.43 | 3.49 | 1.66 | 114.4 | 100% | yes |
-| 50ms | 1×24 | 0.9792 | 0.9722 | 0.958 | 3.33 | 6.09 | 3.84 | 166.4 | 100% | yes |
-| 100ms | 2×24 | 0.9792 | 0.9722 | 0.958 | 3.82 | 5.55 | 3.91 | 165.7 | 100% | |
-| 500ms | 3×24 | 0.9792 | 0.9722 | 0.958 | 3.48 | 5.65 | 3.83 | 165.7 | 0% | |
-| none | 3×24 | 0.9792 | 0.9722 | 0.958 | 4.00 | 6.68 | 4.14 | 165.7 | 0% | |
+| 5ms | 0×72 | 0.9583 | 0.9722 | 0.958 | 1.64 | 2.62 | 1.69 | 114.4 | 100% | |
+| 25ms | 0×72 | 0.9583 | 0.9722 | 0.958 | 1.50 | 3.07 | 1.54 | 114.4 | 100% | yes |
+| 50ms | 1×72 | 0.9792 | 0.9722 | 0.958 | 3.68 | 6.95 | 3.88 | 166.4 | 100% | yes |
+| 100ms | 2×72 | 0.9792 | 0.9722 | 0.958 | 3.76 | 5.69 | 3.95 | 165.7 | 100% | |
+| 500ms | 3×72 | 0.9792 | 0.9722 | 0.958 | 3.81 | 6.41 | 3.97 | 165.7 | 0% | |
+| none | 3×72 | 0.9792 | 0.9722 | 0.958 | 3.80 | 6.60 | 3.95 | 165.7 | 0% | |
 
-Frontier area (AUF, log-latency): 0.9688
+Frontier area (AUF, log-latency): 0.9687
 ```
+
+`×72` is 24 queries × 3 repeats. Each latency is the median over repeats.
 
 ## Reading it
 
@@ -52,9 +55,14 @@ kind of decision a single "recall@5 0.9792" line cannot support.
 - Store: throwaway SQLite file in a temp directory, rebuilt per run.
 - Warmup: every query runs once unbudgeted before measurement, so the first
   call does not pay for lazy vector-cache population.
-- Order: budgets are rotated per query (`(queryIndex + offset) % n`) so
-  cache warmth is spread evenly instead of favouring whichever budget runs
-  last.
+- Order: budgets are rotated per query and per repetition
+  (`(queryIndex + offset + rep) % n`) so cache warmth is spread evenly
+  instead of favouring whichever budget runs last.
+- Repeats: each query/budget pair runs `--repeat` times (default 3);
+  reported latencies are medians over the pooled samples.
+- Cache: every call passes a budget object, including the "no budget" row
+  (`budget: {}`). A budget object bypasses the query cache, so repeats
+  measure retrieval instead of a cached array.
 - Latency: `performance.now()` around the full `searchWithReceipt` call.
 
 ## Options
@@ -62,6 +70,7 @@ kind of decision a single "recall@5 0.9792" line cannot support.
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--budgets=` | `5,25,50,100,250,500,0` | Comma-separated `maxMs` values; `0` = unbudgeted. |
+| `--repeat=` | `3` | Repetitions per query/budget pair (1–20). |
 | `--corpus=` | `scripts/eval/corpus.json` | Same `{facts, queries}` schema. |
 | `--json` | off | Print the report as JSON. |
 | `--out=` | none | Write the JSON report to a path. |
@@ -91,3 +100,6 @@ the frontier is reproducible and diffable between commits.
   provider will shift both accuracy and latency.
 - Latency here is single-process warm; cold-start and disk contention are
   not modelled.
+- A budget is a ceiling, not a delay: a 25ms row can measure faster than a
+  5ms row because both may finish in ~1.5ms and the difference is noise.
+  Compare recall at similar latency, not by budget label.
