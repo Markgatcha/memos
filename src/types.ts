@@ -228,6 +228,14 @@ export interface MemoryNode {
  */
 export interface CreateMemoryInput {
   content: string;
+  /**
+   * Explicit node id. Default: a random UUID v4.
+   *
+   * Supply one for deterministic imports/benchmarks (and for idempotent
+   * re-writes where the caller owns identity). Duplicate ids are rejected
+   * by the storage layer.
+   */
+  id?: string;
   type?: MemoryType;
   metadata?: Record<string, unknown>;
   summary?: string;
@@ -748,6 +756,25 @@ export interface SearchFilter {
    * instance-level `retrieval.multiHop.enabled = true`.
    */
   multiHop?: boolean | MultiHopOptions;
+  /**
+   * Enable Retrieval Flight Recorder tracing for this search call.
+   *
+   * Off by default (can also be turned on globally via `MEMOS_TRACE=1` or
+   * `config.retrieval.trace.enabled`). When enabled, persists a structured
+   * trace of per-leg candidates, timings, fusion contributions, and
+   * rerank/MMR/gate deltas to `recall_traces`.
+   */
+  trace?: boolean;
+  /**
+   * Opt-in to storing memory text (`summary` and `content`) inside a recorded
+   * trace for debugging. Default `false` — traces record IDs and numeric
+   * scores only.
+   */
+  captureText?: boolean;
+  /**
+   * Optional session identifier stamped on the recorded `recall_traces` row.
+   */
+  traceSessionId?: string;
 }
 
 /**
@@ -1497,6 +1524,24 @@ export interface StorageAdapter {
 
   /** Drop every feedback batch. Called by `clear()`. Optional. */
   deleteAllRecallFeedback?(): Promise<void>;
+
+  /**
+   * Persist one retrieval flight-recorder trace and enforce retention by
+   * keeping at most the newest `maxTraces` rows (default 500). Optional.
+   */
+  saveRecallTrace?(trace: RecallTraceRecord, maxTraces?: number): Promise<void>;
+
+  /** Retrieve one recorded retrieval trace by ID, or `null` when absent. */
+  getRecallTrace?(id: string): Promise<RecallTraceRecord | null>;
+
+  /** List recorded retrieval trace summaries, newest first. */
+  listRecallTraces?(
+    limit?: number,
+    sessionId?: string,
+  ): Promise<RecallTraceSummary[]>;
+
+  /** Drop every recorded retrieval trace. Called by `clear()`. Optional. */
+  deleteAllRecallTraces?(): Promise<void>;
 
   /**
    * Append one entry to the tamper-evident mutation log. The adapter
@@ -2556,6 +2601,7 @@ export interface MemOSConfig {
     mmr?: MmrConfig;
     multiHop?: MultiHopOptions;
     outcomeFeedback?: OutcomeFeedbackConfig;
+    trace?: RecallTraceConfig;
   };
 
   /**
@@ -3522,4 +3568,409 @@ export interface MemoryHealth {
   findings: MemoryHealthFinding[];
   /** Loud semantic-search status, independent of memory hygiene. */
   embeddingHealth: EmbeddingHealth;
+}
+
+// ---------------------------------------------------------------------------
+// Retrieval Flight Recorder — tracing, explain-recall, counterfactual replay
+// ---------------------------------------------------------------------------
+
+/** Retrieval Flight Recorder configuration (`MemOSConfig.retrieval.trace`). */
+export interface RecallTraceConfig {
+  /**
+   * Enable tracing by default for every search on this instance.
+   * Default `false` (can also be turned on via `MEMOS_TRACE=1` or per-query
+   * `SearchFilter.trace: true`).
+   */
+  enabled?: boolean;
+  /**
+   * Store memory text (`summary` + `content`) inside trace payloads for
+   * human debugging. Default `false` — traces record IDs and scores only.
+   */
+  captureText?: boolean;
+  /**
+   * Retention limit: keep the newest `maxTraces` rows in `recall_traces` and
+   * prune older rows on write. Default `500`.
+   */
+  maxTraces?: number;
+  /** Default `session_id` written on recorded traces unless overridden. */
+  sessionId?: string;
+}
+
+/** Canonical retrieval leg identifiers in pipeline insertion order. */
+export type TraceLegName = "fts" | "semantic" | "entity" | "clip" | "graph";
+
+/** One candidate surfaced by a retrieval leg before fusion. */
+export interface TraceLegCandidate {
+  /** Memory node ID. */
+  id: string;
+  /** 1-based rank within this leg. */
+  rank: number;
+  /** Raw score produced by the leg (BM25 rank, cosine similarity, match count, or expansion score). */
+  rawScore: number;
+  /** Optional sub-source annotation (e.g. `"prf"` on FTS, `"ppr"` / `"session"` / `"multiHop"` on graph). */
+  source?: string;
+}
+
+/** Per-leg candidate list and execution timing inside a recall trace. */
+export interface TraceLegRecord {
+  /** Whether the leg was active for this query. */
+  enabled: boolean;
+  /** Wall-clock execution time of the leg in milliseconds. */
+  timingMs: number;
+  /** Candidates returned by this leg, ordered best-first. */
+  candidates: TraceLegCandidate[];
+  /** Optional leg mode metadata (e.g. `"exact"` / `"ann"` for semantic). */
+  mode?: string;
+}
+
+/** Snapshot of the effective retrieval configuration captured on a trace. */
+export interface TraceRetrievalConfig {
+  fusionMode: "convex" | "rrf";
+  keywordWeight: number;
+  semanticWeight: number;
+  entityLegWeight: number;
+  imageLegWeight: number;
+  entityWeight: number;
+  rrfK: number;
+  adaptiveWeighting: boolean;
+  trustFloor: number;
+  confidenceWeightStrength: number;
+  provenanceWeightStrength: number;
+  recencyHalfLifeMs: number;
+  temporalRecencyStrength: number;
+  queryEntityCount: number;
+  queryTokenCount: number;
+  temporalQuery: boolean;
+  rerank: {
+    enabled: boolean;
+    candidates: number;
+  };
+  relevanceGate: {
+    enabled: boolean;
+    ratio: number;
+    abstainSimilarity: number | null;
+    minResults: number;
+  };
+  mmr: {
+    enabled: boolean;
+    lambda: number;
+  };
+  limit: number;
+  offset: number;
+  candidateLimit: number;
+}
+
+/** Score decomposition and replay attributes for one candidate in a trace. */
+export interface TraceCandidateBreakdown {
+  /** Memory node ID. */
+  id: string;
+  /** First retrieval leg that introduced this candidate into the pool. */
+  introducedBy: TraceLegName;
+  /** Every leg that matched this candidate, in canonical pipeline order. */
+  matchedLegs: TraceLegName[];
+  /** Non-text scoring attributes needed for deterministic offline replay. */
+  attributes: {
+    updatedAt: number;
+    trustScore: number;
+    confidence?: number;
+    provenance?: ProvenanceTier;
+    entityOverlap: number;
+    exactTermMatch: boolean;
+    postFusionMultiplier: number;
+    dedupDropped: boolean;
+    relativeTimeInWindow?: boolean;
+    graphSeedId?: string;
+    graphSeedFactor?: number;
+    graphFixedScore?: number;
+    rerankScore?: number;
+  };
+  /** Additive and multiplicative score contributions during the live search. */
+  contributions: {
+    fts: number;
+    semantic: number;
+    semanticRaw?: number;
+    entityLeg: number;
+    clip: number;
+    clipRaw?: number;
+    fusedBase: number;
+    temporalRecencyMultiplier: number;
+    entityOverlapMultiplier: number;
+    trustMultiplier: number;
+    provenanceMultiplier: number;
+    confidenceMultiplier: number;
+    recencyTieBreakDelta: number;
+    fusedScore: number;
+    postFusionMultiplier: number;
+    graphInjectedScore?: number;
+    preRerankScore: number;
+    rerankScore?: number;
+    finalScore: number;
+  };
+  /** Opt-in memory text captured only when `captureText: true` was set. */
+  text?: {
+    summary: string;
+    content: string;
+  };
+}
+
+/** Rank and score change recorded for one candidate across the rerank stage. */
+export interface TraceRerankDelta {
+  id: string;
+  rankBefore: number;
+  rankAfter: number;
+  /** Positive means the candidate moved higher (closer to #1). */
+  rankDelta: number;
+  scoreBefore: number;
+  scoreAfter: number;
+  scoreDelta: number;
+}
+
+/** Rank change recorded for one candidate across the MMR diversification stage. */
+export interface TraceMmrDelta {
+  id: string;
+  rankBefore: number;
+  rankAfter: number;
+  /** Positive means the candidate moved higher (closer to #1). */
+  rankDelta: number;
+}
+
+/** JSON payload persisted in `recall_traces.payload`. */
+export interface RecallTracePayload {
+  schemaVersion: 1;
+  captureText: boolean;
+  config: TraceRetrievalConfig;
+  effectiveWeights: {
+    keyword: number;
+    semantic: number;
+    entityLeg: number;
+    clip: number;
+  };
+  legs: {
+    fts: TraceLegRecord;
+    semantic: TraceLegRecord;
+    entity: TraceLegRecord;
+    graph: TraceLegRecord;
+    clip?: TraceLegRecord;
+  };
+  candidates: TraceCandidateBreakdown[];
+  rerank: {
+    enabled: boolean;
+    applied: boolean;
+    timingMs: number;
+    candidateWindow: number;
+    deltas: TraceRerankDelta[];
+  };
+  relevanceGate: {
+    enabled: boolean;
+    abstained: boolean;
+    trimmed: boolean;
+    droppedCount: number;
+    droppedIds: string[];
+  };
+  mmr: {
+    enabled: boolean;
+    applied: boolean;
+    lambda: number | null;
+    timingMs: number;
+    deltas: TraceMmrDelta[];
+  };
+  /**
+   * Sparse upper-triangle pairwise token-Jaccard similarities `[idA, idB, sim]`
+   * with `idA < idB` and `sim > 0`. Contains numeric similarities only (no
+   * text or tokens) so counterfactual MMR replay works with `captureText: false`.
+   */
+  pairwiseSimilarity: Array<[string, string, number]>;
+  /** Final ordered memory IDs returned to the caller. */
+  finalIds: string[];
+}
+
+/** Full persisted row from the `recall_traces` table. */
+export interface RecallTraceRecord {
+  id: string;
+  sessionId: string | null;
+  query: string;
+  configHash: string;
+  createdAt: number;
+  latencyMs: number;
+  payload: RecallTracePayload;
+}
+
+/** Lightweight metadata row returned by `listRecallTraces()`. */
+export interface RecallTraceSummary {
+  id: string;
+  sessionId: string | null;
+  query: string;
+  configHash: string;
+  createdAt: number;
+  latencyMs: number;
+  finalCount: number;
+}
+
+/** Structured report returned by `MemOS.explainRecall` and `memos_explain_recall`. */
+export interface ExplainRecallReport {
+  traceId: string;
+  sessionId: string | null;
+  query: string;
+  configHash: string;
+  createdAt: number;
+  latencyMs: number;
+  captureText: boolean;
+  config: TraceRetrievalConfig;
+  effectiveWeights: RecallTracePayload["effectiveWeights"];
+  legs: RecallTracePayload["legs"];
+  rerank: RecallTracePayload["rerank"];
+  relevanceGate: RecallTracePayload["relevanceGate"];
+  mmr: RecallTracePayload["mmr"];
+  finalItems: Array<{
+    rank: number;
+    id: string;
+    finalScore: number;
+    introducedBy: TraceLegName;
+    matchedLegs: TraceLegName[];
+    contributions: TraceCandidateBreakdown["contributions"];
+    rerankDelta?: TraceRerankDelta;
+    mmrDelta?: TraceMmrDelta;
+    text?: TraceCandidateBreakdown["text"];
+  }>;
+}
+
+/**
+ * Configuration overrides accepted by `MemOS.replayRecall` and
+ * `memos replay <trace-id> --config <file.json>`.
+ *
+ * Supports both flat top-level keys and nested `fusion` / `retrieval` blocks.
+ */
+export interface ReplayConfigOverride {
+  fusionMode?: "convex" | "rrf";
+  keywordWeight?: number;
+  semanticWeight?: number;
+  entityLegWeight?: number;
+  imageLegWeight?: number;
+  entityWeight?: number;
+  rrfK?: number;
+  adaptiveWeighting?: boolean;
+  trustFloor?: number;
+  confidenceWeightStrength?: number;
+  provenanceWeightStrength?: number;
+  recencyHalfLifeMs?: number;
+  temporalRecencyStrength?: number;
+  mmrLambda?: number | null;
+  mmr?:
+    | boolean
+    | number
+    | {
+        enabled?: boolean;
+        lambda?: number;
+      };
+  relevanceGateThreshold?: number | null;
+  relevanceRatio?: number | null;
+  abstainSimilarity?: number | null;
+  relevanceGate?:
+    | boolean
+    | {
+        enabled?: boolean;
+        ratio?: number;
+        abstainSimilarity?: number | null;
+        minResults?: number;
+      };
+  rerank?: boolean;
+  limit?: number;
+  weights?: {
+    keyword?: number;
+    semantic?: number;
+    entityLeg?: number;
+    imageLeg?: number;
+    clip?: number;
+  };
+  fusion?: Partial<
+    Pick<
+      TraceRetrievalConfig,
+      | "fusionMode"
+      | "keywordWeight"
+      | "semanticWeight"
+      | "entityLegWeight"
+      | "imageLegWeight"
+      | "entityWeight"
+      | "rrfK"
+      | "adaptiveWeighting"
+      | "trustFloor"
+      | "confidenceWeightStrength"
+      | "provenanceWeightStrength"
+      | "recencyHalfLifeMs"
+      | "temporalRecencyStrength"
+    >
+  >;
+  retrieval?: {
+    mmr?: {
+      enabled?: boolean;
+      lambda?: number;
+    };
+    relevanceGate?: {
+      enabled?: boolean;
+      ratio?: number;
+      abstainSimilarity?: number | null;
+      minResults?: number;
+    };
+  };
+}
+
+/** Counterfactual ranking diff returned by `MemOS.replayRecall` and `memos replay`. */
+export interface ReplayRecallReport {
+  traceId: string;
+  query: string;
+  originalConfigHash: string;
+  replayConfigHash: string;
+  effectiveConfig: TraceRetrievalConfig;
+  effectiveWeights: RecallTracePayload["effectiveWeights"];
+  configChanges: Array<{
+    field: string;
+    before: unknown;
+    after: unknown;
+  }>;
+  originalFinalIds: string[];
+  replayFinalIds: string[];
+  gate: {
+    abstained: boolean;
+    trimmed: boolean;
+    droppedIds: string[];
+  };
+  diff: {
+    added: Array<{
+      id: string;
+      newRank: number;
+      originalScore: number | null;
+      replayScore: number;
+      scoreDelta: number | null;
+      text?: string;
+    }>;
+    removed: Array<{
+      id: string;
+      oldRank: number;
+      originalScore: number;
+      replayScore: number | null;
+      scoreDelta: number | null;
+      reason: "gate_abstained" | "gate_trimmed" | "out_of_top_k";
+      text?: string;
+    }>;
+    reordered: Array<{
+      id: string;
+      oldRank: number;
+      newRank: number;
+      /** `oldRank - newRank`: positive means promoted toward #1. */
+      rankDelta: number;
+      originalScore: number;
+      replayScore: number;
+      scoreDelta: number;
+      text?: string;
+    }>;
+    unchanged: Array<{
+      id: string;
+      rank: number;
+      originalScore: number;
+      replayScore: number;
+      scoreDelta: number;
+      text?: string;
+    }>;
+  };
+  warnings: string[];
 }

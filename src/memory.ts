@@ -47,6 +47,13 @@ import {
   sortFindings,
 } from "./inspector.js";
 import {
+  buildRecallTraceRecord,
+  DEFAULT_MAX_RECALL_TRACES,
+  explainRecallTrace,
+  replayRecallTrace,
+  type BuildRecallTraceInput,
+} from "./flight-recorder.js";
+import {
   citationToken,
   formatCitationResolution,
   parseCitationToken,
@@ -329,6 +336,11 @@ import type {
   ImageSource,
   ListImagesOptions,
   SearchImagesOptions,
+  ExplainRecallReport,
+  RecallTraceRecord,
+  RecallTraceSummary,
+  ReplayConfigOverride,
+  ReplayRecallReport,
 } from "./types.js";
 
 /**
@@ -959,6 +971,10 @@ export class MemOS {
   private readonly rankingModulated = new WeakSet<ScoredMemory>(); // 5 seconds
   /** Warn only once when the rerank endpoint fails (graceful degradation). */
   private rerankFailureWarned = false;
+  /** Precomputed default trace state from `config.retrieval.trace.enabled`. */
+  private readonly traceConfigEnabled: boolean;
+  /** Most recent trace ID written by a traced search on this instance. */
+  private lastTraceId: string | null = null;
   /**
    * Last timestamp handed out by `store()`. Fast successive stores can land
    * in the same millisecond, which would make createdAt ties ambiguous for
@@ -1085,6 +1101,7 @@ export class MemOS {
 
     this.experimental = this.config.experimental;
     this.profileConfig = this.config.profile ?? {};
+    this.traceConfigEnabled = Boolean(this.config.retrieval?.trace?.enabled);
     // Embeddings are ON by default: a plain `new MemOS()` gets real local
     // semantic search via fastembed (which degrades loudly to a local hash
     // when the optional transformers dep isn't installed). The deprecated
@@ -1581,7 +1598,7 @@ export class MemOS {
     }
 
     const node: MemoryNode = {
-      id: generateId(),
+      id: opts.id ?? generateId(),
       content,
       summary: opts.summary ?? extractiveSummary(content),
       type,
@@ -2468,6 +2485,15 @@ export class MemOS {
       this.storage.pruneVectorCacheForNamespace
     ) {
       this.storage.pruneVectorCacheForNamespace(filter.namespace);
+    }
+
+    // Flight Recorder opt-in: single boolean check on the disabled path.
+    const trace =
+      filter.trace === true ||
+      (filter.trace !== false &&
+        (this.traceConfigEnabled || process.env.MEMOS_TRACE === "1"));
+    if (trace) {
+      return this.searchTraced(filter);
     }
 
     // Check the search cache. Only cache text queries (not structured-only
@@ -5458,6 +5484,10 @@ export class MemOS {
     this.assertInit();
     await this.storage.deleteAllNodes();
     await this.clearRecallFeedback();
+    if (this.storage.deleteAllRecallTraces) {
+      await this.storage.deleteAllRecallTraces();
+    }
+    this.lastTraceId = null;
     this.graph.clear();
   }
 
@@ -8965,8 +8995,13 @@ export class MemOS {
       skipGate?: boolean;
       /** Inspector-only: keep raw ranking order (MMR is a post-rank reorder). */
       skipMmr?: boolean;
+      /** Flight Recorder opt-in flag. */
+      trace?: boolean;
     } = {},
   ): Promise<ScoredMemory[]> {
+    if (opts.trace) {
+      return this.hybridSearchTraced(filter, opts);
+    }
     const limit = filter.limit ?? 20;
     const offset = filter.offset ?? 0;
     // Pull a wider candidate set from all three retrieval legs, then merge.
@@ -9166,6 +9201,573 @@ export class MemOS {
   }
 
   /**
+   * Return the ID of the most recent recall trace recorded on this instance,
+   * or `null` when no traced search has run yet.
+   */
+  getLastTraceId(): string | null {
+    return this.lastTraceId;
+  }
+
+  /**
+   * Load one persisted Retrieval Flight Recorder trace by ID (or `"latest"`),
+   * or `null` when not found.
+   */
+  async getRecallTrace(traceId: string): Promise<RecallTraceRecord | null> {
+    this.assertInit();
+    if (!this.storage.getRecallTrace) return null;
+    return this.storage.getRecallTrace(traceId);
+  }
+
+  /**
+   * List recorded Retrieval Flight Recorder trace summaries, newest first.
+   */
+  async listRecallTraces(options?: {
+    limit?: number;
+    sessionId?: string;
+  }): Promise<RecallTraceSummary[]> {
+    this.assertInit();
+    if (!this.storage.listRecallTraces) return [];
+    return this.storage.listRecallTraces(
+      options?.limit ?? 50,
+      options?.sessionId,
+    );
+  }
+
+  /**
+   * Explain a recorded retrieval trace: query, config, latency, per-leg
+   * candidates and timings, stage deltas, and per-item score contributions.
+   */
+  async explainRecall(traceId: string): Promise<ExplainRecallReport> {
+    this.assertInit();
+    const trimmed = traceId.trim();
+    if (!trimmed) {
+      throw new Error("explainRecall requires a non-empty traceId.");
+    }
+    const trace = await this.getRecallTrace(trimmed);
+    if (!trace) {
+      throw new Error(`Recall trace not found: ${trimmed}`);
+    }
+    return explainRecallTrace(trace);
+  }
+
+  /**
+   * Counterfactual offline replay: recompute retrieval ranking from the
+   * stored candidate scores of a recorded trace under a modified config —
+   * zero re-embedding and zero database re-queries.
+   */
+  async replayRecall(
+    traceId: string,
+    override: ReplayConfigOverride = {},
+  ): Promise<ReplayRecallReport> {
+    this.assertInit();
+    const trimmed = traceId.trim();
+    if (!trimmed) {
+      throw new Error("replayRecall requires a non-empty traceId.");
+    }
+    const trace = await this.getRecallTrace(trimmed);
+    if (!trace) {
+      throw new Error(`Recall trace not found: ${trimmed}`);
+    }
+    return replayRecallTrace(trace, override);
+  }
+
+  private resolveTraceSettings(filter: SearchFilter): {
+    captureText: boolean;
+    sessionId: string | null;
+    maxTraces: number;
+  } {
+    const cfg = this.config.retrieval?.trace;
+    const captureText = filter.captureText ?? cfg?.captureText ?? false;
+    const sessionId =
+      filter.traceSessionId ??
+      cfg?.sessionId ??
+      process.env.MEMOS_SESSION_ID ??
+      null;
+    const envMax = Number.parseInt(process.env.MEMOS_TRACE_MAX ?? "", 10);
+    const maxTraces =
+      cfg?.maxTraces ??
+      (Number.isFinite(envMax) && envMax > 0
+        ? envMax
+        : DEFAULT_MAX_RECALL_TRACES);
+    return { captureText, sessionId, maxTraces };
+  }
+
+  private async searchTraced(filter: SearchFilter): Promise<ScoredMemory[]> {
+    if (filter.query && this.canRunHybrid(filter)) {
+      const results = await this.hybridSearchTraced(filter, { trace: true });
+      return this.postSortResults(results, filter);
+    }
+    return this.ftsOnlySearchTraced(filter);
+  }
+
+  private async ftsOnlySearchTraced(
+    filter: SearchFilter,
+  ): Promise<ScoredMemory[]> {
+    const tStart = performance.now();
+    const createdAt = Date.now();
+    const limit = filter.limit ?? 20;
+    const offset = filter.offset ?? 0;
+
+    const ftsStart = performance.now();
+    const rawResults = await this.storage.queryNodes(filter);
+    const ftsMs = performance.now() - ftsStart;
+
+    const sorted = this.postSortResults(rawResults, filter);
+    const latencyMs = performance.now() - tStart;
+    const { captureText, sessionId, maxTraces } =
+      this.resolveTraceSettings(filter);
+
+    const record = buildRecallTraceRecord({
+      id: `tr_${generateId()}`,
+      sessionId,
+      query: filter.query ?? "",
+      createdAt,
+      latencyMs,
+      captureText,
+      fusionOptions: {
+        ...this.config.fusion,
+        semanticWeight: 0,
+        entityLegWeight: 0,
+      },
+      queryEntities: [],
+      limit,
+      offset,
+      candidateLimit: limit + offset,
+      semanticMode: "disabled",
+      clipEnabled: false,
+      legs: {
+        fts: { timingMs: ftsMs, results: rawResults },
+        semantic: { timingMs: 0, enabled: false, results: [] },
+        entity: { timingMs: 0, enabled: false, results: [] },
+        clip: { timingMs: 0, enabled: false, results: [] },
+        graph: { timingMs: 0, enabled: false, injected: [] },
+      },
+      fusedResults: rawResults,
+      preRerankResults: rawResults,
+      postRerankResults: rawResults,
+      rerankConfig: {
+        enabled: false,
+        applied: false,
+        timingMs: 0,
+        candidates: 0,
+      },
+      dedupDroppedIds: new Set<string>(),
+      modulatedResults: sorted,
+      relevanceGateConfig: {
+        enabled: false,
+        ratio: DEFAULT_RELEVANCE_RATIO,
+        abstainSimilarity: null,
+        minResults: 0,
+      },
+      gatedOutcome: {
+        results: sorted,
+        abstained: false,
+        trimmed: false,
+        dropped: 0,
+      },
+      mmrConfig: {
+        enabled: false,
+        lambda: DEFAULT_MMR_LAMBDA,
+        timingMs: 0,
+      },
+      diversifiedResults: sorted,
+      finalResults: sorted,
+    });
+
+    this.lastTraceId = record.id;
+    if (this.storage.saveRecallTrace) {
+      await this.storage.saveRecallTrace(record, maxTraces);
+    }
+    return sorted;
+  }
+
+  private async hybridSearchTraced(
+    filter: SearchFilter,
+    opts: {
+      internal?: boolean;
+      queryVector?: number[];
+      gateOut?: RelevanceGateResult;
+      skipGate?: boolean;
+      skipMmr?: boolean;
+      trace?: boolean;
+    } = {},
+  ): Promise<ScoredMemory[]> {
+    const totalStart = performance.now();
+    const createdAt = Date.now();
+    const limit = filter.limit ?? 20;
+    const offset = filter.offset ?? 0;
+    const corpusScaledFloor =
+      filter.candidateDepth === undefined
+        ? Math.min(200, Math.max(20, Math.ceil(this.count / 50)))
+        : 20;
+    const candidateLimit = Math.max(
+      limit + offset,
+      filter.candidateDepth ?? limit * 4,
+      corpusScaledFloor,
+    );
+
+    const queryEntities = canonicalizeEntities(
+      extractQueryEntities(filter.query ?? ""),
+      this.config.entityAliases,
+    );
+
+    const clipEnabled = Boolean(this.config.vision?.clip?.enabled);
+    const clipStart = performance.now();
+    const imageLeg = await this.fetchImageLeg(filter, candidateLimit);
+    const clipMs = performance.now() - clipStart;
+
+    let semMs = 0;
+    let ftsMs = 0;
+    let entMs = 0;
+    const [semanticResults, keywordResults, entityResults] = await Promise.all([
+      (async () => {
+        const t0 = performance.now();
+        const res = await this.semanticSearch(
+          filter.query ?? "",
+          candidateLimit,
+          SEMANTIC_FUSION_THRESHOLD,
+          { ...filter, limit: candidateLimit, offset: 0 },
+          { queryVector: opts.queryVector },
+        );
+        semMs = performance.now() - t0;
+        return res;
+      })(),
+      (async () => {
+        const t0 = performance.now();
+        const res = await this.storage.queryNodes({
+          ...filter,
+          limit: candidateLimit,
+          offset: 0,
+        });
+        ftsMs = performance.now() - t0;
+        return res;
+      })(),
+      (async () => {
+        const t0 = performance.now();
+        const res = await this.fetchEntityLeg(
+          queryEntities,
+          filter,
+          candidateLimit,
+        );
+        entMs = performance.now() - t0;
+        return res;
+      })(),
+    ]);
+
+    let fusedKeywordResults = keywordResults;
+    const prfAddedIds = new Set<string>();
+    const prfEnabled =
+      this.config?.experimental?.prfExpansion === true ||
+      process.env.MEMOS_PRF === "1";
+    const queryTerms = filter.query ? prfTokenize(filter.query) : [];
+    if (
+      prfEnabled &&
+      queryTerms.length > 0 &&
+      queryTerms.length <= 3 &&
+      keywordResults.length < 5 &&
+      semanticResults.length > 0
+    ) {
+      const prfTerms = harvestPrfTerms(semanticResults.slice(0, 5), queryTerms);
+      if (prfTerms.length > 0) {
+        const tPrf = performance.now();
+        const prfResults = await this.storage.queryNodes({
+          ...filter,
+          query: prfTerms.join(" "),
+          limit: candidateLimit,
+          offset: 0,
+        });
+        ftsMs += performance.now() - tPrf;
+        const primaryIds = new Set(keywordResults.map((r) => r.node.id));
+        fusedKeywordResults = mergeKeywordLegs(keywordResults, prfResults);
+        for (const r of fusedKeywordResults) {
+          if (!primaryIds.has(r.node.id)) prfAddedIds.add(r.node.id);
+        }
+      }
+    }
+
+    const fusionOptions = {
+      ...this.config.fusion,
+      queryEntities,
+      query: filter.query,
+      nowMs: createdAt,
+    };
+    const fused = fuseResults(
+      fusedKeywordResults,
+      semanticResults,
+      fusionOptions,
+      entityResults,
+      imageLeg,
+    );
+
+    const anomalyScored = await this.applyRetrievalAnomalyScoring(
+      fused,
+      filter.query ?? "",
+    );
+    const resolved = await this.applyContradictionResolution(anomalyScored);
+
+    // Graph expansion sub-stages + timing
+    const graphStart = performance.now();
+    const graphInjected: BuildRecallTraceInput["legs"]["graph"]["injected"] =
+      [];
+    const preGraphIds = new Set(resolved.map((r) => r.node.id));
+
+    const expandedFromResolved = await this.applyGraphExpansion(
+      resolved,
+      undefined,
+      filter,
+    );
+    for (const item of expandedFromResolved) {
+      if (preGraphIds.has(item.node.id)) continue;
+      let seedId: string | undefined;
+      let seedFactor: number | undefined;
+      for (const seed of resolved.slice(0, 5)) {
+        const connected = this.graph
+          .getEdgesForNode(seed.node.id)
+          .some(
+            (e) => e.sourceId === item.node.id || e.targetId === item.node.id,
+          );
+        if (connected && seed.score > 0) {
+          seedId = seed.node.id;
+          seedFactor = item.score / seed.score;
+          break;
+        }
+      }
+      graphInjected.push({
+        memory: item,
+        source: "neighbour",
+        ...(seedId !== undefined ? { seedId } : {}),
+        ...(seedFactor !== undefined ? { seedFactor } : {}),
+      });
+    }
+
+    const prePprIds = new Set(expandedFromResolved.map((r) => r.node.id));
+    const pprExpanded = await this.applyPprGraphExpansion(
+      expandedFromResolved,
+      filter,
+    );
+    for (const item of pprExpanded) {
+      if (prePprIds.has(item.node.id)) continue;
+      graphInjected.push({
+        memory: item,
+        source: "ppr",
+        fixedScore: item.score,
+      });
+    }
+
+    const preSessionIds = new Set(pprExpanded.map((r) => r.node.id));
+    const withSessions = await this.applySessionExpansion(pprExpanded, filter);
+    for (const item of withSessions) {
+      if (preSessionIds.has(item.node.id)) continue;
+      const sessKey = item.node.metadata.sessionId ? "sessionId" : "instanceId";
+      const sessVal = item.node.metadata[sessKey];
+      const seed =
+        sessVal !== undefined
+          ? pprExpanded.find((s) => s.node.metadata[sessKey] === sessVal)
+          : undefined;
+      graphInjected.push({
+        memory: item,
+        source: "session",
+        ...(seed && seed.score > 0
+          ? { seedId: seed.node.id, seedFactor: item.score / seed.score }
+          : { fixedScore: item.score }),
+      });
+    }
+    let graphMs = performance.now() - graphStart;
+
+    const rerankRawCfg =
+      this.experimental.rerank ??
+      (filter.rerank === true
+        ? ({ provider: "local", candidates: 20 } as NonNullable<
+            typeof this.experimental.rerank
+          >)
+        : undefined);
+    const wantLocalRerank =
+      process.env.MEMOS_RERANK_LOCAL === "1" ||
+      rerankRawCfg?.provider === "local" ||
+      (!rerankRawCfg?.endpoint && !!rerankRawCfg?.localModel);
+    const rerankEnabled =
+      !opts.internal &&
+      filter.rerank !== false &&
+      Boolean(rerankRawCfg?.endpoint || wantLocalRerank);
+    const envRerankCand = Number.parseInt(
+      process.env.MEMOS_RERANK_CANDIDATES ?? "",
+      10,
+    );
+    const rerankWindow =
+      rerankRawCfg?.candidates ??
+      (Number.isFinite(envRerankCand) && envRerankCand > 0
+        ? envRerankCand
+        : 20);
+
+    const rerankStart = performance.now();
+    const reranked = opts.internal
+      ? withSessions
+      : await this.applyRerank(withSessions, filter);
+    const rerankMs = performance.now() - rerankStart;
+    const rerankApplied = reranked !== withSessions;
+
+    const deduped = await this.applySearchDedup(reranked, filter);
+    const dedupKept = new Set(deduped.map((r) => r.node.id));
+    const dedupDroppedIds = new Set<string>();
+    for (const r of reranked) {
+      if (!dedupKept.has(r.node.id)) dedupDroppedIds.add(r.node.id);
+    }
+
+    const anchor = this.resolveRelativeTimeAnchor(filter);
+    let relativeTimeWindowIds: Set<string> | undefined;
+    if (anchor) {
+      const anchored = applyRelativeTimeAnchor(deduped, anchor);
+      if (anchored.moved > 0) {
+        relativeTimeWindowIds = new Set(
+          anchored.results.slice(0, anchored.moved).map((r) => r.node.id),
+        );
+      }
+    }
+
+    const modulated = this.applyRankingModulators(deduped, filter);
+
+    const gateResolved = opts.skipGate ? null : this.resolveRelevanceGate();
+    const gated = opts.skipGate
+      ? {
+          results: modulated,
+          gate: { abstained: false, trimmed: false, dropped: 0 },
+        }
+      : this.applyRelevanceGateStage(modulated, filter, opts);
+
+    const mmrResolved = opts.skipMmr ? null : this.resolveMmr(filter);
+    const mmrStart = performance.now();
+    const diversified = opts.skipMmr
+      ? gated.results
+      : this.applyMmrStage(gated.results, filter);
+    const mmrMs = performance.now() - mmrStart;
+
+    const mmrActive = mmrResolved !== null;
+    const ordered = mmrActive
+      ? diversified
+      : [...diversified].sort(compareScoredMemories);
+
+    let finalResults: ScoredMemory[];
+    if (offset === 0 && !opts.internal && !gated.gate.abstained) {
+      const tMh = performance.now();
+      const preMhIds = new Set(ordered.map((r) => r.node.id));
+      finalResults = await this.applyMultiHopExpansion(ordered, limit, filter);
+      graphMs += performance.now() - tMh;
+      for (const item of finalResults) {
+        if (!preMhIds.has(item.node.id)) {
+          graphInjected.push({
+            memory: item,
+            source: "multiHop",
+            fixedScore: item.score,
+          });
+        }
+      }
+    } else {
+      finalResults = ordered.slice(offset, offset + limit);
+    }
+
+    const finalSortedForRecord =
+      filter.sortBy === "trustScore"
+        ? [...finalResults].sort((a, b) =>
+            (filter.sortOrder ?? "desc") === "desc"
+              ? b.node.trustScore - a.node.trustScore
+              : a.node.trustScore - b.node.trustScore,
+          )
+        : finalResults;
+
+    const latencyMs = performance.now() - totalStart;
+    const { captureText, sessionId, maxTraces } =
+      this.resolveTraceSettings(filter);
+    const graphEnabled =
+      filter.graphExpansion !== false &&
+      (this.config.fusion?.graphExpansion !== undefined
+        ? Boolean(this.config.fusion.graphExpansion)
+        : (this.experimental.graphExpansion?.enabled ?? true));
+
+    const record = buildRecallTraceRecord({
+      id: `tr_${generateId()}`,
+      sessionId,
+      query: filter.query ?? "",
+      createdAt,
+      latencyMs,
+      captureText,
+      fusionOptions,
+      queryEntities,
+      limit,
+      offset,
+      candidateLimit,
+      semanticMode:
+        this.embeddingProvider !== null
+          ? (this.config.storageOptions?.semanticScan ?? "exact")
+          : "disabled",
+      clipEnabled,
+      legs: {
+        fts: {
+          timingMs: ftsMs,
+          results: fusedKeywordResults,
+          ...(prfAddedIds.size > 0 ? { prfAddedIds } : {}),
+        },
+        semantic: {
+          timingMs: semMs,
+          enabled: this.embeddingProvider !== null,
+          results: semanticResults,
+        },
+        entity: {
+          timingMs: entMs,
+          enabled: queryEntities.length > 0,
+          results: entityResults,
+        },
+        clip: {
+          timingMs: clipMs,
+          enabled: clipEnabled,
+          results: imageLeg,
+        },
+        graph: {
+          timingMs: graphMs,
+          enabled: graphEnabled,
+          injected: graphInjected,
+        },
+      },
+      fusedResults: fused,
+      preRerankResults: withSessions,
+      postRerankResults: reranked,
+      rerankConfig: {
+        enabled: rerankEnabled,
+        applied: rerankApplied,
+        timingMs: rerankMs,
+        candidates: rerankWindow,
+      },
+      dedupDroppedIds,
+      ...(relativeTimeWindowIds ? { relativeTimeWindowIds } : {}),
+      modulatedResults: modulated,
+      relevanceGateConfig: {
+        enabled: gateResolved !== null,
+        ratio: gateResolved?.ratio ?? DEFAULT_RELEVANCE_RATIO,
+        abstainSimilarity: gateResolved?.abstainSimilarity ?? null,
+        minResults: gateResolved?.minResults ?? 0,
+      },
+      gatedOutcome: {
+        results: gated.results,
+        abstained: gated.gate.abstained,
+        trimmed: gated.gate.trimmed,
+        dropped: gated.gate.dropped,
+      },
+      mmrConfig: {
+        enabled: mmrActive,
+        lambda: mmrResolved?.lambda ?? DEFAULT_MMR_LAMBDA,
+        timingMs: mmrMs,
+      },
+      diversifiedResults: diversified,
+      finalResults: finalSortedForRecord,
+    });
+
+    this.lastTraceId = record.id;
+    if (this.storage.saveRecallTrace) {
+      await this.storage.saveRecallTrace(record, maxTraces);
+    }
+    return finalResults;
+  }
+
+  /**
    * Search and report the relevance gate's verdict alongside the results.
    *
    * Backward-compatible sibling of {@link search}: `search()` keeps
@@ -9217,12 +9819,22 @@ export class MemOS {
       trimmed: false,
       dropped: 0,
     };
+    const trace =
+      filter.trace === true ||
+      (filter.trace !== false &&
+        (this.traceConfigEnabled || process.env.MEMOS_TRACE === "1"));
     if (filter.query && this.embeddingProvider) {
-      const results = await this.hybridSearch(filter, { gateOut: gate });
+      const results = await this.hybridSearch(filter, {
+        gateOut: gate,
+        ...(trace ? { trace: true } : {}),
+      });
       return { results, gate };
     }
     // No hybrid path available: the gate has no semantic signal to judge,
     // so the verdict stays at its defaults.
+    if (trace) {
+      return { results: await this.ftsOnlySearchTraced(filter), gate };
+    }
     return {
       results: this.postSortResults(
         await this.storage.queryNodes(filter),

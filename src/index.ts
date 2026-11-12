@@ -64,6 +64,15 @@ export {
   healthGrade,
   sortFindings,
 } from "./inspector.js";
+export {
+  DEFAULT_MAX_RECALL_TRACES,
+  computeTraceConfigHash,
+  explainRecallTrace,
+  formatExplainRecall,
+  replayRecallTrace,
+  formatReplayRecall,
+  serializeCanonicalJson,
+} from "./flight-recorder.js";
 export { getMcpTools, runMcpServer } from "./mcp.js";
 export {
   chunkText,
@@ -322,6 +331,21 @@ export type {
   ClipStatus,
   ClipMeta,
   VisionConfig,
+  // Retrieval Flight Recorder
+  RecallTraceConfig,
+  TraceLegName,
+  TraceLegCandidate,
+  TraceLegRecord,
+  TraceRetrievalConfig,
+  TraceCandidateBreakdown,
+  TraceRerankDelta,
+  TraceMmrDelta,
+  RecallTracePayload,
+  RecallTraceRecord,
+  RecallTraceSummary,
+  ExplainRecallReport,
+  ReplayConfigOverride,
+  ReplayRecallReport,
 } from "./types.js";
 export { DEFAULT_TRUST_SCORES } from "./types.js";
 export {

@@ -41,6 +41,7 @@ import { citationToken } from "./citations.js";
 import { decorateTrustFlags, isUntrustedForAgent } from "./provenance.js";
 import { buildSelfEvalCases, runRetrievalEval } from "./eval.js";
 import { asMemOSError, errorPayload, formatErrorCard } from "./errors.js";
+import { formatExplainRecall } from "./flight-recorder.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas for MemoryNode / MemoryEdge / ScoredMemory (output validation)
@@ -305,6 +306,8 @@ export const TOOL_ANNOTATIONS: Record<string, McpToolAnnotations> = {
     idempotentHint: true,
     openWorldHint: false,
   },
+  // Flight Recorder trace inspector: pure read over persisted recall_traces.
+  memos_explain_recall: ANNOTATE_READ,
 };
 
 // ---------------------------------------------------------------------------
@@ -2679,6 +2682,44 @@ function registerTools(server: McpServer, memos: MemOS): void {
         }
       },
     );
+
+  if (enabledTools === null || enabledTools.has("memos_explain_recall"))
+    server.registerTool(
+      "memos_explain_recall",
+      {
+        title: "Explain Recorded Recall Trace",
+        annotations: TOOL_ANNOTATIONS.memos_explain_recall,
+        description:
+          "Inspect a Retrieval Flight Recorder trace captured with MEMOS_TRACE=1 " +
+          "or trace: true. Returns query, config, latency, per-leg candidates and " +
+          "timings, stage deltas, and per-item score contributions.",
+        inputSchema: z.object({
+          traceId: z
+            .string()
+            .min(1)
+            .describe(
+              'Recorded trace ID from recall_traces (or "latest" for the newest trace).',
+            ),
+        }),
+        outputSchema: z.object({ explanation: z.unknown() }),
+      },
+      async ({ traceId }) => {
+        try {
+          const explanation = await memos.explainRecall(traceId);
+          const text = `${formatExplainRecall(explanation)}\n\n${JSON.stringify(
+            explanation,
+            null,
+            2,
+          )}`;
+          return {
+            content: [{ type: "text" as const, text }],
+            structuredContent: { explanation },
+          };
+        } catch (error) {
+          return toolErrorResult("memos_explain_recall", error);
+        }
+      },
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3923,6 +3964,21 @@ const TOOL_METADATA: McpToolInfo[] = [
       string,
       unknown
     >,
+  },
+  {
+    name: "memos_explain_recall",
+    annotations: TOOL_ANNOTATIONS.memos_explain_recall,
+    description:
+      "Inspect a Retrieval Flight Recorder trace: query, config, latency, " +
+      "per-leg candidates and timings, stage deltas, and score contributions.",
+    inputSchema: z.toJSONSchema(
+      z.object({
+        traceId: z.string().min(1),
+      }),
+    ) as Record<string, unknown>,
+    outputSchema: z.toJSONSchema(
+      z.object({ explanation: z.unknown() }),
+    ) as Record<string, unknown>,
   },
 ];
 

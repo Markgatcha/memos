@@ -24,7 +24,7 @@ describe("MCP tool profiles", () => {
 
   test("MEMOS_MCP_TOOLS=all restores the full surface", () => {
     process.env.MEMOS_MCP_TOOLS = "all";
-    expect(getMcpTools()).toHaveLength(40);
+    expect(getMcpTools()).toHaveLength(41);
   });
 
   test("MEMOS_MCP_TOOLS=none hides every tool but keeps the server valid", () => {

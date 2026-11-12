@@ -61,7 +61,12 @@ import {
 } from "./eval.js";
 import { CLI_COMMANDS, suggestCommand, getCommandHelp } from "./cli-help.js";
 import { getCompletionScript, COMPLETION_SHELLS } from "./cli-completion.js";
-import type { EmbeddingConfig, EmbeddingProviderKind } from "./types.js";
+import { formatExplainRecall, formatReplayRecall } from "./flight-recorder.js";
+import type {
+  EmbeddingConfig,
+  EmbeddingProviderKind,
+  ReplayConfigOverride,
+} from "./types.js";
 import { resolve, dirname, join } from "path";
 import * as os from "os";
 import {
@@ -96,6 +101,8 @@ function nonFlagArgs(args: string[], startIndex: number): string[] {
     "--reason",
     "--actor",
     "--namespace",
+    "--config",
+    "--session",
   ]);
   const result: string[] = [];
   let skipNext = false;
@@ -1008,6 +1015,10 @@ Commands:
                           --k <n>, --limit <n>, --json)
   explain "<query>"       Explain a ranking; --id <memoryId> diagnoses one
                           memory that should have matched but did not
+  explain-recall <id>     Print a Flight Recorder breakdown for a recorded
+                          retrieval trace (--list shows recent traces)
+  replay <id> --config <f> Counterfactual offline replay of a trace under a
+                          modified JSON config (no re-embedding / DB re-query)
   explain-error [code]    Explain an error code: what probably went wrong,
                           likely causes, and how to fix it (no code lists
                           every MemOS error code)
@@ -1647,6 +1658,10 @@ async function main(): Promise<void> {
           }
           if (searchTags.length === 0) searchTags = undefined;
         }
+        const traceFlag = args.includes("--trace");
+        const captureTextFlag = args.includes("--capture-text");
+        const sessionIdx = args.indexOf("--session");
+        const sessionArg = sessionIdx !== -1 ? args[sessionIdx + 1] : undefined;
         const results = await memos.search({
           query,
           limit,
@@ -1655,6 +1670,9 @@ async function main(): Promise<void> {
           ...(scope && Object.keys(scope).length > 0 ? { scope } : {}),
           ...(namespaces && namespaces.length > 0 ? { namespaces } : {}),
           ...(harnessArg ? { harness: harnessArg } : {}),
+          ...(traceFlag ? { trace: true } : {}),
+          ...(captureTextFlag ? { captureText: true } : {}),
+          ...(sessionArg ? { traceSessionId: sessionArg } : {}),
         });
         if (jsonFlag) {
           console.log(JSON.stringify(results, null, 2));
@@ -1670,6 +1688,10 @@ async function main(): Promise<void> {
                 console.log(`    Tags: ${r.node.tags.join(", ")}`);
               }
             }
+          }
+          const recordedTraceId = memos.getLastTraceId();
+          if (recordedTraceId) {
+            console.log(`\nTrace ID: ${recordedTraceId}`);
           }
         }
         break;
@@ -2698,6 +2720,104 @@ async function main(): Promise<void> {
           for (const reason of focus.reasons) {
             console.log(`  -> ${reason}`);
           }
+        }
+        break;
+      }
+
+      case "explain-recall": {
+        const getFlag = (name: string): string | undefined => {
+          const eq = args.find((a) => a.startsWith(`${name}=`));
+          if (eq) return eq.slice(name.length + 1);
+          const idx = args.indexOf(name);
+          return idx !== -1 ? args[idx + 1] : undefined;
+        };
+        if (args.includes("--list")) {
+          const limitArg = getFlag("--limit");
+          const parsedLimit = limitArg ? Number.parseInt(limitArg, 10) : 20;
+          const sessionArg = getFlag("--session");
+          const traces = await memos.listRecallTraces({
+            limit:
+              Number.isFinite(parsedLimit) && parsedLimit > 0
+                ? parsedLimit
+                : 20,
+            ...(sessionArg ? { sessionId: sessionArg } : {}),
+          });
+          if (jsonFlag) {
+            console.log(JSON.stringify(traces, null, 2));
+          } else if (traces.length === 0) {
+            console.log(
+              "No recall traces recorded. Run a search with MEMOS_TRACE=1 or --trace.",
+            );
+          } else {
+            console.log(`Recorded recall traces (${traces.length}):\n`);
+            for (const t of traces) {
+              const iso = new Date(t.createdAt).toISOString();
+              console.log(
+                `  ${t.id}  ${iso}  ${t.latencyMs.toFixed(2)} ms  items=${t.finalCount}  cfg=${t.configHash}  query=${JSON.stringify(t.query)}`,
+              );
+            }
+          }
+          break;
+        }
+        const positional = nonFlagArgs(args, 1);
+        const traceId = positional[0];
+        if (!traceId) {
+          console.error(
+            "Error: trace ID is required.\n  Usage: memos explain-recall <trace-id> [--json]\n         memos explain-recall --list [--limit <n>] [--json]",
+          );
+          process.exit(1);
+        }
+        const report = await memos.explainRecall(traceId);
+        if (jsonFlag) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          console.log(formatExplainRecall(report));
+        }
+        break;
+      }
+
+      case "replay": {
+        const getFlag = (name: string): string | undefined => {
+          const eq = args.find((a) => a.startsWith(`${name}=`));
+          if (eq) return eq.slice(name.length + 1);
+          const idx = args.indexOf(name);
+          return idx !== -1 ? args[idx + 1] : undefined;
+        };
+        const positional = nonFlagArgs(args, 1);
+        const traceId = positional[0];
+        const configPath = getFlag("--config");
+        if (!traceId || !configPath) {
+          console.error(
+            "Error: <trace-id> and --config <file.json> are required.\n  Usage: memos replay <trace-id> --config <file.json> [--json]",
+          );
+          process.exit(1);
+        }
+        const resolvedPath = resolve(process.cwd(), configPath);
+        if (!existsSync(resolvedPath)) {
+          console.error(`Error: config file not found: ${resolvedPath}`);
+          process.exit(1);
+        }
+        let parsedConfig: ReplayConfigOverride;
+        try {
+          const raw = readFileSync(resolvedPath, "utf8").replace(/^\uFEFF/, "");
+          const json = JSON.parse(raw) as unknown;
+          if (!json || typeof json !== "object" || Array.isArray(json)) {
+            throw new Error("Config root must be a JSON object.");
+          }
+          parsedConfig = json as ReplayConfigOverride;
+        } catch (err) {
+          console.error(
+            `Error: invalid replay config JSON (${resolvedPath}): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          process.exit(1);
+        }
+        const report = await memos.replayRecall(traceId, parsedConfig);
+        if (jsonFlag) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          console.log(formatReplayRecall(report));
         }
         break;
       }

@@ -25,6 +25,10 @@ import {
   writeEntityIndexRows,
 } from "../entity-index.js";
 import { GENESIS_PREV, entryHash as tamperEntryHash } from "../tamper-log.js";
+import {
+  DEFAULT_MAX_RECALL_TRACES,
+  serializeCanonicalJson,
+} from "../flight-recorder.js";
 import type {
   StorageAdapter,
   ContradictionRecord,
@@ -37,6 +41,9 @@ import type {
   MemoryEdge,
   RecallBatchOutcome,
   RecallBatchRecord,
+  RecallTracePayload,
+  RecallTraceRecord,
+  RecallTraceSummary,
   SearchFilter,
   ScoredMemory,
   GraphSnapshot,
@@ -646,6 +653,24 @@ export class SQLiteStorage implements StorageAdapter {
       );
 
       CREATE INDEX IF NOT EXISTS idx_tamper_log_node ON tamper_log(node_id);
+
+      -- Retrieval Flight Recorder: opt-in per-search trace of candidate legs,
+      -- timings, fusion weights/contributions, and rerank/MMR/gate deltas.
+      -- Capped by retention pruning on write (default 500 newest traces).
+      CREATE TABLE IF NOT EXISTS recall_traces (
+        id            TEXT PRIMARY KEY,
+        session_id    TEXT,
+        query         TEXT NOT NULL,
+        config_hash   TEXT NOT NULL,
+        created_at    INTEGER NOT NULL,
+        latency_ms    REAL NOT NULL,
+        payload       TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_recall_traces_created_at
+        ON recall_traces(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_recall_traces_session
+        ON recall_traces(session_id);
     `);
 
     // Migration from the first-day schema, which stored a content-only
@@ -1301,6 +1326,152 @@ export class SQLiteStorage implements StorageAdapter {
   async deleteAllRecallFeedback(): Promise<void> {
     this.db.exec("DELETE FROM recall_feedback");
     this.db.exec("DELETE FROM recall_batches");
+  }
+
+  /**
+   * Persist one retrieval trace and prune older traces beyond `maxTraces`
+   * (default 500) atomically inside one SQLite transaction.
+   */
+  async saveRecallTrace(
+    trace: RecallTraceRecord,
+    maxTraces: number = DEFAULT_MAX_RECALL_TRACES,
+  ): Promise<void> {
+    const payloadJson = serializeCanonicalJson(trace.payload);
+    const cap = Math.max(1, Math.floor(maxTraces));
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO recall_traces
+             (id, session_id, query, config_hash, created_at, latency_ms, payload)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          trace.id,
+          trace.sessionId,
+          trace.query,
+          trace.configHash,
+          trace.createdAt,
+          trace.latencyMs,
+          payloadJson,
+        );
+      this.db
+        .prepare(
+          `DELETE FROM recall_traces
+           WHERE id NOT IN (
+             SELECT id FROM recall_traces
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?
+           )`,
+        )
+        .run(cap);
+    });
+    tx();
+  }
+
+  /**
+   * Read one persisted retrieval trace by ID (or `"latest"` for the most
+   * recently written trace). Returns `null` when not found.
+   */
+  async getRecallTrace(id: string): Promise<RecallTraceRecord | null> {
+    const row = (
+      id === "latest"
+        ? this.db
+            .prepare(
+              `SELECT id, session_id, query, config_hash, created_at, latency_ms, payload
+               FROM recall_traces
+               ORDER BY created_at DESC, rowid DESC
+               LIMIT 1`,
+            )
+            .get()
+        : this.db
+            .prepare(
+              `SELECT id, session_id, query, config_hash, created_at, latency_ms, payload
+               FROM recall_traces
+               WHERE id = ?`,
+            )
+            .get(id)
+    ) as
+      | {
+          id: string;
+          session_id: string | null;
+          query: string;
+          config_hash: string;
+          created_at: number;
+          latency_ms: number;
+          payload: string;
+        }
+      | undefined;
+    if (!row) return null;
+    const payload = JSON.parse(row.payload) as RecallTracePayload;
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      query: row.query,
+      configHash: row.config_hash,
+      createdAt: row.created_at,
+      latencyMs: row.latency_ms,
+      payload,
+    };
+  }
+
+  /** List recorded retrieval trace summaries, newest first. */
+  async listRecallTraces(
+    limit = 50,
+    sessionId?: string,
+  ): Promise<RecallTraceSummary[]> {
+    const safeLimit = Math.max(1, Math.min(1000, Math.floor(limit)));
+    const rows = (
+      sessionId !== undefined
+        ? this.db
+            .prepare(
+              `SELECT id, session_id, query, config_hash, created_at, latency_ms, payload
+               FROM recall_traces
+               WHERE session_id = ?
+               ORDER BY created_at DESC, rowid DESC
+               LIMIT ?`,
+            )
+            .all(sessionId, safeLimit)
+        : this.db
+            .prepare(
+              `SELECT id, session_id, query, config_hash, created_at, latency_ms, payload
+               FROM recall_traces
+               ORDER BY created_at DESC, rowid DESC
+               LIMIT ?`,
+            )
+            .all(safeLimit)
+    ) as Array<{
+      id: string;
+      session_id: string | null;
+      query: string;
+      config_hash: string;
+      created_at: number;
+      latency_ms: number;
+      payload: string;
+    }>;
+
+    return rows.map((row) => {
+      let finalCount = 0;
+      try {
+        const parsed = JSON.parse(row.payload) as { finalIds?: unknown };
+        if (Array.isArray(parsed.finalIds)) finalCount = parsed.finalIds.length;
+      } catch {
+        finalCount = 0;
+      }
+      return {
+        id: row.id,
+        sessionId: row.session_id,
+        query: row.query,
+        configHash: row.config_hash,
+        createdAt: row.created_at,
+        latencyMs: row.latency_ms,
+        finalCount,
+      };
+    });
+  }
+
+  /** Drop every persisted retrieval trace. */
+  async deleteAllRecallTraces(): Promise<void> {
+    this.db.exec("DELETE FROM recall_traces");
   }
 
   private bufferAccess(id: string, now: number): void {
@@ -3142,6 +3313,7 @@ export class SQLiteStorage implements StorageAdapter {
     this.db.exec("DELETE FROM nodes");
     this.db.exec("DELETE FROM recall_feedback");
     this.db.exec("DELETE FROM recall_batches");
+    this.db.exec("DELETE FROM recall_traces");
     // Rebuild FTS index
     this.db.exec("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')");
   }

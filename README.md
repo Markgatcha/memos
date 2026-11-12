@@ -578,6 +578,11 @@ memos-server
 # Boot the full AI Trio (MemOS + LLM-Guardian + Universal-MCP-Toolkit)
 memos trio            # print the compose plan
 memos trio --up       # launch Guardian + UMT alongside this MemOS instance
+
+# Retrieval Flight Recorder: opt-in trace, explain, and offline counterfactual replay
+MEMOS_TRACE=1 memos search "dark mode" --limit 5
+memos explain-recall <trace-id>
+memos replay <trace-id> --config ./override.json
 ```
 
 ### MCP Server
@@ -755,6 +760,18 @@ console.log(report.gate);       // { enabled, abstained, trimmed, dropped }
 console.log(report.candidates); // ranked evidence
 console.log(report.focus?.reasons);
 ```
+
+### Retrieval Flight Recorder — trace, explain-recall, and counterfactual replay
+
+Tracing is off by default (single boolean check when disabled). Enable it with `MEMOS_TRACE=1` or `trace: true` to persist per-leg candidates, timings, fusion contributions, and rerank/MMR/gate deltas in `recall_traces` (IDs and numeric scores only unless `captureText: true` is set; newest 500 traces retained). Recompute rankings offline with `memos replay` — no re-embedding and no database re-queries:
+
+```bash
+MEMOS_TRACE=1 memos search "deployment runbook"
+memos explain-recall <trace-id>
+memos replay <trace-id> --config ./rrf-override.json
+```
+
+See [docs/retrieval-debugging.md](docs/retrieval-debugging.md) for the full guide and MCP `memos_explain_recall` tool usage.
 
 ### Outcome-conditioned ranking — learn what actually helped
 

@@ -53,6 +53,8 @@ export const CLI_COMMANDS: readonly string[] = [
   "audit",
   "eval",
   "explain",
+  "explain-recall",
+  "replay",
   "explain-error",
   "feedback",
   "compact",
@@ -334,6 +336,20 @@ token cost. --corpus runs a JSON array (or {cases:[...]}) of
 Explain a ranking: per-leg score signals, lifecycle status, supersede
 chain, outcome utility, and the relevance-gate verdict. Pass --id to
 diagnose one memory that should have matched but did not.`,
+  "explain-recall": `memos explain-recall <trace-id> [--json]
+memos explain-recall --list [--limit <n>] [--session <id>] [--json]
+
+Print a Flight Recorder breakdown for a recorded retrieval trace: query,
+effective config, latency, per-leg candidates and timings, stage deltas,
+and for each final item the leg that introduced it and its score
+contributions. Enable tracing with MEMOS_TRACE=1 or 'memos search --trace'.`,
+  replay: `memos replay <trace-id> --config <file.json> [--json]
+
+Counterfactual offline replay: recompute retrieval ranking from the stored
+candidate scores of <trace-id> under a modified JSON config — no
+re-embedding and no database re-query — and print added, removed, and
+reordered items with score deltas. Supports overriding fusionMode, leg
+weights, mmrLambda, relevanceGateThreshold, and rerank on/off.`,
   "explain-error": `memos explain-error <code> [--json]
 
 Explain a MemOS error code: what probably went wrong, the likely causes
