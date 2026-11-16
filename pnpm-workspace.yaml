@@ -30,6 +30,26 @@ minimumReleaseAgeExclude:
   - '@typescript/typescript-win32-arm64@7.1.0-beta'
   - '@typescript/typescript-win32-x64@7.1.0-beta'
   - typescript@7.1.0-beta
+  - '@oxlint/binding-android-arm-eabi@1.94.0'
+  - '@oxlint/binding-android-arm64@1.94.0'
+  - '@oxlint/binding-darwin-arm64@1.94.0'
+  - '@oxlint/binding-darwin-x64@1.94.0'
+  - '@oxlint/binding-freebsd-x64@1.94.0'
+  - '@oxlint/binding-linux-arm-gnueabihf@1.94.0'
+  - '@oxlint/binding-linux-arm-musleabihf@1.94.0'
+  - '@oxlint/binding-linux-arm64-gnu@1.94.0'
+  - '@oxlint/binding-linux-arm64-musl@1.94.0'
+  - '@oxlint/binding-linux-ppc64-gnu@1.94.0'
+  - '@oxlint/binding-linux-riscv64-gnu@1.94.0'
+  - '@oxlint/binding-linux-riscv64-musl@1.94.0'
+  - '@oxlint/binding-linux-s390x-gnu@1.94.0'
+  - '@oxlint/binding-linux-x64-gnu@1.94.0'
+  - '@oxlint/binding-linux-x64-musl@1.94.0'
+  - '@oxlint/binding-openharmony-arm64@1.94.0'
+  - '@oxlint/binding-win32-arm64-msvc@1.94.0'
+  - '@oxlint/binding-win32-ia32-msvc@1.94.0'
+  - '@oxlint/binding-win32-x64-msvc@1.94.0'
+  - oxlint@1.94.0
 packageExtensions:
   # @huggingface/transformers imports `onnxruntime-common` without declaring
   # it (a phantom dependency) and pins onnxruntime-node@1.30.0. pnpm hoists
@@ -41,6 +61,6 @@ packageExtensions:
   # ("Tensor.location must be a string"), which silently degrades the SDK
   # to its local-hash fallback. Declaring the edge pins transformers to the
   # onnxruntime-common version that matches its own onnxruntime-node.
-  '@huggingface/transformers@4.3.1':
+  '@huggingface/transformers@4.3.2':
     dependencies:
       onnxruntime-common: 1.30.0

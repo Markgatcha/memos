@@ -44,15 +44,15 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "fastapi>=0.157.0",
+    "fastapi>=0.163.1",
     "uvicorn[standard]>=0.54.0",
-    "pydantic>=2.14.1",
+    "pydantic>=2.14.3",
 ]
 
 [project.optional-dependencies]
 langchain = [
-    "langchain>=1.4.6",
-    "langchain-core>=1.6.12",
+    "langchain>=1.5.0",
+    "langchain-core>=1.8.1",
 ]
 ollama = [
     "ollama>=0.6.3",
@@ -61,11 +61,11 @@ all = [
     "mem-os-python[langchain,ollama]",
 ]
 dev = [
-    "ruff>=0.17.1",
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.5",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
     "httpx>=0.28.1",
-    "mypy>=2.4.0",
+    "mypy>=2.4.1",
 ]
 
 [project.urls]
