@@ -1,4 +1,4 @@
-name: Dump code scanning alerts
+name: Dump code scanning alerts (verification run)
 on:
   push:
     branches: [fix/code-scanning-alerts]
