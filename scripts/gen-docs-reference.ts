@@ -18,7 +18,11 @@ const outDir = resolve(root, "docs/reference");
 mkdirSync(outDir, { recursive: true });
 
 function escapeCell(text: string): string {
-  return text.replace(/\|/g, "\\|").replace(/\n+/g, " ").trim();
+  return text
+    .replace(/\\/g, "\\\\") // escape the escape character first
+    .replace(/\|/g, "\\|")
+    .replace(/\n+/g, " ")
+    .trim();
 }
 
 // ---------------------------------------------------------------------------

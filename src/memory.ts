@@ -5020,11 +5020,23 @@ export class MemOS {
         frontmatterLines.push(line);
       } else {
         bodyLines.push(line);
-        // Extract [[wikilinks]]
-        const linkMatches = line.match(/\[\[([^\]]+)\]\]/g);
-        if (linkMatches) {
-          for (const match of linkMatches) {
-            wikilinks.push(match.slice(2, -2));
+        // Extract [[wikilinks]] with a linear scan. The equivalent
+        // `/\[\[([^\]]+)\]\]/g` backtracks quadratically on input like
+        // `[[a[[a[[a…` because `[^\]]+` and `\]\]` overlap.
+        let searchFrom = 0;
+        while (searchFrom < line.length) {
+          const open = line.indexOf("[[", searchFrom);
+          if (open === -1) break;
+          const close = line.indexOf("]]", open + 2);
+          if (close === -1) break;
+          const target = line.slice(open + 2, close);
+          // A wikilink needs a non-empty target with no inner `]` characters.
+          if (target.length > 0 && !target.includes("]")) {
+            wikilinks.push(target);
+            searchFrom = close + 2;
+          } else {
+            // Keep looking: a valid link may start inside the rejected span.
+            searchFrom = open + 1;
           }
         }
       }
@@ -5044,10 +5056,14 @@ export class MemOS {
       if (key === "type") {
         type = value.replace(/"/g, "");
       } else if (key === "tags") {
-        // Parse [tag1, tag2] format
-        const tagMatch = value.match(/\[(.*)\]/);
-        if (tagMatch) {
-          tags = tagMatch[1]
+        // Parse [tag1, tag2] format. Greedy `/\[(.*)\]/` backtracks
+        // quadratically on values like `[a[a[a…`; first `[` plus last `]`
+        // gives the same result in linear time.
+        const open = value.indexOf("[");
+        const close = value.lastIndexOf("]");
+        if (open !== -1 && close > open) {
+          tags = value
+            .slice(open + 1, close)
             .split(",")
             .map((t: string) => t.trim().replace(/"/g, ""));
         }

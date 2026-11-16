@@ -100,26 +100,33 @@ export function isSupportedFile(path: string): boolean {
 
 /** Strip HTML to readable text without a DOM dependency. */
 export function htmlToText(html: string): string {
-  return html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(
-      /<\/(p|div|section|article|li|tr|h[1-6]|pre|blockquote)>/gi,
-      "\n\n",
-    )
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(td|th)>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return (
+    html
+      // HTML parsers tolerate attributes and whitespace in closing tags, and
+      // accept `--!>` as a comment end. Match those variants too, so script /
+      // style / comment contents can never leak into the extracted text.
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, " ")
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/gi, " ")
+      .replace(/<!--[\s\S]*?(?:-->|--!>)/g, " ")
+      .replace(
+        /<\/(p|div|section|article|li|tr|h[1-6]|pre|blockquote)>/gi,
+        "\n\n",
+      )
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(td|th)>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;|&apos;/gi, "'")
+      // Decode `&amp;` last: decoding it earlier would turn `&amp;lt;` into a
+      // literal `<` on the next replacement (double unescaping).
+      .replace(/&amp;/gi, "&")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+  );
 }
 
 /**

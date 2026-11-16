@@ -62,6 +62,69 @@ describe("htmlToText", () => {
     expect(text).not.toContain("alert");
     expect(text).not.toContain("color:red");
   });
+
+  test("strips tags with attributes or whitespace in their closing tag", () => {
+    const html =
+      '<script src="x">alert(1)</script foo="bar">' +
+      "<style >p{color:red}</style\t\n bar>" +
+      "<!-- comment --!>ok";
+    const text = htmlToText(html);
+    expect(text).not.toContain("alert");
+    expect(text).not.toContain("color:red");
+    expect(text).not.toContain("comment");
+    expect(text).toContain("ok");
+  });
+
+  test("decodes &amp; last so entities are not unescaped twice", () => {
+    expect(htmlToText("<p>&amp;lt;</p>")).toBe("&lt;");
+    expect(htmlToText("<p>&amp;amp;</p>")).toBe("&amp;");
+  });
+});
+
+describe("markdown import", () => {
+  test("parses frontmatter tags and wikilinks without regex backtracking", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "memos-import-"));
+    // Auto-link would already connect these two nodes, so disable it to keep
+    // the assertions about wikilink re-creation unambiguous.
+    const memos = new MemOS({
+      storage: new SQLiteStorage(":memory:", true),
+      experimental: { namespaces: true },
+      embeddings: { enabled: false },
+      embeddingQueue: { synchronous: true },
+      autoLinkThreshold: 0,
+    });
+    await memos.init();
+    try {
+      writeFileSync(
+        join(dir, "a.md"),
+        ["---", 'type: "fact"', "tags: []", "---", "", "Alpha note"].join("\n"),
+      );
+      writeFileSync(
+        join(dir, "b.md"),
+        [
+          "---",
+          'type: "fact"',
+          'tags: ["alpha", "beta"]',
+          "---",
+          "",
+          "Seed note pointing at [[Alpha note]]",
+        ].join("\n"),
+      );
+
+      const result = await memos.importMemories({
+        source: dir,
+        format: "obsidian",
+      });
+      expect(result.count).toBe(2);
+      expect(result.edgesCreated).toBeGreaterThan(0);
+
+      const hits = await memos.search({ query: "Seed note", limit: 5 });
+      expect(hits.some((hit) => hit.node.tags.includes("alpha"))).toBe(true);
+    } finally {
+      await memos.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("extractFileText", () => {

@@ -537,9 +537,13 @@ export function extractBridgeEntities(
   }
 
   const addCandidate = (phrase: string, weight: number): void => {
+    // Strip leading/trailing punctuation with two anchored passes. A single
+    // global alternation of `^[…]+|[…]+$` backtracks quadratically on strings
+    // that alternate punctuation with other characters.
     const norm = phrase
       .trim()
-      .replace(/^[.,"'()[\]]+|[.,"'()[\]]+$/g, "")
+      .replace(/^[.,"'()[\]]+/, "")
+      .replace(/[.,"'()[\]]+$/, "")
       .trim();
     if (norm.length < 3) return;
     const lower = norm.toLowerCase();
