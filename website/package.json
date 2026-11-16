@@ -25,7 +25,7 @@
     "autoprefixer": "^10.6.2",
     "postcss": "^8.5.33",
     "tailwindcss": "^4.3.5",
-    "typescript": "^7.0.2"
+    "typescript": "7.1.0-beta"
   },
   "overrides": {
     "postcss": "^8.5.28",
