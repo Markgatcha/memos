@@ -1,6 +1,7 @@
 name: Dump code scanning alerts
 on:
-  workflow_dispatch:
+  push:
+    branches: [fix/code-scanning-alerts]
 permissions:
   contents: read
   security-events: read
