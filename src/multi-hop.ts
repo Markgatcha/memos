@@ -252,6 +252,22 @@ function tokenize(text: string): string[] {
   );
 }
 
+/** Punctuation stripped from the edges of candidate entity phrases. */
+const EDGE_PUNCTUATION = new Set([".", ",", '"', "'", "(", ")", "[", "]"]);
+
+/**
+ * Strip edge punctuation with a linear scan. The equivalent
+ * `/^[.,"'()[\]]+|[.,"'()[\]]+$/g` backtracks quadratically on strings that
+ * alternate punctuation with other characters.
+ */
+function stripEdgePunctuation(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && EDGE_PUNCTUATION.has(text[start]!)) start++;
+  while (end > start && EDGE_PUNCTUATION.has(text[end - 1]!)) end--;
+  return text.slice(start, end);
+}
+
 /**
  * Strip single-letter middle initials ("William H. Seward" -> "William Seward")
  * so mentions with or without middle initials match cleanly.
@@ -537,14 +553,7 @@ export function extractBridgeEntities(
   }
 
   const addCandidate = (phrase: string, weight: number): void => {
-    // Strip leading/trailing punctuation with two anchored passes. A single
-    // global alternation of `^[…]+|[…]+$` backtracks quadratically on strings
-    // that alternate punctuation with other characters.
-    const norm = phrase
-      .trim()
-      .replace(/^[.,"'()[\]]+/, "")
-      .replace(/[.,"'()[\]]+$/, "")
-      .trim();
+    const norm = stripEdgePunctuation(phrase.trim()).trim();
     if (norm.length < 3) return;
     const lower = norm.toLowerCase();
     if (STOPWORDS.has(lower) || SENTENCE_STARTERS.has(lower)) return;
