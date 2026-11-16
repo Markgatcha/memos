@@ -1,0 +1,17 @@
+name: Dump code scanning alerts
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  security-events: read
+jobs:
+  dump:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Dump alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api --paginate "repos/$GH_REPO/code-scanning/alerts?state=open&per_page=100" \
+            --jq '.[] | "ALERT \(.number) | \(.rule.severity) | \(.rule.id) | \(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line) | \(.most_recent_instance.message.text)"'
