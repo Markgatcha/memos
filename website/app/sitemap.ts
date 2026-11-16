@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { docs } from "@/lib/docs";
 
 // Required for `output: "export"` — metadata routes are dynamic by default.
 export const dynamic = "force-static";
@@ -29,6 +30,7 @@ const pages = [
   "support",
   "compare/memos-vs-mem0",
   "compare/umt-vs-mcp-get-supergateway",
+  ...docs.filter((doc) => doc.slug).map((doc) => `docs/${doc.slug}`),
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

@@ -1,0 +1,112 @@
+Guardian's core idea is simple: most long prompts contain more tokens than
+information. Folding removes the redundant tokens; sharding keeps the remainder
+coherent when it is still too large.
+
+## Semantic folding
+
+Folding rewrites text into an entity-dense form. Names, numbers, decisions, and
+relationships stay; filler and repeated framing go.
+
+```bash
+guardian optimize "Your long text here..." --max-tokens 50
+```
+
+```ts
+import { foldText } from "llm-guardian/folding";
+
+const result = foldText(longText, { maxTokens: 200 });
+console.log(result.metadata.compressionRatio); // 0.08 = 92% reduction
+console.log(result.foldedPrompt);
+```
+
+The output is not a summary you should show a user. It is a prompt shaped for a
+model: short, specific, and factual.
+
+## VCM sharding
+
+Sharding splits context into variable-size chunks and keeps the boundaries
+semantically coherent. Use it when folding alone cannot fit the budget.
+
+```bash
+guardian optimize "very long text" --max-tokens 500 --shard
+```
+
+## Retain pre-filter
+
+Before folding, the retain pre-filter decides which turns are worth keeping at
+all. It is inspired by the Hermes-style approach: score the turn, keep the ones
+that carry decisions or facts, drop the rest.
+
+That is different from summarising everything. A turn that only says "ok" does
+not need a summary.
+
+## Tool gating and tool fusion
+
+Tool definitions are a large fixed cost in agent prompts. Guardian can:
+
+- **Gate** tools that the current turn cannot use.
+- **Fuse** multiple MCP tool turns into one semantic block.
+
+The result is fewer tokens and a shorter tool list for the model to reason over.
+
+## Prompt caching
+
+Guardian writes the provider prompt cache before the first turn (`/prewarm`),
+then reuses it. This is orthogonal to folding: caching avoids re-sending stable
+prefixes, folding shrinks the variable part.
+
+## Memory packs
+
+When MemOS is configured, Guardian builds a **TOON context pack** for the user
+query and injects it ahead of the conversation. TOON is 60–90% smaller than the
+equivalent JSON, and the pack carries citations back to the source memory.
+
+You can override the automatic pack per request:
+
+```json
+{
+  "model": "auto",
+  "messages": [{ "role": "user", "content": "..." }],
+  "memory_pack": "explicit pack string"
+}
+```
+
+## Measuring it without losing accuracy
+
+Compression is lossy. Measure it in two passes:
+
+```bash
+# Offline: fact retention, no model needed
+bun run bench:context-loss
+
+# Online: answer fidelity against a local model
+MODEL=google/gemma-4-e2b BASE_URL=http://127.0.0.1:1234/v1 \
+  MAX_TOKENS=400 GUARDIAN_REASONING=none bun run bench:quality
+```
+
+The repository ships benchmark scripts under `src/benchmarks/` and a
+`benchmarks/` report. Treat a compression ratio without an accuracy check as a
+marketing number.
+
+<Callout type="warn" title="Validate on your own corpus">
+A fold that preserves facts on a blog post may drop a negation in a contract.
+Run the fact check on the material you actually care about.
+</Callout>
+
+## Slash commands
+
+| Command | Effect |
+| --- | --- |
+| `/fold <text>` | Fold text and show the saving |
+| `/shard <text>` | Shard text and show the saving |
+| `/compact` | Fold and shard the current history |
+| `/context` | Current context size and optimization state |
+| `/tokens` | Token breakdown |
+| `/cost` | Session cost and savings |
+| `/prewarm` | Write the provider cache before turn one |
+
+## Related
+
+- [Proxy and API](/docs/guardian/api)
+- [TUI and CLI](/docs/guardian/cli)
+- [Providers](/docs/guardian/config)

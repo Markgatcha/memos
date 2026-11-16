@@ -9,7 +9,7 @@ command without explaining it.
 
 | Surface | Documented | Total | Coverage |
 | --- | ---: | ---: | ---: |
-| CLI commands | 60 | 60 | 100% |
+| CLI commands | 61 | 61 | 100% |
 | MCP tools | 40 | 40 | 100% |
 | HTTP routes | 34 | 34 | 100% |
 
@@ -61,6 +61,7 @@ command without explaining it.
 | `memos audit` | yes |
 | `memos eval` | yes |
 | `memos explain` | yes |
+| `memos explain-error` | yes |
 | `memos feedback` | yes |
 | `memos compact` | yes |
 | `memos doctor` | yes |

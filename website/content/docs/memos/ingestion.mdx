@@ -1,0 +1,99 @@
+MemOS is useful the moment it has something to remember. There are three
+ingestion paths: point it at a folder, import an existing chat export, or write
+through the SDK.
+
+## Ingest a folder
+
+```bash
+memos ingest ./notes
+memos ingest ./notes --watch
+memos ingest ./papers --ext .pdf --namespace research
+```
+
+| Flag | What it does |
+| --- | --- |
+| `--watch` | Keep the store in sync as files change |
+| `--ext` | Limit to specific extensions (`.md`, `.html`, `.pdf`) |
+| `--namespace` | Write into a separate memory space |
+| `--incremental` | Only process new or changed files |
+
+Supported formats are Markdown, HTML, and PDF. Ingestion stores the extracted
+text with a source pointer, so `memos forget-source` can remove everything that
+came from one file.
+
+## Import ChatGPT or Claude memory
+
+```bash
+# One memory export
+memos import-external ./chatgpt-memories.json --source chatgpt
+
+# A full conversation export
+memos import ./export.zip --from chatgpt --synthesize
+
+# Preview before writing
+memos import-external ./memories.json --source claude --dry-run
+```
+
+`--dry-run` prints what would be created. `--max-items` caps a large import;
+`--namespace` keeps imported personal memory separate from project memory.
+
+Slack exports are supported too:
+
+```bash
+memos import ./slack-export --from slack --namespace work
+```
+
+## Write through the SDK
+
+```ts
+import { MemOS } from "@mem-os/sdk";
+
+const memos = new MemOS({ dbPath: "./memos.db" });
+
+await memos.store("The staging cluster uses Postgres 16", {
+  type: "fact",
+  namespace: "project:infra",
+  tags: ["database", "staging"],
+  source: "runbook.md",
+});
+```
+
+For a document, pass the content and let the chunker split it:
+
+```ts
+await memos.ingest("./docs", { namespace: "research", watch: false });
+```
+
+## What happens to a document
+
+1. **Extract** — text is pulled from Markdown, HTML, or PDF.
+2. **Chunk** — the document is split into retrievable units.
+3. **Enrich** — optional contextual headers and metadata are added.
+4. **Embed** — vectors are written by the configured provider.
+5. **Index** — FTS5 and the vector index are updated.
+6. **Link** — source and derivation edges are recorded.
+
+Ingestion is incremental. Re-running it does not duplicate unchanged files.
+
+<Callout type="warn" title="Large imports take time">
+Embedding is the bottleneck, not parsing. A 23,882-session benchmark corpus
+took about 103 minutes to embed on the recorded run. Use `--namespace` and
+`--max-items` to stage a large import.
+</Callout>
+
+## Verify
+
+```bash
+memos count --namespace research
+memos search "the claim you expect" --namespace research
+memos graph --mermaid > graph.mmd
+```
+
+If a document is missing, check the extension filter and the namespace before
+re-running. `memos doctor` reports the embedding provider and store path.
+
+## Related
+
+- [Memory model](/docs/memos/concepts)
+- [CLI and API reference](/docs/memos/reference)
+- [Operations](/docs/memos/operations)

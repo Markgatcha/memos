@@ -20,7 +20,7 @@ is most of the problem.
 |---|---|---|
 | Hybrid (memories + raw context) | **Yes** — `event`/`note`/`procedure` pools + session/graph expansion | **Yes** — `searchMode: "hybrid"` |
 | Benchmarked hybrid mode | **Yes (retrieval)** — LongMemEval-S, ConvoMem, LoCoMo | Yes (claimed, vendor-run) |
-| Retrieval accuracy published | **Yes** — 100% Hit@20 LongMemEval-S (100 q), 89.4% Hit@10 ConvoMem, 64.1% Hit@10 LoCoMo | Yes (97% Recall@20 LongMemEval-S) |
+| Retrieval accuracy published | **Yes** — 99.4% Hit@20 LongMemEval-S (full 500), 91.0% Hit@10 ConvoMem, 65.0% Hit@10 LoCoMo (full 1,986) | Yes (97% Recall@20 LongMemEval-S) |
 | End-to-end QA accuracy published | **Yes, self-judged** — 78% on a 50-question sample (DeepSeek answerer + judge, high reasoning); not comparable to gpt-4o-judged vendor numbers | Yes (85.4% LongMemEval-S, gpt-4o judge) |
 | One-call user profile | **Yes** (`profile()`) | Yes (`client.profile()`, ~50ms) |
 | Abstains when it doesn't know | **Yes** (`trustFloor`, `shouldAbstain`) | Not advertised |
@@ -29,11 +29,11 @@ is most of the problem.
 | Connectors (Drive/Gmail/Notion/GitHub) | No | **Yes** |
 | Multimodal ingestion (PDF/OCR/video) | No | **Yes** |
 
-**The uncomfortable summary (updated 2026-10-30):** the evidence gap has
+**The uncomfortable summary (updated 2026-11-07):** the evidence gap has
 narrowed. MemOS now publishes reproducible retrieval results on all three
 datasets Supermemory uses (see [Benchmark Results](benchmark-results.md)):
-100% Hit@20 on a 100-question LongMemEval-S sample vs their 97% claim, 89.4%
-Hit@10 on a ConvoMem sample, and 64.1% Hit@10 on LoCoMo. What MemOS still lacks
+99.4% Hit@20 on the full 500-question LongMemEval-S set, 91.0% Hit@10 on
+ConvoMem, and 65.0% Hit@10 on the full LoCoMo set. What MemOS still lacks
 is end-to-end QA accuracy (needs a fixed reader + judge), plus connectors and
 document ingestion.
 

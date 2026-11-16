@@ -9,12 +9,15 @@ which doctor output to paste into a GitHub issue if you're still stuck.
 
 ## Structured errors and crash reports
 
-Every CLI failure now prints a code, an actionable hint, the context that
-caused it, and the path to a redacted crash report:
+Every CLI failure prints a code, what probably went wrong, what to do, the
+context that caused it, and the path to a redacted crash report:
 
 ```
 MemOS error [MEMOS_DB_LOCKED]
   database is locked
+  what probably went wrong: Another process holds a write lock (or a long
+  write is in progress) and MemOS's busy timeout expired first. SQLite allows
+  many concurrent readers but exactly one writer.
   what to do: Another MemOS process is writing. Wait a moment, then retry...
   context:
     dbPath: C:\Users\you\.memos\memos.db
@@ -23,11 +26,65 @@ MemOS error [MEMOS_DB_LOCKED]
   set MEMOS_DEBUG=1 for the stack trace
 ```
 
-- `MEMOS_DB_OPEN` / `MEMOS_DB_LOCKED` / `MEMOS_DB_CORRUPT` / `MEMOS_DB_ENCRYPTED`
-- `MEMOS_EMBEDDING_UNAVAILABLE` / `MEMOS_EMBEDDING_FAILED`
-- `MEMOS_PROVIDER_AUTH` / `MEMOS_PROVIDER_RATE_LIMIT` / `MEMOS_PROVIDER_TIMEOUT`
-- `MEMOS_CONFIG_INVALID` / `MEMOS_INVALID_INPUT` / `MEMOS_NOT_FOUND`
-- `MEMOS_IO` / `MEMOS_MCP_TOOL_FAILED` / `MEMOS_UNKNOWN`
+### Explaining an error code
+
+`memos explain-error <code>` prints what probably went wrong, the likely
+causes (most probable first), and how to fix it:
+
+```bash
+memos explain-error                # list every code
+memos explain-error MEMOS_DB_LOCKED
+memos explain-error db-locked      # short spellings work too
+memos explain-error --json         # machine-readable explainer
+```
+
+`memos doctor` also prints the explainer for the latest crash report, and its
+`--json` output includes a `lastCrashExplainer` object.
+
+### Error codes
+
+| Code | What probably went wrong |
+| --- | --- |
+| `MEMOS_DB_OPEN` | The SQLite store could not be opened: missing/unwritable path or a native binding that failed to load |
+| `MEMOS_DB_LOCKED` | Another process holds the write lock and the busy timeout expired first |
+| `MEMOS_DB_CORRUPT` | The file's pages no longer parse as SQLite — copies/syncs mid-write, interrupted writes, failing disks |
+| `MEMOS_DB_ENCRYPTED` | The store is encrypted (or not a database) and the key is missing or wrong |
+| `MEMOS_MIGRATION_FAILED` | A schema upgrade step failed; the store was left at the previous schema |
+| `MEMOS_EMBEDDING_UNAVAILABLE` | No embedder is reachable: Model2Vec not installed, Ollama/endpoint down, offline cache |
+| `MEMOS_EMBEDDING_FAILED` | An embedder was reachable but errored during inference (input, OOM, corrupt model cache) |
+| `MEMOS_PROVIDER_AUTH` | The provider rejected credentials with 401/403 — missing, revoked, or under-permissioned key |
+| `MEMOS_PROVIDER_RATE_LIMIT` | The provider throttled the request (429) — quota, shared key, retry storm |
+| `MEMOS_PROVIDER_TIMEOUT` | No response within the timeout — proxy/VPN, wrong base URL, cold provider, oversized batch |
+| `MEMOS_CONFIG_INVALID` | `~/.memos/config.json` or `.memos.json` is unparseable or fails validation |
+| `MEMOS_INVALID_INPUT` | Input failed validation before the store was touched (flags, JSON-RPC, tool args) |
+| `MEMOS_NOT_FOUND` | No row matches the id — forgotten, archived, mistyped, or a different `--db` |
+| `MEMOS_IO` | An OS-level file operation failed — full disk, permissions, Windows file locks |
+| `MEMOS_MCP_TOOL_FAILED` | A tool raised inside the MCP server; the payload carries the underlying code when known |
+| `MEMOS_BRIDGE_UNAVAILABLE` | The HTTP server's Node bridge is not running — bad first-run install or Node not on PATH |
+| `MEMOS_BRIDGE_CRASHED` | The bridge died or went silent mid-request — OOM, native-module fault, killed child |
+| `MEMOS_SERVER_ERROR` | An unexpected exception escaped the server's request handling (a bug or environment fault) |
+| `MEMOS_UNKNOWN` | An unexpected error MemOS could not classify — see the crash report |
+
+### HTTP error shape
+
+Bridge-sourced failures from the Python server return a structured `detail`
+object, not a plain string:
+
+```json
+{
+  "detail": {
+    "code": "MEMOS_BRIDGE_CRASHED",
+    "message": "No response from MemOS bridge.",
+    "hint": "Check the server stderr ...",
+    "explanation": "The bridge produced no usable answer ..."
+  }
+}
+```
+
+Failures raised by the Node bridge forward the SDK's own explainer
+(`MEMOS_*` code, hint, explanation). Unhandled 500s use `MEMOS_SERVER_ERROR`
+with the same shape. 4xx responses for client errors keep their plain-string
+`detail` as before.
 
 `memos doctor` prints the latest crash report (code, message, timestamp) and
 includes it in `--json` output. Crash reports never include raw key material:

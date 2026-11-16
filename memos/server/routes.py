@@ -226,13 +226,60 @@ class ImageSearchRequest(BaseModel):
 # Bridge communication
 # ---------------------------------------------------------------------------
 
+_BRIDGE_TRANSPORT_EXPLAINERS: dict[str, tuple[str, str]] = {
+    "MEMOS_BRIDGE_UNAVAILABLE": (
+        "Check the server log for bridge startup errors (better-sqlite3 "
+        "install, Node on PATH), then restart `python -m memos.server.main`.",
+        "The HTTP server proxies every memory operation to a Node child "
+        "process that runs the TypeScript SDK. It never started, exited "
+        "earlier, or failed its SDK self-check, so no request can be served.",
+    ),
+}
+
+_BRIDGE_CRASHED_EXPLAINER = (
+    "Check the server stderr for a native-module or out-of-memory crash, "
+    "then restart `python -m memos.server.main`.",
+    "The bridge produced no usable answer - it crashed, was killed, or wrote "
+    "nothing to stdout. Native-module and out-of-memory faults are the usual "
+    "causes; the operation may or may not have completed.",
+)
+
+
+def _structured_error_detail(code: str, message: str, response: dict | None = None) -> dict:
+    """Build the structured ``detail`` payload for bridge-sourced failures.
+
+    Kept as a dict (not a plain string) so clients can read ``code``,
+    ``hint`` and ``explanation`` without parsing free text. Legacy clients
+    that only read ``detail`` as text still get a useful message inside
+    ``message``.
+    """
+    detail: dict[str, Any] = {"code": code, "message": message}
+    hint, explanation = _BRIDGE_TRANSPORT_EXPLAINERS.get(code, (None, None))
+    if code == "MEMOS_BRIDGE_CRASHED":
+        hint, explanation = _BRIDGE_CRASHED_EXPLAINER
+    if response is not None:
+        # Prefer the explainer the Node bridge forwarded from the SDK's
+        # error registry; fall back to the local texts above.
+        hint = response.get("errorHint") or hint
+        explanation = response.get("errorExplanation") or explanation
+    if hint:
+        detail["hint"] = hint
+    if explanation:
+        detail["explanation"] = explanation
+    return detail
+
 
 def _get_bridge():
     """Get the Node.js bridge subprocess from the app state."""
     from .main import _node_process
 
     if _node_process is None or _node_process.poll() is not None:
-        raise HTTPException(status_code=503, detail="MemOS bridge process not running.")
+        raise HTTPException(
+            status_code=503,
+            detail=_structured_error_detail(
+                "MEMOS_BRIDGE_UNAVAILABLE", "MemOS bridge process not running."
+            ),
+        )
     return _node_process
 
 
@@ -250,16 +297,33 @@ def _rpc_call(method: str, params: dict[str, Any] | None = None) -> Any:
 
         line = bridge.stdout.readline()
         if not line:
-            raise HTTPException(status_code=502, detail="No response from MemOS bridge.")
+            raise HTTPException(
+                status_code=502,
+                detail=_structured_error_detail(
+                    "MEMOS_BRIDGE_CRASHED", "No response from MemOS bridge."
+                ),
+            )
 
         response = json.loads(line.strip())
 
         if "error" in response and response["error"]:
-            raise HTTPException(status_code=400, detail=response["error"])
+            raise HTTPException(
+                status_code=400,
+                detail=_structured_error_detail(
+                    str(response.get("errorCode") or "MEMOS_UNKNOWN"),
+                    str(response["error"]),
+                    response,
+                ),
+            )
 
         return response.get("result")
     except BrokenPipeError as err:
-        raise HTTPException(status_code=503, detail="MemOS bridge process crashed.") from err
+        raise HTTPException(
+            status_code=503,
+            detail=_structured_error_detail(
+                "MEMOS_BRIDGE_CRASHED", "MemOS bridge process crashed."
+            ),
+        ) from err
 
 
 # ---------------------------------------------------------------------------

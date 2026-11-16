@@ -1,0 +1,139 @@
+UMT generates the same `mcpServers` shape every host understands, then writes
+it to the right file. This page shows the shapes and the transport model.
+
+## Claude Desktop
+
+Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+Linux: `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@universal-mcp-toolkit/server-github", "--transport", "stdio"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@universal-mcp-toolkit/server-filesystem", "--transport", "stdio"],
+      "env": {
+        "FILESYSTEM_ROOTS": "${FILESYSTEM_ROOTS}"
+      }
+    }
+  }
+}
+```
+
+Replace `${...}` with real values before pasting. UMT does not write secrets
+into generated snippets.
+
+## Cursor
+
+```json
+{
+  "mcpServers": {
+    "slack": {
+      "command": "npx",
+      "args": ["-y", "@universal-mcp-toolkit/server-slack", "--transport", "stdio"],
+      "env": { "SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}" }
+    },
+    "linear": {
+      "command": "npx",
+      "args": ["-y", "@universal-mcp-toolkit/server-linear", "--transport", "stdio"],
+      "env": { "LINEAR_API_KEY": "${LINEAR_API_KEY}" }
+    }
+  }
+}
+```
+
+Generate it instead of hand-editing:
+
+```bash
+umt config -s slack linear -t cursor --write
+```
+
+## Claude Code
+
+```bash
+umt config -s github hackernews -t claude-code --write
+```
+
+Or let Claude Code write it:
+
+```bash
+claude mcp add github -- npx -y @universal-mcp-toolkit/server-github --transport stdio
+```
+
+## Codex
+
+`umt config -t codex --write` edits `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "@universal-mcp-toolkit/server-github", "--transport", "stdio"]
+
+[mcp_servers.github.env]
+GITHUB_TOKEN = "${GITHUB_TOKEN}"
+```
+
+## Transport model
+
+| Transport | Use it for |
+| --- | --- |
+| `stdio` | Local child-process integrations |
+| Streamable HTTP | Current remote MCP integrations |
+| HTTP+SSE | Legacy compatibility only |
+
+Every server is built on the same core, so the transport flags and lifecycle
+behave consistently. `umt run <server> --transport http` starts the HTTP mode.
+
+## What `--write` does
+
+1. Reads the existing config file.
+2. Merges the new server entries without dropping existing ones.
+3. Writes a `<file>.umt-bak` backup first.
+4. Writes the merged file atomically.
+
+If the merge goes wrong, restore the backup. If the harness still cannot see the
+server, restart it; most hosts read config only at startup.
+
+## Environment variables
+
+| Server | Required |
+| --- | --- |
+| GitHub | `GITHUB_TOKEN` |
+| Slack | `SLACK_BOT_TOKEN` |
+| Notion | `NOTION_TOKEN` |
+| Linear | `LINEAR_API_KEY` |
+| Jira | `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
+| PostgreSQL | `POSTGRESQL_URL` |
+| MongoDB | `MONGODB_URI` |
+| Redis | `REDIS_URL` |
+| Supabase | `SUPABASE_URL`, `SUPABASE_KEY` |
+| Vercel | `VERCEL_TOKEN` |
+| Cloudflare | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
+| FileSystem | `FILESYSTEM_ROOTS` |
+| Airtable | `AIRTABLE_API_KEY`, `AIRTABLE_BASE_ID` |
+| Trello | `TRELLO_API_KEY`, `TRELLO_TOKEN` |
+| Discord | `DISCORD_BOT_TOKEN` |
+| OpenAI | `OPENAI_API_KEY` |
+
+The full list is in [Server catalog](/docs/umt/servers) and the root
+`.env.example`.
+
+## Verify
+
+```bash
+umt doctor
+umt test github
+umt conformance
+```
+
+`umt doctor` checks build output, config state, and env vars. `umt test` performs
+a live MCP handshake. `umt conformance` checks registry config and local
+handshakes where build output exists.

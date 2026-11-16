@@ -1,0 +1,145 @@
+MemOS is a graph, not a chat log. Understanding five ideas is enough to use it
+well: nodes, edges, pools, scopes, and trust.
+
+## Nodes
+
+A node is one memory. It carries:
+
+| Field | Meaning |
+| --- | --- |
+| `content` | The text you stored |
+| `type` | `fact`, `preference`, `decision`, `event`, `note`, `procedure` |
+| `pool` | `event`, `note`, or `procedure` |
+| `namespace` | The isolation boundary |
+| `tags` | Free-form labels |
+| `trustScore` | How much to believe it, 0–1 |
+| `source` | Where it came from |
+| `validFrom` / `validTo` | When it was true |
+| `createdAt` / `updatedAt` | When it entered the store |
+
+Nodes are immutable in the sense that changes create history. `memos history
+<id>` shows the version timeline; `memos revert` restores a prior version.
+
+## Edges
+
+Edges are typed and first-class:
+
+- `relates_to` — associative recall
+- `supports` — evidence for another memory
+- `contradicts` — conflict the review queue can surface
+- `derived_from` — this memory was extracted from that one
+- `temporal_precedes` — ordering in time
+
+Graph expansion is how MemOS finds context a pure vector search would miss. A
+hit can pull its neighbours into a context pack, bounded by the token budget.
+
+## Pools
+
+| Pool | Holds | Use it for |
+| --- | --- | --- |
+| `event` | Raw episodes and imported turns | "What happened?" |
+| `note` | Distilled facts and summaries | "What do I know?" |
+| `procedure` | Learned lessons and how-tos | "What should I do next time?" |
+
+Hybrid retrieval can search one pool or all three. The separation keeps raw
+context available without letting it drown the distilled memories.
+
+## Scopes and namespaces
+
+Every memory lives in a namespace. `MEMOS_NAMESPACE` sets the default; the CLI
+accepts `--namespace`, and the SDK accepts `namespace` per call.
+
+Scoped reads union the shared default scope with the requested scope. The
+convention for free-form scopes is:
+
+```text
+project:<name>
+harness:<name>
+user:<id>
+agent:<id>
+run:<id>
+```
+
+That is how one store can hold personal, project, and per-agent memory without
+mixing them.
+
+## Trust and provenance
+
+Trust is not a boolean. A memory can be certain, inferred, imported, or
+contradicted. `trustScore` feeds retrieval, so a low-trust memory needs a
+stronger match to surface. `source` and `derived_from` edges let you trace a
+claim back to the document or conversation it came from.
+
+The review queue (`memos quarantine list`, the `memos_review` MCP tool, and
+`memos_quarantine_release`) is the safety valve: questionable writes wait for a
+human instead of silently entering recall.
+
+## Time
+
+Two clocks matter:
+
+- **Event time** — when the thing was true (`validFrom` / `validTo`).
+- **Ingest time** — when MemOS learned it (`createdAt`).
+
+`memos search --temporal` and `memos_set_validity` let you ask "what did we
+believe on March 1?" rather than "what is the latest row?" Superseding a memory
+closes its validity interval and keeps the old version in history.
+
+## Retrieval
+
+The shipped path is hybrid:
+
+1. **Candidate generation** — SQLite FTS5 keyword matches plus vector
+   similarity from the configured embedding provider.
+2. **Fusion** — reciprocal rank fusion combines the two ranked lists.
+3. **Trust and temporal weighting** — recency, validity, and trust adjust the
+   order.
+4. **Relevance gate** — weak candidates are dropped instead of padding the
+   context.
+5. **Graph and session expansion** — neighbours fill gaps, bounded by budget.
+6. **MMR** — optional diversification so ten paraphrases do not take ten slots.
+
+`memos explain "<query>"` shows the candidates before the gate and why each one
+ranked where it did.
+
+## Context packs
+
+A context pack is the unit you inject into a prompt. It contains selected
+memories, citations, graph neighbours, and a token budget. Packs are available
+through `memos.contextPack()`, the `memos_context_pack` MCP tool, and
+`POST /api/mem/context-pack`.
+
+The pack is deterministic given the same store and query. That matters for
+reproducible agents and for debugging "why did the model say that?"
+
+## Lessons and knowledge pages
+
+- **Procedural lessons** (`memos learn`, `memos lesson`) capture behavioral
+  guidance, not facts. Outcomes reinforce or demote them.
+- **Knowledge pages** are consolidated cluster summaries: a stable note that
+  stands in for many raw events.
+- **Consolidation** (`memos consolidate`, `memos dream`) merges duplicates,
+  archives stale memories, and distils clusters without deleting history.
+
+## Deletion
+
+Forgetting is a first-class operation, not a `DELETE` statement:
+
+- `memos forget <id>` removes a memory and records a deletion certificate.
+- `memos forget-source` removes everything derived from a source.
+- `memos audit` emits a tamper-evident artifact covering provenance,
+  quarantine, and deletions.
+
+If you need proof that data is gone, that is the path.
+
+## What MemOS is not
+
+- It is not a hosted service. There is no account and no control plane.
+- It is not a vector database. Vectors are one signal in a hybrid pipeline.
+- It is not a model. It stores and retrieves context; your model does the
+  reasoning.
+- It is not a replacement for your application's database. It is the memory
+  layer beside it.
+
+For the layered architecture, the retrieval pipeline diagram, and the
+confidence state machine, see [Architecture](/docs/architecture).

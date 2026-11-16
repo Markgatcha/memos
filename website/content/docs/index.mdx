@@ -1,0 +1,88 @@
+The AI Trio is three open-source tools that fix three different failures of
+AI agents. They run locally, speak open protocols, and compose without a
+control plane.
+
+| Failure | Tool | What it fixes |
+| --- | --- | --- |
+| The agent forgets everything between runs | **MemOS** | Persistent memory in one SQLite file |
+| Every tool needs its own MCP config | **UMT** | One CLI and one config for 28 servers |
+| The context window costs too much | **Guardian** | Folding, budgets, and provider proxies |
+
+## Pick your path
+
+<Cards cols={3}>
+  <Card title="MemOS" href="/docs/memos" eyebrow="memory">
+    Store facts, preferences, decisions, and documents. Recall them from Claude
+    Code, Cursor, Codex, or any MCP client.
+  </Card>
+  <Card title="Universal MCP Toolkit" href="/docs/umt" eyebrow="tools">
+    Install, configure, and run 28 curated MCP servers across every major
+    coding harness.
+  </Card>
+  <Card title="LLM Guardian" href="/docs/guardian" eyebrow="cost">
+    Fold long context, enforce budgets, and proxy Anthropic or OpenAI clients
+    without changing code.
+  </Card>
+</Cards>
+
+## The 60-second version
+
+```bash
+# Memory: store, then recall, in one SQLite file
+npx -y @mem-os/sdk store "Prefers pnpm over npm" --db ./memos.db
+npx -y @mem-os/sdk search "package manager" --db ./memos.db
+
+# Tools: see every bundled MCP server
+npx -y universal-mcp-toolkit list
+
+# Cost: fold a long prompt and print the savings
+npx -y llm-guardian optimize "your long context here"
+```
+
+<Callout type="tip" title="No account, no key">
+None of the three requires a hosted account. MemOS and UMT work fully offline.
+Guardian needs a model provider only when you ask it to generate text.
+</Callout>
+
+## How they compose
+
+The trio is designed as a stack, not a bundle:
+
+1. **UMT is the transport layer.** It writes the MCP config each harness
+   understands, starts servers over stdio or HTTP, and can link a MemOS
+   database so memory is available as an MCP tool.
+2. **MemOS is the memory layer.** It stores the graph, retrieves context
+   within a token budget, and exposes it over SDK, CLI, MCP, and HTTP.
+3. **Guardian is the cost layer.** It folds long context, injects MemOS memory
+   packs, and proxies Anthropic or OpenAI traffic so savings apply without
+   code changes.
+
+Read [How the trio fits together](/docs/trio/architecture) for the contracts,
+ports, and data flow.
+
+## What "local-first" means here
+
+- **One file you own.** MemOS is a SQLite database. Copy it, back it up, delete
+  it.
+- **No telemetry.** The core paths make no network calls.
+- **MIT licensed.** No paid tier, no per-seat gate, no hosted control plane.
+- **Open protocols.** MCP over stdio and Streamable HTTP; OpenAI- and
+  Anthropic-compatible HTTP where it matters.
+
+## Where to go next
+
+<Cards cols={2}>
+  <Card title="Set up memory first" href="/docs/memos/quickstart">
+    The fastest path to a useful agent: store one fact, connect one harness,
+    verify recall.
+  </Card>
+  <Card title="Connect your tools" href="/docs/umt">
+    Pick servers, pick a harness, and let UMT write the config.
+  </Card>
+  <Card title="Cut token spend" href="/docs/guardian">
+    Start with the proxy if you do not want to change application code.
+  </Card>
+  <Card title="See the benchmarks" href="/docs/memos/benchmarks">
+    Retrieval numbers, methodology, and the open leaderboard.
+  </Card>
+</Cards>

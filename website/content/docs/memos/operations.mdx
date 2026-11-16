@@ -1,0 +1,153 @@
+A memory store is a database. Treat it like one: back it up, watch its health,
+and know how to prove what is in it.
+
+## Backup and restore
+
+```bash
+memos backup --output ./backup-2026-11-05.db
+memos restore ./backup-2026-11-05.db
+```
+
+Backups are SQLite files. Stop writes for a consistent snapshot, or use the
+`backup` command, which handles the WAL correctly.
+
+## Encryption at rest
+
+```bash
+memos encrypt --key "$MEMOS_KEY"
+memos decrypt --key "$MEMOS_KEY"
+```
+
+Encryption requires `better-sqlite3-multiple-ciphers`. Keep the key outside the
+repository. Losing the key means losing the store.
+
+## Health and consolidation
+
+```bash
+memos health
+memos consolidate --dry-run
+memos consolidate --watch --interval-min 60
+memos dream --json
+```
+
+- `health` reports contradictions, TTL issues, confidence, and recall outcomes.
+- `consolidate` merges duplicates, archives stale memories, supersedes decayed
+  ones (kept as history), and distils cluster summaries.
+- `dream` is consolidation with a report and optional scheduling.
+
+Nothing is hard-deleted by consolidation. Superseded memories remain in the
+version timeline.
+
+## Retention
+
+```bash
+memos store "Temporary note" --ttl 3600
+memos health
+```
+
+TTL is per memory. Expired memories stop surfacing in recall; they are not
+silently destroyed. Use `forget` when you need a deletion certificate.
+
+## Embeddings
+
+The default is Model2Vec's `potion-base-8M`: 256 dimensions, pure JavaScript, no
+native addon. For higher accuracy, configure a provider:
+
+| Provider | Notes |
+| --- | --- |
+| Ollama | Local, e.g. `nomic-embed-text` |
+| FastEmbed | Local ONNX |
+| OpenAI | API key required |
+| Voyage | API key required |
+| Cohere | API key required |
+| Local hash | Deterministic fallback, no semantics |
+
+After changing providers, re-embed:
+
+```bash
+memos reindex-embeddings
+memos reindex-embeddings --purge-stale
+```
+
+`--purge-stale` removes vectors written by other models. Without it, old and
+new vectors coexist and scores become meaningless.
+
+## Multi-harness stores
+
+```bash
+memos harness list
+memos harness merge --from ~/.other-harness/memos.db --dry-run
+memos harness merge --from ~/.other-harness/memos.db
+```
+
+Merging keeps provenance, so you can tell which harness produced a memory.
+
+## Upgrades
+
+1. Back up.
+2. Install the new version.
+3. Run `memos doctor`.
+4. Run `memos health`.
+5. Re-run `memos eval` if you keep a retrieval corpus.
+
+Schema migrations are handled by the store. If a migration fails, restore the
+backup rather than editing the database by hand.
+
+## Security model
+
+- **Local by default.** The core paths make no network calls.
+- **No telemetry.** No analytics, no phone-home.
+- **Write gate.** Suspicious writes can be quarantined for review instead of
+  entering recall.
+- **Provenance.** Every memory can carry a source and derivation chain.
+- **Redaction.** Sensitive fields can be redacted before storage.
+- **Tamper evidence.** `memos audit` emits a chain that detects edits.
+- **Deletion certificates.** `memos forget` records proof of deletion.
+
+<Callout type="note" title="Availability">
+`memos audit` and deletion certificates are on `main` and ship in the next
+release. Run `memos audit --help` in your build to confirm before relying on
+them.
+</Callout>
+
+<Callout type="warn" title="Local does not mean safe by default">
+Encryption is opt-in. A plain SQLite file is readable by anyone with access to
+the disk. Use full-disk encryption or `memos encrypt` for sensitive stores.
+</Callout>
+
+## Observability
+
+| Command | Question it answers |
+| --- | --- |
+| `memos stats` | How many tokens did context packs save? |
+| `memos health` | Is the store clean and useful? |
+| `memos audit` | What changed, and can I prove it? |
+| `memos explain "<query>"` | Why did this memory rank here? |
+| `memos diagnostics` | What is the store and embedder doing? |
+| `memos explain-error <code>` | What does this failure mean? |
+
+## Incident checklist
+
+1. Stop writes.
+2. Copy the database file.
+3. Run `memos doctor` and `memos health`.
+4. Check `memos audit --expect-tip` if tamper evidence matters.
+5. Restore the last known-good backup if the store is corrupt.
+6. Re-run `memos eval` after recovery.
+
+## Troubleshooting
+
+| Symptom | First check |
+| --- | --- |
+| Search returns nothing | `memos doctor`; confirm DB path and namespace |
+| Scores look random | Re-embed with `--purge-stale`; check provider |
+| Slow recall | Reduce graph expansion or context budget |
+| Harness cannot connect | Restart after `connect --write`; check the DB path |
+| Encryption fails | Install `better-sqlite3-multiple-ciphers` |
+| Migration error | Restore the backup; do not hand-edit the schema |
+
+## Related
+
+- [Memory model](/docs/memos/concepts)
+- [CLI and API reference](/docs/memos/reference)
+- [Benchmarks](/docs/memos/benchmarks)

@@ -563,7 +563,7 @@ export default function Home() {
               </div>
               <div className="mt-5">
                 <InstallCommand
-                  command="npx memos init --local"
+                  command="npx -y @mem-os/sdk init --yes"
                   note="after install"
                 />
               </div>

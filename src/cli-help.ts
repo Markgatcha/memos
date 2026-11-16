@@ -53,6 +53,7 @@ export const CLI_COMMANDS: readonly string[] = [
   "audit",
   "eval",
   "explain",
+  "explain-error",
   "feedback",
   "compact",
   "doctor",
@@ -333,6 +334,14 @@ token cost. --corpus runs a JSON array (or {cases:[...]}) of
 Explain a ranking: per-leg score signals, lifecycle status, supersede
 chain, outcome utility, and the relevance-gate verdict. Pass --id to
 diagnose one memory that should have matched but did not.`,
+  "explain-error": `memos explain-error <code> [--json]
+
+Explain a MemOS error code: what probably went wrong, the likely causes
+(most probable first), and how to fix it. Accepts the full code or a short
+spelling (db_locked, memos-db-locked). With no code, lists every error code.
+  memos explain-error MEMOS_DB_LOCKED
+  memos explain-error db-locked
+  memos explain-error            # list all codes`,
   feedback: `memos feedback --query "<query>" --used <id[,id]> --outcome success|partial|failure
   [--weight <n>] [--note <text>] [--json]
 

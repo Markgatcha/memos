@@ -1,0 +1,69 @@
+MemOS is a local-first memory layer for AI agents. It stores facts,
+preferences, decisions, and ingested documents in a single SQLite file, then
+recalls them through a TypeScript SDK, a CLI, an MCP server, or an HTTP API.
+
+There is no account, no hosted control plane, and no API key in the core path.
+
+## Why it exists
+
+Hosted memory APIs are convenient, but they make your context someone else's
+service. MemOS takes the opposite position: the memory is a file on your disk.
+You can inspect it, back it up, encrypt it, export it, or delete it without
+asking a vendor.
+
+That choice also makes the system useful where cloud memory is not: offline
+laptops, air-gapped machines, regulated environments, and local-model setups.
+
+## The four surfaces
+
+| Surface | Use it for | Start |
+| --- | --- | --- |
+| TypeScript SDK | Embed memory in a Node or Bun app | `npm install @mem-os/sdk` |
+| CLI | Local work, scripts, and maintenance | `npx -y @mem-os/sdk --help` |
+| MCP server | Any MCP-capable coding agent | `npx -y @mem-os/sdk mcp` |
+| HTTP API | Python, Dify, n8n, or a shared service | `memos-server` |
+
+All four read and write the same SQLite database. `MEMOS_DB_PATH` selects the
+file; `MEMOS_NAMESPACE` selects the default namespace.
+
+## What you get
+
+- **Graph memory.** Nodes have typed edges: `relates_to`, `contradicts`,
+  `supports`, `derived_from`, `temporal_precedes`, and more.
+- **Trust and provenance.** Every memory can carry a source, a trust score, and
+  a version timeline. Trust-weighted retrieval is built in.
+- **Temporal validity.** `validFrom` / `validTo` and `searchTemporal()` let you
+  ask what was true at a point in time.
+- **Context packs.** Token-budgeted bundles of memory, graph neighbours, and
+  citations, ready to inject into a prompt.
+- **Consolidation.** Deduplicate, archive, summarise clusters, and decay stale
+  memories without losing history.
+- **Audit and deletion.** A tamper-evident log, export, and deletion
+  certificates.
+- **Encryption at rest.** `memos encrypt` uses SQLite's encrypted build.
+- **Image memory.** Captions plus optional CLIP pixel search.
+- **MCP native.** stdio and Streamable HTTP, with a published compatibility
+  policy.
+
+## Works with
+
+Claude Code, Cursor, Codex, Gemini CLI, Hermes, OpenClaw, Cline, Zed, Goose,
+Kilo, pi, OpenCode, Windsurf, and any MCP client. `memos connect <harness>`
+writes the config for you; see the [harness matrix](/docs/memos/harnesses).
+
+## Next
+
+<Cards cols={2}>
+  <Card title="Quickstart" href="/docs/memos/quickstart">
+    Store a memory and connect a harness in under two minutes.
+  </Card>
+  <Card title="Memory model" href="/docs/memos/concepts">
+    Nodes, pools, scopes, trust, time, packs, and deletion.
+  </Card>
+  <Card title="Harnesses" href="/docs/memos/harnesses">
+    Exact commands for 14 coding agents and MCP clients.
+  </Card>
+  <Card title="Benchmarks" href="/docs/memos/benchmarks">
+    Reproducible retrieval results and the open leaderboard.
+  </Card>
+</Cards>
