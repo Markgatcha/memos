@@ -17,7 +17,7 @@ public class NestedLoops {
         while (r < 3) {
             int num = 1;
             while (num <= 4) {
-                System.out.print(num);
+                System.out.print(num + " ");
                 num++;
             }
             System.out.println();
