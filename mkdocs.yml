@@ -47,6 +47,7 @@ nav:
       - Overview: index.md
       - Installation: installation.md
       - Your first memory: quickstart-ingest.md
+      - MemOS Desktop: desktop-app.md
       - Harness matrix: harness-matrix.md
   - Concepts:
       - Memory model: concepts.md
@@ -74,6 +75,13 @@ nav:
       - TypeScript API: api-reference.md
       - MCP compatibility: mcp-compatibility.md
       - Memory Explorer (MCP App): mcp-apps-explorer.md
+      - MemOS Desktop backlog: desktop-improvement-backlog-2026.md
+      - Desktop design review: desktop-design-review.md
+      - Desktop CLI parity: desktop-cli-parity-2026.md
+      - Desktop 0.1.0 feature inventory: desktop-feature-inventory-0.1.0.md
+      - Desktop 0.1.0 video kit: desktop-video-kit-0.1.0.md
+      - Desktop v0.1 release blockers: desktop-v0.1-release-blockers.md
+      - Desktop UI research (2026-11-17): desktop-ui-research-2026-11-17.md
       - Open benchmark leaderboard: benchmark-leaderboard.md
       - Documentation coverage: coverage.md
   - Operations:

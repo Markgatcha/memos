@@ -1,0 +1,71 @@
+[package]
+name = "memos-desktop"
+version = "0.1.0"
+edition = "2024"
+description = "Native GPUI desktop browser for the MemOS memory store"
+license = "MIT"
+publish = false
+
+[features]
+default = ["gui"]
+gui = [
+    "dep:gpui",
+    "dep:gpui_platform",
+    "dep:lyon",
+    "dep:raw-window-handle",
+    "dep:sentry",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:tracing-appender",
+    "dep:open",
+]
+cli = []
+
+[[bin]]
+name = "memos-desktop"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[[bin]]
+name = "memos"
+path = "src/bin/memos.rs"
+required-features = ["cli"]
+
+[[test]]
+name = "crash_scrubber"
+required-features = ["gui"]
+
+[[test]]
+name = "smoke_bench"
+required-features = ["gui"]
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0"
+
+[dependencies]
+gpui = { package = "gpui-unofficial", version = "=1.28.1", optional = true }
+gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "=1.28.1", optional = true }
+lyon = { version = "1.0", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+rusqlite = { version = "0.42", default-features = false, features = ["bundled", "cache"] }
+sentry = { version = "0.49", default-features = false, features = ["panic", "backtrace", "contexts", "ureq", "rustls"], optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"], optional = true }
+tracing-appender = { version = "0.2", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "2.0"
+directories = "6.0"
+open = { version = "5.4", optional = true }
+time = { version = "0.3", features = ["formatting", "macros"] }
+uuid = { version = "1.1", features = ["v4"] }
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1

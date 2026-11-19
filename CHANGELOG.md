@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Harness connectivity: DeepSeek Harness and OpenCode 2.x
+
+`memos connect` now knows three new targets:
+
+- **`dsh`** (aliases: `deepseek`, `deepseek-harness`) - DeepSeek Harness. dsh
+  has no `mcp.json`; its MCP integration is an `@deepseek-ai/dsh-mcp-client` row
+  inside a Cordis patch file. `memos connect dsh` prints the row; `--write`
+  saves it to a dedicated `~/.dsh/memos.patch.yml` (never your
+  `cordis.patch.yml`). Tools are namespaced `mcp__memos__<tool>`.
+- **`opencode`** (aliases: `opencode-v2`, `opencode2`) - OpenCode 2.x / latest.
+  Writes the V2 `mcp.servers` shape, which rejects the old `mcp.<name>`
+  layout. `--with-session-hook` also writes the session-hook plugin
+  (`Plugin.define` + `ctx.event.subscribe()`) at
+  `.opencode/plugins/memos-session-hook/index.ts` and wires it into the
+  `plugins` array.
+- **`opencode-v1`** (alias: `opencode1`) - OpenCode 1.x. Writes the legacy
+  `mcp.<name>` shape and, with `--with-session-hook`, the V1 session-hook
+  plugin (`event` hook) wired into the `plugin` array.
+
+Breaking note: `memos connect opencode` now writes the OpenCode V2 shape
+instead of the 1.x shape. OpenCode 1.x users should run
+`memos connect opencode-v1` instead. The generated OpenCode session-hook
+plugin also moved from the V1-only `"session.deleted"` hook-key style to
+correct V1 and V2 forms; the previous V1 output would never have fired.
+
+Harness attribution now detects DeepSeek Harness via its runtime-injected
+`DSH_HOME` / `DSH_SHELL` environment variables (slug: `dsh`).
+
+### Added - MemOS Desktop 0.1.0 (Rust/GPUI)
+
+First public 0.1 release of the native memory explorer for the MemOS store, at
+`apps/desktop-gpui` (`memos-desktop` 0.1.0). It opens the SQLite database
+directly through bundled `rusqlite` with no Node sidecar, WebView, or Electron;
+every Rust connection stays read-only (`SQLITE_OPEN_READ_ONLY`,
+`PRAGMA query_only = ON`), and writes route through an opt-in MCP writer so
+embeddings, provenance, contradictions, and tamper receipts remain intact.
+
+- **Today / Brief** daily workspace for new, changed, expiring, contradicting,
+  and attention-needed memories, with live sidebar badges and filter drill-down.
+- **Review queue and document Ingest** over MCP (`memos_review`,
+  `memos_ingest`), with capability preflight, human error states, and native
+  file/folder pickers.
+- **Opt-in write mode** with `MCP 2026-07-28` (`server/discover` + per-request
+  `_meta`, legacy `initialize` fallback), local-CLI discovery, schema preflight,
+  New/Edit/Forget flows, and confirmation dialogs.
+- **Keyset pagination** past the 500-row ceiling (`500` first page + `250` per
+  page), removable search-scope chips, and tabular Detail timestamps.
+- **Five graph modes** (namespace, tag, entity, temporal, contradictions) with
+  padded Fit view, label LOD, daylight-separated temporal columns, linked
+  List ↔ Graph hover, and cluster overflow counts.
+- **Store Health, Dream Diff, receipts/provenance, live memory strip, and
+  "What the AI sees"** context preview with token estimate and copy.
+- **Warm obsidian surface system** (dark and light) with a Windows Mica
+  backdrop and warm-glass floating surfaces (alpha palette, popovers, and
+  dialogs with a 1 px top highlight), unified Segoe Fluent/MDL2 icons, a
+  compact `56 px` icon rail at `900×600`, 64/48 px row density, and refined
+  modals.
+- **16-harness Tools detection** with OpenCode 2.x vs 1.x version
+  disambiguation, DeepSeek Harness (`dsh`) Cordis plans, print-only badges, and
+  non-mutating launch/connect plans.
+- **AccessKit roles/labels**, keyboard navigation, reduced-motion support, and a
+  Windows DWM caption that follows the app theme on the visible top-level HWND.
+- **Embedded app icon** (`assets/memos-icon.ico`) and persisted window bounds,
+  sort, and last view.
+
+Also updated CLI `memos retrieve` text output to print `Updated` and
+`Last accessed` timestamps.
+
+See `apps/desktop-gpui/CHANGELOG.md` for the full 0.1.0 notes and measured
+startup/search/RSS figures.
+
+### Added - Retrieval flight recorder
+
+Opt-in `recall_traces` capture records what a search actually saw: per-leg
+candidates and timings, fusion contributions, rerank/MMR deltas, and the first
+leg that introduced each final item. Tracing is off by default and the disabled
+path is a single boolean check.
+
+- `memos explain-recall <trace-id>` (CLI, SDK `explainRecall`, opt-in MCP
+  `memos_explain_recall`) prints the breakdown, including each item's score
+  contributions and originating leg.
+- `memos replay <trace-id> --config <file>` recomputes ranking from stored
+  candidate scores with no re-embedding and no database re-query, then reports
+  added, removed, and reordered items with score deltas. Same input and config
+  produce byte-identical output.
+- Trace retention defaults to the newest 500 entries, and memory text is not
+  stored unless `captureText: true` is explicit.
+
+### Added - Error explainers
+
+Every crash path now has a stable `MEMOS_*` code and a cause/fix card instead
+of a bare stack trace. `memos explain-error <code|log>` resolves a code from a
+pasted log, the local crash-report files capture the same context, and the
+FastAPI server has a last-resort handler that returns the explained error.
+
 ### Added - Recall budgets
 
 `search()` now accepts `budget: { maxMs, maxTokens }`. The pipeline picks a

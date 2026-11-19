@@ -1,0 +1,116 @@
+MemOS Desktop is a native Rust/GPUI app for exploring and managing a local
+MemOS store. Direct SQLite access in Rust is **strictly read-only** through
+bundled `rusqlite` (no WebView or Electron), while users can optionally enable
+**Write mode (MCP)** in Settings to route creates, versioned edits
+(`memos_supersede`), and forgets through the MemOS MCP stdio server.
+
+Source: [`apps/desktop-gpui`](https://github.com/Markgatcha/memos/tree/main/apps/desktop-gpui)
+
+## What it shows
+
+- **Store card & page header.** A pinned sidebar Store card tracks memory
+  count, 0–100 health progress, and **Open health →**. The two-line page header
+  displays the active view, tabular counts (`last write <age>`), and
+  right-aligned **Filter** and **Sort** controls.
+- **List, search & density.** A virtualized list with a 120 ms debounced FTS5
+  search, scrollable namespace/type/provenance/contradiction/stale filters at
+  `900×600`+, three sort orders, and **Row density** (`Comfortable 64 px` /
+  `Compact 48 px`).
+- **Detail & sticky header.** Content, tags, entities, causal connections,
+  contradictions, technical metadata, copyable citations (`Segoe Fluent Icons` on
+  Windows), and a `40 px` sticky bar when scrolled (`>= 56 px`). Below 1600 px
+  the pane overlays the list instead of squeezing it.
+- **Opt-in MCP writing & schema preflight.** Off by default (`read-only`).
+  Enabling **Write mode (MCP)** in Settings runs a schema preflight; stores
+  predating required write columns keep write mode off with a clear migration
+  notice instead of raw SQLite errors. Compatible stores connect via
+  `npx -y @mem-os/sdk mcp` (or `memos mcp`) for **New memory**, **Edit**, and
+  **Forget**, with a non-blocking **Retry**/**Settings** banner on errors.
+- **Receipts and provenance.** Trust, importance, read count, origin, causal
+  lineage, and tamper-log entries with chain hashes.
+- **Graph & linked hover.** Namespace, tag, entity, temporal, and contradiction
+  modes with padded Fit view, top-10/selected label LOD, `1 px` text halos,
+  `35%`/`70%` edge opacities, `2 px` selection rings, and synchronized list ↔
+  graph hover.
+- **Store health & Dream diff.** A `520 px` health dialog with `56 px`
+  quick-filter fix cards plus a read-only tamper-log timeline.
+- **What the AI sees & Saved views.** Token-estimated citation context preview,
+  saved sidebar views, and live WAL memory updates without replacing the active
+  selection.
+- **Tools (16 targets).** Detection and non-mutating launch plans for Claude Code,
+  Codex, Cursor, Windsurf, Cline (print-only), OpenCode 2.x vs legacy 1.x
+  (`opencode --version` disambiguation), Gemini CLI, Hermes Agent (print-only),
+  `.dsh` (`$DSH_HOME`/binary detection, print-only `memos.patch.yml`), Kilo, Pi,
+  OpenClaw (print-only), Zed (print-only), Goose (print-only), and Continue.
+
+## Read-only SQLite & Opt-In Write Mode
+
+Every direct SQLite connection from Rust opens with:
+
+- `SQLITE_OPEN_READ_ONLY`
+- `PRAGMA query_only = ON`
+- `PRAGMA busy_timeout = 5000`
+
+The crate contains no `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, or `DROP`
+statements. Schema introspection tolerates older and newer stores: missing
+optional tables or columns degrade to empty facets instead of failing to open.
+
+When **Write mode (MCP)** is toggled on in Settings (`Write mode enabled (MCP)`
+in the Settings footer), mutations go through `WriteBridge` over JSON-RPC 2.0
+stdio so embeddings, provenance, contradiction scans, and tamper logs remain
+consistent with the CLI and SDK.
+
+## Run it
+
+```bash
+cd apps/desktop-gpui
+cargo run --release -- --db ~/.memos/memos.db
+
+# Or run the lightweight headless read-only CLI (2.65 MB, no GPUI)
+cargo run --no-default-features --features cli --bin memos -- list
+```
+
+The path resolves in this order: `--db`, `MEMOS_DB`, then `~/.memos/memos.db`.
+If the file or `nodes` table is missing, the app shows the resolved path and the
+command to create a store.
+
+| Flag | Purpose |
+| --- | --- |
+| `--diagnostics` | Versions, DB path, table counts, log paths, harness detection. No memory text. |
+| `--startup-report <path>` | Write a JSON startup timeline. |
+| `--smoke-exit-after-first-frame` | Exit after the first frame and initial load. |
+| `--self-test` | Exercise onboarding, DB resolution, harness detection, and core views. |
+| `MEMOS_DESKTOP_HOME` | Override the settings/log directory for isolated runs. |
+
+## Keyboard
+
+`Ctrl/Cmd+K` opens the command palette. `Ctrl/Cmd+F` focuses search,
+`Ctrl/Cmd+1` and `Ctrl/Cmd+2` switch list/graph, `j`/`k` and arrows move,
+`Enter` opens the detail pane, `Home`/`End` jump, `?` opens the shortcut
+sheet, and `Esc` dismisses the active dialog or detail pane.
+
+## Performance
+
+The release gate asserts FTS5 p95 under 30 ms and graph layout under 250 ms on a
+10k-node synthetic store; the 50k test asserts RSS under 200 MB. Numbers vary
+with GPU power state and background load, so reproduce them locally:
+
+```bash
+cargo test --release --test smoke_bench -- --nocapture
+```
+
+The two benchmark cases serialize themselves. Running them concurrently made the
+10k p95 gate flaky because the 50k setup competed for CPU and disk.
+
+## Privacy
+
+Memory text, summaries, tags, and queries are never written to logs, analytics,
+or crash reports. Crash reporting is opt-in and off by default; the scrubber
+removes paths, usernames, and hostnames while keeping app version, OS/arch,
+error kind, and a random install id.
+
+## Related
+
+- [Desktop changelog](https://github.com/Markgatcha/memos/blob/main/apps/desktop-gpui/CHANGELOG.md)
+- [38-point improvement backlog](https://github.com/Markgatcha/memos/blob/main/docs/desktop-improvement-backlog-2026.md)
+- [Memory Explorer MCP App](https://github.com/Markgatcha/memos/blob/main/docs/mcp-apps-explorer.md)
