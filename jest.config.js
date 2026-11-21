@@ -24,6 +24,13 @@ export default {
   },
   extensionsToTreatAsEsm: [".ts"],
   testEnvironment: "node",
+  // V8 coverage instead of the default babel/istanbul instrumentation.
+  // The babel provider instruments every transformed file and made the
+  // coverage run ~8x slower than the plain suite (measured locally:
+  // 8.5 s -> 66.6 s for 95 suites; ~16 s -> ~97 s on CI's 4-core runner).
+  // V8 coverage rides on Node's built-in profiler: 10.5 s locally, and it
+  // still emits the same lcov.info artifact.
+  coverageProvider: "v8",
   testMatch: ["**/__tests__/**/*.test.ts"],
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",

@@ -48,12 +48,12 @@ RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic langchain lang
 
 # Copy built TypeScript into the bundled-SDK location the server expects
 COPY --from=ts-build /app/dist ./memos/_js
-COPY --from=ts-build /app/package.json ./
-# Native Node deps for the bundled SDK (better-sqlite3 cannot live in a wheel)
-# pnpm was installed with --ignore-scripts, so run it via node directly.
-# The version must match the SDK's own dependency (package.json) — the
-# compiled dist is built against that API and loads this module at runtime.
-RUN node /usr/local/lib/node_modules/pnpm/bin/pnpm.mjs add better-sqlite3@^13.0.3 --ignore-scripts
+# Deliberately no `node_modules` here. The Python server stages memos/_js
+# into its runtime directory (~/.memos/runtime/js) and installs the Node
+# deps it needs there on first start, so a node_modules in /app would never
+# be read. It also used to be enormous: `pnpm add` pulled the SDK's full
+# devDependency tree (jest, onnxruntime, …) into the runtime image — 1.3 GB
+# of the 2.8 GB image, and the single slowest layer to export in CI.
 
 # Data volume
 VOLUME /root/.memos
