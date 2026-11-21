@@ -317,21 +317,10 @@ jobs:
   # Docker build. The image is verified by starting the
   # container and polling its health endpoint.
   #
-  # Speed comes from two places:
-  #
-  # 1. The build runs through plain `docker build` (buildx
-  #    with the built-in docker driver), not a
-  #    docker-container driver builder. The container
-  #    driver exports the image as an OCI tarball and
-  #    re-imports it into the daemon — on the old 2.8 GB
-  #    image that round trip alone cost ~45 s of every
-  #    run. With the docker driver the image lands in the
-  #    image store directly. The GitHub Actions layer
-  #    cache (type=gha) works with the docker driver.
-  #
-  # 2. A rebuild after a source-only change reuses every
-  #    unchanged layer, so the pnpm install and the pip
-  #    install do not re-run.
+  # Speed comes from the GitHub Actions layer cache
+  # (type=gha): a rebuild after a source-only change
+  # reuses every unchanged layer, so the pnpm install
+  # and the pip install do not re-run.
   #
   # `mode=max` is required. The default `min` caches
   # only the final stage and would discard the
@@ -342,6 +331,18 @@ jobs:
   # or the read-only cache scope some PR events get)
   # from failing an otherwise-good build.
   #
+  # The build goes through build-push-action's
+  # docker-container driver on purpose: type=gha cache
+  # with the built-in docker driver only works when the
+  # daemon has the containerd image store enabled, which
+  # GitHub-hosted runners do not — the cache would be
+  # silently dropped and every run would rebuild from
+  # scratch. The container driver does pay an OCI
+  # export/import round trip when loading the image, but
+  # the Dockerfile no longer ships the 1.3 GB dead
+  # node_modules layer, so the image — and that export —
+  # is less than half its old size.
+  #
   # .dockerignore keeps the build context at ~2 MB
   # instead of ~40 MB of benchmark fixtures.
   # ──────────────────────────────────────────────
@@ -351,13 +352,18 @@ jobs:
     needs: [verify-lockfile]
     steps:
       - uses: actions/checkout@v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
       - name: Build Docker image
-        run: |
-          docker build \
-            --provenance=false \
-            --cache-from type=gha,scope=memos-ci \
-            --cache-to type=gha,scope=memos-ci,mode=max,ignore-error=true \
-            -t memos:ci .
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          tags: memos:ci
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=memos-ci
+          cache-to: type=gha,scope=memos-ci,mode=max,ignore-error=true
       - name: Verify container starts
         run: |
           docker run -d --rm --name memos-test -p 7400:7400 memos:ci
