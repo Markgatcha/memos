@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { RotateCcw, Search, Trash2 } from "lucide-react";
 import demo from "../../../data/memory-demo.json";
+import { rankMemories } from "../../../lib/playground/rank";
 
 type Memory = {
   id: string;
@@ -51,37 +52,6 @@ const quickAdds = [
     tags: ["design", "radix"],
   },
 ];
-
-const STOPWORDS = new Set([
-  "the", "and", "for", "with", "that", "this", "what", "who", "how", "does",
-  "did", "are", "was", "were", "from", "into", "our", "your", "their", "its",
-  "about", "when", "where", "which", "will", "would", "can", "could", "should",
-  "have", "has", "had", "not", "but", "they", "them", "you", "use", "using",
-]);
-
-function tokens(text: string): string[] {
-  return (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
-    (token) => token.length > 2 && !STOPWORDS.has(token),
-  );
-}
-
-function rank(memories: Memory[], query: string): Result[] {
-  const q = [...new Set(tokens(query))];
-  if (q.length === 0) return [];
-  return memories
-    .map((memory) => {
-      const haystack = new Set(
-        tokens(`${memory.content} ${memory.tags.join(" ")} ${memory.type}`),
-      );
-      const overlap = q.filter((token) => haystack.has(token)).length;
-      const relevance = overlap / q.length;
-      const score = relevance * 0.75 + memory.trustScore * 0.2 + 0.05;
-      return { memory, score: Math.round(score * 1000) / 1000 };
-    })
-    .filter((result) => result.score > 0.25)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
-}
 
 function shortId(id: string): string {
   return `[mem:${id.slice(0, 8)}]`;
@@ -153,8 +123,8 @@ export default function MemoryPlayground() {
       runPreset(preset);
       return;
     }
-    const ranked = rank(memories, query);
     setMode("local");
+    const ranked = rankMemories(memories, query);
     setResults(ranked);
     const items = ranked.slice(0, 3).map((result) => ({
       id: result.memory.id,

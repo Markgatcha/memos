@@ -44,9 +44,9 @@ export default function MemoryPlaygroundPage() {
                 machine.
               </li>
               <li>
-                Arbitrary queries are ranked by a deliberately small lexical
-                model so the page stays fast and dependency-free. The real
-                engine fuses keyword and embedding retrieval.
+                Arbitrary queries are ranked by a small BM25 lexical model with
+                Porter stemming, mirroring the SDK&apos;s FTS5 keyword leg. The
+                real engine also fuses in embedding retrieval.
               </li>
             </ul>
           </div>

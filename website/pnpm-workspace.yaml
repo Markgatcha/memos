@@ -1,3 +1,6 @@
+allowBuilds:
+  '@parcel/watcher': false
+  '@swc/core': true
 minimumReleaseAgeExclude:
   - '@typescript/typescript-aix-ppc64@7.1.0-beta'
   - '@typescript/typescript-android-arm64@7.1.0-beta'
