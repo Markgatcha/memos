@@ -199,7 +199,7 @@ jobs:
           choco install wixtoolset --yes --no-progress
           cargo install cargo-wix --locked
           cargo wix init
-          cargo wix
+          cargo wix --nocapture
 
       - name: Upload release binary and package artifacts
         uses: actions/upload-artifact@v4
