@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
 use memos_desktop::core::db::{DbError, ReadOnlyStore};
 use memos_desktop::core::model::{GraphMode, QueryFilter};
@@ -15,7 +16,20 @@ use sentry::protocol::{
     Value as SentryValue,
 };
 
-struct GuardCleanup;
+static SENSITIVE_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
+
+struct GuardCleanup(#[allow(dead_code)] MutexGuard<'static, ()>);
+
+impl GuardCleanup {
+    fn lock() -> Self {
+        let guard = SENSITIVE_REGISTRY_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        clear_sensitive_text();
+        Self(guard)
+    }
+}
+
 impl Drop for GuardCleanup {
     fn drop(&mut self) {
         clear_sensitive_text();
@@ -31,7 +45,7 @@ fn temp_dir(name: &str) -> PathBuf {
 
 #[test]
 fn whole_event_scrub_covers_nested_fields() {
-    let _cleanup = GuardCleanup;
+    let _cleanup = GuardCleanup::lock();
     let secret = "NESTED_SECRET_MEMORY_abc123";
     register_sensitive_text(secret);
     let ctx = ScrubContext::from_environment("test-install-nested")
@@ -64,7 +78,7 @@ fn whole_event_scrub_covers_nested_fields() {
 
 #[test]
 fn crash_scrubber_strips_secret_query_paths_username_and_hostname() {
-    let _cleanup = GuardCleanup;
+    let _cleanup = GuardCleanup::lock();
     let secret = "MEMOS_SECRET_MEMORY_TOKEN_xyz789";
     let search_query = "project_apollo_confidential_roadmap";
     let install_id = "test-install-0000-1111-2222-333333333333";
@@ -187,7 +201,7 @@ fn crash_scrubber_strips_secret_query_paths_username_and_hostname() {
 
 #[test]
 fn local_crash_report_works_offline_and_strips_sensitive_data() {
-    let _cleanup = GuardCleanup;
+    let _cleanup = GuardCleanup::lock();
     let dir = temp_dir("local-crash");
     let canary = "OFFLINE_PANIC_MEMORY_CANARY_424242";
     register_sensitive_text(canary);
