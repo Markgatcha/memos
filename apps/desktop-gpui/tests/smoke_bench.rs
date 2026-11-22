@@ -73,6 +73,10 @@ fn build_synthetic_store(path: &Path, node_count: usize, with_fts: bool) {
             entity TEXT NOT NULL,
             node_id TEXT NOT NULL
          );
+         CREATE INDEX idx_nodes_type ON nodes(type);
+         CREATE INDEX idx_nodes_namespace ON nodes(namespace);
+         CREATE INDEX idx_nodes_provenance ON nodes(provenance);
+         CREATE INDEX idx_node_tags_tag ON node_tags(tag);
          CREATE INDEX idx_nodes_recency_sort
             ON nodes(COALESCE(updated_at, created_at, 0) DESC, id DESC);",
     )
@@ -487,20 +491,33 @@ fn smoke_50k_nodes_resident_memory_under_200mb() {
     let _ = fs::remove_file(&db_path);
     build_synthetic_store(&db_path, 50_000, false);
 
+    let t_open = Instant::now();
     let store = ReadOnlyStore::open(&db_path).expect("open 50k db");
-    let overview = store.load_overview().expect("overview 50k");
-    assert_eq!(overview.node_count, 50_000);
+    let open_ms = t_open.elapsed().as_secs_f64() * 1000.0;
 
+    let t_fast_meta = Instant::now();
+    let (node_count, contradiction_ids) = store.load_list_fast_meta().expect("fast meta 50k");
+    let fast_meta_ms = t_fast_meta.elapsed().as_secs_f64() * 1000.0;
+    assert_eq!(node_count, 50_000);
+
+    let t_first_page = Instant::now();
     let page1 = store
         .query_nodes_page(
             &QueryFilter::default(),
-            &overview.contradiction_node_ids,
+            &contradiction_ids,
             None,
             LIST_PAGE_SIZE,
         )
         .expect("query 50k page 1");
+    let first_page_ms = t_first_page.elapsed().as_secs_f64() * 1000.0;
+    let first_list_page_ms = open_ms + fast_meta_ms + first_page_ms;
     assert_eq!(page1.items.len(), LIST_PAGE_SIZE);
     assert!(page1.has_more);
+
+    let t_overview = Instant::now();
+    let overview = store.load_overview().expect("overview 50k");
+    let overview_ms = t_overview.elapsed().as_secs_f64() * 1000.0;
+    assert_eq!(overview.node_count, 50_000);
     let page2 = store
         .query_nodes_page(
             &QueryFilter::default(),
@@ -518,10 +535,14 @@ fn smoke_50k_nodes_resident_memory_under_200mb() {
     if let Some(rss_bytes) = current_rss_bytes() {
         let rss_mb = rss_bytes as f64 / (1024.0 * 1024.0);
         println!(
-            "BENCH_50K: loaded_nodes={}, rss_mb={rss_mb:.2}",
+            "BENCH_50K: loaded_nodes={}, open_ms={open_ms:.2}, fast_meta_ms={fast_meta_ms:.2}, first_page_query_ms={first_page_ms:.2}, first_list_page_ms={first_list_page_ms:.2}, overview_ms={overview_ms:.2}, rss_mb={rss_mb:.2}",
             items.len()
         );
         if !cfg!(debug_assertions) {
+            assert!(
+                first_list_page_ms < 120.0,
+                "50k first list page exceeded 120 ms budget: {first_list_page_ms:.2} ms"
+            );
             assert!(
                 rss_mb < 120.0,
                 "Resident memory with 50,000 nodes exceeded 120 MB budget: {rss_mb:.2} MB"
