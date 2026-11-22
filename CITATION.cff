@@ -3,9 +3,10 @@ message: "If you use this software, please cite it as below."
 type: software
 title: "MemOS"
 version: "1.6.27"
+date-released: "2026-10-13"
 license: MIT
 repository-code: "https://github.com/Markgatcha/memos"
-description: "Universal, local-first, persistent memory layer for AI agents, LLM apps, and chatbots."
+abstract: "MemOS is a universal, local-first, persistent memory layer for AI agents, LLM applications, and chatbots. It stores memories in SQLite and exposes graph, semantic, and context-pack retrieval through SDK, CLI, and MCP interfaces."
 authors:
   - family-names: "Gatcha"
     given-names: "Mark"
