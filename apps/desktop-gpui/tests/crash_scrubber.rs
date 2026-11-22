@@ -19,11 +19,15 @@ use sentry::protocol::{
 // parallel test's cleanup cannot clear another test's registered secrets.
 static REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-struct GuardCleanup(std::sync::MutexGuard<'static, ()>);
+struct GuardCleanup {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
 
 impl GuardCleanup {
     fn new() -> Self {
-        Self(REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner()))
+        Self {
+            _guard: REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner()),
+        }
     }
 }
 
