@@ -41,6 +41,9 @@ modules:
         /app/share/icons/hicolor/512x512/apps/memos-desktop.png
       - install -Dm644 packaging/linux/io.github.Markgatcha.memos.metainfo.xml
         /app/share/metainfo/io.github.Markgatcha.memos.metainfo.xml
+      # Point launchable at the renamed (app-id) desktop entry inside Flatpak
+      - sed -i 's|memos-desktop.desktop|io.github.Markgatcha.memos.desktop|'
+        /app/share/metainfo/io.github.Markgatcha.memos.metainfo.xml
       - desktop-file-validate /app/share/applications/memos-desktop.desktop
       - appstreamcli validate --no-net --pedantic
         /app/share/metainfo/io.github.Markgatcha.memos.metainfo.xml || true

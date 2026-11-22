@@ -8,7 +8,7 @@
   <developer>
     <name>Mark Gatcha</name>
   </developer>
-  <launchable type="desktop-id">io.github.Markgatcha.memos.desktop</launchable>
+  <launchable type="desktop-id">memos-desktop.desktop</launchable>
   <description>
     <p>
       MemOS Desktop is a native GPUI application for browsing the MemOS

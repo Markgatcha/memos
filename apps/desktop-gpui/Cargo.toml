@@ -94,8 +94,8 @@ assets = [
 [package.metadata.generate-rpm.requires]
 libxkbcommon = "*"
 libxkbcommon-x11 = "*"
-wayland = "*"
-vulkan = "*"
+libwayland-client = "*"
+vulkan-loader = "*"
 fontconfig = "*"
 alsa-lib = "*"
 libxcb = "*"
