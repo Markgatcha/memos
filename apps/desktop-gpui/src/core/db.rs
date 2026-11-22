@@ -604,23 +604,37 @@ impl ReadOnlyStore {
                 vec![]
             });
         }
-        let sql = format!(
-            "SELECT COALESCE(NULLIF({col}, ''), ?1) AS val, COUNT(*) AS c \
-             FROM nodes GROUP BY val ORDER BY c DESC, val ASC LIMIT 250"
-        );
+        // Group by the raw column so SQLite can use its facet index; NULL and
+        // empty values are folded into the default facet after counting.
+        let sql = format!("SELECT {col}, COUNT(*) AS c FROM nodes GROUP BY {col}");
         let mut stmt = self
             .conn
             .prepare(&sql)
             .map_err(|e| DbError::from_sqlite(&e, false))?;
         let rows = stmt
-            .query_map([default_val], |row| {
-                Ok(FacetCount {
-                    name: row.get::<_, String>(0)?,
-                    count: row.get::<_, i64>(1)?.max(0) as usize,
-                })
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, i64>(1)?.max(0) as usize,
+                ))
             })
             .map_err(|e| DbError::from_sqlite(&e, false))?;
-        Ok(rows.filter_map(Result::ok).collect())
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for row in rows {
+            let (value, count) = row.map_err(|e| DbError::from_sqlite(&e, false))?;
+            let name = match value {
+                Some(value) if !value.is_empty() => value,
+                _ => default_val.to_string(),
+            };
+            *counts.entry(name).or_insert(0) += count;
+        }
+        let mut out: Vec<FacetCount> = counts
+            .into_iter()
+            .map(|(name, count)| FacetCount { name, count })
+            .collect();
+        out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
+        out.truncate(250);
+        Ok(out)
     }
 
     fn load_tag_counts(&self) -> Result<Vec<FacetCount>, DbError> {

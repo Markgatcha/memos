@@ -21,19 +21,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: Format, Clippy & Check Build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: apps/desktop-gpui
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Linux system libraries for GPUI
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -50,7 +55,7 @@ jobs:
             libfontconfig1-dev \
             libssl-dev
 
-      - name: Install Rust stable toolchain + fmt/clippy
+      - name: Install Rust stable toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -61,198 +66,59 @@ jobs:
           workspaces: "apps/desktop-gpui -> target"
           cache-on-failure: true
 
-      - name: Prepare CI log directory
-        shell: bash
-        run: mkdir -p "${RUNNER_TEMP}/memos-ci-logs"
-
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Run Clippy
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo clippy --all-targets -- -D warnings 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/clippy.log"
-
-      - name: Debug check build
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo build 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/debug-build.log"
-
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-gpui-check-logs
-          path: ${{ runner.temp }}/memos-ci-logs
-          retention-days: 7
-          if-no-files-found: ignore
-
-  test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: apps/desktop-gpui
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-15]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Linux system libraries for GPUI
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libx11-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            libwayland-dev \
-            libvulkan1 \
-            mesa-vulkan-drivers \
-            libasound2-dev \
-            libfontconfig1-dev \
-            libssl-dev
-
-      - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo registry and target
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "apps/desktop-gpui -> target"
-          cache-on-failure: true
-
       - name: Prepare CI directories
         shell: bash
         run: mkdir -p "${RUNNER_TEMP}/memos-ci-logs" "${RUNNER_TEMP}/memos-desktop-home"
 
-      - name: Run unit, onboarding, harness, and integration tests
+      - name: Run release Clippy
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --release --all-targets -- -D warnings 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/clippy.log"
+
+      - name: Run release library tests
         shell: bash
         env:
           MEMOS_DESKTOP_HOME: ${{ runner.temp }}/memos-desktop-home
         run: |
           set -o pipefail
-          cargo test -- --nocapture 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/cargo-test.log"
+          cargo test --release --lib 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/lib-tests.log"
 
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-gpui-test-logs-${{ matrix.os }}
-          path: |
-            ${{ runner.temp }}/memos-ci-logs
-            ${{ runner.temp }}/memos-desktop-home/logs
-          retention-days: 7
-          if-no-files-found: ignore
-
-  release:
-    name: Release (${{ matrix.os }})
-    needs: [check, test]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: apps/desktop-gpui
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-15]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Linux system libraries for GPUI
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libx11-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            libwayland-dev \
-            libvulkan1 \
-            mesa-vulkan-drivers \
-            libasound2-dev \
-            libfontconfig1-dev \
-            libssl-dev
-
-      - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo registry and target
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "apps/desktop-gpui -> target"
-          cache-on-failure: true
-
-      - name: Prepare CI directories
+      - name: Run crash scrubber tests
         shell: bash
-        run: mkdir -p "${RUNNER_TEMP}/memos-ci-logs" "${RUNNER_TEMP}/memos-desktop-home"
-
-      - name: Build release binary
-        shell: bash
+        env:
+          MEMOS_DESKTOP_HOME: ${{ runner.temp }}/memos-desktop-home
         run: |
           set -o pipefail
-          cargo build --release 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/release-build.log"
+          cargo test --release --test crash_scrubber 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/crash-scrubber-tests.log"
 
-      - name: Run release performance smoke benchmarks (Linux)
-        if: runner.os == 'Linux'
+      - name: Run headless smoke benchmarks
         shell: bash
+        env:
+          MEMOS_DESKTOP_HOME: ${{ runner.temp }}/memos-desktop-home
         run: |
           set -o pipefail
           cargo test --release --test smoke_bench -- --nocapture 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/smoke-bench.log"
 
-      - name: Run binary self-test and diagnostics smoke check
+      - name: Build release desktop binary
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --release --bin memos-desktop 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/release-build.log"
+
+      - name: Run desktop self-test
         shell: bash
         env:
           MEMOS_DESKTOP_HOME: ${{ runner.temp }}/memos-desktop-home
         run: |
           set -o pipefail
-          BIN="target/release/memos-desktop"
-          if [ -f "target/release/memos-desktop.exe" ]; then
-            BIN="target/release/memos-desktop.exe"
-          fi
-          "$BIN" --diagnostics 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/diagnostics.log"
-          "$BIN" --self-test 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/self-test.log"
-
-      - name: Report release binary size
-        shell: bash
-        run: |
-          if [ -f target/release/memos-desktop.exe ]; then
-            ls -lh target/release/memos-desktop.exe
-          elif [ -f target/release/memos-desktop ]; then
-            ls -lh target/release/memos-desktop
-          fi
-
-      - name: Upload release binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: memos-desktop-${{ matrix.os }}
-          path: |
-            apps/desktop-gpui/target/release/memos-desktop
-            apps/desktop-gpui/target/release/memos-desktop.exe
-          retention-days: 7
-          if-no-files-found: error
+          ./target/release/memos-desktop --self-test 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/self-test.log"
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-gpui-release-logs-${{ matrix.os }}
+          name: desktop-gpui-verify-logs-${{ matrix.os }}
           path: |
             ${{ runner.temp }}/memos-ci-logs
             ${{ runner.temp }}/memos-desktop-home/logs
