@@ -198,6 +198,7 @@ jobs:
         run: |
           choco install wixtoolset --yes --no-progress
           cargo install cargo-wix --locked
+          cargo build --release
           cargo wix init
           cargo wix --nocapture
 
