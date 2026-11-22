@@ -103,6 +103,7 @@ libxcb = "*"
 # Windows installer (`choco install wixtoolset`, `cargo install cargo-wix`, `cargo wix`)
 [package.metadata.wix]
 upgrade-guid = "032E3396-DAEF-48CF-85C3-500416DF6E2F"
+manufacturer = "Mark Gatcha"
 product-icon = "assets/memos-icon.ico"
 license = false
 
