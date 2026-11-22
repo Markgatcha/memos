@@ -257,6 +257,68 @@ pub fn tabular_nums() -> FontFeatures {
 }
 
 static ICON_FONT_FAMILY: OnceLock<Option<&'static str>> = OnceLock::new();
+static MONO_FONT_FAMILY: OnceLock<&'static str> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+const MONO_FONT_CANDIDATES: &[&str] = &["Cascadia Mono", "Consolas", "Courier New"];
+#[cfg(target_os = "macos")]
+const MONO_FONT_CANDIDATES: &[&str] = &["SF Mono", "Menlo", "Monaco", "Courier New"];
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+const MONO_FONT_CANDIDATES: &[&str] = &[
+    "JetBrains Mono",
+    "DejaVu Sans Mono",
+    "Liberation Mono",
+    "Noto Sans Mono",
+    "Ubuntu Mono",
+    "FreeMono",
+    "Courier New",
+];
+
+#[cfg(target_os = "windows")]
+const DEFAULT_MONO_FONT_FAMILY: &str = "Consolas";
+#[cfg(target_os = "macos")]
+const DEFAULT_MONO_FONT_FAMILY: &str = "Menlo";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+const DEFAULT_MONO_FONT_FAMILY: &str = "DejaVu Sans Mono";
+
+/// Choose the first installed monospace font from `candidates`, falling back to `fallback`.
+pub fn select_mono_font_family<'a>(
+    installed: &[String],
+    candidates: &[&'a str],
+    fallback: &'a str,
+) -> &'a str {
+    for &candidate in candidates {
+        if installed.iter().any(|name| name == candidate) {
+            return candidate;
+        }
+    }
+    fallback
+}
+
+/// Detect and cache the best installed monospace font for the current platform.
+pub fn init_mono_font_from_window(window: &Window) {
+    MONO_FONT_FAMILY.get_or_init(|| {
+        let names = window.text_system().all_font_names();
+        select_mono_font_family(&names, MONO_FONT_CANDIDATES, DEFAULT_MONO_FONT_FAMILY)
+    });
+}
+
+/// Return the resolved platform-native monospace font family.
+pub fn resolved_mono_font_family() -> &'static str {
+    MONO_FONT_FAMILY
+        .get()
+        .copied()
+        .unwrap_or(DEFAULT_MONO_FONT_FAMILY)
+}
+
+/// Format a primary-modifier shortcut label for the current platform (`⌘K` on macOS, `Ctrl+K` elsewhere).
+pub fn primary_shortcut_label(key: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("⌘{key}")
+    } else {
+        format!("Ctrl+{key}")
+    }
+}
 
 /// Detect and cache the native Windows icon font family (`Segoe Fluent Icons` or `Segoe MDL2 Assets`).
 pub fn init_icon_font_from_window(window: &Window) {
@@ -541,6 +603,8 @@ pub fn register_input_key_bindings(cx: &mut App) {
         KeyBinding::new("cmd-v", Paste, Some("TextInput")),
         KeyBinding::new("cmd-c", Copy, Some("TextInput")),
         KeyBinding::new("cmd-x", Cut, Some("TextInput")),
+        KeyBinding::new("cmd-left", Home, Some("TextInput")),
+        KeyBinding::new("cmd-right", End, Some("TextInput")),
     ];
     #[cfg(not(target_os = "macos"))]
     let platform_bindings = [
@@ -1881,5 +1945,24 @@ mod tests {
             assert!(!ui_icon_glyph(icon, true).is_empty());
             assert!(!ui_icon_glyph(icon, false).is_empty());
         }
+    }
+
+    #[test]
+    fn select_mono_font_prefers_first_installed_candidate_and_falls_back() {
+        let installed = vec![
+            "Inter".to_string(),
+            "Menlo".to_string(),
+            "Monaco".to_string(),
+        ];
+        assert_eq!(
+            select_mono_font_family(&installed, &["SF Mono", "Menlo", "Monaco"], "Courier New"),
+            "Menlo"
+        );
+        assert_eq!(
+            select_mono_font_family(&[], &["SF Mono", "Menlo"], "Menlo"),
+            "Menlo"
+        );
+        assert!(!resolved_mono_font_family().is_empty());
+        assert!(!primary_shortcut_label("K").is_empty());
     }
 }

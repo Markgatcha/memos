@@ -52,8 +52,9 @@ use crate::ui::views::palette::{CommandPalette, PaletteAction, PaletteEvent};
 use crate::ui::views::review::{ReviewEvent, ReviewLoadError, ReviewView};
 use crate::ui::views::sidebar::{SidebarEvent, SidebarSurface, SidebarView};
 use crate::ui::views::{
-    InputEvent, TextInput, ThemePalette, UiIcon, init_icon_font_from_window, keycap,
-    register_input_key_bindings, render_ui_icon, render_vertical_scroll_overlay, status_dot,
+    InputEvent, TextInput, ThemePalette, UiIcon, init_icon_font_from_window,
+    init_mono_font_from_window, keycap, primary_shortcut_label, register_input_key_bindings,
+    render_ui_icon, render_vertical_scroll_overlay, resolved_mono_font_family, status_dot,
     tabular_nums, tooltip_view,
 };
 
@@ -66,7 +67,9 @@ actions!(
         FocusSearch,
         SwitchToList,
         SwitchToGraph,
-        ToggleTheme
+        ToggleTheme,
+        OpenSettings,
+        QuitApp
     ]
 );
 
@@ -210,6 +213,7 @@ pub struct LaunchOptions {
 
 pub fn register_app_key_bindings(cx: &mut App) {
     register_input_key_bindings(cx);
+    cx.on_action(|_: &QuitApp, cx| cx.quit());
 
     #[cfg(target_os = "macos")]
     cx.bind_keys([
@@ -217,6 +221,8 @@ pub fn register_app_key_bindings(cx: &mut App) {
         KeyBinding::new("cmd-f", FocusSearch, None),
         KeyBinding::new("cmd-1", SwitchToList, None),
         KeyBinding::new("cmd-2", SwitchToGraph, None),
+        KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("cmd-q", QuitApp, None),
     ]);
 
     #[cfg(not(target_os = "macos"))]
@@ -225,6 +231,7 @@ pub fn register_app_key_bindings(cx: &mut App) {
         KeyBinding::new("ctrl-f", FocusSearch, None),
         KeyBinding::new("ctrl-1", SwitchToList, None),
         KeyBinding::new("ctrl-2", SwitchToGraph, None),
+        KeyBinding::new("ctrl-,", OpenSettings, None),
     ]);
 }
 
@@ -457,6 +464,7 @@ impl MemOSApp {
         cx: &mut Context<Self>,
     ) -> Self {
         init_icon_font_from_window(window);
+        init_mono_font_from_window(window);
         let theme = ThemePalette::resolve(settings.theme, window.appearance());
         sync_win32_titlebar(window, theme);
         let effective_no_fun = prefers_reduced_motion(options.no_fun);
@@ -617,8 +625,11 @@ impl MemOSApp {
         subs.push(cx.subscribe_in(
             &brief_view,
             window,
-            |this, _, event, _window, cx| match event {
-                BriefEvent::OpenMemory(id) => this.select_memory(id.clone(), false, cx),
+            |this, _, event, window, cx| match event {
+                BriefEvent::OpenMemory(id) => {
+                    this.select_memory(id.clone(), false, cx);
+                    window.focus(&this.focus_handle, cx);
+                }
                 BriefEvent::ViewAll(section) => this.open_brief_section_in_list(*section, cx),
                 BriefEvent::ViewAllMemories => {
                     this.active_surface = WorkspaceSurface::Memories;
@@ -636,7 +647,10 @@ impl MemOSApp {
             window,
             |this, _, event, window, cx| match event {
                 ReviewEvent::Refresh => this.refresh_review_view(cx),
-                ReviewEvent::OpenMemory(id) => this.select_memory(id.clone(), false, cx),
+                ReviewEvent::OpenMemory(id) => {
+                    this.select_memory(id.clone(), false, cx);
+                    window.focus(&this.focus_handle, cx);
+                }
                 ReviewEvent::Approve(id) => this.execute_review_decision(id.clone(), true, cx),
                 ReviewEvent::Reject(id) => this.execute_review_decision(id.clone(), false, cx),
                 ReviewEvent::OpenSettings => this.open_settings_modal(window, cx),
@@ -678,7 +692,10 @@ impl MemOSApp {
             &list_view,
             window,
             |this, _, event, window, cx| match event {
-                ListEvent::Select(id) => this.select_memory(id.clone(), false, cx),
+                ListEvent::Select(id) => {
+                    this.select_memory(id.clone(), false, cx);
+                    window.focus(&this.focus_handle, cx);
+                }
                 ListEvent::Highlight(id) => {
                     this.selected_id = Some(id.clone());
                     this.graph_view
@@ -756,12 +773,18 @@ impl MemOSApp {
             &detail_view,
             window,
             |this, _, event, window, cx| match event {
-                DetailEvent::SelectMemory(id) => this.select_memory(id.clone(), true, cx),
+                DetailEvent::SelectMemory(id) => {
+                    this.select_memory(id.clone(), true, cx);
+                    window.focus(&this.focus_handle, cx);
+                }
                 DetailEvent::RevealInGraph(id) => this.reveal_in_graph(id.clone(), cx),
                 DetailEvent::PreviewContext => this.open_selected_context_modal(window, cx),
                 DetailEvent::EditSelected => this.open_edit_memory_composer(window, cx),
                 DetailEvent::ForgetSelected => this.open_forget_confirm(cx),
-                DetailEvent::Close => this.close_detail(cx),
+                DetailEvent::Close => {
+                    this.close_detail(cx);
+                    window.focus(&this.focus_handle, cx);
+                }
             },
         ));
 
@@ -895,13 +918,14 @@ impl MemOSApp {
         subs.push(cx.subscribe_in(
             &graph_view,
             window,
-            |this, _, event, _window, cx| match event {
+            |this, _, event, window, cx| match event {
                 GraphEvent::SwitchMode(mode) => {
                     this.graph_mode = *mode;
                     this.spawn_graph_load(cx);
                 }
                 GraphEvent::SelectMemory(id) => {
                     this.select_memory(id.clone(), true, cx);
+                    window.focus(&this.focus_handle, cx);
                 }
                 GraphEvent::Hover(hovered_id) => {
                     this.sync_linked_hover(HoverOrigin::Graph, hovered_id.clone(), cx);
@@ -4065,7 +4089,7 @@ impl MemOSApp {
                             .bg(theme.bg_sunken)
                             .border_1()
                             .border_color(theme.border_subtle)
-                            .font_family("Consolas")
+                            .font_family(resolved_mono_font_family())
                             .text_size(px(11.))
                             .text_color(theme.text_muted)
                             .truncate()
@@ -4698,7 +4722,7 @@ impl MemOSApp {
                                     .gap(px(4.))
                                     .child(
                                         div()
-                                            .font_family("Consolas")
+                                            .font_family(resolved_mono_font_family())
                                             .text_size(px(11.))
                                             .text_color(theme.text_muted)
                                             .child(SharedString::from(format!(
@@ -5276,6 +5300,10 @@ impl MemOSApp {
 
     fn on_toggle_theme(&mut self, _: &ToggleTheme, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_theme(window, cx);
+    }
+
+    fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_settings_modal(window, cx);
     }
 
     fn render_consent_modal(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -7756,7 +7784,7 @@ impl MemOSApp {
                             div()
                                 .text_size(px(12.))
                                 .text_color(theme.text_muted)
-                                .child("Ctrl+K"),
+                                .child(primary_shortcut_label("K")),
                         )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.show_overflow_menu = false;
@@ -8050,7 +8078,7 @@ impl MemOSApp {
                                                     .py(px(1.))
                                                     .rounded(px(4.))
                                                     .bg(theme.bg_elevated)
-                                                    .font_family("Consolas")
+                                                    .font_family(resolved_mono_font_family())
                                                     .text_size(px(11.))
                                                     .text_color(theme.text_secondary)
                                                     .child(format!("[mem:{}]", entry.short_id)),
@@ -8198,6 +8226,7 @@ impl MemOSApp {
             ("Focus search", vec![mod_prefix, "F", "/"]),
             ("List view", vec![mod_prefix, "1"]),
             ("Graph view", vec![mod_prefix, "2"]),
+            ("Settings", vec![mod_prefix, ","]),
             ("Keyboard shortcuts", vec!["?"]),
         ];
 
@@ -8407,7 +8436,7 @@ impl MemOSApp {
                             .track_scroll(&self.context_scroll)
                             .p(px(12.))
                             .pr(px(16.))
-                            .font_family("Consolas")
+                            .font_family(resolved_mono_font_family())
                             .text_size(px(12.))
                             .line_height(gpui::relative(1.45))
                             .text_color(theme.text_primary)
@@ -8863,6 +8892,7 @@ impl Render for MemOSApp {
                 .on_action(cx.listener(Self::on_switch_list))
                 .on_action(cx.listener(Self::on_switch_graph))
                 .on_action(cx.listener(Self::on_toggle_theme))
+                .on_action(cx.listener(Self::on_open_settings))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, event: &MouseDownEvent, _, cx| {
