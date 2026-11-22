@@ -13,6 +13,7 @@ use crate::core::model::{
     TableSummary, TamperReceipt, WriterSchemaPreflight, citation_token, make_single_line_preview,
     parse_citation_prefix, short_citation_id,
 };
+use crate::core::write_bridge::ReviewQueueItem;
 
 pub const DEFAULT_GRAPH_NODE_CAP: usize = 2_000;
 
@@ -858,8 +859,13 @@ impl ReadOnlyStore {
                 ));
                 params.push(SqlValue::Text(tag.to_string()));
             } else if self.schema.has_col("nodes", "tags") {
-                conds.push(format!("{alias}.tags LIKE ?"));
-                params.push(SqlValue::Text(format!("%\"{tag}\"%")));
+                // Legacy stores predate `node_tags`: match the JSON array
+                // exactly instead of LIKE, which is case-insensitive and
+                // treats `%`/`_` as wildcards.
+                conds.push(format!(
+                    "EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid({alias}.tags) THEN {alias}.tags ELSE '[]' END) je WHERE je.value = ?)"
+                ));
+                params.push(SqlValue::Text(tag.to_string()));
             }
         }
 
@@ -1037,7 +1043,9 @@ impl ReadOnlyStore {
         } else if self.schema.has_col("nodes", "created_at") {
             format!("COALESCE({alias}.created_at, 0)")
         } else {
-            format!("{alias}.rowid")
+            // No time axis at all: order and page by the same id expression
+            // the cursor uses, otherwise page two compares against 0.
+            self.id_sort_col(alias)
         }
     }
 
@@ -1089,6 +1097,13 @@ impl ReadOnlyStore {
         let id_col = self.id_sort_col(alias);
         match sort {
             SortOrder::Recency => {
+                if !self.schema.has_col("nodes", "updated_at")
+                    && !self.schema.has_col("nodes", "created_at")
+                {
+                    conds.push(format!("{id_col} < ?"));
+                    params.push(SqlValue::Text(c.id.clone()));
+                    return;
+                }
                 let col = self.updated_sort_col(alias);
                 conds.push(format!("({col} < ? OR ({col} = ? AND {id_col} < ?))"));
                 params.push(SqlValue::Integer(c.updated_at));
@@ -2709,26 +2724,150 @@ impl ReadOnlyStore {
         Ok((items, total_matching))
     }
 
+    /// SQL predicate shared by the review count and the read-only review queue.
+    fn review_pending_predicate(&self, alias: &str) -> Option<String> {
+        let mut parts = Vec::new();
+        if self.schema.has_col("nodes", "metadata") {
+            parts.push(format!(
+                "({alias}.metadata LIKE '%\"reviewStatus\":\"pending\"%' OR {alias}.metadata LIKE '%\"reviewStatus\": \"pending\"%')"
+            ));
+        }
+        if self.schema.has_col("nodes", "quarantine_reason") {
+            parts.push(format!("{alias}.quarantine_reason = 'review:pending'"));
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" OR "))
+        }
+    }
+
     /// Count memories awaiting approval (`reviewStatus == 'pending'` / `review:pending`).
     pub fn count_pending_review(&self) -> Result<usize, DbError> {
         if !self.schema.has_table("nodes") {
             return Ok(0);
         }
-        let mut parts = Vec::new();
-        if self.schema.has_col("nodes", "metadata") {
-            parts.push(
-                "(nodes.metadata LIKE '%\"reviewStatus\":\"pending\"%' OR nodes.metadata LIKE '%\"reviewStatus\": \"pending\"%')"
-                    .to_string(),
-            );
+        let Some(predicate) = self.review_pending_predicate("nodes") else {
+            return Ok(0);
+        };
+        let sql = format!("SELECT COUNT(*) FROM nodes WHERE {predicate}");
+        self.exec_count_query(&sql, Vec::new())
+    }
+
+    /// List agent-queued memories awaiting approval straight from SQLite.
+    ///
+    /// Listing never needs the MCP writer, so the Review pane can show what is
+    /// waiting while the app is still read-only. Approve/reject stay gated.
+    pub fn load_pending_review(&self, limit: usize) -> Result<Vec<ReviewQueueItem>, DbError> {
+        if !self.schema.has_table("nodes") || limit == 0 {
+            return Ok(Vec::new());
         }
-        if self.schema.has_col("nodes", "quarantine_reason") {
-            parts.push("nodes.quarantine_reason = 'review:pending'".to_string());
+        let Some(predicate) = self.review_pending_predicate("n") else {
+            return Ok(Vec::new());
+        };
+        let id_expr = self.schema.node_col_expr("n", "id", "CAST(n.rowid AS TEXT)");
+        let content_expr = self.schema.node_col_expr("n", "content", "''");
+        let summary_expr = self.schema.node_col_expr("n", "summary", "''");
+        let type_expr = self.schema.node_col_expr("n", "type", "'fact'");
+        let ns_expr = self.schema.node_col_expr("n", "namespace", "'default'");
+        let created_expr = self.schema.node_col_expr("n", "created_at", "0");
+        let reason_expr = if self.schema.has_col("nodes", "quarantine_reason") {
+            "n.quarantine_reason".to_string()
+        } else {
+            "''".to_string()
+        };
+        let sql = format!(
+            "SELECT {id_expr}, {content_expr}, {summary_expr}, {type_expr}, {ns_expr}, \
+                    {created_expr}, {reason_expr} \
+             FROM nodes n WHERE {predicate} ORDER BY {created_expr} DESC LIMIT ?1"
+        );
+        let mut stmt = self
+            .conn
+            .prepare_cached(&sql)
+            .map_err(|e| DbError::from_sqlite(&e, false))?;
+        let mut rows = stmt
+            .query(rusqlite::params![limit as i64])
+            .map_err(|e| DbError::from_sqlite(&e, false))?;
+        let mut items = Vec::with_capacity(limit.min(64));
+        while let Some(row) = rows.next().map_err(|e| DbError::from_sqlite(&e, false))? {
+            let id: String = get_string(row, 0);
+            let content: String = get_string(row, 1);
+            let summary: String = get_string(row, 2);
+            let node_type: String = get_string(row, 3);
+            let namespace: String = get_string(row, 4);
+            let created_at: i64 = row.get(5).unwrap_or(0);
+            let reason: String = get_string(row, 6);
+            let preview_source = if summary.trim().is_empty() {
+                content.as_str()
+            } else {
+                summary.as_str()
+            };
+            items.push(ReviewQueueItem {
+                short_id: short_citation_id(&id),
+                preview: make_single_line_preview(preview_source, 180),
+                content: content.chars().take(4_000).collect(),
+                node_type,
+                namespace,
+                created_at,
+                confidence: None,
+                reason: {
+                    let reason = reason.trim();
+                    // `review:pending` is the queue's own marker, not a reason
+                    // worth repeating on every row.
+                    if reason.is_empty() || reason == "review:pending" {
+                        None
+                    } else {
+                        Some(reason.to_string())
+                    }
+                },
+                id,
+            });
         }
-        if parts.is_empty() {
+        Ok(items)
+    }
+
+    /// Distinct nodes matching any Today section. Used for the nav badge so
+    /// a memory that is both new and worth-reviewing counts once.
+    fn count_brief_unique_nodes(&self, now_ms: i64) -> Result<usize, DbError> {
+        const ONE_DAY_MS: i64 = 86_400_000;
+        const SEVEN_DAYS_MS: i64 = 7 * 86_400_000;
+        let day_ago = now_ms.saturating_sub(ONE_DAY_MS);
+        let week_ahead = now_ms.saturating_add(SEVEN_DAYS_MS);
+        let filters = [
+            QueryFilter {
+                created_after_ms: Some(day_ago),
+                ..Default::default()
+            },
+            QueryFilter {
+                updated_not_new_after_ms: Some(day_ago),
+                ..Default::default()
+            },
+            QueryFilter {
+                expiring_window_ms: Some((now_ms, week_ahead)),
+                ..Default::default()
+            },
+            QueryFilter {
+                needs_review_only: true,
+                ..Default::default()
+            },
+        ];
+        let mut unions = Vec::new();
+        let mut params = Vec::new();
+        for filter in &filters {
+            let mut conds = Vec::new();
+            self.build_filter_where("n", filter, &mut conds, &mut params);
+            if !conds.is_empty() {
+                unions.push(format!(
+                    "SELECT n.id FROM nodes n WHERE {}",
+                    conds.join(" AND ")
+                ));
+            }
+        }
+        if unions.is_empty() {
             return Ok(0);
         }
-        let sql = format!("SELECT COUNT(*) FROM nodes WHERE {}", parts.join(" OR "));
-        self.exec_count_query(&sql, Vec::new())
+        let sql = format!("SELECT COUNT(*) FROM ({})", unions.join(" UNION "));
+        self.exec_count_query(&sql, params)
     }
 
     /// Load the pure SQLite Today / Brief snapshot (`now_ms - 24h`, upcoming 7d expirations,
@@ -2812,6 +2951,10 @@ impl ReadOnlyStore {
                 .max(needs_review_items.len())
         };
 
+        let unique_count = self
+            .count_brief_unique_nodes(now_ms)?
+            .saturating_add(contradiction_count);
+
         Ok(BriefSnapshot {
             now_ms,
             new_items,
@@ -2824,6 +2967,7 @@ impl ReadOnlyStore {
             contradiction_count,
             needs_review_items,
             needs_review_count,
+            unique_count,
         })
     }
 
@@ -2973,7 +3117,9 @@ impl ReadOnlyStore {
         if let Some(prefix) = parse_citation_prefix(trimmed_query)
             && self.schema.has_col("nodes", "id")
         {
-            conds.push("LOWER(n.id) LIKE LOWER(?)".to_string());
+            // Must match `query_nodes_by_citation_prefix` exactly, including
+            // stripping dashes from UUID ids.
+            conds.push("REPLACE(LOWER(n.id), '-', '') LIKE ?".to_string());
             params.push(SqlValue::Text(format!("{prefix}%")));
             let sql = format!("SELECT COUNT(*) FROM nodes n WHERE {}", conds.join(" AND "));
             return self.exec_count_query(&sql, params);
@@ -3437,6 +3583,162 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(detail.citation_token, "[mem:a3f9]");
+
+        drop(store);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn lists_pending_review_from_sqlite_without_the_writer() {
+        let tmp = env::temp_dir().join(format!("memos-review-{}.db", Uuid::new_v4()));
+        {
+            let rw = Connection::open(&tmp).unwrap();
+            rw.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT 'fact',
+                    namespace TEXT NOT NULL DEFAULT 'default',
+                    created_at INTEGER NOT NULL,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    quarantine_reason TEXT
+                 );
+                 INSERT INTO nodes (id, content, type, namespace, created_at, metadata) VALUES
+                   ('11111111-0000-4000-8000-000000000001', 'queued by an agent', 'decision', 'work', 1700000000000,
+                    '{\"reviewStatus\":\"pending\"}'),
+                   ('22222222-0000-4000-8000-000000000002', 'queued with spacing', 'fact', 'personal', 1700000001000,
+                    '{\"reviewStatus\": \"pending\"}');
+                 INSERT INTO nodes (id, content, created_at) VALUES
+                   ('33333333-0000-4000-8000-000000000003', 'already settled', 1700000002000);",
+            )
+            .unwrap();
+        }
+
+        let store = ReadOnlyStore::open(&tmp).expect("open read-only");
+        assert_eq!(store.count_pending_review().unwrap(), 2);
+
+        let items = store.load_pending_review(10).unwrap();
+        assert_eq!(items.len(), 2);
+        // Newest first, previews usable, and no MCP writer involved.
+        assert_eq!(items[0].id, "22222222-0000-4000-8000-000000000002");
+        assert_eq!(items[0].preview, "queued with spacing");
+        assert_eq!(items[0].short_id, "2222");
+        assert_eq!(items[1].namespace, "work");
+        assert!(store.load_pending_review(0).unwrap().is_empty());
+
+        drop(store);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn legacy_tag_filter_matches_json_exactly_without_node_tags() {
+        let tmp = env::temp_dir().join(format!("memos-legacy-tags-{}.db", Uuid::new_v4()));
+        {
+            let rw = Connection::open(&tmp).unwrap();
+            rw.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT 'fact',
+                    tags TEXT NOT NULL DEFAULT '[]',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                 );
+                 INSERT INTO nodes (id, content, tags, created_at, updated_at) VALUES
+                   ('11111111-0000-4000-8000-000000000001', 'has rust', '[\"rust\",\"gpui\"]', 1700000000000, 1700000000000),
+                   ('22222222-0000-4000-8000-000000000002', 'different tag', '[\"rust-lang\"]', 1700000001000, 1700000001000),
+                   ('33333333-0000-4000-8000-000000000003', 'percent tag', '[\"100%\"]', 1700000002000, 1700000002000);",
+            )
+            .unwrap();
+        }
+
+        let store = ReadOnlyStore::open(&tmp).expect("open legacy store");
+        assert!(!store.schema().has_table("node_tags"));
+
+        let exact = store
+            .query_nodes(
+                &QueryFilter {
+                    tag: Some("rust".to_string()),
+                    ..Default::default()
+                },
+                &HashSet::new(),
+                10,
+            )
+            .expect("exact tag");
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].short_id.as_ref(), "1111");
+        assert_eq!(
+            store
+                .count_matching_nodes(&QueryFilter {
+                    tag: Some("rust".to_string()),
+                    ..Default::default()
+                })
+                .unwrap(),
+            1
+        );
+
+        // LIKE wildcards must be literal here.
+        let percent = store
+            .query_nodes(
+                &QueryFilter {
+                    tag: Some("100%".to_string()),
+                    ..Default::default()
+                },
+                &HashSet::new(),
+                10,
+            )
+            .expect("percent tag");
+        assert_eq!(percent.len(), 1);
+
+        drop(store);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn keyset_pagination_works_without_timestamp_columns() {
+        let tmp = env::temp_dir().join(format!("memos-no-ts-{}.db", Uuid::new_v4()));
+        {
+            let rw = Connection::open(&tmp).unwrap();
+            rw.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL
+                 );
+                 INSERT INTO nodes (id, content) VALUES
+                   ('a', 'first'), ('b', 'second'), ('c', 'third');",
+            )
+            .unwrap();
+        }
+
+        let store = ReadOnlyStore::open(&tmp).expect("open legacy store");
+        let filter = QueryFilter {
+            sort: SortOrder::Recency,
+            ..Default::default()
+        };
+        let page1 = store
+            .query_nodes_page(&filter, &HashSet::new(), None, 2)
+            .expect("page 1");
+        assert_eq!(page1.items.len(), 2);
+        assert!(page1.has_more);
+        let page2 = store
+            .query_nodes_page(
+                &filter,
+                &HashSet::new(),
+                page1.next_cursor.as_ref(),
+                2,
+            )
+            .expect("page 2");
+        assert_eq!(page2.items.len(), 1);
+        assert!(!page2.has_more);
+        let all: HashSet<&str> = page1
+            .items
+            .iter()
+            .chain(page2.items.iter())
+            .map(|i| i.id.as_str())
+            .collect();
+        assert_eq!(all.len(), 3, "pages must not duplicate rows");
 
         drop(store);
         let _ = std::fs::remove_file(&tmp);

@@ -72,7 +72,9 @@ fn build_synthetic_store(path: &Path, node_count: usize, with_fts: bool) {
          CREATE TABLE entity_index (
             entity TEXT NOT NULL,
             node_id TEXT NOT NULL
-         );",
+         );
+         CREATE INDEX idx_nodes_recency_sort
+            ON nodes(COALESCE(updated_at, created_at, 0) DESC, id DESC);",
     )
     .expect("create schema");
 

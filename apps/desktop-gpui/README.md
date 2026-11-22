@@ -56,15 +56,15 @@ Per-platform notes:
 
 When `settings.onboarding_completed` is `false`, MemOS Desktop launches directly into a native 2-step GPUI onboarding flow (`1100×720`, minimum `900×600`, keyboard-navigable with `Tab`/`Shift-Tab`, `Enter`/`Space`, and `Esc` to step backward):
 
-1. **Database (`1/2`)** — Auto-detects `MEMOS_DB` / `~/.memos/memos.db`. Displays the path and node/edge counts when found; otherwise shows `memos init`, a **Copy** button, **Retry**, and a native **Browse…** file picker (`rfd`). Selected files are validated asynchronously off the UI thread (read-only SQLite + `nodes` table check, guarded by a generation counter) with inline errors if invalid.
+1. **Database (`1/2`)** — Auto-detects `MEMOS_DB` / `~/.memos/memos.db`. Displays the path and node/edge counts when found. When it is missing, **Create memory store** writes the canonical SDK schema at that path (no Node or CLI required) and re-probes; the `memos init` command remains available as a secondary copy action, alongside **Browse…** and **Retry**. Selected files are validated asynchronously off the UI thread (read-only SQLite + `nodes` table check, guarded by a generation counter) with inline errors if invalid.
 2. **Ready (`2/2`)** — Live **System** / **Light** / **Dark** theme, **List** / **Graph** default view, and the opt-in crash-reporting toggle (**OFF** by default), finishing into the main window.
 
-Settings persist atomically (temporary file write + rename) to `settings.json` inside the platform config dir or `$MEMOS_DESKTOP_HOME`. If the chosen database opens with `0` memories, the main window displays an empty state with exact `memos store` and `memos mcp` copyable commands.
+Settings persist atomically (temporary file write + rename) to `settings.json` inside the platform config dir or `$MEMOS_DESKTOP_HOME`. If the chosen database opens with `0` memories, the main window displays an empty state with exact `memos store` and `memos mcp` copyable commands. **Optimize store** in Settings adds any missing read-path indexes (recency, provenance, …) to an existing store; it is a non-destructive, idempotent DDL action and the only SQLite write besides creating a new store.
 
 ## Surfaces
 
 - **Today / Brief (`Today`).** A pure-SQLite daily digest listing `New`, `Changed`, `Expiring`, `Contradictions`, and `Needs attention` entries with live sidebar badge counts, `View all →` section filters, keyboard navigation, and an empty state (`"Nothing changed in the last 24 hours"`). The `New` and `Changed` sections cover the last 24 hours; contradiction and attention sections are standing issues.
-- **Review queue (`Review`).** Lists candidate memories from `memos_review` (`list`) with type, namespace, age, confidence, and reason **only when Write mode (MCP) is enabled**. Read-only mode shows an `"Enable write mode to review"` banner and never starts the writer, so opening Review cannot mutate the store. If the configured writer exposes fewer tools (e.g. a `24`-tool build missing `memos_review`), Review shows a clear capability card with **Settings** and **Retry** actions instead of a raw RPC error or false empty state. A `42`-tool writer unlocks per-row **Approve** / **Reject** actions that update the store and Store Health live.
+- **Review queue (`Review`).** Lists candidate memories pending approval straight from SQLite in read-only mode (no writer process), with type, namespace, age and reason. Approve/Reject are gated: read-only shows an `"Turn on editing to approve"` banner and never starts the writer, while enabling **Write mode (MCP)** unlocks the actions. Reject is a two-step inline confirm. If the configured writer exposes fewer tools (e.g. a `24`-tool build missing `memos_review`), write-mode Review shows a clear capability card with **Settings** and **Retry** actions instead of a raw RPC error or false empty state.
 - **Opt-in MCP writing, capability preflight & Ingest.** Disabled by default so the app opens strictly read-only. Turning on **Write mode (MCP)** in Settings runs a schema preflight (`WriterSchemaPreflight`) and connects via `server/discover` + `_meta` (`MCP 2026-07-28`, falling back to legacy `initialize` `2025-11-25` only if unsupported). Settings auto-detects local CLIs (`memos` on `PATH` -> repo `dist/cli.js mcp` -> `npx -y @mem-os/sdk mcp`) with a **Use local CLI** button, **Test connection** summary (`Connected · MCP 2026-07-28 · 42 tools · review ✓`), and footer state (`Read-only` / `Write mode enabled (MCP ...)`). Older stores missing required write columns/tables keep write mode off cleanly with human migration guidance; compatible stores unlock header **Ingest** (gated on `memos_ingest`; modal with native folder picker, `documents`/`default` presets, extensions, chunk size, recursive toggle, and `Added`/`Updated`/`Unchanged`/`Removed`/`Skipped`/`Errors`/`Chunks` summary) and **New memory** CTAs, multiline composer modal, **Edit** (`memos_store` + `memos_supersede`), **Forget** confirmation modal, **Review** approvals, palette write commands, and automatic store reload. Errors map raw SQLite/MCP strings into short actionable messages inside a non-blocking banner with **Retry** and **Settings**.
 - **Search scopes & Keyset pagination.** The search bar (`"Search memories · type: tag: ns:"`) promotes `type:`, `tag:`, `ns:`, `provenance:`, `has:contradiction`, `is:stale`, `after:YYYY-MM-DD`, `trust:<N`, and `is:quarantined` tokens into removable filter pills (`Backspace` on empty input or click `×`). Results load in keyset-paginated batches (`500` initial + `250` per page) with `showing N of total` in the list header until the tail is reached.
 - **Warm obsidian surface & Store Card.** Dark mode uses warm obsidian surfaces (`#12100E` app, `#1A1714` panel, `#221E1A` elevated, `#2E2823` hairlines, `#E8E1D5` text, `#C97B4A` accent) unified with the warm light theme. Above the list, a two-line page header (`STORE / ALL`, active view title, tabular summary with `last write <age>`, right-aligned **Filter** / **Sort**) pairs with a fixed sidebar **Store card** showing total memories, 0–100 health score bar, and **Open health →**.
@@ -78,7 +78,7 @@ Settings persist atomically (temporary file write + rename) to `settings.json` i
 - **Dream diff.** A read-only timeline of promotions, merges, decays, contradictions, and updates derived from the tamper log.
 - **Live memory strip.** New writes detected by the WAL watcher appear without replacing the active selection, with **Jump to newest** and **Refresh**.
 - **Receipts and provenance.** Trust, importance, read count, origin, causal lineage, and tamper-log entries with chain hashes.
-- **Keyboard and accessibility.** `j`/`k` and arrows move across List, Today, and Review, `Enter` opens Detail, `Esc` closes modals/popovers, `Home`/`End` jump, `?` opens the shortcut sheet. Rows, sidebar views, palette rows, tabs, and modal buttons expose AccessKit roles and labels.
+- **Keyboard and accessibility.** `j`/`k` and arrows move across List, Today, Review and Graph (Graph: arrows step through nodes, `Home`/`End` jump, `Enter` opens Detail), `Esc` closes modals/popovers, `?` opens the shortcut sheet. Rows, sidebar views, palette rows, tabs, and modal buttons expose AccessKit roles and labels. Closing the command palette restores the focus you had before opening it.
 
 ## Database Path Resolution
 
@@ -88,7 +88,7 @@ MemOS Desktop resolves the target database path in strict order:
 2. `MEMOS_DB` environment variable
 3. `~/.memos/memos.db` (`%USERPROFILE%\.memos\memos.db` on Windows)
 
-If the database file does not exist yet, the UI displays an explicit empty state with the resolved path and the CLI command (`memos init`) to create one.
+If the database file does not exist yet, the UI displays an explicit empty state with the resolved path and a **Create memory store** button that writes the canonical schema in place; it also offers Retry and the `memos init` command as a secondary path.
 
 All SQLite connections enforce:
 
@@ -108,8 +108,9 @@ Measured on Windows x86_64 against synthetic 10k/50k stores (`cargo test --relea
 | CLI `memos list --limit 20` warm wall time (0.1.0 pass) | `19.31–19.82 ms` | `< 30 ms` |
 | First frame, warm (0.1.0 pass, 5 runs) | `147.13–163.26 ms` | `< 400 ms` |
 | DB startup (open + overview + 500-row page), 10k store | `49.87 ms` | — |
+| First list page, 50k store, two-phase startup (2026-11-20) | `93–96 ms` list; `~257 ms` for facets/health in phase two | `< 200 ms` list |
 | FTS5 search p50 / p95 (warm) & cold-cache p95, 10k store | `5.40 ms` / `10.89 ms` (`9.59 ms` cold) | `< 30 ms` warm / `< 60 ms` cold |
-| RSS, 50k store (`500 + 250` paginated rows = `750` loaded) | `32.14 MB` (`20.85 MB` @ 10k) | `< 200 MB` |
+| RSS, 50k store, GUI window (`500 + 250` paginated rows = `750` loaded) | `98.4 MB` working set / `88.7 MB` private (measured 2026-11-20, maximized window). The earlier `32.14 MB` figure was the headless smoke harness, which opens no window. | `< 200 MB` |
 | Graph query + layout (1,941 visible + 8,064 clustered): Namespace | `29.28 ms` query + `23.76 ms` layout | `< 250 ms` layout |
 | Graph query + layout: Tag / Entity / Temporal | `18.68–30.39 ms` query + `0.52–18.76 ms` layout | `< 250 ms` layout |
 | Graph query + layout: Contradictions (`60` nodes, `35` edges) | `2.79 ms` query + `0.31 ms` layout | `< 250 ms` layout |
@@ -142,7 +143,7 @@ Notes:
 
 - **Sensitive text protection**: Memory content, summaries, tags, and search queries are never written to tracing logs, analytics, error alerts, or crash reports. Logs record only counts, durations, IDs, and versions.
 - **Opt-in telemetry (OFF by default)**: On first launch, a dialog lets you opt in or keep crash reporting disabled.
-- **Scrubber (`before_send`)**: Sentry events and local crash reports strip tracked memory strings, search queries, full filesystem paths, usernames, and hostnames while preserving app version, OS/arch, GPUI version (`1.28.1`), error kind, and a random `install_id`.
+- **Scrubber (`before_send`)**: Sentry events and local crash reports strip tracked memory strings, search queries, full filesystem paths, usernames, and hostnames while preserving app version, OS/arch, GPUI version (`1.29.2`), error kind, and a random `install_id`.
 - **Offline crash recovery & logs**:
   - Rotating file logs (`5 × 2 MB`) are stored in the platform data log directory (accessible via Command Palette → **Open Logs Directory** or `--diagnostics`).
   - Unhandled panics always write a scrubbed local crash report and open a recovery window with **Copy diagnostics** and **Open logs** buttons — even with network telemetry disabled.

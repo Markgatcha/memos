@@ -778,8 +778,18 @@ export class SQLiteStorage implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS idx_nodes_valid_to ON nodes(valid_to);
       CREATE INDEX IF NOT EXISTS idx_nodes_trust_score ON nodes(trust_score);
       CREATE INDEX IF NOT EXISTS idx_nodes_source ON nodes(source);
+      CREATE INDEX IF NOT EXISTS idx_nodes_provenance ON nodes(provenance);
       CREATE INDEX IF NOT EXISTS idx_nodes_pool ON nodes(pool);
       CREATE INDEX IF NOT EXISTS idx_nodes_harness ON nodes(harness);
+    `);
+
+    // Recency index for list/keyset reads. `db.ts` and the desktop list both
+    // order by COALESCE(updated_at, created_at, 0) DESC, id DESC; without a
+    // matching expression index every page scans and top-N sorts the whole
+    // table (measured ~30x slower on a 10k store).
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_nodes_recency_sort
+        ON nodes(COALESCE(updated_at, created_at, 0) DESC, id DESC);
     `);
 
     // FTS5 virtual table for full-text search. The `porter unicode61`

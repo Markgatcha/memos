@@ -22,7 +22,7 @@ use crate::core::settings::{AppSettings, ResolvedDbPath};
 
 pub const APP_NAME: &str = "memos-desktop";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const GPUI_VERSION: &str = "1.28.1";
+pub const GPUI_VERSION: &str = "1.29.2";
 pub const LOG_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub const LOG_MAX_FILES: usize = 5;
 const LOG_BASENAME: &str = "memos-desktop.log";
@@ -155,6 +155,29 @@ pub struct SizeRotatingFileWriter {
     file: Option<File>,
 }
 
+#[cfg(unix)]
+fn restrict_dir(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn restrict_dir(_path: &Path) -> io::Result<()> {
+    // Windows inherits the user-profile ACL, which is already user-scoped.
+    Ok(())
+}
+
+#[cfg(unix)]
+fn restrict_file(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn restrict_file(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 impl SizeRotatingFileWriter {
     pub fn new(
         dir: PathBuf,
@@ -163,6 +186,7 @@ impl SizeRotatingFileWriter {
         max_files: usize,
     ) -> io::Result<Self> {
         fs::create_dir_all(&dir)?;
+        let _ = restrict_dir(&dir);
         let base_name = base_name.into();
         let active_path = dir.join(&base_name);
         let current_bytes = fs::metadata(&active_path).map(|m| m.len()).unwrap_or(0);
@@ -170,6 +194,7 @@ impl SizeRotatingFileWriter {
             .create(true)
             .append(true)
             .open(&active_path)?;
+        let _ = restrict_file(&active_path);
         Ok(Self {
             dir,
             base_name,
@@ -208,6 +233,7 @@ impl SizeRotatingFileWriter {
             .truncate(true)
             .write(true)
             .open(self.rotated_path(0))?;
+        let _ = restrict_file(&self.rotated_path(0));
         self.current_bytes = 0;
         self.file = Some(fresh);
         Ok(())
@@ -510,6 +536,17 @@ fn scrub_keyed_markers(input: &str) -> String {
 /// strips memory content, search queries, full file paths, usernames, and hostnames,
 /// while keeping app version, OS, GPUI version, error kind, and random install id.
 pub fn scrub_sentry_event(mut event: Event<'static>, ctx: &ScrubContext) -> Option<Event<'static>> {
+    // Whole-event pass first: catches nested fields the targeted scrubbers
+    // below do not enumerate (contexts, spans, debug_meta, attachments…).
+    // If the round-trip fails we keep the original event and still run the
+    // explicit field scrubbers, so this can only add coverage.
+    if let Ok(mut value) = serde_json::to_value(&event) {
+        scrub_json_value(&mut value, ctx);
+        if let Ok(cleaned) = serde_json::from_value::<Event<'static>>(value) {
+            event = cleaned;
+        }
+    }
+
     event.server_name = None;
     event.request = None;
     event.user = Some(User {
@@ -662,14 +699,29 @@ fn is_sensitive_key(key: &str) -> bool {
     matches!(
         lower.as_str(),
         "content"
+            | "content_preview"
+            | "preview"
             | "summary"
+            | "description"
+            | "detail"
+            | "reason"
             | "memory"
             | "memory_text"
+            | "prompt"
+            | "response"
+            | "payload"
             | "query"
             | "search_query"
             | "metadata"
+            | "command"
+            | "env"
+            | "db"
+            | "database"
             | "db_path"
             | "path"
+            | "abs_path"
+            | "filename"
+            | "tags"
             | "username"
             | "user"
             | "hostname"
@@ -688,6 +740,7 @@ pub fn write_local_crash_report(
     backtrace: &str,
 ) -> io::Result<PathBuf> {
     fs::create_dir_all(dir)?;
+    let _ = restrict_dir(dir);
     let now_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -718,6 +771,7 @@ pub fn write_local_crash_report(
     );
 
     fs::write(&report_path, &report)?;
+    let _ = restrict_file(&report_path);
     if let Some(cell) = CRASH_TEST_REPORT_CAPTURE.get()
         && let Ok(mut guard) = cell.lock()
     {

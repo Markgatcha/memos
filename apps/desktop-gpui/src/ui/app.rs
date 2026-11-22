@@ -12,7 +12,7 @@ use gpui::{
 };
 
 use crate::core::db::{
-    DEFAULT_GRAPH_NODE_CAP, DbError, DbProbeSummary, LIST_NEXT_PAGE_SIZE, ListCursor, ReadOnlyStore,
+    DEFAULT_GRAPH_NODE_CAP, DbError, LIST_NEXT_PAGE_SIZE, ListCursor, ReadOnlyStore,
 };
 use crate::core::easter_eggs::{
     CELEBRATE_100_DURATION, Celebrate100Outcome, Celebrate100Tracker, KonamiDetector, KonamiKey,
@@ -33,6 +33,7 @@ use crate::core::settings::{
     AppSettings, DEFAULT_WRITER_COMMAND, DbPathSource, ResolvedDbPath, ThemeMode,
     WindowBoundsSetting,
 };
+use crate::core::store_cache::SharedStore;
 use crate::core::write_bridge::{
     BridgeError, IngestInput, IngestResult, PingResult, ReviewInput, StoreInput, WriteBridge,
     detect_local_writer, parse_extensions_csv, recommended_writer_command,
@@ -45,8 +46,7 @@ use crate::ui::views::graph::{GraphEvent, GraphView};
 use crate::ui::views::list::{ListEvent, MemoryListView};
 use crate::ui::views::momo::render_momo_button;
 use crate::ui::views::onboarding::{
-    CLI_INIT_COMMAND, CLI_STORE_COMMAND, DbValidationState, OnboardingEvent, OnboardingState,
-    OnboardingStep, OnboardingView,
+    CLI_INIT_COMMAND, CLI_STORE_COMMAND, OnboardingEvent, OnboardingView,
 };
 use crate::ui::views::palette::{CommandPalette, PaletteAction, PaletteEvent};
 use crate::ui::views::review::{ReviewEvent, ReviewLoadError, ReviewView};
@@ -78,6 +78,14 @@ struct InitialLoadResult {
     has_more: bool,
     total_matching: usize,
     health: Option<StoreHealthReport>,
+}
+
+/// Phase two of startup: the full overview plus health. `full` is `None`
+/// when the fast phase already owns the list rows.
+struct PhaseTwo {
+    overview: DbOverview,
+    health: Option<StoreHealthReport>,
+    full: Option<(InitialLoadResult, Instant)>,
 }
 
 fn load_initial_snapshot_with_overview(
@@ -163,8 +171,20 @@ enum WriteRetryAction {
         original_id: String,
         input: StoreInput,
     },
+    /// The new version was already stored; only the supersede link failed.
+    /// Retrying this must never store a second copy.
+    FinishEdit {
+        original_id: String,
+        new_id: String,
+    },
     Forget {
         id: String,
+    },
+    /// Retry an approve/reject from the review queue through the same banner
+    /// as other writes.
+    Review {
+        id: String,
+        approve: bool,
     },
 }
 
@@ -282,775 +302,23 @@ pub fn launch_main_app(
     });
 }
 
-/// Exercise onboarding state machine, every view constructor, and harness discovery without showing a window.
-pub fn run_self_test(
-    resolved_db: ResolvedDbPath,
-    settings: AppSettings,
-    telemetry: Arc<TelemetryHandle>,
-    timeline: Arc<StartupTimeline>,
-) -> anyhow::Result<()> {
-    use anyhow::ensure;
-    use rusqlite::{Connection, TransactionBehavior};
-    use uuid::Uuid;
-
-    struct TempDirCleanup(PathBuf);
-    impl Drop for TempDirCleanup {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn run_check(name: &str, f: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
-        f().map_err(|err| anyhow::anyhow!("[check:{name}] {err}"))
-    }
-
-    fn create_rich_schema(conn: &mut Connection) -> anyhow::Result<()> {
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = OFF;
-             CREATE TABLE nodes (
-                id TEXT PRIMARY KEY,
-                type TEXT NOT NULL,
-                content TEXT NOT NULL,
-                summary TEXT DEFAULT '',
-                importance REAL DEFAULT 0.5,
-                confidence REAL DEFAULT 0.8,
-                evidence_count INTEGER DEFAULT 1,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                access_count INTEGER DEFAULT 0,
-                last_accessed INTEGER NOT NULL,
-                valid_from INTEGER,
-                valid_to INTEGER,
-                expires_at INTEGER,
-                metadata TEXT DEFAULT '{}',
-                namespace TEXT NOT NULL DEFAULT 'default',
-                source TEXT NOT NULL DEFAULT 'cli',
-                harness TEXT NOT NULL DEFAULT 'codex',
-                provenance TEXT NOT NULL DEFAULT 'user-verified',
-                trust_score REAL NOT NULL DEFAULT 0.9,
-                quarantined INTEGER NOT NULL DEFAULT 0,
-                quarantined_at INTEGER,
-                quarantine_reason TEXT
-             );
-             CREATE TABLE edges (
-                id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                target_id TEXT NOT NULL,
-                relation TEXT NOT NULL DEFAULT 'relates_to',
-                weight REAL DEFAULT 0.7,
-                created_at INTEGER NOT NULL,
-                valid_from INTEGER,
-                valid_to INTEGER
-             );
-             CREATE TABLE node_tags (
-                node_id TEXT NOT NULL,
-                tag TEXT NOT NULL
-             );
-             CREATE TABLE contradictions (
-                id TEXT PRIMARY KEY,
-                node_a TEXT NOT NULL,
-                node_b TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'open',
-                detected_at INTEGER NOT NULL
-             );
-             CREATE TABLE entity_index (
-                entity TEXT NOT NULL,
-                node_id TEXT NOT NULL
-             );
-             CREATE VIRTUAL TABLE nodes_fts USING fts5(content, summary);",
-        )?;
-        Ok(())
-    }
-
-    let tmp_root = std::env::temp_dir().join(format!("memos-self-test-{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&tmp_root)?;
-    let _cleanup = TempDirCleanup(tmp_root.clone());
-
-    // 1. Missing DB check
-    run_check("db_missing", || {
-        let missing = tmp_root.join("does-not-exist.db");
-        let err = ReadOnlyStore::open(&missing)
-            .err()
-            .ok_or_else(|| anyhow::anyhow!("expected NotFound opening missing DB"))?;
-        ensure!(
-            matches!(err, DbError::NotFound),
-            "expected DbError::NotFound, got {err}"
-        );
-        ensure!(
-            crate::core::db::probe_database(&missing).is_err(),
-            "probe_database should fail on missing DB"
-        );
-        Ok(())
-    })?;
-
-    // 2. Empty DB (0 rows) + health Empty + all 5 graph modes empty
-    run_check("db_empty_0_rows", || {
-        let empty_db = tmp_root.join("empty.db");
-        {
-            let mut conn = Connection::open(&empty_db)?;
-            create_rich_schema(&mut conn)?;
-        }
-        let store = ReadOnlyStore::open(&empty_db)?;
-        let ov = store.load_overview()?;
-        ensure!(
-            ov.node_count == 0,
-            "expected 0 nodes, got {}",
-            ov.node_count
-        );
-        let health = assess_store_health(&store, &ov, now_unix_ms())?;
-        ensure!(
-            health.status == StoreHealthStatus::Empty,
-            "expected Empty health status"
-        );
-        let filter = QueryFilter::default();
-        for mode in GraphMode::ALL {
-            let snap = store.load_graph_snapshot(
-                mode,
-                &filter,
-                &ov.contradiction_node_ids,
-                DEFAULT_GRAPH_NODE_CAP,
-            )?;
-            ensure!(snap.nodes.is_empty(), "empty DB graph node count != 0");
-        }
-        Ok(())
-    })?;
-
-    // 3. Invalid DB (non-SQLite bytes & SQLite DB lacking `nodes` table)
-    run_check("db_invalid", || {
-        let corrupt = tmp_root.join("corrupt.db");
-        std::fs::write(&corrupt, b"definitely-not-a-sqlite-header")?;
-        let corrupt_res = ReadOnlyStore::open(&corrupt);
-        ensure!(
-            matches!(
-                corrupt_res,
-                Err(DbError::OpenFailed { .. } | DbError::QueryFailed { .. })
-            ),
-            "expected OpenFailed/QueryFailed on non-SQLite file"
-        );
-        ensure!(
-            crate::core::db::probe_database(&corrupt).is_err(),
-            "probe_database must fail on non-SQLite file"
-        );
-
-        let no_nodes = tmp_root.join("no_nodes.db");
-        {
-            let conn = Connection::open(&no_nodes)?;
-            conn.execute_batch("CREATE TABLE unrelated (id INTEGER PRIMARY KEY);")?;
-        }
-        ensure!(
-            matches!(
-                ReadOnlyStore::open(&no_nodes),
-                Err(DbError::MissingNodesTable)
-            ),
-            "expected MissingNodesTable on DB without `nodes`"
-        );
-        Ok(())
-    })?;
-
-    // 4. Legacy DB schema (minimal columns, no optional/FTS tables, read-only enforcement)
-    let legacy_db = tmp_root.join("legacy.db");
-    run_check("db_legacy", || {
-        {
-            let conn = Connection::open(&legacy_db)?;
-            conn.execute_batch(
-                "CREATE TABLE nodes (
-                    id TEXT PRIMARY KEY,
-                    content TEXT NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                 );
-                 INSERT INTO nodes (id, content, created_at, updated_at) VALUES
-                    ('a3f9c2e1-0000-4000-8000-000000000001', 'legacy fallback searchable memory', 1700000000000, 1700000000000),
-                    ('b7e21104-0000-4000-8000-000000000002', 'second legacy note', 1700000100000, 1700000100000);",
-            )?;
-        }
-        let store = ReadOnlyStore::open(&legacy_db)?;
-        let ov = store.load_overview()?;
-        ensure!(ov.node_count == 2, "expected 2 legacy rows");
-        ensure!(ov.missing_tables.contains(&"edges".to_string()));
-        ensure!(ov.missing_tables.contains(&"nodes_fts".to_string()));
-        let filter = QueryFilter {
-            query: "searchable".to_string(),
-            ..Default::default()
-        };
-        let found = store.query_nodes(&filter, &ov.contradiction_node_ids, 50)?;
-        ensure!(found.len() == 1, "expected LIKE fallback match");
-        ensure!(
-            matches!(
-                store.resolve_node_id("[mem:a3f9]")?,
-                crate::core::db::NodeLookup::Exact(_)
-            ),
-            "short citation resolution failed on legacy DB"
-        );
-        let detail = store
-            .load_node_detail("a3f9c2e1-0000-4000-8000-000000000001")?
-            .ok_or_else(|| anyhow::anyhow!("missing legacy detail"))?;
-        ensure!(detail.citation_token == "[mem:a3f9]");
-        for mode in GraphMode::ALL {
-            let _ = store.load_graph_snapshot(
-                mode,
-                &QueryFilter::default(),
-                &ov.contradiction_node_ids,
-                DEFAULT_GRAPH_NODE_CAP,
-            )?;
-        }
-        Ok(())
-    })?;
-
-    // 5. 10k rows + FTS5 + all 5 graph modes & layout finiteness
-    run_check("db_10k_rows_and_5_graph_modes", || {
-        let db10k = tmp_root.join("10k.db");
-        let now = now_unix_ms();
-        {
-            let mut conn = Connection::open(&db10k)?;
-            create_rich_schema(&mut conn)?;
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            {
-                let mut ins_node = tx.prepare(
-                    "INSERT INTO nodes (id, type, content, summary, importance, created_at, updated_at, last_accessed, namespace, source, harness, provenance, trust_score)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'cli', 'codex', 'user-verified', 0.9)",
-                )?;
-                let mut ins_fts = tx.prepare(
-                    "INSERT INTO nodes_fts(rowid, content, summary) VALUES (?1, ?2, ?3)",
-                )?;
-                let mut ins_tag =
-                    tx.prepare("INSERT INTO node_tags(node_id, tag) VALUES (?1, ?2)")?;
-                let mut ins_ent =
-                    tx.prepare("INSERT INTO entity_index(entity, node_id) VALUES (?1, ?2)")?;
-                for i in 0..10_000usize {
-                    let id = format!("{i:08x}-0000-4000-8000-000000000001");
-                    let ty = match i % 4 {
-                        0 => "fact",
-                        1 => "decision",
-                        2 => "preference",
-                        _ => "lesson",
-                    };
-                    let ns = if i % 2 == 0 { "work" } else { "personal" };
-                    let content = if i == 42 {
-                        "needle_10k_unique_token architectural choice".to_string()
-                    } else {
-                        format!("synthetic memory entry #{i} about component {}", i % 40)
-                    };
-                    let ts = now - (i as i64) * 60_000;
-                    ins_node.execute(rusqlite::params![
-                        id,
-                        ty,
-                        content,
-                        format!("summary {i}"),
-                        0.4 + ((i % 6) as f32) * 0.1,
-                        ts,
-                        ts,
-                        ts,
-                        ns
-                    ])?;
-                    ins_fts.execute(rusqlite::params![
-                        (i + 1) as i64,
-                        content,
-                        format!("summary {i}")
-                    ])?;
-                    if i < 200 {
-                        ins_tag.execute(rusqlite::params![id, format!("tag-{}", i % 5)])?;
-                        ins_ent.execute(rusqlite::params![format!("Entity-{}", i % 7), id])?;
-                    }
-                }
-                let mut ins_edge = tx.prepare(
-                    "INSERT INTO edges(id, source_id, target_id, relation, weight, created_at) VALUES (?1, ?2, ?3, 'relates_to', 0.8, ?4)",
-                )?;
-                for i in 0..400usize {
-                    let a = format!("{i:08x}-0000-4000-8000-000000000001");
-                    let b = format!("{:08x}-0000-4000-8000-000000000001", i + 1);
-                    ins_edge.execute(rusqlite::params![format!("e-{i}"), a, b, now])?;
-                }
-                tx.execute(
-                    "INSERT INTO contradictions(id, node_a, node_b, status, detected_at)
-                     VALUES ('c-1', '00000000-0000-4000-8000-000000000001', '00000001-0000-4000-8000-000000000001', 'open', ?1)",
-                    [now],
-                )?;
-            }
-            tx.commit()?;
-        }
-
-        let store = ReadOnlyStore::open(&db10k)?;
-        let ov = store.load_overview()?;
-        ensure!(
-            ov.node_count == 10_000,
-            "expected 10000 rows, got {}",
-            ov.node_count
-        );
-        let fts_hits = store.query_nodes(
-            &QueryFilter {
-                query: "needle_10k_unique_token".to_string(),
-                ..Default::default()
-            },
-            &ov.contradiction_node_ids,
-            100,
-        )?;
-        ensure!(fts_hits.len() == 1, "expected 1 FTS5 match on 10k rows");
-        let health = assess_store_health(&store, &ov, now)?;
-        ensure!(health.status == StoreHealthStatus::Contradictions);
-
-        for mode in GraphMode::ALL {
-            let snap = store.load_graph_snapshot(
-                mode,
-                &QueryFilter::default(),
-                &ov.contradiction_node_ids,
-                DEFAULT_GRAPH_NODE_CAP,
-            )?;
-            ensure!(
-                snap.nodes.len() <= DEFAULT_GRAPH_NODE_CAP + 64,
-                "mode {:?} exceeded cap",
-                mode
-            );
-            let layout = crate::ui::views::graph::compute_graph_layout(&snap);
-            ensure!(
-                layout
-                    .nodes
-                    .iter()
-                    .all(|n| n.x.is_finite() && n.y.is_finite()),
-                "non-finite graph coordinates for {:?}",
-                mode
-            );
-        }
-        Ok(())
-    })?;
-
-    // 6. 50k rows pagination + graph snapshot
-    run_check("db_50k_rows", || {
-        let db50k = tmp_root.join("50k.db");
-        let now = now_unix_ms();
-        {
-            let mut conn = Connection::open(&db50k)?;
-            create_rich_schema(&mut conn)?;
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            {
-                let mut ins = tx.prepare(
-                    "INSERT INTO nodes (id, type, content, importance, created_at, updated_at, last_accessed, namespace, source, harness, provenance, trust_score)
-                     VALUES (?1, 'fact', ?2, 0.5, ?3, ?3, ?3, 'scale', 'cli', 'codex', 'user-verified', 0.9)",
-                )?;
-                for i in 0..50_000usize {
-                    let id = format!("{i:08x}-0000-4000-8000-000000000050");
-                    let ts = now - (i as i64) * 1000;
-                    ins.execute(rusqlite::params![id, format!("scale item #{i}"), ts])?;
-                }
-            }
-            tx.commit()?;
-        }
-        let store = ReadOnlyStore::open(&db50k)?;
-        let ov = store.load_overview()?;
-        ensure!(
-            ov.node_count == 50_000,
-            "expected 50000 rows, got {}",
-            ov.node_count
-        );
-        let page = store.query_nodes(
-            &QueryFilter::default(),
-            &ov.contradiction_node_ids,
-            crate::core::db::LIST_PAGE_SIZE,
-        )?;
-        ensure!(
-            page.len() == crate::core::db::LIST_PAGE_SIZE,
-            "50k page size mismatch: {}",
-            page.len()
-        );
-        let snap = store.load_graph_snapshot(
-            GraphMode::Namespace,
-            &QueryFilter::default(),
-            &ov.contradiction_node_ids,
-            DEFAULT_GRAPH_NODE_CAP,
-        )?;
-        ensure!(!snap.nodes.is_empty(), "50k graph should emit clusters");
-        ensure!(snap.clustered_nodes > 0, "50k graph must cluster overflow");
-        Ok(())
-    })?;
-
-    // 7. All onboarding branches (missing/stale/valid, Ready options, Back, Skip, Finish)
-    run_check("onboarding_all_branches", || {
-        let mut st = OnboardingState::new(resolved_db.path.clone(), &settings);
-        ensure!(st.step == OnboardingStep::Database);
-        ensure!(!st.can_advance());
-        ensure!(!st.can_skip());
-        ensure!(!st.go_next());
-
-        let gen0 = st.begin_probe(PathBuf::from("nonexistent_memos_self_test.db"));
-        ensure!(st.apply_probe_result(
-            gen0,
-            PathBuf::from("nonexistent_memos_self_test.db"),
-            Err("file does not exist".to_string()),
-        ));
-        ensure!(matches!(st.db_status, DbValidationState::NotFound(_)));
-        ensure!(!st.can_advance());
-        ensure!(!st.can_skip());
-
-        let gen_inv = st.begin_probe(PathBuf::from("invalid_memos_self_test.db"));
-        ensure!(st.apply_probe_result(
-            gen_inv,
-            PathBuf::from("invalid_memos_self_test.db"),
-            Err("missing required tables".to_string()),
-        ));
-        ensure!(matches!(st.db_status, DbValidationState::Invalid { .. }));
-        ensure!(!st.can_advance());
-
-        let gen1 = st.begin_probe(legacy_db.clone());
-        ensure!(!st.apply_probe_result(
-            gen1.saturating_sub(1),
-            PathBuf::from("stale.db"),
-            Ok(DbProbeSummary {
-                path: PathBuf::from("stale.db"),
-                node_count: 1,
-                edge_count: 0,
-            }),
-        ));
-        ensure!(st.apply_probe_result(
-            gen1,
-            legacy_db.clone(),
-            Ok(DbProbeSummary {
-                path: legacy_db.clone(),
-                node_count: 2,
-                edge_count: 0,
-            }),
-        ));
-        ensure!(matches!(st.db_status, DbValidationState::Valid(_)));
-        ensure!(st.can_advance());
-        ensure!(st.can_skip());
-
-        // Branch: skip directly without changing Ready toggles preserves defaults.
-        let skipped = st.build_skipped_settings(&AppSettings::default());
-        ensure!(skipped.onboarding_completed);
-        ensure_eq_msg(
-            skipped.preferred_db_path,
-            Some(legacy_db.clone()),
-            "skip db",
-        )?;
-        ensure!(skipped.crash_reporting_consent == Some(false));
-
-        // Branch: go_next -> change theme & crash opt-in -> go_back -> go_next -> finish.
-        ensure!(st.go_next());
-        ensure!(st.step == OnboardingStep::Ready);
-        st.theme = ThemeMode::Light;
-        st.crash_reporting_enabled = true;
-        ensure!(!st.go_next());
-        ensure!(st.go_back());
-        ensure!(st.step == OnboardingStep::Database);
-        ensure!(st.go_next());
-        let finished = st.build_finished_settings(&settings);
-        ensure!(finished.onboarding_completed);
-        ensure!(finished.theme == ThemeMode::Light);
-        ensure!(finished.crash_reporting_consent == Some(true));
-        ensure!(finished.preferred_db_path == Some(legacy_db.clone()));
-        Ok(())
-    })?;
-
-    // 8. Settings round-trip + celebrated_100 + write mode
-    run_check("settings_round_trip", || {
-        let cfg_path = tmp_root.join("settings.json");
-        let original = AppSettings {
-            install_id: "self-test-install-id".to_string(),
-            crash_reporting_consent: Some(true),
-            theme: ThemeMode::Dark,
-            default_view: ViewMode::Graph,
-            onboarding_completed: true,
-            celebrated_100: true,
-            preferred_db_path: Some(legacy_db.clone()),
-            saved_views: settings.saved_views.clone(),
-            window_bounds: Some(WindowBoundsSetting {
-                x: 120.0,
-                y: 80.0,
-                width: 1280.0,
-                height: 800.0,
-                maximized: false,
-            }),
-            last_sort: SortOrder::Importance,
-            last_view_mode: Some(ViewMode::Graph),
-            last_saved_view_id: Some("all".to_string()),
-            row_density: RowDensity::Compact,
-            write_mode: true,
-            writer_command: "memos mcp".to_string(),
-        };
-        original.save_to(&cfg_path)?;
-        let loaded = AppSettings::load_from(&cfg_path);
-        ensure!(loaded.install_id == original.install_id);
-        ensure!(loaded.crash_reporting_consent == Some(true));
-        ensure!(loaded.theme == ThemeMode::Dark);
-        ensure!(loaded.default_view == ViewMode::Graph);
-        ensure!(loaded.onboarding_completed);
-        ensure!(loaded.celebrated_100);
-        ensure!(loaded.preferred_db_path == original.preferred_db_path);
-        ensure!(loaded.window_bounds == original.window_bounds);
-        ensure!(loaded.last_sort == SortOrder::Importance);
-        ensure!(loaded.row_density == RowDensity::Compact);
-        ensure!(loaded.last_view_mode == Some(ViewMode::Graph));
-        ensure!(loaded.last_saved_view_id.as_deref() == Some("all"));
-        ensure!(loaded.write_mode);
-        ensure!(loaded.effective_writer_command() == "memos mcp");
-        Ok(())
-    })?;
-
-    // 9. Harness detection 0/16 and 16/16 in isolated directory (no host leak)
-    run_check("harness_detection_0_of_16_and_16_of_16", || {
-        let empty_home = tmp_root.join("harness-empty");
-        std::fs::create_dir_all(&empty_home)?;
-        let zero = harness::adapters::detect_all_for_isolated_home_and_path(
-            empty_home,
-            Some(std::ffi::OsString::new()),
-        );
-        ensure!(
-            zero.len() == 16,
-            "expected 16 harness entries, got {}",
-            zero.len()
-        );
-        let installed_zero = zero.iter().filter(|d| d.installed).count();
-        ensure!(
-            installed_zero == 0,
-            "expected 0/16 in isolated empty home, got {installed_zero}/16"
-        );
-
-        let full_home = tmp_root.join("harness-full");
-        let fake_bin = full_home.join("bin");
-        std::fs::create_dir_all(&fake_bin)?;
-        for sub in [
-            ".claude",
-            ".codex",
-            ".cursor",
-            ".codeium/windsurf",
-            ".cline",
-            ".config/opencode",
-            ".gemini",
-            ".hermes",
-            ".dsh",
-            ".config/kilo",
-            ".pi/agent",
-            ".openclaw",
-            ".config/zed",
-            ".config/goose",
-            ".continue",
-        ] {
-            std::fs::create_dir_all(full_home.join(sub))?;
-        }
-        std::fs::write(full_home.join(".claude.json"), "{}")?;
-        std::fs::write(full_home.join(".codex/config.toml"), "")?;
-        std::fs::write(full_home.join(".cursor/mcp.json"), "{}")?;
-        std::fs::write(full_home.join(".codeium/windsurf/mcp_config.json"), "{}")?;
-        std::fs::write(full_home.join(".cline/cline_mcp_settings.json"), "{}")?;
-        std::fs::write(full_home.join(".config/opencode/opencode.json"), "{}")?;
-        std::fs::write(full_home.join(".gemini/settings.json"), "{}")?;
-        std::fs::write(full_home.join(".hermes/config.yaml"), "mcp_servers:\n")?;
-        std::fs::write(full_home.join(".dsh/memos.patch.yml"), "- insert: []\n")?;
-        std::fs::write(full_home.join(".config/kilo/kilo.json"), "{}")?;
-        std::fs::write(full_home.join(".pi/agent/mcp.json"), "{}")?;
-        std::fs::write(full_home.join(".openclaw/openclaw.json"), "{}")?;
-        std::fs::write(full_home.join(".config/zed/settings.json"), "{}")?;
-        std::fs::write(full_home.join(".config/goose/config.yaml"), "extensions:\n")?;
-        std::fs::write(full_home.join(".continue/config.yaml"), "mcpServers:\n")?;
-
-        for name in [
-            "claude", "codex", "cursor", "windsurf", "cline", "opencode", "gemini", "hermes",
-            "dsh", "kilo", "pi", "openclaw", "zed", "goose", "continue",
-        ] {
-            #[cfg(target_os = "windows")]
-            let fname = format!("{name}.cmd");
-            #[cfg(not(target_os = "windows"))]
-            let fname = name.to_string();
-            std::fs::write(fake_bin.join(fname), "echo ok")?;
-        }
-        let sixteen = harness::adapters::detect_all_for_isolated_home_and_path(
-            full_home,
-            Some(fake_bin.into_os_string()),
-        );
-        let installed_sixteen = sixteen.iter().filter(|d| d.installed).count();
-        ensure!(
-            installed_sixteen == 16,
-            "expected 16/16 in isolated full home, got {installed_sixteen}/16"
-        );
-        Ok(())
-    })?;
-
-    // 10. Crash reporting off/on & secret scrubbing
-    run_check("crash_reporting_off_and_on", || {
-        let mut s_off = settings.clone();
-        s_off.crash_reporting_consent = None;
-        ensure!(!s_off.crash_reporting_enabled());
-        s_off.crash_reporting_consent = Some(false);
-        ensure!(!s_off.crash_reporting_enabled());
-        telemetry.sync_sentry_from_settings(&s_off);
-
-        let mut s_on = settings.clone();
-        s_on.crash_reporting_consent = Some(true);
-        ensure!(s_on.crash_reporting_enabled());
-        telemetry.sync_sentry_from_settings(&s_on);
-        telemetry.sync_sentry_from_settings(&settings);
-
-        let secret = "SELF_TEST_SENSITIVE_MEMORY_LINE";
-        telemetry::register_sensitive_text(secret);
-        telemetry::set_active_query("secret_query_self_test");
-        let crash_dir = tmp_root.join("crash-reports");
-        let report_path = telemetry::write_local_crash_report(
-            &crash_dir,
-            &settings.install_id,
-            &format!("panic near {secret} query=secret_query_self_test"),
-            Some("C:\\Users\\fakeuser\\memos\\secret"),
-            "frame 0",
-        )?;
-        let report_body = std::fs::read_to_string(&report_path)?;
-        telemetry::clear_sensitive_text();
-        ensure!(!report_body.contains(secret), "crash report leaked secret");
-        ensure!(
-            !report_body.contains("secret_query_self_test"),
-            "crash report leaked search query"
-        );
-        Ok(())
-    })?;
-
-    // 11. Easter eggs state machines + GPUI headless render & views across all modes/themes
-    run_check("easter_eggs_and_headless_ui", || {
-        let now = Instant::now();
-        let mut konami = KonamiDetector::new();
-        for (ix, k) in [
-            KonamiKey::Up,
-            KonamiKey::Up,
-            KonamiKey::Down,
-            KonamiKey::Down,
-            KonamiKey::Left,
-            KonamiKey::Right,
-            KonamiKey::Left,
-            KonamiKey::Right,
-            KonamiKey::B,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            ensure!(!konami.push(k, now + Duration::from_millis(ix as u64 * 100)));
-        }
-        ensure!(konami.push(KonamiKey::A, now + Duration::from_millis(950)));
-
-        let mut cel = Celebrate100Tracker::new(false);
-        ensure!(cel.observe_count(99, false) == Celebrate100Outcome::None);
-        ensure!(cel.observe_count(100, false) == Celebrate100Outcome::AnimateAndPersist);
-
-        for mode in [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark] {
-            let theme = ThemePalette::for_mode(mode);
-            let _sidebar = SidebarView::new(settings.saved_views.clone(), theme);
-            let _list = MemoryListView::new(theme);
-            let _detail = DetailView::new(theme);
-            for gm in GraphMode::ALL {
-                let _graph = GraphView::new(gm, theme);
-            }
-        }
-
-        let db_clone = resolved_db.clone();
-        let settings_clone = settings.clone();
-        let tl_clone = timeline.clone();
-        let tel_clone = telemetry.clone();
-        gpui_platform::headless().run(move |cx: &mut App| {
-            register_app_key_bindings(cx);
-            let bounds = Bounds::centered(None, size(px(1100.), px(720.)), cx);
-            let window_opts = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(900.), px(600.))),
-                show: false,
-                focus: false,
-                ..Default::default()
-            };
-            let _ = cx.open_window(window_opts, move |window, cx| {
-                let theme = ThemePalette::resolve(settings_clone.theme, window.appearance());
-                let _input = cx.new(|cx| TextInput::new(cx, "self-test", theme));
-                let _multiline =
-                    cx.new(|cx| TextInput::new_multiline(cx, "self-test multi", theme));
-                let _palette = cx.new(|cx| CommandPalette::new(theme, window, cx));
-                let _onboarding = cx.new(|cx| {
-                    OnboardingView::new(db_clone.path.clone(), settings_clone.clone(), theme, cx)
-                });
-                cx.new(|cx| {
-                    MemOSApp::new(
-                        db_clone,
-                        settings_clone,
-                        tel_clone,
-                        tl_clone,
-                        LaunchOptions {
-                            smoke_exit_after_first_frame: true,
-                            no_fun: false,
-                        },
-                        window,
-                        cx,
-                    )
-                })
-            });
-            cx.quit();
-        });
-        ensure!(crate::ui::views::detail::is_sticky_header_visible(60.0));
-        Ok(())
-    })?;
-
-    // 12. WriteBridge error handling (invalid command surfaces SpawnFailed without DB mutation)
-    run_check("write_bridge_config_and_errors", || {
-        let bridge = WriteBridge::new("memos-nonexistent-writer-cmd-xyz", legacy_db.clone());
-        let err = bridge
-            .ping()
-            .expect_err("nonexistent writer must fail cleanly");
-        ensure!(matches!(err, BridgeError::SpawnFailed { .. }));
-        bridge.shutdown();
-        Ok(())
-    })?;
-
-    println!(
-        "SELF_TEST_OK checks=12 harnesses=0/16,16/16 db_source={}",
-        resolved_db.source.label()
-    );
-    Ok(())
-}
-
-fn ensure_eq_msg<T: PartialEq + std::fmt::Debug>(
-    left: T,
-    right: T,
-    label: &str,
-) -> anyhow::Result<()> {
-    if left != right {
-        anyhow::bail!("{label}: expected {right:?}, got {left:?}");
-    }
-    Ok(())
-}
-
-pub fn launch_crash_dialog(
-    report_path: PathBuf,
-    resolved_db: ResolvedDbPath,
-    settings: AppSettings,
-    telemetry: Arc<TelemetryHandle>,
-) {
-    gpui_platform::application().run(move |cx: &mut App| {
-        register_app_key_bindings(cx);
-        cx.on_window_closed(|cx, _window_id| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
-
-        let bounds = Bounds::centered(None, size(px(680.), px(500.)), cx);
-        let window_opts = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            focus: true,
-            titlebar: Some(TitlebarOptions {
-                title: Some("MemOS — Crash report".into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-
-        let _ = cx.open_window(window_opts, move |_window, cx| {
-            cx.new(|cx| CrashDialogView::new(report_path, resolved_db, settings, telemetry, cx))
-        });
-    });
-}
+pub use crate::ui::crash_dialog::launch_crash_dialog;
+pub use crate::ui::self_test::run_self_test;
 
 /// Root MemOS Desktop workspace view orchestrating background DB queries, graph, and overlays.
 pub struct MemOSApp {
     focus_handle: FocusHandle,
+    palette_return_focus: Option<FocusHandle>,
     timeline: Arc<StartupTimeline>,
     smoke_exit_after_first_frame: bool,
     no_fun: bool,
     first_frame_logged: bool,
     first_frame_done: bool,
     initial_load_done: bool,
+    store_create_in_flight: bool,
+    store_optimize_in_flight: bool,
+    window_active: bool,
+    shared_store: SharedStore,
 
     resolved_db: ResolvedDbPath,
     settings: AppSettings,
@@ -1124,10 +392,10 @@ pub struct MemOSApp {
     last_db_stamp: Option<(u64, Option<SystemTime>)>,
     pending_live_reload: Option<PendingLiveReload>,
 
-    query_generation: u64,
-    page_generation: u64,
-    detail_generation: u64,
-    graph_generation: u64,
+    query_generation: crate::ui::request::RequestToken,
+    page_generation: crate::ui::request::RequestToken,
+    detail_generation: crate::ui::request::RequestToken,
+    graph_generation: crate::ui::request::RequestToken,
 
     list_cursor: Option<ListCursor>,
     list_total_matching: usize,
@@ -1153,6 +421,7 @@ pub struct MemOSApp {
     onboarding: Option<Entity<OnboardingView>>,
 
     _init_task: Option<Task<()>>,
+    _optimize_task: Option<Task<()>>,
     _search_task: Option<Task<()>>,
     _next_page_task: Option<Task<()>>,
     _brief_task: Option<Task<()>>,
@@ -1178,7 +447,7 @@ pub struct MemOSApp {
 }
 
 impl MemOSApp {
-    fn new(
+    pub(crate) fn new(
         resolved_db: ResolvedDbPath,
         settings: AppSettings,
         telemetry: Arc<TelemetryHandle>,
@@ -1208,7 +477,7 @@ impl MemOSApp {
             initial_filter.sort = settings.last_sort;
         }
         let search_input = cx.new(|cx| {
-            let mut input = TextInput::new(cx, "Search memories · type: tag: ns:", theme)
+            let mut input = TextInput::new(cx, "Search memories", theme)
                 .with_leading_icon(UiIcon::Search);
             if !initial_filter.query.trim().is_empty() {
                 input.set_text(initial_filter.query.clone(), cx);
@@ -1469,6 +738,7 @@ impl MemOSApp {
                 ListEvent::ClearFilters => this.clear_filters(cx),
                 ListEvent::RetryLoad => this.spawn_initial_load(cx),
                 ListEvent::LoadNextPage => this.spawn_next_page_load(cx),
+                ListEvent::CreateStore(path) => this.create_memory_store(path.clone(), cx),
                 ListEvent::CopyInitCommand => {
                     cx.write_to_clipboard(ClipboardItem::new_string(CLI_INIT_COMMAND.to_string()));
                     this.set_notice("Copied init command", cx);
@@ -1646,7 +916,11 @@ impl MemOSApp {
                     this.execute_palette_action(action.clone(), window, cx)
                 }
                 PaletteEvent::Closed => {
-                    window.focus(&this.focus_handle, cx);
+                    if let Some(handle) = this.palette_return_focus.take() {
+                        window.focus(&handle, cx);
+                    } else {
+                        window.focus(&this.focus_handle, cx);
+                    }
                 }
             }),
         );
@@ -1659,12 +933,17 @@ impl MemOSApp {
 
         let mut app = Self {
             focus_handle: focus_handle.clone(),
+            palette_return_focus: None,
             timeline,
             smoke_exit_after_first_frame: options.smoke_exit_after_first_frame,
             no_fun: effective_no_fun,
             first_frame_logged: false,
             first_frame_done: false,
             initial_load_done: show_onboarding,
+            store_create_in_flight: false,
+            store_optimize_in_flight: false,
+            window_active: true,
+            shared_store: SharedStore::new(),
             resolved_db,
             settings,
             telemetry,
@@ -1734,10 +1013,10 @@ impl MemOSApp {
             momo_peek_sample: PeekSample::default(),
             last_db_stamp: initial_stamp,
             pending_live_reload: None,
-            query_generation: 0,
-            page_generation: 0,
-            detail_generation: 0,
-            graph_generation: 0,
+            query_generation: Default::default(),
+            page_generation: Default::default(),
+            detail_generation: Default::default(),
+            graph_generation: Default::default(),
             list_cursor: None,
             list_total_matching: 0,
             loading_next_page: false,
@@ -1760,6 +1039,7 @@ impl MemOSApp {
             palette,
             onboarding,
             _init_task: None,
+            _optimize_task: None,
             _search_task: None,
             _next_page_task: None,
             _brief_task: None,
@@ -1797,79 +1077,234 @@ impl MemOSApp {
         app
     }
 
+    /// Create a fresh store at `path`, then reload as if it had always existed.
+    ///
+    /// This is the only write path in the desktop crate that is not gated on
+    /// write mode: it touches a path that does not hold a store yet.
+    fn create_memory_store(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.store_create_in_flight {
+            return;
+        }
+        self.store_create_in_flight = true;
+        self.set_notice("Creating memory store…", cx);
+        let create_path = path.clone();
+
+        self._init_task = Some(cx.spawn(async move |this, cx| {
+            let res = cx
+                .background_executor()
+                .spawn(async move { crate::core::store_init::create_store(&create_path) })
+                .await;
+
+            let _ = this.update(cx, |app, cx| {
+                app.store_create_in_flight = false;
+                match res {
+                    Ok(()) => {
+                        app.set_notice("Memory store created", cx);
+                        app.spawn_initial_load(cx);
+                        app.refresh_review_view(cx);
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to create memory store");
+                        app.set_notice(err.ui_summary(), cx);
+                    }
+                }
+            });
+        }));
+    }
+
+    /// Add missing read-path indexes. Explicit, non-destructive, idempotent.
+    fn optimize_store(&mut self, cx: &mut Context<Self>) {
+        if self.store_optimize_in_flight {
+            return;
+        }
+        self.store_optimize_in_flight = true;
+        self.set_notice("Optimising store…", cx);
+        let path = self.resolved_db.path.clone();
+
+        self._optimize_task = Some(cx.spawn(async move |this, cx| {
+            let res = cx
+                .background_executor()
+                .spawn(async move { crate::core::store_optimize::optimize_store(&path) })
+                .await;
+
+            let _ = this.update(cx, |app, cx| {
+                app.store_optimize_in_flight = false;
+                match res {
+                    Ok(report) => {
+                        // The cached connection must reopen: indexes changed.
+                        app.shared_store.invalidate();
+                        app.set_notice(report.summary(), cx);
+                        app.spawn_initial_load(cx);
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err, "store optimisation failed");
+                        app.set_notice(err.ui_summary(), cx);
+                    }
+                }
+            });
+        }));
+    }
+
     fn spawn_initial_load(&mut self, cx: &mut Context<Self>) {
         let db_path = self.resolved_db.path.clone();
         let filter = self.filter.clone();
         let timeline = self.timeline.clone();
+        let shared = self.shared_store.clone();
         let record_startup = !self.initial_load_done;
+        let fast_phase = record_startup;
         self.list_view.update(cx, |v, cx| v.set_loading(true, cx));
 
+        // Phase one runs inside the same task, before the full load, so the
+        // shared connection is free when it starts. It paints totals plus the
+        // first page; facets, health and badges arrive in phase two.
         self._init_task = Some(cx.spawn(async move |this, cx| {
+            let fast_applied = if fast_phase {
+                let fast_db = db_path.clone();
+                let fast_filter = filter.clone();
+                let fast_shared = shared.clone();
+                let fast_timeline = timeline.clone();
+                let fast = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let db_open_start = Instant::now();
+                        fast_shared.ensure_open(&fast_db)?;
+                        fast_timeline.record_span("db_open", db_open_start, Instant::now());
+                        fast_shared.with_store(&fast_db, |store| {
+                            let (node_count, contradiction_ids) = store.load_list_fast_meta()?;
+                            let overview = DbOverview::fast(
+                                fast_db.clone(),
+                                node_count,
+                                contradiction_ids,
+                            );
+                            let list_start = Instant::now();
+                            let page = store.query_nodes_page(
+                                &fast_filter,
+                                &overview.contradiction_node_ids,
+                                None,
+                                crate::core::db::LIST_PAGE_SIZE,
+                            )?;
+                            let total_matching = if !page.has_more {
+                                page.items.len()
+                            } else if fast_filter.is_empty() {
+                                node_count
+                            } else {
+                                store.count_matching_nodes(&fast_filter)?.max(page.items.len())
+                            };
+                            Ok::<_, DbError>((overview, page, total_matching, list_start))
+                        })
+                    })
+                    .await;
+
+                let applied = this.update(cx, |app, cx| {
+                    if app.initial_load_done {
+                        return false;
+                    }
+                    if let Ok((overview, page, total_matching, list_start)) = fast {
+                        timeline.record_span("first_list_page", list_start, Instant::now());
+                        app.apply_fast_snapshot(overview, page, total_matching, cx);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                matches!(applied, Ok(true))
+            } else {
+                false
+            };
+
             let started = Instant::now();
             let result = cx
                 .background_executor()
                 .spawn(async move {
                     let db_open_start = Instant::now();
-                    let store = ReadOnlyStore::open(&db_path)?;
-                    if record_startup {
+                    shared.ensure_open(&db_path)?;
+                    if record_startup && !fast_applied {
                         timeline.record_span("db_open", db_open_start, Instant::now());
                     }
 
-                    let overview_start = Instant::now();
-                    let overview = store.load_overview()?;
-                    if record_startup {
-                        timeline.record_span("overview", overview_start, Instant::now());
-                    }
-
-                    let list_start = Instant::now();
-                    let loaded = load_initial_snapshot_with_overview(&store, overview, &filter)?;
-                    Ok::<(InitialLoadResult, Instant), DbError>((loaded, list_start))
+                    let phase = shared.with_store(&db_path, |store| {
+                        let overview_start = Instant::now();
+                        let overview = store.load_overview()?;
+                        if record_startup {
+                            timeline.record_span("overview", overview_start, Instant::now());
+                        }
+                        if fast_applied {
+                            let health = assess_store_health(store, &overview, now_unix_ms()).ok();
+                            Ok(PhaseTwo {
+                                overview,
+                                health,
+                                full: None,
+                            })
+                        } else {
+                            let list_start = Instant::now();
+                            let loaded =
+                                load_initial_snapshot_with_overview(store, overview.clone(), &filter)?;
+                            Ok(PhaseTwo {
+                                overview,
+                                health: None,
+                                full: Some((loaded, list_start)),
+                            })
+                        }
+                    })?;
+                    Ok::<PhaseTwo, DbError>(phase)
                 })
                 .await;
 
             let _ = this.update(cx, |app, cx| {
                 let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
                 match result {
-                    Ok((loaded, list_start)) => {
+                    Ok(phase) => {
+                        let overview = phase.overview;
                         tracing::info!(
-                            nodes = loaded.overview.node_count,
-                            edges = loaded.overview.edge_count,
-                            rows = loaded.items.len(),
+                            nodes = overview.node_count,
+                            edges = overview.edge_count,
                             elapsed_ms,
                             "database loaded read-only"
                         );
-                        let total = loaded.overview.node_count;
-                        let total_matching = loaded.total_matching;
-                        let has_more = loaded.has_more;
-                        app.list_cursor = loaded.next_cursor;
-                        app.list_total_matching = total_matching;
-                        app.loading_next_page = false;
-                        app.page_generation = app.page_generation.wrapping_add(1);
-                        app._next_page_task = None;
-                        let ov = loaded.overview.clone();
-                        let ov_list = loaded.overview.clone();
-                        app.apply_store_health_and_milestones(&loaded.overview, loaded.health, cx);
-                        app.overview = Some(loaded.overview);
+                        // In the fast path health comes from phase two; in the
+                        // combined path it already rode along with the list.
+                        let health = phase
+                            .health
+                            .or_else(|| phase.full.as_ref().and_then(|(l, _)| l.health.clone()));
+                        app.apply_store_health_and_milestones(&overview, health, cx);
+                        app.overview = Some(overview.clone());
                         app.last_db_stamp = db_file_stamp(&app.resolved_db.path);
-                        app.sidebar.update(cx, |s, cx| s.set_overview(Some(ov), cx));
-                        app.list_view.update(cx, |list, cx| {
-                            list.set_overview(Some(ov_list), cx);
-                            list.set_items(
-                                loaded.items,
-                                !app.filter.is_empty(),
-                                total_matching,
-                                total,
-                                has_more,
-                                cx,
-                            );
-                            list.set_selected(None, false, cx);
-                        });
-                        app.selected_id = None;
-                        app.detail_open = false;
-                        app.detail_view.update(cx, |d, cx| d.set_detail(None, cx));
-                        if record_startup {
-                            app.timeline
-                                .record_span("first_list_page", list_start, Instant::now());
+                        app.sidebar
+                            .update(cx, |s, cx| s.set_overview(Some(overview.clone()), cx));
+
+                        if let Some((loaded, list_start)) = phase.full {
+                            let total = overview.node_count;
+                            let total_matching = loaded.total_matching;
+                            app.list_cursor = loaded.next_cursor;
+                            app.list_total_matching = total_matching;
+                            app.loading_next_page = false;
+                            app.page_generation.advance();
+                            app._next_page_task = None;
+                            app.list_view.update(cx, |list, cx| {
+                                list.set_overview(Some(overview), cx);
+                                list.set_items(
+                                    loaded.items,
+                                    !app.filter.is_empty(),
+                                    total_matching,
+                                    total,
+                                    loaded.has_more,
+                                    cx,
+                                );
+                                list.set_selected(None, false, cx);
+                            });
+                            app.selected_id = None;
+                            app.detail_open = false;
+                            app.detail_view.update(cx, |d, cx| d.set_detail(None, cx));
+                            if record_startup {
+                                app.timeline.record_span(
+                                    "first_list_page",
+                                    list_start,
+                                    Instant::now(),
+                                );
+                            }
+                        } else {
+                            app.list_view
+                                .update(cx, |list, cx| list.set_overview(Some(overview), cx));
                         }
                         app.spawn_brief_and_review_badges(cx);
                         if app.active_surface == WorkspaceSurface::Memories
@@ -2009,7 +1444,7 @@ impl MemOSApp {
         self.pending_live_reload = None;
         self.list_cursor = None;
         self.loading_next_page = false;
-        self.page_generation = self.page_generation.wrapping_add(1);
+        self.page_generation.advance();
         self._next_page_task = None;
         self.list_view.update(cx, |l, cx| {
             l.set_pending_new_count(None, cx);
@@ -2068,15 +1503,15 @@ impl MemOSApp {
     }
 
     fn schedule_filtered_query(&mut self, debounce_ms: u64, cx: &mut Context<Self>) {
-        self.query_generation = self.query_generation.wrapping_add(1);
-        self.page_generation = self.page_generation.wrapping_add(1);
+        self.page_generation.advance();
         self.list_cursor = None;
         self.loading_next_page = false;
         self._next_page_task = None;
-        let request_gen = self.query_generation;
+        let request_gen = self.query_generation.advance();
         let db_path = self.resolved_db.path.clone();
         let filter = self.filter.clone();
         let overview_clone = self.overview.clone();
+        let shared = self.shared_store.clone();
         self.list_view.update(cx, |l, cx| l.set_loading(true, cx));
 
         self._search_task = Some(cx.spawn(async move |this, cx| {
@@ -2090,34 +1525,35 @@ impl MemOSApp {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let store = ReadOnlyStore::open(&db_path)?;
-                    let overview = match overview_clone {
-                        Some(ov) => ov,
-                        None => store.load_overview()?,
-                    };
-                    let page = store.query_nodes_page(
-                        &filter,
-                        &overview.contradiction_node_ids,
-                        None,
-                        crate::core::db::LIST_PAGE_SIZE,
-                    )?;
-                    let total_matching = if !page.has_more {
-                        page.items.len()
-                    } else if filter.is_empty() {
-                        overview.node_count
-                    } else {
-                        store.count_matching_nodes(&filter)?.max(page.items.len())
-                    };
-                    Ok::<(DbOverview, crate::core::db::ListPageResult, usize), DbError>((
-                        overview,
-                        page,
-                        total_matching,
-                    ))
+                    shared.with_store(&db_path, |store| {
+                        let overview = match overview_clone {
+                            Some(ov) => ov,
+                            None => store.load_overview()?,
+                        };
+                        let page = store.query_nodes_page(
+                            &filter,
+                            &overview.contradiction_node_ids,
+                            None,
+                            crate::core::db::LIST_PAGE_SIZE,
+                        )?;
+                        let total_matching = if !page.has_more {
+                            page.items.len()
+                        } else if filter.is_empty() {
+                            overview.node_count
+                        } else {
+                            store.count_matching_nodes(&filter)?.max(page.items.len())
+                        };
+                        Ok::<(DbOverview, crate::core::db::ListPageResult, usize), DbError>((
+                            overview,
+                            page,
+                            total_matching,
+                        ))
+                    })
                 })
                 .await;
 
             let _ = this.update(cx, |app, cx| {
-                if app.query_generation != request_gen {
+                if !app.query_generation.is_current(request_gen) {
                     return;
                 }
                 let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
@@ -2187,9 +1623,9 @@ impl MemOSApp {
             return;
         };
         self.loading_next_page = true;
-        self.page_generation = self.page_generation.wrapping_add(1);
-        let request_gen = self.page_generation;
-        let query_gen = self.query_generation;
+        self.page_generation.advance();
+        let request_gen = self.page_generation.current();
+        let query_gen = self.query_generation.current();
         let db_path = self.resolved_db.path.clone();
         let filter = self.filter.clone();
         let contradiction_ids = self
@@ -2197,23 +1633,27 @@ impl MemOSApp {
             .as_ref()
             .map(|o| o.contradiction_node_ids.clone())
             .unwrap_or_default();
+        let shared = self.shared_store.clone();
 
         self._next_page_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let store = ReadOnlyStore::open(&db_path)?;
-                    store.query_nodes_page(
-                        &filter,
-                        &contradiction_ids,
-                        Some(&cursor),
-                        LIST_NEXT_PAGE_SIZE,
-                    )
+                    shared.with_store(&db_path, |store| {
+                        store.query_nodes_page(
+                            &filter,
+                            &contradiction_ids,
+                            Some(&cursor),
+                            LIST_NEXT_PAGE_SIZE,
+                        )
+                    })
                 })
                 .await;
 
             let _ = this.update(cx, |app, cx| {
-                if app.page_generation != request_gen || app.query_generation != query_gen {
+                if !app.page_generation.is_current(request_gen)
+                    || !app.query_generation.is_current(query_gen)
+                {
                     return;
                 }
                 app.loading_next_page = false;
@@ -2238,7 +1678,7 @@ impl MemOSApp {
     fn close_detail(&mut self, cx: &mut Context<Self>) {
         self.detail_open = false;
         self.selected_id = None;
-        self.detail_generation = self.detail_generation.wrapping_add(1);
+        self.detail_generation.advance();
         self._detail_task = None;
         self.list_view
             .update(cx, |list, cx| list.set_selected(None, false, cx));
@@ -2264,22 +1704,21 @@ impl MemOSApp {
             graph.set_selected(Some(id.clone()), false, cx)
         });
 
-        self.detail_generation = self.detail_generation.wrapping_add(1);
-        let request_gen = self.detail_generation;
+        let request_gen = self.detail_generation.advance();
         let db_path = self.resolved_db.path.clone();
+        let shared = self.shared_store.clone();
         self.detail_view.update(cx, |d, cx| d.set_loading(true, cx));
 
         self._detail_task = Some(cx.spawn(async move |this, cx| {
             let detail_res = cx
                 .background_executor()
                 .spawn(async move {
-                    let store = ReadOnlyStore::open(&db_path)?;
-                    store.load_node_detail(&id)
+                    shared.with_store(&db_path, |store| store.load_node_detail(&id))
                 })
                 .await;
 
             let _ = this.update(cx, |app, cx| {
-                if app.detail_generation != request_gen {
+                if !app.detail_generation.is_current(request_gen) {
                     return;
                 }
                 match detail_res {
@@ -2305,12 +1744,12 @@ impl MemOSApp {
     }
 
     fn spawn_graph_load(&mut self, cx: &mut Context<Self>) {
-        self.graph_generation = self.graph_generation.wrapping_add(1);
-        let request_gen = self.graph_generation;
+        let request_gen = self.graph_generation.advance();
         let db_path = self.resolved_db.path.clone();
         let mode = self.graph_mode;
         let filter = self.filter.clone();
         let overview_clone = self.overview.clone();
+        let shared = self.shared_store.clone();
 
         self.graph_view.update(cx, |g, cx| {
             g.set_mode(mode, cx);
@@ -2321,22 +1760,23 @@ impl MemOSApp {
             let res = cx
                 .background_executor()
                 .spawn(async move {
-                    let store = ReadOnlyStore::open(&db_path)?;
-                    let overview = match overview_clone {
-                        Some(ov) => ov,
-                        None => store.load_overview()?,
-                    };
-                    store.load_graph_snapshot(
-                        mode,
-                        &filter,
-                        &overview.contradiction_node_ids,
-                        DEFAULT_GRAPH_NODE_CAP,
-                    )
+                    shared.with_store(&db_path, |store| {
+                        let overview = match overview_clone {
+                            Some(ov) => ov,
+                            None => store.load_overview()?,
+                        };
+                        store.load_graph_snapshot(
+                            mode,
+                            &filter,
+                            &overview.contradiction_node_ids,
+                            DEFAULT_GRAPH_NODE_CAP,
+                        )
+                    })
                 })
                 .await;
 
             let _ = this.update(cx, |app, cx| {
-                if app.graph_generation != request_gen {
+                if !app.graph_generation.is_current(request_gen) {
                     return;
                 }
                 match res {
@@ -2374,6 +1814,12 @@ impl MemOSApp {
         }
         if mode == ViewMode::Graph {
             self.detail_open = false;
+            // Keep the memory the user was reading in focus instead of
+            // dumping the whole store at Fit.
+            if let Some(id) = self.selected_id.clone() {
+                self.graph_view
+                    .update(cx, |g, cx| g.set_selected(Some(id), true, cx));
+            }
             self.spawn_graph_load(cx);
         }
         cx.notify();
@@ -2659,6 +2105,7 @@ impl MemOSApp {
         self.show_composer_modal = false;
         self.forget_confirm_target = None;
         self.show_ingest_modal = false;
+        self.show_consent_modal = false;
     }
 
     fn open_harnesses_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2715,12 +2162,12 @@ impl MemOSApp {
         cx.notify();
 
         let db_path = self.resolved_db.path.clone();
+        let shared = self.shared_store.clone();
         self._dream_diff_task = Some(cx.spawn(async move |this, cx| {
             let loaded = cx
                 .background_executor()
                 .spawn(async move {
-                    let store = ReadOnlyStore::open(&db_path)?;
-                    store.load_dream_diff(120)
+                    shared.with_store(&db_path, |store| store.load_dream_diff(120))
                 })
                 .await;
             let _ = this.update(cx, |app, cx| {
@@ -2782,24 +2229,26 @@ impl MemOSApp {
         let db_path = self.resolved_db.path.clone();
         let filter = self.filter.clone();
         let overview_clone = self.overview.clone();
+        let shared = self.shared_store.clone();
         self._context_task = Some(cx.spawn(async move |this, cx| {
             let loaded = cx
                 .background_executor()
                 .spawn(async move {
-                    let store = ReadOnlyStore::open(&db_path)?;
-                    let overview = match overview_clone {
-                        Some(ov) => ov,
-                        None => store.load_overview()?,
-                    };
-                    let (items, total) = store.load_context_items_for_filter(
-                        &filter,
-                        &overview.contradiction_node_ids,
-                        CONTEXT_PREVIEW_VIEW_LIMIT,
-                    )?;
-                    let subtitle = describe_filter_target(&filter);
-                    Ok::<AiContextPreview, DbError>(format_ai_context_payload(
-                        &items, total, subtitle,
-                    ))
+                    shared.with_store(&db_path, |store| {
+                        let overview = match overview_clone {
+                            Some(ov) => ov,
+                            None => store.load_overview()?,
+                        };
+                        let (items, total) = store.load_context_items_for_filter(
+                            &filter,
+                            &overview.contradiction_node_ids,
+                            CONTEXT_PREVIEW_VIEW_LIMIT,
+                        )?;
+                        let subtitle = describe_filter_target(&filter);
+                        Ok::<AiContextPreview, DbError>(format_ai_context_payload(
+                            &items, total, subtitle,
+                        ))
+                    })
                 })
                 .await;
 
@@ -2973,10 +2422,16 @@ impl MemOSApp {
     }
 
     fn start_db_watcher(&mut self, cx: &mut Context<Self>) {
+        let shared = self.shared_store.clone();
         self._db_watch_task = Some(cx.spawn(async move |this, cx| {
             loop {
+                // Back off while the window is in the background: a store that
+                // is not being watched does not need a 1.5 s poll.
+                let active = this
+                    .read_with(cx, |app, _| app.window_active)
+                    .unwrap_or(true);
                 cx.background_executor()
-                    .timer(Duration::from_millis(1500))
+                    .timer(Duration::from_millis(if active { 1500 } else { 8000 }))
                     .await;
                 let info = this.read_with(cx, |app, _| {
                     if app.onboarding.is_some() {
@@ -2996,11 +2451,13 @@ impl MemOSApp {
                     continue;
                 };
 
+                let reload_shared = shared.clone();
                 let reloaded = cx
                     .background_executor()
                     .spawn(async move {
-                        let store = ReadOnlyStore::open(&db_path)?;
-                        load_initial_snapshot_blocking(&store, &filter)
+                        reload_shared.with_store(&db_path, |store| {
+                            load_initial_snapshot_blocking(store, &filter)
+                        })
                     })
                     .await;
 
@@ -3044,6 +2501,40 @@ impl MemOSApp {
         }));
     }
 
+    /// First-paint apply: list + totals only. Deliberately does not touch
+    /// health, milestones, brief, graph or review; the full load owns those.
+    fn apply_fast_snapshot(
+        &mut self,
+        overview: DbOverview,
+        page: crate::core::db::ListPageResult,
+        total_matching: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_surface != WorkspaceSurface::Memories {
+            return;
+        }
+        let total = overview.node_count;
+        let filtered = !self.filter.is_empty();
+        self.list_cursor = page.next_cursor;
+        self.list_total_matching = total_matching;
+        self.loading_next_page = false;
+        self.overview = Some(overview.clone());
+        self.sidebar
+            .update(cx, |s, cx| s.set_overview(Some(overview.clone()), cx));
+        self.list_view.update(cx, |list, cx| {
+            list.set_overview(Some(overview), cx);
+            list.set_items(
+                page.items,
+                filtered,
+                total_matching,
+                total,
+                page.has_more,
+                cx,
+            );
+        });
+        cx.notify();
+    }
+
     fn apply_loaded_snapshot(
         &mut self,
         loaded: InitialLoadResult,
@@ -3059,14 +2550,10 @@ impl MemOSApp {
         self.list_cursor = loaded.next_cursor;
         self.list_total_matching = total_matching;
         self.loading_next_page = false;
-        self.page_generation = self.page_generation.wrapping_add(1);
+        self.page_generation.advance();
         self._next_page_task = None;
         let ov = loaded.overview.clone();
         let ov_list = loaded.overview.clone();
-        let selected_still_present = self
-            .selected_id
-            .as_deref()
-            .is_some_and(|sel| loaded.items.iter().any(|it| it.id == sel));
 
         self.apply_store_health_and_milestones(&loaded.overview, loaded.health, cx);
         self.overview = Some(loaded.overview);
@@ -3090,9 +2577,11 @@ impl MemOSApp {
 
         if let Some(target_id) = jump_to_id {
             self.select_memory(target_id, true, cx);
-        } else if !selected_still_present && self.selected_id.is_some() {
-            self.close_detail(cx);
         }
+        // A reload must not close the detail pane just because the selected
+        // memory fell outside the first page: that would throw away the
+        // user's reading position. Explicit deletes clear `selected_id`
+        // before reloading, so a genuinely removed memory still closes it.
 
         self.spawn_brief_and_review_badges(cx);
         if self.active_surface == WorkspaceSurface::Memories && self.view_mode == ViewMode::Graph {
@@ -3504,6 +2993,7 @@ impl MemOSApp {
 
     fn confirm_forget(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.write_in_flight {
+            self.set_notice("Wait for the current save to finish", cx);
             return;
         }
         let Some(target) = self.forget_confirm_target.take() else {
@@ -3551,26 +3041,66 @@ impl MemOSApp {
                 .background_executor()
                 .spawn(async move {
                     match action {
-                        WriteRetryAction::Store { input } => {
-                            let stored = bridge.store(input)?;
-                            Ok::<(Option<String>, Option<String>, String), BridgeError>((
+                        WriteRetryAction::Store { input } => match bridge.store(input) {
+                            Ok(stored) => Ok::<_, (BridgeError, Option<WriteRetryAction>)>((
                                 Some(stored.id),
                                 None,
                                 "Memory saved".to_string(),
-                            ))
-                        }
+                            )),
+                            Err(err) => Err((err, None)),
+                        },
                         WriteRetryAction::Edit { original_id, input } => {
-                            let stored = bridge.store(input)?;
-                            bridge.supersede(&original_id, Some(&stored.id))?;
-                            Ok((
-                                Some(stored.id),
+                            match bridge.store(input) {
+                                Ok(stored) => {
+                                    match bridge.supersede(&original_id, Some(&stored.id)) {
+                                        Ok(_) => Ok((
+                                            Some(stored.id),
+                                            Some(original_id),
+                                            "Saved as a new version".to_string(),
+                                        )),
+                                        Err(err) => Err((
+                                            err,
+                                            Some(WriteRetryAction::FinishEdit {
+                                                original_id,
+                                                new_id: stored.id,
+                                            }),
+                                        )),
+                                    }
+                                }
+                                Err(err) => Err((err, None)),
+                            }
+                        }
+                        WriteRetryAction::FinishEdit {
+                            original_id,
+                            new_id,
+                        } => match bridge.supersede(&original_id, Some(&new_id)) {
+                            Ok(_) => Ok((
+                                Some(new_id),
                                 Some(original_id),
                                 "Saved as a new version".to_string(),
-                            ))
-                        }
-                        WriteRetryAction::Forget { id } => {
-                            bridge.forget(&id)?;
-                            Ok((None, Some(id), "Memory forgotten".to_string()))
+                            )),
+                            Err(err) => Err((
+                                err,
+                                Some(WriteRetryAction::FinishEdit {
+                                    original_id,
+                                    new_id,
+                                }),
+                            )),
+                        },
+                        WriteRetryAction::Forget { id } => match bridge.forget(&id) {
+                            Ok(_) => Ok((None, Some(id), "Memory forgotten".to_string())),
+                            Err(err) => Err((err, None)),
+                        },
+                        WriteRetryAction::Review { id, approve } => {
+                            let action = if approve { "approve" } else { "reject" }.to_string();
+                            match bridge.review(ReviewInput {
+                                action,
+                                id: Some(id),
+                                namespace: None,
+                            }) {
+                                Ok(done) => Ok((None, None, done.summary)),
+                                Err(err) => Err((err, None)),
+                            }
                         }
                     }
                 })
@@ -3590,13 +3120,13 @@ impl MemOSApp {
                         app.set_notice(toast, cx);
                         app.reload_store_after_write(jump_id, cx);
                     }
-                    Err(err) => {
+                    Err((err, retry_override)) => {
                         let summary = err.ui_summary();
                         tracing::warn!(error = %summary, "MCP write operation failed");
                         app.write_bridge_error = Some(BridgeErrorBanner {
                             command: cmd,
                             message: summary,
-                            retry_action,
+                            retry_action: retry_override.unwrap_or(retry_action),
                         });
                         cx.notify();
                     }
@@ -3608,12 +3138,14 @@ impl MemOSApp {
     fn reload_store_after_write(&mut self, jump_to_id: Option<String>, cx: &mut Context<Self>) {
         let db_path = self.resolved_db.path.clone();
         let filter = self.filter.clone();
+        let shared = self.shared_store.clone();
         self._init_task = Some(cx.spawn(async move |this, cx| {
             let reloaded = cx
                 .background_executor()
                 .spawn(async move {
-                    let store = ReadOnlyStore::open(&db_path)?;
-                    load_initial_snapshot_blocking(&store, &filter)
+                    shared.with_store(&db_path, |store| {
+                        load_initial_snapshot_blocking(store, &filter)
+                    })
                 })
                 .await;
 
@@ -3642,6 +3174,7 @@ impl MemOSApp {
             .as_ref()
             .map(|o| o.contradiction_node_ids.clone())
             .unwrap_or_default();
+        let shared = self.shared_store.clone();
         if self.active_surface == WorkspaceSurface::Today {
             self.brief_view.update(cx, |b, cx| b.set_loading(true, cx));
         }
@@ -3650,11 +3183,12 @@ impl MemOSApp {
             let res = cx
                 .background_executor()
                 .spawn(async move {
-                    let store = ReadOnlyStore::open(&db_path)?;
-                    let now_ms = now_unix_ms();
-                    let snapshot = store.load_brief(now_ms, &contradiction_ids, 5)?;
-                    let pending_review = store.count_pending_review().unwrap_or(0);
-                    Ok::<(BriefSnapshot, usize), DbError>((snapshot, pending_review))
+                    shared.with_store(&db_path, |store| {
+                        let now_ms = now_unix_ms();
+                        let snapshot = store.load_brief(now_ms, &contradiction_ids, 5)?;
+                        let pending_review = store.count_pending_review().unwrap_or(0);
+                        Ok::<(BriefSnapshot, usize), DbError>((snapshot, pending_review))
+                    })
                 })
                 .await;
 
@@ -3731,13 +3265,46 @@ impl MemOSApp {
         if self.settings.write_mode && self.writer_preflight.compatible {
             self.spawn_review_list_load(cx);
         } else {
-            self.review_view.update(cx, |r, cx| {
-                r.set_loading(false, cx);
-                r.set_items(Vec::new(), cx);
-                r.set_error(None, cx);
-                r.set_load_error(None, cx);
-            });
+            self.spawn_read_only_review_load(cx);
         }
+    }
+
+    /// List the review queue straight from SQLite when the writer is off.
+    ///
+    /// The queue is read-only here: approve/reject remain gated on write mode,
+    /// but the user can still see what their agents have queued up.
+    fn spawn_read_only_review_load(&mut self, cx: &mut Context<Self>) {
+        let db_path = self.resolved_db.path.clone();
+        let shared = self.shared_store.clone();
+        self.review_view.update(cx, |r, cx| {
+            r.set_load_error(None, cx);
+            r.set_loading(true, cx);
+        });
+
+        self._review_task = Some(cx.spawn(async move |this, cx| {
+            let res = cx
+                .background_executor()
+                .spawn(async move {
+                    shared.with_store(&db_path, |store| store.load_pending_review(500))
+                })
+                .await;
+
+            let _ = this.update(cx, |app, cx| match res {
+                Ok(items) => {
+                    let count = items.len();
+                    app.pending_review_count = count;
+                    app.sidebar
+                        .update(cx, |s, cx| s.set_pending_review_count(count, cx));
+                    app.review_view.update(cx, |r, cx| r.set_items(items, cx));
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to list pending review from sqlite");
+                    app.review_view.update(cx, |r, cx| {
+                        r.set_load_error(Some(ReviewLoadError::Other(err.to_string())), cx)
+                    });
+                }
+            });
+        }));
     }
 
     fn spawn_review_list_load(&mut self, cx: &mut Context<Self>) {
@@ -3782,12 +3349,13 @@ impl MemOSApp {
 
     fn execute_review_decision(&mut self, id: String, approve: bool, cx: &mut Context<Self>) {
         if !self.settings.write_mode {
-            self.set_notice("Enable write mode to review", cx);
+            self.set_notice("Turn on editing to review", cx);
             return;
         }
         let cmd = self.settings.effective_writer_command().to_string();
         self.write_bridge.configure(&cmd, &self.resolved_db.path);
         let bridge = self.write_bridge.clone();
+        let retry_id = id.clone();
         self.review_view
             .update(cx, |r, cx| r.set_busy_id(Some(id.clone()), cx));
         let action = if approve { "approve" } else { "reject" }.to_string();
@@ -3813,7 +3381,15 @@ impl MemOSApp {
                 Err(err) => {
                     let msg = err.ui_summary();
                     app.review_view.update(cx, |r, cx| r.set_busy_id(None, cx));
-                    app.set_notice(msg, cx);
+                    app.write_bridge_error = Some(BridgeErrorBanner {
+                        command: cmd,
+                        message: msg,
+                        retry_action: WriteRetryAction::Review {
+                            id: retry_id,
+                            approve,
+                        },
+                    });
+                    cx.notify();
                 }
             });
         }));
@@ -5204,8 +4780,11 @@ impl MemOSApp {
     fn start_peek_watcher(&mut self, cx: &mut Context<Self>) {
         self._peek_watch_task = Some(cx.spawn(async move |this, cx| {
             loop {
+                let active = this
+                    .read_with(cx, |app, _| app.window_active)
+                    .unwrap_or(true);
                 cx.background_executor()
-                    .timer(Duration::from_secs(15))
+                    .timer(Duration::from_secs(if active { 15 } else { 60 }))
                     .await;
                 let res = this.update(cx, |app, cx| {
                     let suppressed = app.has_overlay_open(cx);
@@ -5409,6 +4988,30 @@ impl MemOSApp {
                     _ => {}
                 }
             }
+            WorkspaceSurface::Memories if self.view_mode == ViewMode::Graph => {
+                match key_lower.as_str() {
+                    "j" | "down" | "right" => {
+                        self.graph_view.update(cx, |g, cx| g.step_keyboard(1, cx));
+                    }
+                    "k" | "up" | "left" => {
+                        self.graph_view.update(cx, |g, cx| g.step_keyboard(-1, cx));
+                    }
+                    "home" => {
+                        self.graph_view
+                            .update(cx, |g, cx| g.step_keyboard(isize::MIN, cx));
+                    }
+                    "end" => {
+                        self.graph_view
+                            .update(cx, |g, cx| g.step_keyboard(isize::MAX, cx));
+                    }
+                    "enter" if !event.is_held => {
+                        if let Some(id) = self.graph_view.read(cx).keyboard_selected_id() {
+                            self.select_memory(id, false, cx);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             WorkspaceSurface::Memories => {}
         }
 
@@ -5505,6 +5108,7 @@ impl MemOSApp {
 
     fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.dismiss_popovers(PopoverOwner::None, cx);
+        self.palette_return_focus = window.focused(cx);
         let items = self.list_view.read(cx).items().to_vec();
         let saved_views = self.settings.saved_views.clone();
         let write_mode = self.settings.write_mode;
@@ -5582,6 +5186,7 @@ impl MemOSApp {
             PaletteAction::CopyActiveMarkdown => self.copy_active_memory_markdown(cx),
             PaletteAction::OpenHarnesses => self.open_harnesses_modal(window, cx),
             PaletteAction::OpenSettings => self.open_settings_modal(window, cx),
+            PaletteAction::OptimizeStore => self.optimize_store(cx),
             PaletteAction::OpenLogs => self.open_logs_folder(cx),
             PaletteAction::CopyDiagnostics => self.copy_diagnostics(cx),
             PaletteAction::ClearFilters => self.clear_filters(cx),
@@ -5757,6 +5362,8 @@ impl MemOSApp {
                                 div()
                                     .id("consent-decline")
                                     .focusable()
+                                    .role(Role::Button)
+                                    .aria_label("Keep crash reports off")
                                     .h(px(34.))
                                     .px(px(14.))
                                     .rounded(px(6.))
@@ -5778,6 +5385,8 @@ impl MemOSApp {
                                 div()
                                     .id("consent-accept")
                                     .focusable()
+                                    .role(Role::Button)
+                                    .aria_label("Enable scrubbed crash reports")
                                     .h(px(34.))
                                     .px(px(14.))
                                     .rounded(px(6.))
@@ -6967,14 +6576,14 @@ impl MemOSApp {
                                                             .text_size(px(13.))
                                                             .font_weight(FontWeight::MEDIUM)
                                                             .text_color(theme.text_primary)
-                                                            .child("Write mode (MCP)"),
+                                                            .child("Let your AI save changes"),
                                                     )
                                                     .child(
                                                         div()
                                                             .text_size(px(12.))
                                                             .line_height(px(17.))
                                                             .text_color(theme.text_muted)
-                                                            .child("Writes go through MemOS MCP so embeddings, provenance, and the tamper log stay intact."),
+                                                            .child("Approve, edit, forget, and add memories. Every change is logged and can be traced back."),
                                                     ),
                                             )
                                             .child(
@@ -7358,6 +6967,39 @@ impl MemOSApp {
                                                         this.copy_database_path(cx);
                                                     }))
                                                     .child("Copy path"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("settings-optimize-store")
+                                                    .focusable()
+                                                    .role(Role::Button)
+                                                    .aria_label("Optimize store indexes")
+                                                    .tooltip(tooltip_view(
+                                                        SharedString::from(
+                                                            "Adds missing read-path indexes. Safe and repeatable.",
+                                                        ),
+                                                        theme,
+                                                    ))
+                                                    .h(px(28.))
+                                                    .px(px(10.))
+                                                    .rounded(px(6.))
+                                                    .cursor_pointer()
+                                                    .bg(gpui::transparent_black())
+                                                    .border_1()
+                                                    .border_color(theme.border_subtle)
+                                                    .hover(move |s| s.bg(theme.bg_elevated))
+                                                    .flex()
+                                                    .items_center()
+                                                    .text_size(px(12.))
+                                                    .text_color(theme.text_secondary)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.optimize_store(cx);
+                                                    }))
+                                                    .child(if self.store_optimize_in_flight {
+                                                        "Optimising…"
+                                                    } else {
+                                                        "Optimize store"
+                                                    }),
                                             ),
                                     ),
                             )
@@ -9125,6 +8767,14 @@ impl Drop for MemOSApp {
 
 impl Render for MemOSApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Read once per frame; the DB watcher backs off when this is false,
+        // and the graph stops its drift loop while backgrounded.
+        let active = window.is_window_active();
+        if active != self.window_active {
+            self.window_active = active;
+            self.graph_view
+                .update(cx, |graph, cx| graph.set_window_active(active, cx));
+        }
         let first_render_start = if !self.first_frame_logged {
             Some(Instant::now())
         } else {
@@ -9188,30 +8838,18 @@ impl Render for MemOSApp {
         } else {
             let mode_label = if self.settings.write_mode {
                 if self.write_in_flight {
-                    "write mode (saving…)"
+                    "saving…"
                 } else {
-                    "write mode"
+                    "editing on"
                 }
             } else {
-                "read-only"
+                "view only"
             };
             let footer_left: SharedString = if let Some(ov) = &self.overview {
-                format!(
-                    "{} · {mode_label} · local",
-                    format_memory_count(ov.node_count)
-                )
-                .into()
+                format!("{} · {mode_label}", format_memory_count(ov.node_count)).into()
             } else {
-                format!("no database · {mode_label} · local").into()
+                format!("no database · {mode_label}").into()
             };
-            let db_filename: SharedString = self
-                .resolved_db
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| self.resolved_db.path.display().to_string())
-                .into();
 
             div()
                 .id("memos-desktop-root")
@@ -9762,13 +9400,7 @@ impl Render for MemOSApp {
                                             .text_color(theme.success)
                                             .child(SharedString::from(msg)),
                                     )
-                                })
-                                .child(
-                                    div()
-                                        .text_size(px(12.))
-                                        .text_color(theme.text_muted)
-                                        .child(db_filename),
-                                ),
+                                }),
                         ),
                 )
                 .when(self.momo_hovered && !self.has_overlay_open(cx), |el| {
@@ -9867,208 +9499,15 @@ impl Render for MemOSApp {
 }
 
 /// Dedicated crash report recovery window launched by the panic hook.
-struct CrashDialogView {
-    report_path: PathBuf,
-    report_preview: String,
-    resolved_db: ResolvedDbPath,
-    settings: AppSettings,
-    _telemetry: Arc<TelemetryHandle>,
-    theme: ThemePalette,
-    copied: bool,
-}
-
-impl CrashDialogView {
-    fn new(
-        report_path: PathBuf,
-        resolved_db: ResolvedDbPath,
-        settings: AppSettings,
-        telemetry: Arc<TelemetryHandle>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let theme = ThemePalette::for_mode(settings.theme);
-        let path_clone = report_path.clone();
-        cx.spawn(async move |this, cx| {
-            let text = cx
-                .background_executor()
-                .spawn(async move {
-                    std::fs::read_to_string(&path_clone)
-                        .unwrap_or_else(|e| format!("Unable to read local crash report: {e}"))
-                })
-                .await;
-            let _ = this.update(cx, |view, cx| {
-                view.report_preview = text;
-                cx.notify();
-            });
-        })
-        .detach();
-
-        Self {
-            report_path,
-            report_preview: "Loading sanitized local crash report…".to_string(),
-            resolved_db,
-            settings,
-            _telemetry: telemetry,
-            theme,
-            copied: false,
-        }
-    }
-}
-
-impl Render for CrashDialogView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = self.theme;
-        let report_path = self.report_path.clone();
-        let resolved_db = self.resolved_db.clone();
-        let settings = self.settings.clone();
-
-        div()
-            .w_full()
-            .h_full()
-            .p(px(18.))
-            .bg(theme.bg_app)
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_base()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.danger)
-                            .child("MemOS Desktop encountered an unexpected error"),
-                    )
-                    .when(self.copied, |el| {
-                        el.child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(theme.success)
-                                .child("Diagnostics copied"),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(SharedString::from(format!(
-                        "Sanitized local report saved at: {}",
-                        self.report_path.display()
-                    ))),
-            )
-            .child(
-                div()
-                    .id("crash-report-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p(px(10.))
-                    .rounded(px(6.))
-                    .bg(theme.bg_panel)
-                    .border_1()
-                    .border_color(theme.border)
-                    .text_xs()
-                    .text_color(theme.text_secondary)
-                    .child(SharedString::from(self.report_preview.clone())),
-            )
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .id("crash-open-logs")
-                            .px(px(12.))
-                            .py(px(6.))
-                            .rounded(px(6.))
-                            .cursor_pointer()
-                            .bg(theme.bg_elevated)
-                            .border_1()
-                            .border_color(theme.border)
-                            .hover(|s| s.bg(theme.bg_hover))
-                            .text_xs()
-                            .text_color(theme.text_primary)
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                let dir = telemetry::log_dir();
-                                cx.background_executor()
-                                    .spawn(async move {
-                                        let _ = std::fs::create_dir_all(&dir);
-                                        let _ = open::that(dir);
-                                    })
-                                    .detach();
-                            }))
-                            .child("Open logs"),
-                    )
-                    .child(
-                        div()
-                            .id("crash-copy-diag")
-                            .px(px(12.))
-                            .py(px(6.))
-                            .rounded(px(6.))
-                            .cursor_pointer()
-                            .bg(theme.accent_soft)
-                            .hover(|s| s.bg(theme.bg_hover))
-                            .text_xs()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.accent_text)
-                            .on_click(cx.listener(move |_this, _, _, cx| {
-                                let rdb = resolved_db.clone();
-                                let st = settings.clone();
-                                let rpath = report_path.clone();
-                                cx.spawn(async move |weak, cx| {
-                                    let diag = cx
-                                        .background_executor()
-                                        .spawn(async move {
-                                            let log_directory = telemetry::log_dir();
-                                            let base = telemetry::build_diagnostics_text(
-                                                &rdb,
-                                                None,
-                                                &st,
-                                                &log_directory,
-                                                &[],
-                                            );
-                                            format!(
-                                                "{base}\nlast_crash_report: {}",
-                                                rpath.display()
-                                            )
-                                        })
-                                        .await;
-                                    let _ = weak.update(cx, |v, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(diag));
-                                        v.copied = true;
-                                        cx.notify();
-                                    });
-                                })
-                                .detach();
-                            }))
-                            .child("Copy diagnostics"),
-                    )
-                    .child(
-                        div()
-                            .id("crash-close")
-                            .px(px(12.))
-                            .py(px(6.))
-                            .rounded(px(6.))
-                            .cursor_pointer()
-                            .bg(theme.bg_elevated)
-                            .border_1()
-                            .border_color(theme.border)
-                            .text_xs()
-                            .text_color(theme.text_secondary)
-                            .on_click(cx.listener(|_, _, _, cx| cx.quit()))
-                            .child("Close"),
-                    ),
-            )
-    }
-}
-
 fn sanitize_db_error(err: &DbError, path: &std::path::Path) -> String {
+    // Keep the message actionable without putting the full home path (and
+    // therefore the OS username) into logs and crash reports.
+    let label = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("the database file");
     match err {
-        DbError::NotFound => format!("Database not found at {}", path.display()),
+        DbError::NotFound => format!("Database not found at {label}"),
         DbError::MissingNodesTable => "Database has no `nodes` table (run `memos init`)".into(),
         DbError::OpenFailed { code } => format!("Failed to open read-only SQLite store ({code})"),
         DbError::QueryFailed { code } => format!("Read-only SQLite query failed ({code})"),
@@ -10084,20 +9523,7 @@ fn toggle_opt_string(slot: &mut Option<String>, val: String) {
 }
 
 fn db_file_stamp(db_path: &std::path::Path) -> Option<(u64, Option<SystemTime>)> {
-    let main_meta = std::fs::metadata(db_path).ok()?;
-    let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
-    let (wal_len, wal_mod) = std::fs::metadata(&wal_path)
-        .ok()
-        .map(|m| (m.len(), m.modified().ok()))
-        .unwrap_or((0, None));
-    let combined_len = main_meta.len().saturating_add(wal_len);
-    let latest_mod = match (main_meta.modified().ok(), wal_mod) {
-        (Some(a), Some(b)) => Some(a.max(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    };
-    Some((combined_len, latest_mod))
+    crate::core::store_cache::file_stamp(db_path)
 }
 
 fn format_memory_count(n: usize) -> String {
@@ -10545,7 +9971,7 @@ mod tests {
         );
         assert_eq!(
             PingResult::settings_footer_mode(false, Some(&modern_ping)),
-            "Read-only"
+            "View only"
         );
         assert_eq!(
             PingResult::settings_footer_mode(true, Some(&modern_ping)),

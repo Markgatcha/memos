@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -18,7 +19,7 @@ use crate::core::model::{
     GraphEdgeData, GraphMode, GraphNodeData, GraphSnapshot, short_citation_id,
 };
 use crate::ui::views::{
-    ThemePalette, UiIcon, render_ui_icon, status_dot, tabular_nums, tooltip_view,
+    ThemePalette, UiIcon, render_ui_icon, status_dot, tooltip_view,
 };
 
 const MAX_PAN_WORLD: f32 = 12_000.0;
@@ -178,7 +179,7 @@ fn hsla_bits(c: Hsla) -> u32 {
 
 #[derive(Clone)]
 struct CanvasRenderData {
-    layout: ComputedLayout,
+    layout: Arc<ComputedLayout>,
     viewport: GraphViewport,
     selected_id: Option<String>,
     hovered_node: Option<usize>,
@@ -194,11 +195,14 @@ struct CanvasRenderData {
 /// Interactive GPUI graph canvas with background force/temporal layout and lyon edges.
 pub struct GraphView {
     mode: GraphMode,
-    layout: Option<ComputedLayout>,
+    layout: Option<Arc<ComputedLayout>>,
     is_loading: bool,
     error: Option<String>,
     viewport: GraphViewport,
     selected_id: Option<String>,
+    /// Node index for arrow-key traversal; separate from mouse selection so
+    /// the ring survives until the next reload.
+    keyboard_index: Option<usize>,
     pending_center_on_load: bool,
     needs_fit_on_bounds: bool,
     hovered_node: Option<usize>,
@@ -212,6 +216,7 @@ pub struct GraphView {
     constellation: bool,
     drift_phase: f32,
     active_visible: bool,
+    window_active: bool,
     no_fun: bool,
     layout_generation: u64,
     label_cache: Rc<RefCell<LabelShapeCache>>,
@@ -220,7 +225,10 @@ pub struct GraphView {
     theme: ThemePalette,
 }
 
-pub const GRAPH_AMBIENT_LABEL_MIN_ZOOM: f32 = 0.85;
+/// Ambient (non-selected) node labels stay out of the overview. The fit
+/// zoom now fills the canvas (~1.2), so showing every top-importance label
+/// there just produces collisions; zoom in to read names.
+pub const GRAPH_AMBIENT_LABEL_MIN_ZOOM: f32 = 1.5;
 
 pub(crate) fn is_node_hovered(
     hovered_node: Option<usize>,
@@ -356,6 +364,7 @@ impl GraphView {
             error: None,
             viewport: GraphViewport::default(),
             selected_id: None,
+            keyboard_index: None,
             pending_center_on_load: false,
             needs_fit_on_bounds: false,
             hovered_node: None,
@@ -369,6 +378,7 @@ impl GraphView {
             constellation: false,
             drift_phase: 0.0,
             active_visible: false,
+            window_active: true,
             no_fun: false,
             layout_generation: 0,
             label_cache: Rc::new(RefCell::new(LabelShapeCache::default())),
@@ -412,6 +422,14 @@ impl GraphView {
         }
     }
 
+    /// Pause constellation drift when the window is in the background.
+    pub fn set_window_active(&mut self, active: bool, cx: &mut Context<Self>) {
+        if self.window_active != active {
+            self.window_active = active;
+            self.sync_drift_task(cx);
+        }
+    }
+
     pub fn set_constellation(&mut self, enabled: bool, cx: &mut Context<Self>) {
         if self.no_fun {
             return;
@@ -429,7 +447,12 @@ impl GraphView {
     }
 
     fn sync_drift_task(&mut self, cx: &mut Context<Self>) {
-        if !self.constellation || !self.active_visible || self.no_fun || cx.reduce_motion() {
+        if !self.constellation
+            || !self.active_visible
+            || !self.window_active
+            || self.no_fun
+            || cx.reduce_motion()
+        {
             self._drift_task = None;
             return;
         }
@@ -445,6 +468,7 @@ impl GraphView {
                 let res = this.update(cx, |view, cx| {
                     if !view.constellation
                         || !view.active_visible
+                        || !view.window_active
                         || view.no_fun
                         || cx.reduce_motion()
                     {
@@ -539,6 +563,49 @@ impl GraphView {
         cx.notify();
     }
 
+    /// Move the keyboard cursor through real (non-cluster) nodes.
+    pub fn step_keyboard(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(layout) = self.layout.as_ref() else {
+            return;
+        };
+        let indices: Vec<usize> = layout
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.data.memory_id.is_some())
+            .map(|(i, _)| i)
+            .collect();
+        if indices.is_empty() {
+            return;
+        }
+        let current = self
+            .keyboard_index
+            .and_then(|k| indices.iter().position(|&i| i == k));
+        let next = match current {
+            Some(p) => (p as isize).saturating_add(delta).clamp(0, indices.len() as isize - 1) as usize,
+            None => {
+                if delta < 0 {
+                    indices.len() - 1
+                } else {
+                    0
+                }
+            }
+        };
+        let ix = indices[next];
+        let memory_id = layout
+            .nodes
+            .get(ix)
+            .and_then(|n| n.data.memory_id.clone());
+        self.keyboard_index = Some(ix);
+        self.selected_id = memory_id;
+        cx.notify();
+    }
+
+    /// Currently ringed node, used by Enter to open the detail pane.
+    pub fn keyboard_selected_id(&self) -> Option<String> {
+        self.selected_id.clone()
+    }
+
     /// Schedule force-directed / temporal layout strictly on GPUI's background executor.
     pub fn apply_snapshot(&mut self, snapshot: GraphSnapshot, cx: &mut Context<Self>) {
         self.mode = snapshot.mode;
@@ -546,6 +613,7 @@ impl GraphView {
         self.error = None;
         self.hovered_node = None;
         self.hovered_edge = None;
+        self.keyboard_index = None;
         self.layout_generation = self.layout_generation.wrapping_add(1);
         let generation = self.layout_generation;
         let selected_id = self.selected_id.clone();
@@ -570,7 +638,7 @@ impl GraphView {
                     "graph layout ready"
                 );
                 view.label_cache.borrow_mut().entries.clear();
-                view.layout = Some(computed);
+                view.layout = Some(Arc::new(computed));
                 view.is_loading = false;
                 let focus_id = if std::mem::take(&mut view.pending_center_on_load) {
                     selected_id.as_deref()
@@ -830,15 +898,19 @@ impl Render for GraphView {
         };
 
         let stats_summary: Option<SharedString> = self.layout.as_ref().map(|l| {
+            // `nodes.len()` is what is drawn (including cluster nodes), not
+            // what matched; use the store-side total so a clustered 50k store
+            // does not read as "1,936 memories".
+            let total = l.total_matching_nodes.max(l.nodes.len());
             if l.clustered_nodes > 0 {
                 SharedString::from(format!(
-                    "{} visible (+{} clustered) · {} edges",
-                    l.nodes.len(),
-                    l.clustered_nodes,
-                    l.edges.len()
+                    "{} memories · {} links · {} grouped",
+                    total,
+                    l.edges.len(),
+                    l.clustered_nodes
                 ))
             } else {
-                SharedString::from(format!("{} nodes · {} edges", l.nodes.len(), l.edges.len()))
+                SharedString::from(format!("{} memories · {} links", total, l.edges.len()))
             }
         });
         let has_legend = !legend_entries.is_empty();
@@ -1242,12 +1314,6 @@ impl Render for GraphView {
                                 .left(px(12.))
                                 .max_w(px(340.))
                                 .overflow_hidden()
-                                .px(px(10.))
-                                .py(px(6.))
-                                .rounded(px(6.))
-                                .bg(theme.bg_panel)
-                                .border_1()
-                                .border_color(theme.border_subtle)
                                 .flex()
                                 .items_center()
                                 .flex_wrap()
@@ -1266,23 +1332,7 @@ impl Render for GraphView {
                                         )
                                 })),
                         )
-                    })
-                    .child(
-                        div()
-                            .absolute()
-                            .bottom(px(12.))
-                            .right(px(12.))
-                            .px(px(8.))
-                            .py(px(5.))
-                            .rounded(px(6.))
-                            .bg(theme.bg_panel)
-                            .border_1()
-                            .border_color(theme.border_subtle)
-                            .text_size(px(12.))
-                            .font_features(tabular_nums())
-                            .text_color(theme.text_muted)
-                            .child(format!("{:.0}%", self.viewport.zoom * 100.0)),
-                    ),
+                    }),
             )
     }
 }
@@ -1335,7 +1385,13 @@ pub fn compute_graph_layout(snapshot: &GraphSnapshot) -> ComputedLayout {
 
     let num_groups = group_names.len().max(1);
     let golden_angle = 2.399_963_2_f32;
-    let group_scale = 200.0 + (num_groups as f32).sqrt() * 90.0 + (n as f32).sqrt() * 14.0;
+    // Small stores get a tighter anchor ring so Fit can zoom in and use the
+    // canvas instead of leaving three small clumps in a sea of background.
+    let group_scale = if n <= 120 {
+        120.0 + (num_groups as f32).sqrt() * 60.0 + (n as f32).sqrt() * 10.0
+    } else {
+        200.0 + (num_groups as f32).sqrt() * 90.0 + (n as f32).sqrt() * 14.0
+    };
     let mut anchors: Vec<(f32, f32)> = Vec::with_capacity(num_groups);
     for g in 0..num_groups {
         let r = if num_groups == 1 {
@@ -1520,7 +1576,7 @@ fn compute_fit_viewport(layout: &ComputedLayout, vp_w: f32, vp_h: f32) -> GraphV
     let avail_h = (vp_h - pad_top - pad_bottom).max(120.0);
     let zoom = (avail_w / span_x)
         .min(avail_h / span_y)
-        .clamp(MIN_ZOOM, 1.35);
+        .clamp(MIN_ZOOM, 1.8);
     GraphViewport {
         zoom,
         pan_x: -mid_x + (pad_left - pad_right) * 0.5 / zoom,
@@ -1832,15 +1888,17 @@ fn finalize_layout(
             let mut core_xs: Vec<f32> = by_dist[..core_len].iter().map(|p| p.1).collect();
             core_xs.sort_by(f32::total_cmp);
             let anchor_x = core_xs[core_xs.len() / 2];
-            let core_top_y = by_dist[..core_len]
+            // Clear every node in the group, not just the core, so a heading
+            // never lands on top of an outlier node.
+            let top_y = pts
                 .iter()
-                .map(|p| p.2 - p.3)
+                .map(|p| p.1 - p.2)
                 .fold(f32::INFINITY, f32::min);
 
             group_labels.push(GroupAnchorLabel {
                 text: sanitize_single_line(name, 26),
                 x: anchor_x,
-                y: core_top_y,
+                y: top_y,
                 count: pts.len(),
             });
         }
@@ -2068,6 +2126,42 @@ fn paint_graph_canvas(
     type EdgeCurve = (Point<Pixels>, Point<Pixels>, Point<Pixels>);
     type ActiveEdge = (usize, EdgeCurve, Hsla);
 
+    // Small open arrowhead at the target end, drawn only for the active
+    // (hovered/selected) edge so direction is readable without adding noise
+    // to the overview.
+    fn edge_arrow_curves(ctrl: Point<Pixels>, p1: Point<Pixels>) -> [EdgeCurve; 2] {
+        let dx = p1.x.as_f32() - ctrl.x.as_f32();
+        let dy = p1.y.as_f32() - ctrl.y.as_f32();
+        let len = (dx * dx + dy * dy).sqrt().max(0.001);
+        let (ux, uy) = (dx / len, dy / len);
+        let tip = point(
+            px(p1.x.as_f32() - ux * 11.0),
+            px(p1.y.as_f32() - uy * 11.0),
+        );
+        let base = point(
+            px(tip.x.as_f32() - ux * 9.0),
+            px(tip.y.as_f32() - uy * 9.0),
+        );
+        let left = point(
+            px(base.x.as_f32() - uy * 5.0),
+            px(base.y.as_f32() + ux * 5.0),
+        );
+        let right = point(
+            px(base.x.as_f32() + uy * 5.0),
+            px(base.y.as_f32() - ux * 5.0),
+        );
+        let mid = |a: Point<Pixels>, b: Point<Pixels>| {
+            point(
+                px((a.x.as_f32() + b.x.as_f32()) * 0.5),
+                px((a.y.as_f32() + b.y.as_f32()) * 0.5),
+            )
+        };
+        [
+            (tip, mid(tip, left), left),
+            (tip, mid(tip, right), right),
+        ]
+    }
+
     let mut regular_edges: Vec<EdgeCurve> = Vec::new();
     let mut contradiction_edges: Vec<EdgeCurve> = Vec::new();
     let mut active_edges: Vec<ActiveEdge> = Vec::new();
@@ -2143,6 +2237,9 @@ fn paint_graph_canvas(
             px(2.2)
         };
         paint_lyon_edge_chunks(&[curve], width, None, color, window);
+        for arrow in edge_arrow_curves(curve.1, curve.2) {
+            paint_lyon_edge_chunks(&[arrow], width, None, color, window);
+        }
     }
 
     let l = bounds.left().as_f32();
@@ -2917,10 +3014,11 @@ mod tests {
 
     #[test]
     fn graph_label_zoom_gate_collision_and_bounds_clamp() {
-        // Below 0.85 zoom, only selected or hovered labels appear; ambient labels hide.
-        assert!(!should_show_node_label(true, false, false, 0.84, true));
-        assert!(should_show_node_label(true, false, false, 0.85, true));
-        assert!(!should_show_node_label(true, false, false, 0.84, false));
+        // Below the ambient threshold, only selected or hovered labels appear.
+        let gate = GRAPH_AMBIENT_LABEL_MIN_ZOOM;
+        assert!(!should_show_node_label(true, false, false, gate - 0.01, true));
+        assert!(should_show_node_label(true, false, false, gate, true));
+        assert!(!should_show_node_label(true, false, false, gate - 0.01, false));
         assert!(should_show_node_label(true, true, false, 0.25, false));
         assert!(should_show_node_label(true, false, true, 0.25, false));
 

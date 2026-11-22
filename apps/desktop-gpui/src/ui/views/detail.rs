@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{
@@ -31,6 +32,9 @@ pub fn is_sticky_header_visible(scroll_y: f32) -> bool {
 
 pub struct DetailView {
     detail: Option<MemoryDetail>,
+    metadata_entries: Arc<Vec<(String, String)>>,
+    tags_line: Option<SharedString>,
+    entities_line: Option<SharedString>,
     loading: bool,
     error: Option<String>,
     copied_label: Option<&'static str>,
@@ -47,6 +51,9 @@ impl DetailView {
     pub fn new(theme: ThemePalette) -> Self {
         Self {
             detail: None,
+            metadata_entries: Arc::new(Vec::new()),
+            tags_line: None,
+            entities_line: None,
             loading: false,
             error: None,
             copied_label: None,
@@ -77,6 +84,35 @@ impl DetailView {
 
     pub fn set_detail(&mut self, detail: Option<MemoryDetail>, cx: &mut Context<Self>) {
         let id_changed = self.detail.as_ref().map(|d| &d.id) != detail.as_ref().map(|d| &d.id);
+        // Metadata parsing, pretty-printing and token wrapping are expensive
+        // and must not run per frame.
+        self.metadata_entries = Arc::new(
+            detail
+                .as_ref()
+                .map(|d| format_metadata_entries(&d.metadata_json))
+                .unwrap_or_default(),
+        );
+        self.tags_line = detail.as_ref().and_then(|d| {
+            if d.tags.is_empty() {
+                None
+            } else {
+                Some(
+                    d.tags
+                        .iter()
+                        .map(|t| format!("#{t}"))
+                        .collect::<Vec<_>>()
+                        .join("  ")
+                        .into(),
+                )
+            }
+        });
+        self.entities_line = detail.as_ref().and_then(|d| {
+            if d.entities.is_empty() {
+                None
+            } else {
+                Some(d.entities.join(", ").into())
+            }
+        });
         self.detail = detail;
         self.loading = false;
         self.error = None;
@@ -112,8 +148,13 @@ impl DetailView {
     }
 
     fn render_meta_row(&self, key: &str, value: String, monospace: bool) -> AnyElement {
-        let theme = self.theme;
         let wrapped = wrap_unbroken_tokens(&value, 32);
+        self.render_meta_row_text(key, &wrapped, monospace)
+    }
+
+    /// Same as [`Self::render_meta_row`] for values that are already wrapped.
+    fn render_meta_row_text(&self, key: &str, wrapped: &str, monospace: bool) -> AnyElement {
+        let theme = self.theme;
         let val_el = div()
             .flex_1()
             .min_w(px(0.))
@@ -122,7 +163,7 @@ impl DetailView {
             .line_height(px(17.))
             .text_color(theme.text_primary)
             .when(monospace, |el| el.font_family("Consolas"))
-            .child(SharedString::from(wrapped));
+            .child(SharedString::from(wrapped.to_string()));
 
         div()
             .w_full()
@@ -493,25 +534,9 @@ impl Render for DetailView {
             })
             .collect();
 
-        let metadata_entries = format_metadata_entries(&detail.metadata_json);
-        let tags_line: Option<SharedString> = if detail.tags.is_empty() {
-            None
-        } else {
-            Some(
-                detail
-                    .tags
-                    .iter()
-                    .map(|t| format!("#{t}"))
-                    .collect::<Vec<_>>()
-                    .join("  ")
-                    .into(),
-            )
-        };
-        let entities_line: Option<SharedString> = if detail.entities.is_empty() {
-            None
-        } else {
-            Some(detail.entities.join(", ").into())
-        };
+        let metadata_entries = self.metadata_entries.clone();
+        let tags_line: Option<SharedString> = self.tags_line.clone();
+        let entities_line: Option<SharedString> = self.entities_line.clone();
         let sticky_scroll_y = (-self.scroll_handle.offset().y.as_f32()).max(0.0);
         let show_sticky_header = is_sticky_header_visible(sticky_scroll_y);
         let sticky_short_id: SharedString = detail.short_id.clone().into();
@@ -1065,10 +1090,10 @@ impl Render for DetailView {
                                                                     .child("Metadata"),
                                                             )
                                                             .children(
-                                                                metadata_entries.into_iter().map(
+                                                                metadata_entries.iter().map(
                                                                     |(k, v)| {
-                                                                        self.render_meta_row(
-                                                                            &k, v, true,
+                                                                        self.render_meta_row_text(
+                                                                            k, v, true,
                                                                         )
                                                                     },
                                                                 ),
@@ -1259,17 +1284,13 @@ impl DetailView {
             origin_parts.join(" · ")
         };
 
-        let mut signal_parts = vec![
-            format!("Trust {:.2}", detail.trust_score),
-            format!("Importance {:.2}", detail.importance),
-        ];
-        if let Some(conf) = detail.confidence {
-            signal_parts.push(format!("Confidence {conf:.2}"));
+        let trust_pct = (detail.trust_score * 100.0).round().clamp(0.0, 100.0) as i32;
+        let mut signal_parts = vec![format!("Trusted {trust_pct}%")];
+        if detail.access_count == 1 {
+            signal_parts.push("read once".to_string());
+        } else if detail.access_count > 1 {
+            signal_parts.push(format!("read {} times", detail.access_count));
         }
-        if let Some(ev) = detail.evidence_count {
-            signal_parts.push(format!("Evidence {ev}"));
-        }
-        signal_parts.push(format!("Reads {}", detail.access_count));
         let signal_line = signal_parts.join(" · ");
 
         div()
@@ -1310,9 +1331,14 @@ impl DetailView {
                     )
                     .child(div().text_size(px(11.)).text_color(theme.text_muted).child(
                         if has_receipts {
-                            format!("{} entry(s)", detail.receipts.len())
+                            let n = detail.receipts.len();
+                            if n == 1 {
+                                "1 receipt".to_string()
+                            } else {
+                                format!("{n} receipts")
+                            }
                         } else {
-                            "Unsigned".to_string()
+                            "No history yet".to_string()
                         },
                     )),
             )
@@ -1389,7 +1415,7 @@ impl DetailView {
                                         .text_color(theme.text_muted)
                                         .flex_shrink_0()
                                         .child(SharedString::from(format!(
-                                            "[mem:{}]",
+                                            "#{}",
                                             edge.peer_short_id
                                         ))),
                                 )

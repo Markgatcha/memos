@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{
@@ -14,7 +15,7 @@ use crate::core::model::{
 };
 use crate::ui::motion::{DURATION_FAST_MS, DURATION_NORMAL_MS, ease_out_cubic, lerp_hsla};
 use crate::ui::views::momo::render_momo_button;
-use crate::ui::views::onboarding::{CLI_INIT_COMMAND, CLI_STORE_COMMAND};
+use crate::ui::views::onboarding::CLI_STORE_COMMAND;
 use crate::ui::views::{
     ThemePalette, UiIcon, render_ui_icon, render_vertical_scroll_overlay, status_dot, tabular_nums,
 };
@@ -36,6 +37,7 @@ pub enum ListEvent {
     ClearFilters,
     RetryLoad,
     LoadNextPage,
+    CreateStore(PathBuf),
     CopyInitCommand,
     CopyStoreCommand,
     OpenTools,
@@ -51,6 +53,9 @@ enum HeaderPopover {
 
 pub struct MemoryListView {
     items: Vec<MemoryListItem>,
+    /// Ids of every loaded item, kept in sync so appending a page never
+    /// rebuilds a set over the whole list.
+    item_ids: HashSet<String>,
     total_matching: usize,
     total_store_nodes: usize,
     filtered: bool,
@@ -94,6 +99,7 @@ impl MemoryListView {
     pub fn new(theme: ThemePalette) -> Self {
         Self {
             items: Vec::new(),
+            item_ids: HashSet::new(),
             total_matching: 0,
             total_store_nodes: 0,
             filtered: false,
@@ -239,6 +245,7 @@ impl MemoryListView {
         cx: &mut Context<Self>,
     ) {
         self.items = items;
+        self.item_ids = self.items.iter().map(|i| i.id.clone()).collect();
         self.filtered = filtered;
         self.total_store_nodes = total_store_nodes;
         self.total_matching = total_matching.max(self.items.len());
@@ -258,7 +265,7 @@ impl MemoryListView {
         total_matching: usize,
         cx: &mut Context<Self>,
     ) {
-        let _added = append_deduped_items(&mut self.items, next_items);
+        let _added = append_deduped_items(&mut self.items, &mut self.item_ids, next_items);
         self.has_more = has_more;
         self.loading_more = false;
         self.total_matching = total_matching.max(self.items.len());
@@ -945,8 +952,7 @@ impl Render for MemoryListView {
         let viewport_h = window.viewport_size().height.as_f32();
         let now = Self::now_ms();
 
-        let (breadcrumb, page_title) =
-            page_header_titles(&self.filter, self.active_view_name.as_deref());
+        let (_, page_title) = page_header_titles(&self.filter, self.active_view_name.as_deref());
 
         let count_text = format_list_count_text(
             total,
@@ -955,23 +961,11 @@ impl Render for MemoryListView {
             self.filtered,
             self.has_more,
         );
-        let tags_count = self.overview.as_ref().map(|o| o.tags.len()).unwrap_or(0);
-        let types_count = self.overview.as_ref().map(|o| o.types.len()).unwrap_or(0);
-        let mut summary_parts = vec![
-            count_text,
-            format!(
-                "{tags_count} {}",
-                if tags_count == 1 { "tag" } else { "tags" }
-            ),
-            format!(
-                "{types_count} {}",
-                if types_count == 1 { "type" } else { "types" }
-            ),
-        ];
+        let mut summary_parts = vec![count_text];
         if self.total_store_nodes > 0
             && let Some(ts) = self.overview.as_ref().and_then(|o| o.newest_updated_at)
         {
-            summary_parts.push(format!("last write {}", format_relative_age(ts, now)));
+            summary_parts.push(format!("updated {}", format_relative_age(ts, now)));
         }
         let summary_line = summary_parts.join(" · ");
 
@@ -988,23 +982,15 @@ impl Render for MemoryListView {
             .w_full()
             .min_w(px(0.))
             .overflow_hidden()
-            .pt(px(24.))
-            .pb(px(16.))
+            .pt(px(22.))
+            .pb(px(14.))
             .pl(px(16.))
             .pr(px(16.) + self.overlay_right_inset)
             .border_b_1()
             .border_color(theme.border_subtle)
             .flex()
             .flex_col()
-            .gap(px(4.))
-            .child(
-                div()
-                    .text_size(px(10.))
-                    .line_height(px(14.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.text_muted)
-                    .child(breadcrumb),
-            )
+            .gap(px(3.))
             .child(
                 div()
                     .w_full()
@@ -1234,7 +1220,7 @@ impl Render for MemoryListView {
                                 .text_size(px(19.))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme.text_primary)
-                                .child("Database not found"),
+                                .child("No memory store yet"),
                         )
                         .child(
                             div()
@@ -1242,9 +1228,7 @@ impl Render for MemoryListView {
                                 .line_height(px(21.))
                                 .text_color(theme.text_muted)
                                 .text_center()
-                                .child(format!(
-                                    "No MemOS store was found at {path_display}. Initialize a store, then retry."
-                                )),
+                                .child("A store keeps what your AI remembers on this machine. Create one at the path below, or open an existing store from Settings."),
                         )
                         .child(
                             div()
@@ -1255,9 +1239,10 @@ impl Render for MemoryListView {
                                 .bg(theme.bg_panel)
                                 .border_1()
                                 .border_color(theme.border_subtle)
-                                .text_size(px(13.))
-                                .text_color(theme.text_primary)
-                                .child(CLI_INIT_COMMAND),
+                                .text_size(px(12.))
+                                .text_color(theme.text_muted)
+                                .truncate()
+                                .child(path_display),
                         )
                         .child(
                             div()
@@ -1266,21 +1251,26 @@ impl Render for MemoryListView {
                                 .gap(px(8.))
                                 .child(
                                     div()
-                                        .id("copy-init-cmd")
+                                        .id("create-memory-store")
                                         .focusable()
+                                        .role(Role::Button)
                                         .cursor_pointer()
                                         .h(px(34.))
                                         .px(px(14.))
                                         .rounded(px(6.))
                                         .bg(theme.accent)
+                                        .hover(move |s| s.opacity(0.92))
                                         .text_size(px(13.))
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme.primary_btn_fg)
                                         .flex()
                                         .items_center()
-                                        .child("Copy init command")
-                                        .on_click(cx.listener(|_, _, _, cx| {
-                                            cx.emit(ListEvent::CopyInitCommand);
+                                        .child("Create memory store")
+                                        .on_click(cx.listener({
+                                            let target = PathBuf::from(missing_path);
+                                            move |_, _, _, cx| {
+                                                cx.emit(ListEvent::CreateStore(target.clone()));
+                                            }
                                         })),
                                 )
                                 .child(
@@ -1302,6 +1292,34 @@ impl Render for MemoryListView {
                                         .child("Retry")
                                         .on_click(cx.listener(|_, _, _, cx| {
                                             cx.emit(ListEvent::RetryLoad);
+                                        })),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .pt(px(2.))
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(theme.text_muted)
+                                        .child("Prefer the CLI? `memos init --yes`"),
+                                )
+                                .child(
+                                    div()
+                                        .id("copy-init-cmd")
+                                        .focusable()
+                                        .cursor_pointer()
+                                        .px(px(4.))
+                                        .rounded(px(4.))
+                                        .hover(move |s| s.bg(theme.bg_elevated))
+                                        .text_size(px(12.))
+                                        .text_color(theme.text_secondary)
+                                        .child("Copy")
+                                        .on_click(cx.listener(|_, _, _, cx| {
+                                            cx.emit(ListEvent::CopyInitCommand);
                                         })),
                                 ),
                         ),
@@ -1765,16 +1783,27 @@ pub fn format_list_count_text(
     }
 }
 
+/// Upper bound on rows retained in the list. Six pages of 750 rows is far
+/// more than a session scrolls through, and it keeps memory bounded on stores
+/// with tens of thousands of memories.
+pub const LIST_MAX_ITEMS: usize = 5_000;
+
 pub fn append_deduped_items(
     existing: &mut Vec<MemoryListItem>,
+    seen: &mut HashSet<String>,
     next_items: Vec<MemoryListItem>,
 ) -> usize {
-    let mut seen: HashSet<String> = existing.iter().map(|i| i.id.clone()).collect();
     let mut added = 0usize;
     for item in next_items {
         if seen.insert(item.id.clone()) {
             existing.push(item);
             added += 1;
+        }
+    }
+    if existing.len() > LIST_MAX_ITEMS {
+        let drop_n = existing.len() - LIST_MAX_ITEMS;
+        for item in existing.drain(0..drop_n) {
+            seen.remove(&item.id);
         }
     }
     added
@@ -1870,8 +1899,10 @@ mod tests {
     #[test]
     fn append_deduped_items_and_count_text_behave_cleanly() {
         let mut items = vec![sample_item("m1"), sample_item("m2")];
+        let mut seen: HashSet<String> = items.iter().map(|i| i.id.clone()).collect();
         let added = append_deduped_items(
             &mut items,
+            &mut seen,
             vec![sample_item("m2"), sample_item("m3"), sample_item("m4")],
         );
         assert_eq!(added, 2);
@@ -1891,5 +1922,27 @@ mod tests {
             "42 of 2000 memories"
         );
         assert_eq!(format_list_count_text(1, 1, 1, false, false), "1 memory");
+    }
+
+    #[test]
+    fn append_caps_retained_rows_and_keeps_the_dedupe_set_in_sync() {
+        let mut items = Vec::new();
+        let mut seen = HashSet::new();
+        let batch: Vec<_> = (0..LIST_MAX_ITEMS + 250)
+            .map(|i| sample_item(&format!("m{i}")))
+            .collect();
+        append_deduped_items(&mut items, &mut seen, batch);
+        assert_eq!(items.len(), LIST_MAX_ITEMS);
+        assert_eq!(seen.len(), LIST_MAX_ITEMS);
+        assert_eq!(items.first().map(|i| i.id.as_str()), Some("m250"));
+        assert!(!seen.contains("m0"));
+
+        // Every retained id is still deduplicated.
+        let added = append_deduped_items(
+            &mut items,
+            &mut seen,
+            vec![sample_item("m250"), sample_item("tail")],
+        );
+        assert_eq!(added, 1);
     }
 }

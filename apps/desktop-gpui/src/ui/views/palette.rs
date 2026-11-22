@@ -37,6 +37,7 @@ pub enum PaletteAction {
     CopyActiveMarkdown,
     OpenHarnesses,
     OpenSettings,
+    OptimizeStore,
     OpenLogs,
     CopyDiagnostics,
     ClearFilters,
@@ -99,7 +100,7 @@ impl CommandPalette {
         let input = cx.new(|cx| {
             TextInput::new(
                 cx,
-                "Type command, view, health, graph mode, or [mem:xxxx]…",
+                "Search memories or run a command",
                 theme,
             )
             .with_leading_icon(crate::ui::views::UiIcon::Search)
@@ -515,6 +516,14 @@ fn static_palette_commands() -> Vec<PaletteEntry> {
             PaletteAction::OpenHarnesses,
         ),
         (
+            "Optimize Store",
+            "Add missing read-path indexes — safe and repeatable",
+            "Database",
+            None,
+            PaletteGroup::Actions,
+            PaletteAction::OptimizeStore,
+        ),
+        (
             "Open Settings",
             "Appearance, default view, crash reporting, and logs",
             "Settings",
@@ -777,14 +786,11 @@ pub fn filter_palette_entries_full(
 
     let mut mem_matches = Vec::new();
     for item in memories_snapshot {
-        let title = format!("[mem:{}] {}", item.short_id, item.preview);
+        let title = format!("#{} {}", item.short_id, item.preview);
         if trimmed.is_empty() {
             mem_matches.push(PaletteEntry {
                 title,
-                subtitle: format!(
-                    "{} · {} · importance {:.2}",
-                    item.node_type, item.namespace, item.importance
-                ),
+                subtitle: format!("{} · {}", item.node_type, item.namespace),
                 badge: "Memory",
                 shortcut: None,
                 group: PaletteGroup::Navigate,
@@ -809,10 +815,7 @@ pub fn filter_palette_entries_full(
             };
             mem_matches.push(PaletteEntry {
                 title,
-                subtitle: format!(
-                    "{} · {} · importance {:.2}",
-                    item.node_type, item.namespace, item.importance
-                ),
+                subtitle: format!("{} · {}", item.node_type, item.namespace),
                 badge: "Memory",
                 shortcut: None,
                 group: PaletteGroup::Navigate,
@@ -1102,8 +1105,9 @@ impl Render for CommandPalette {
                             )
                             .child(div().text_size(px(11.)).text_color(theme.text_muted).child(
                                 SharedString::from(format!(
-                                    "Trust {:.2} · Importance {:.2} · {}",
-                                    item.trust_score, item.importance, age
+                                    "Trusted {:.0}% · {}",
+                                    item.trust_score * 100.0,
+                                    age
                                 )),
                             )),
                     )

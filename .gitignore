@@ -28,6 +28,7 @@ Thumbs.db
 
 # Build output
 dist/
+apps/desktop-gpui/target/
 
 # Test / Coverage
 coverage/

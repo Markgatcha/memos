@@ -30,7 +30,7 @@ pub fn review_gate_notice(write_mode: bool) -> Option<&'static str> {
     if write_mode {
         None
     } else {
-        Some("Enable write mode to review")
+        Some("Turn on editing to approve")
     }
 }
 
@@ -89,6 +89,8 @@ pub fn review_header_subtitle(
 pub struct ReviewView {
     items: Vec<ReviewQueueItem>,
     selected_id: Option<String>,
+    /// First Reject click arms this id; the second confirms.
+    pending_reject: Option<String>,
     loading: bool,
     busy_id: Option<String>,
     error: Option<ReviewLoadError>,
@@ -105,6 +107,7 @@ impl ReviewView {
         Self {
             items: Vec::new(),
             selected_id: None,
+            pending_reject: None,
             loading: false,
             busy_id: None,
             error: None,
@@ -123,6 +126,9 @@ impl ReviewView {
     pub fn set_write_mode(&mut self, write_mode: bool, cx: &mut Context<Self>) {
         if self.write_mode != write_mode {
             self.write_mode = write_mode;
+            if !write_mode {
+                self.pending_reject = None;
+            }
             cx.notify();
         }
     }
@@ -149,6 +155,7 @@ impl ReviewView {
 
     pub fn set_items(&mut self, items: Vec<ReviewQueueItem>, cx: &mut Context<Self>) {
         self.items = items;
+        self.pending_reject = None;
         self.loading = false;
         self.busy_id = None;
         self.error = None;
@@ -229,6 +236,7 @@ impl ReviewView {
         let is_selected = self.selected_id.as_deref() == Some(item.id.as_str());
         let mutation_enabled = is_review_mutation_enabled(self.write_mode, self.busy_id.as_deref());
         let row_busy = self.busy_id.as_deref() == Some(item.id.as_str());
+        let reject_armed = self.pending_reject.as_deref() == Some(item.id.as_str());
         let id_open = item.id.clone();
         let id_approve = item.id.clone();
         let id_reject = item.id.clone();
@@ -378,11 +386,36 @@ impl ReviewView {
                                             this.write_mode,
                                             this.busy_id.as_deref(),
                                         ) {
+                                            this.pending_reject = None;
                                             cx.emit(ReviewEvent::Approve(id_approve.clone()));
                                         }
                                     }))
                                     .child(if row_busy { "Working…" } else { "Approve" }),
                             )
+                            .when(reject_armed, |row| {
+                                row.child(
+                                    div()
+                                        .id(("review-reject-cancel", ix))
+                                        .focusable()
+                                        .role(Role::Button)
+                                        .aria_label("Cancel reject")
+                                        .h(px(28.))
+                                        .px(px(8.))
+                                        .rounded(px(6.))
+                                        .cursor_pointer()
+                                        .hover(move |s| s.bg(theme.bg_hover))
+                                        .flex()
+                                        .items_center()
+                                        .text_size(px(12.))
+                                        .text_color(theme.text_muted)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.pending_reject = None;
+                                            cx.notify();
+                                        }))
+                                        .child("Cancel"),
+                                )
+                            })
                             .child(
                                 div()
                                     .id(("review-reject", ix))
@@ -398,9 +431,13 @@ impl ReviewView {
                                     } else {
                                         gpui::CursorStyle::Arrow
                                     })
-                                    .bg(theme.bg_elevated)
+                                    .bg(if reject_armed {
+                                        theme.danger
+                                    } else {
+                                        theme.bg_elevated
+                                    })
                                     .border_1()
-                                    .border_color(if mutation_enabled {
+                                    .border_color(if mutation_enabled || reject_armed {
                                         theme.danger
                                     } else {
                                         theme.border_subtle
@@ -409,7 +446,9 @@ impl ReviewView {
                                     .flex()
                                     .items_center()
                                     .text_size(px(12.))
-                                    .text_color(if mutation_enabled {
+                                    .text_color(if reject_armed {
+                                        theme.primary_btn_fg
+                                    } else if mutation_enabled {
                                         theme.danger
                                     } else {
                                         theme.text_muted
@@ -423,10 +462,27 @@ impl ReviewView {
                                             this.write_mode,
                                             this.busy_id.as_deref(),
                                         ) {
-                                            cx.emit(ReviewEvent::Reject(id_reject.clone()));
+                                            if this.pending_reject.as_deref()
+                                                == Some(id_reject.as_str())
+                                            {
+                                                this.pending_reject = None;
+                                                cx.emit(ReviewEvent::Reject(
+                                                    id_reject.clone(),
+                                                ));
+                                            } else {
+                                                this.pending_reject =
+                                                    Some(id_reject.clone());
+                                                cx.notify();
+                                            }
                                         }
                                     }))
-                                    .child("Reject"),
+                                    .child(if row_busy {
+                                        "Working…"
+                                    } else if reject_armed {
+                                        "Confirm reject"
+                                    } else {
+                                        "Reject"
+                                    }),
                             ),
                     ),
             )
@@ -442,33 +498,21 @@ impl Render for ReviewView {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         let scroll_handle = self.scroll_handle.clone();
-        let pending_label = if self.write_mode {
-            review_header_subtitle(self.loading, self.items.len(), self.error.as_ref())
-        } else {
-            "Write mode required".to_string()
-        };
+        let pending_label = review_header_subtitle(self.loading, self.items.len(), self.error.as_ref());
 
         let header = div()
             .id("review-page-header")
             .w_full()
             .min_w(px(0.))
-            .pt(px(24.))
-            .pb(px(16.))
+            .pt(px(22.))
+            .pb(px(14.))
             .pl(px(20.))
             .pr(px(20.) + self.overlay_right_inset)
             .border_b_1()
             .border_color(theme.border_subtle)
             .flex()
             .flex_col()
-            .gap(px(4.))
-            .child(
-                div()
-                    .text_size(px(10.))
-                    .line_height(px(14.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.text_muted)
-                    .child("QUEUE"),
-            )
+            .gap(px(3.))
             .child(
                 div()
                     .w_full()
@@ -654,7 +698,7 @@ impl Render for ReviewView {
                                 .child(if self.write_mode {
                                     "No memories waiting for review"
                                 } else {
-                                    "Review is read-only"
+                                    "Nothing waiting for review"
                                 }),
                         )
                         .child(
@@ -665,7 +709,7 @@ impl Render for ReviewView {
                                 .child(if self.write_mode {
                                     "Agent-queued memories stored with review pending appear here for approval."
                                 } else {
-                                    "Enable Write mode (MCP) to list agent-queued memories for approval."
+                                    "When an agent queues a memory for approval it appears here. Turn on editing to approve or reject."
                                 }),
                         ),
                 )
@@ -773,7 +817,7 @@ mod tests {
         assert!(!is_review_mutation_enabled(true, Some("id-1")));
         assert_eq!(
             review_gate_notice(false),
-            Some("Enable write mode to review")
+            Some("Turn on editing to approve")
         );
         assert_eq!(review_gate_notice(true), None);
 

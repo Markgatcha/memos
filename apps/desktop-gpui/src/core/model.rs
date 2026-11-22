@@ -267,15 +267,14 @@ pub struct BriefSnapshot {
     pub contradiction_count: usize,
     pub needs_review_items: Vec<MemoryListItem>,
     pub needs_review_count: usize,
+    /// Distinct nodes across the four node sections plus unresolved
+    /// contradiction pairs. Sections can overlap; this does not.
+    pub unique_count: usize,
 }
 
 impl BriefSnapshot {
     pub fn total_count(&self) -> usize {
-        self.new_count
-            + self.changed_count
-            + self.expiring_count
-            + self.contradiction_count
-            + self.needs_review_count
+        self.unique_count
     }
 
     pub fn is_empty(&self) -> bool {
@@ -400,6 +399,36 @@ pub struct DbOverview {
     pub tables: Vec<TableSummary>,
     pub missing_tables: Vec<String>,
     pub contradiction_node_ids: HashSet<String>,
+}
+
+impl DbOverview {
+    /// Minimal overview for the first paint: totals and contradiction ids
+    /// only. Facets, table counts and preflight arrive with the full overview.
+    pub fn fast(
+        db_path: PathBuf,
+        node_count: usize,
+        contradiction_node_ids: HashSet<String>,
+    ) -> Self {
+        Self {
+            db_path,
+            node_count,
+            edge_count: 0,
+            contradiction_count: 0,
+            lesson_count: 0,
+            trace_count: 0,
+            tamper_count: 0,
+            embedding_count: 0,
+            newest_updated_at: None,
+            writer_preflight: WriterSchemaPreflight::default(),
+            namespaces: Vec::new(),
+            tags: Vec::new(),
+            types: Vec::new(),
+            provenances: Vec::new(),
+            tables: Vec::new(),
+            missing_tables: Vec::new(),
+            contradiction_node_ids,
+        }
+    }
 }
 
 /// Raw node rendered in the graph canvas (either a real memory or an aggregated cluster).

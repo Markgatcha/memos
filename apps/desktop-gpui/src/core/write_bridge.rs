@@ -528,7 +528,7 @@ impl PingResult {
 
     pub fn settings_footer_mode(write_mode: bool, connected: Option<&PingResult>) -> String {
         if !write_mode {
-            return "Read-only".to_string();
+            return "View only".to_string();
         }
         match connected {
             Some(info) if info.era == ProtocolEra::Legacy => {

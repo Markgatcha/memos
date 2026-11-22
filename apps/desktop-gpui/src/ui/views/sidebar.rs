@@ -10,7 +10,6 @@ use crate::core::easter_eggs::{LOGO_CHARGE_HOLD, LogoPhase, LogoPhysics};
 use crate::core::health::{StoreHealthReport, StoreHealthStatus};
 use crate::core::model::{DbOverview, QueryFilter};
 use crate::core::settings::SavedView;
-use crate::ui::views::logo::{LogoRenderConfig, render_breakable_logo};
 use crate::ui::views::{
     ThemePalette, UiIcon, render_ui_icon, status_dot, tabular_nums, tooltip_view,
 };
@@ -67,7 +66,9 @@ impl SidebarState {
     }
 
     pub fn show_views_section(overview: Option<&DbOverview>) -> bool {
-        overview.is_some_and(|o| o.node_count > 0)
+        // A store being open is what matters: an empty store still needs its
+        // five destinations so the first-run user can orient themselves.
+        overview.is_some()
     }
 
     pub fn show_tags_section(overview: Option<&DbOverview>) -> bool {
@@ -258,6 +259,9 @@ impl SidebarView {
         cx.notify();
     }
 
+    // Kept for the breakable-mark state machine and its unit tests; the
+    // sidebar no longer renders a second app mark.
+    #[allow(dead_code)]
     fn on_logo_press(
         &mut self,
         _: &gpui::MouseDownEvent,
@@ -281,6 +285,7 @@ impl SidebarView {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     fn on_logo_release(
         &mut self,
         _: &gpui::MouseUpEvent,
@@ -899,19 +904,6 @@ impl Render for SidebarView {
                     .pt(px(12.))
                     .flex()
                     .flex_col()
-                    .child(div().px(px(12.)).pb(px(8.)).flex().items_center().child(
-                        render_breakable_logo(
-                            LogoRenderConfig {
-                                physics: &self.logo_physics,
-                                momo_status: self.momo_status,
-                                no_fun: self.no_fun,
-                                theme,
-                            },
-                            Self::on_logo_press,
-                            Self::on_logo_release,
-                            cx,
-                        ),
-                    ))
                     .when_some(self.overview.as_ref(), |col, ov| {
                         let count_label = if ov.node_count == 1 {
                             "memory"
@@ -919,10 +911,16 @@ impl Render for SidebarView {
                             "memories"
                         };
                         let score = self.health_score.unwrap_or(100);
-                        let score_line = if self.health_review_count > 0 {
-                            format!("Health {score} · {} need review", self.health_review_count)
+                        let review_count = self.health_review_count;
+                        let status_text = if review_count > 0 {
+                            format!("{review_count} to check")
                         } else {
-                            format!("Health {score} · healthy")
+                            "All caught up".to_string()
+                        };
+                        let status_color = if review_count > 0 {
+                            theme.accent
+                        } else {
+                            theme.text_muted
                         };
                         let bar_color = if score >= 80 {
                             theme.success
@@ -934,23 +932,26 @@ impl Render for SidebarView {
                         col.child(
                             div()
                                 .id("sidebar-store-card")
+                                .focusable()
+                                .cursor_pointer()
+                                .role(Role::Button)
+                                .aria_label("Open health")
                                 .mx(px(12.))
                                 .mb(px(12.))
-                                .p(px(12.))
+                                .px(px(12.))
+                                .py(px(10.))
                                 .rounded(px(10.))
                                 .bg(theme.bg_elevated)
                                 .border_1()
-                                .border_color(theme.border)
+                                .border_color(theme.border_subtle)
+                                .hover(move |s| s.border_color(theme.border_strong))
+                                .focus_visible(move |s| s.border_color(theme.accent))
+                                .on_click(cx.listener(|_, _, _, cx| {
+                                    cx.emit(SidebarEvent::OpenHealth);
+                                }))
                                 .flex()
                                 .flex_col()
                                 .gap(px(6.))
-                                .child(
-                                    div()
-                                        .text_size(px(10.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(theme.text_muted)
-                                        .child("STORE"),
-                                )
                                 .child(
                                     div()
                                         .flex()
@@ -958,10 +959,9 @@ impl Render for SidebarView {
                                         .gap(px(6.))
                                         .child(
                                             div()
-                                                .font_family("Consolas")
-                                                .text_size(px(32.))
-                                                .line_height(px(34.))
-                                                .font_weight(FontWeight::BOLD)
+                                                .text_size(px(20.))
+                                                .line_height(px(24.))
+                                                .font_weight(FontWeight::SEMIBOLD)
                                                 .font_features(tabular_nums())
                                                 .text_color(theme.text_primary)
                                                 .child(SharedString::from(
@@ -977,16 +977,8 @@ impl Render for SidebarView {
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(12.))
-                                        .font_features(tabular_nums())
-                                        .text_color(theme.text_secondary)
-                                        .truncate()
-                                        .child(SharedString::from(score_line)),
-                                )
-                                .child(
-                                    div()
                                         .w_full()
-                                        .h(px(4.))
+                                        .h(px(3.))
                                         .rounded(px(2.))
                                         .bg(theme.bg_sunken)
                                         .overflow_hidden()
@@ -1002,34 +994,27 @@ impl Render for SidebarView {
                                 )
                                 .child(
                                     div()
-                                        .id("sidebar-open-health")
-                                        .focusable()
-                                        .cursor_pointer()
-                                        .role(Role::Button)
-                                        .aria_label("Open health")
-                                        .mt(px(2.))
-                                        .h(px(28.))
-                                        .px(px(8.))
-                                        .rounded(px(6.))
-                                        .hover(move |s| s.bg(theme.bg_selected))
-                                        .focus_visible(move |s| {
-                                            s.border_1().border_color(theme.accent)
-                                        })
                                         .flex()
                                         .items_center()
-                                        .gap(px(4.))
-                                        .text_size(px(12.))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(theme.text_primary)
-                                        .on_click(cx.listener(|_, _, _, cx| {
-                                            cx.emit(SidebarEvent::OpenHealth);
-                                        }))
-                                        .child("Open health")
-                                        .child(render_ui_icon(
-                                            UiIcon::ArrowRight,
-                                            12.0,
-                                            theme.text_muted,
-                                        )),
+                                        .justify_between()
+                                        .gap(px(8.))
+                                        .child(
+                                            div()
+                                                .text_size(px(12.))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(status_color)
+                                                .truncate()
+                                                .child(SharedString::from(status_text)),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(11.))
+                                                .font_features(tabular_nums())
+                                                .text_color(theme.text_muted)
+                                                .child(SharedString::from(format!(
+                                                    "Health {score}"
+                                                ))),
+                                        ),
                                 ),
                         )
                     }),
@@ -1393,8 +1378,10 @@ mod tests {
     #[test]
     fn hides_empty_sidebar_sections() {
         let empty = sample_overview(0, Vec::new());
-        assert!(!SidebarState::show_views_section(Some(&empty)));
+        // Views stay visible for an open store even when it has no rows yet.
+        assert!(SidebarState::show_views_section(Some(&empty)));
         assert!(!SidebarState::show_tags_section(Some(&empty)));
+        assert!(!SidebarState::show_views_section(None));
 
         let no_tags = sample_overview(12, Vec::new());
         assert!(SidebarState::show_views_section(Some(&no_tags)));

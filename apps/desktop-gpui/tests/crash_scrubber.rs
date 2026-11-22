@@ -30,6 +30,39 @@ fn temp_dir(name: &str) -> PathBuf {
 }
 
 #[test]
+fn whole_event_scrub_covers_nested_fields() {
+    let _cleanup = GuardCleanup;
+    let secret = "NESTED_SECRET_MEMORY_abc123";
+    register_sensitive_text(secret);
+    let ctx = ScrubContext::from_environment("test-install-nested")
+        .with_extra_sensitive(secret);
+
+    let mut event = Event::default();
+    event.contexts.insert(
+        "custom".to_string(),
+        SentryContext::Other(BTreeMap::from([(
+            "note".to_string(),
+            SentryValue::String(secret.to_string()),
+        )])),
+    );
+    let mut nested = serde_json::Map::new();
+    nested.insert(
+        "description".to_string(),
+        SentryValue::String(secret.to_string()),
+    );
+    event
+        .extra
+        .insert("nested".to_string(), SentryValue::Object(nested));
+
+    let scrubbed = scrub_sentry_event(event, &ctx).expect("event kept");
+    let serialized = serde_json::to_string(&scrubbed).expect("serialize");
+    assert!(
+        !serialized.contains(secret),
+        "nested field leaked secret: {serialized}"
+    );
+}
+
+#[test]
 fn crash_scrubber_strips_secret_query_paths_username_and_hostname() {
     let _cleanup = GuardCleanup;
     let secret = "MEMOS_SECRET_MEMORY_TOKEN_xyz789";

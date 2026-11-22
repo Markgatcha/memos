@@ -10,6 +10,7 @@ use gpui::{
 
 use crate::core::db::{self, DbProbeSummary};
 use crate::core::settings::{AppSettings, ThemeMode};
+use crate::core::store_init;
 use crate::ui::views::{ThemePalette, status_dot};
 
 pub const CLI_INIT_COMMAND: &str = "memos init --yes";
@@ -284,6 +285,40 @@ impl OnboardingView {
         self.spawn_probe(path, gen_id, cx);
         self.spawn_spinner_tick(cx);
         cx.notify();
+    }
+
+    /// Create a store at `path` and immediately probe it, so the wizard can
+    /// advance without leaving the app or shelling out to Node.
+    fn create_store_and_probe(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.state.step != OnboardingStep::Database {
+            return;
+        }
+        self.spawn_spinner_tick(cx);
+        self._probe_task = Some(cx.spawn(async move |this, cx| {
+            let create_path = path.clone();
+            let created = cx
+                .background_executor()
+                .spawn(async move { store_init::create_store(&create_path) })
+                .await;
+            let result = match created {
+                Ok(()) => {
+                    let probe_path = path.clone();
+                    cx.background_executor()
+                        .spawn(async move { db::probe_database(&probe_path) })
+                        .await
+                }
+                Err(err) => Err(err.ui_summary()),
+            };
+            let _ = this.update(cx, |view, cx| {
+                let gen_id = view.state.begin_probe(path.clone());
+                if view.state.apply_probe_result(gen_id, path, result) {
+                    if view.state.step == OnboardingStep::Database {
+                        view.needs_focus_sync = true;
+                    }
+                    cx.notify();
+                }
+            });
+        }));
     }
 
     fn spawn_probe(&mut self, path: PathBuf, gen_id: u64, cx: &mut Context<Self>) {
@@ -717,7 +752,7 @@ impl OnboardingView {
                                 .text_size(px(13.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(theme.text_primary)
-                                .child("No database found"),
+                                .child("No memory store here yet"),
                         ),
                 )
                 .child(
@@ -725,46 +760,83 @@ impl OnboardingView {
                         .text_size(px(13.))
                         .line_height(px(18.))
                         .text_color(theme.text_muted)
+                        .child("Create a new store at this path, or browse to an existing file."),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(theme.text_muted)
                         .child(format_path(path)),
                 )
                 .child(
                     div()
-                        .p(px(10.))
-                        .rounded(px(6.))
-                        .bg(theme.bg_app)
-                        .border_1()
-                        .border_color(theme.border_subtle)
                         .flex()
                         .items_center()
-                        .justify_between()
                         .gap(px(8.))
-                        .child(
+                        .child({
+                            let target = path.clone();
                             div()
-                                .text_size(px(13.))
-                                .text_color(theme.text_primary)
-                                .truncate()
-                                .child(CLI_INIT_COMMAND),
-                        )
-                        .child(
-                            div()
-                                .id("onboarding-copy-init")
-                                .track_focus(&self.copy_init_focus)
-                                .tab_stop(true)
-                                .tab_index(12)
+                                .id("onboarding-create-store")
                                 .focusable()
                                 .cursor_pointer()
-                                .h(px(26.))
-                                .px(px(8.))
+                                .h(px(32.))
+                                .px(px(14.))
+                                .rounded(px(6.))
+                                .bg(theme.accent)
+                                .hover(move |s| s.opacity(0.92))
+                                .flex()
+                                .items_center()
+                                .text_size(px(13.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(theme.primary_btn_fg)
+                                .child("Create memory store")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.create_store_and_probe(target.clone(), cx);
+                                }))
+                        })
+                        .child(
+                            div()
+                                .id("onboarding-browse-secondary")
+                                .focusable()
+                                .cursor_pointer()
+                                .h(px(32.))
+                                .px(px(12.))
                                 .rounded(px(6.))
                                 .bg(theme.bg_elevated)
                                 .border_1()
                                 .border_color(theme.border_subtle)
                                 .hover(move |s| s.bg(theme.bg_selected))
-                                .focus_visible(move |s| s.border_1().border_color(theme.accent))
                                 .flex()
                                 .items_center()
-                                .text_size(px(12.))
+                                .text_size(px(13.))
                                 .text_color(theme.text_primary)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.open_browse_dialog(cx);
+                                }))
+                                .child("Browse…"),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(theme.text_muted)
+                                .child("Prefer the CLI? memos init --yes"),
+                        )
+                        .child(
+                            div()
+                                .id("onboarding-copy-init")
+                                .focusable()
+                                .cursor_pointer()
+                                .px(px(4.))
+                                .rounded(px(4.))
+                                .hover(move |s| s.bg(theme.bg_elevated))
+                                .text_size(px(11.))
+                                .text_color(theme.text_secondary)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.copy_text(CLI_INIT_COMMAND, "Init command copied", cx);
                                 }))

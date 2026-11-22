@@ -1309,13 +1309,6 @@ struct PrepaintTextState {
     multiline: bool,
 }
 
-impl IntoElement for TextLineElement {
-    type Element = Self;
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for TextLineElement {
     type RequestLayoutState = ();
     type PrepaintState = PrepaintTextState;

@@ -25,9 +25,9 @@ impl BriefSectionKind {
         match self {
             BriefSectionKind::New => "New",
             BriefSectionKind::Changed => "Changed",
-            BriefSectionKind::Expiring => "Expiring",
+            BriefSectionKind::Expiring => "Expiring soon",
             BriefSectionKind::Contradictions => "Contradictions",
-            BriefSectionKind::NeedsReview => "Needs attention",
+            BriefSectionKind::NeedsReview => "Worth a look",
         }
     }
 
@@ -37,7 +37,7 @@ impl BriefSectionKind {
             BriefSectionKind::Changed => "Today · Changed",
             BriefSectionKind::Expiring => "Today · Expiring",
             BriefSectionKind::Contradictions => "Contradictions",
-            BriefSectionKind::NeedsReview => "Today · Needs attention",
+            BriefSectionKind::NeedsReview => "Today · Worth a look",
         }
     }
 
@@ -112,6 +112,17 @@ pub fn format_brief_date_utc(now_ms: i64) -> String {
     let secs = now_ms.div_euclid(1000);
     if let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(secs) {
         let format = time::macros::format_description!("[year]-[month]-[day]");
+        dt.format(&format).unwrap_or_else(|_| "Today".to_string())
+    } else {
+        "Today".to_string()
+    }
+}
+
+/// Human date for the Today header, e.g. `Wed, Nov 18`.
+pub fn format_brief_date_label(now_ms: i64) -> String {
+    let secs = now_ms.div_euclid(1000);
+    if let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(secs) {
+        let format = time::macros::format_description!("[weekday repr:short], [month repr:short] [day]");
         dt.format(&format).unwrap_or_else(|_| "Today".to_string())
     } else {
         "Today".to_string()
@@ -240,10 +251,7 @@ impl BriefView {
         let id_for_click = item.id.clone();
         let age = format_relative_age(item.updated_at, self.snapshot.now_ms);
         let type_color = theme.type_color(&item.node_type);
-        let meta = format!(
-            "{} · {} · {} · trust {:.2}",
-            item.node_type, item.namespace, age, item.trust_score
-        );
+        let meta = format!("{} · {} · {}", item.node_type, item.namespace, age);
         div()
             .id((section.title(), ix))
             .focusable()
@@ -301,11 +309,11 @@ impl BriefView {
                     )
                     .child(
                         div()
-                            .font_family("Consolas")
                             .text_size(px(11.))
+                            .font_features(tabular_nums())
                             .text_color(theme.text_muted)
                             .flex_shrink_0()
-                            .child(SharedString::from(format!("[mem:{}]", item.short_id))),
+                            .child(SharedString::from(format!("#{}", item.short_id))),
                     ),
             )
             .child(
@@ -397,12 +405,12 @@ impl BriefView {
                     }))
                     .child(
                         div()
-                            .font_family("Consolas")
                             .text_size(px(11.))
+                            .font_features(tabular_nums())
                             .text_color(theme.text_muted)
                             .flex_shrink_0()
                             .child(SharedString::from(format!(
-                                "[mem:{}]",
+                                "#{}",
                                 pair.node_a_short_id
                             ))),
                     )
@@ -435,12 +443,12 @@ impl BriefView {
                     }))
                     .child(
                         div()
-                            .font_family("Consolas")
                             .text_size(px(11.))
+                            .font_features(tabular_nums())
                             .text_color(theme.text_muted)
                             .flex_shrink_0()
                             .child(SharedString::from(format!(
-                                "[mem:{}]",
+                                "#{}",
                                 pair.node_b_short_id
                             ))),
                     )
@@ -477,11 +485,12 @@ impl BriefView {
                     .items_center()
                     .justify_between()
                     .gap(px(8.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
+                    .child({
+                        let mut title_row = div().flex().items_center().gap(px(8.));
+                        if kind == BriefSectionKind::Contradictions {
+                            title_row = title_row.child(status_dot(theme.danger));
+                        }
+                        title_row
                             .child(
                                 div()
                                     .text_size(px(13.))
@@ -489,18 +498,24 @@ impl BriefView {
                                     .text_color(theme.text_primary)
                                     .child(kind.title()),
                             )
-                            .child(
+                            .child({
+                                let (pill_bg, pill_fg) =
+                                    if kind == BriefSectionKind::Contradictions {
+                                        (theme.danger_soft, theme.danger)
+                                    } else {
+                                        (theme.bg_badge, theme.text_muted)
+                                    };
                                 div()
                                     .px(px(7.))
                                     .py(px(1.))
                                     .rounded(px(10.))
-                                    .bg(theme.bg_badge)
+                                    .bg(pill_bg)
                                     .text_size(px(11.))
                                     .font_features(tabular_nums())
-                                    .text_color(theme.text_muted)
-                                    .child(SharedString::from(total_count.to_string())),
-                            ),
-                    )
+                                    .text_color(pill_fg)
+                                    .child(SharedString::from(total_count.to_string()))
+                            })
+                    })
                     .child(
                         div()
                             .id(("brief-view-all", kind as usize))
@@ -531,31 +546,23 @@ impl BriefView {
 impl Render for BriefView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
-        let date_label = format_brief_date_utc(self.snapshot.now_ms);
-        let subtitle = format!("Daily brief · {date_label}");
+        let date_label = format_brief_date_label(self.snapshot.now_ms);
+        let subtitle = date_label;
         let scroll_handle = self.scroll_handle.clone();
 
         let header = div()
             .id("brief-page-header")
             .w_full()
             .min_w(px(0.))
-            .pt(px(24.))
-            .pb(px(16.))
+            .pt(px(22.))
+            .pb(px(14.))
             .pl(px(20.))
             .pr(px(20.) + self.overlay_right_inset)
             .border_b_1()
             .border_color(theme.border_subtle)
             .flex()
             .flex_col()
-            .gap(px(4.))
-            .child(
-                div()
-                    .text_size(px(10.))
-                    .line_height(px(14.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.text_muted)
-                    .child("BRIEF"),
-            )
+            .gap(px(3.))
             .child(
                 div()
                     .text_size(px(21.))
@@ -839,6 +846,7 @@ mod tests {
             contradiction_count: 1,
             needs_review_items: vec![mk_item("r1")],
             needs_review_count: 1,
+            unique_count: 5,
         };
         assert!(!populated.is_empty());
         assert_eq!(populated.total_count(), 5);

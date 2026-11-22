@@ -46,4 +46,7 @@ pub mod harness;
 pub mod health;
 pub mod model;
 pub mod settings;
+pub mod store_cache;
+pub mod store_init;
+pub mod store_optimize;
 pub mod write_bridge;
