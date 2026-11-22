@@ -910,7 +910,6 @@ impl Render for SidebarView {
                         } else {
                             "memories"
                         };
-                        let score = self.health_score.unwrap_or(100);
                         let review_count = self.health_review_count;
                         let status_text = if review_count > 0 {
                             format!("{review_count} to check")
@@ -921,13 +920,6 @@ impl Render for SidebarView {
                             theme.accent
                         } else {
                             theme.text_muted
-                        };
-                        let bar_color = if score >= 80 {
-                            theme.success
-                        } else if score >= 50 {
-                            theme.accent
-                        } else {
-                            theme.danger
                         };
                         col.child(
                             div()
@@ -977,27 +969,9 @@ impl Render for SidebarView {
                                 )
                                 .child(
                                     div()
-                                        .w_full()
-                                        .h(px(3.))
-                                        .rounded(px(2.))
-                                        .bg(theme.bg_sunken)
-                                        .overflow_hidden()
-                                        .child(
-                                            div()
-                                                .h_full()
-                                                .w(gpui::relative(
-                                                    (score as f32 / 100.0).clamp(0.0, 1.0),
-                                                ))
-                                                .rounded(px(2.))
-                                                .bg(bar_color),
-                                        ),
-                                )
-                                .child(
-                                    div()
                                         .flex()
                                         .items_center()
-                                        .justify_between()
-                                        .gap(px(8.))
+                                        .gap(px(6.))
                                         .child(
                                             div()
                                                 .text_size(px(12.))
@@ -1006,15 +980,11 @@ impl Render for SidebarView {
                                                 .truncate()
                                                 .child(SharedString::from(status_text)),
                                         )
-                                        .child(
-                                            div()
-                                                .text_size(px(11.))
-                                                .font_features(tabular_nums())
-                                                .text_color(theme.text_muted)
-                                                .child(SharedString::from(format!(
-                                                    "Health {score}"
-                                                ))),
-                                        ),
+                                        .child(render_ui_icon(
+                                            UiIcon::ArrowRight,
+                                            11.0,
+                                            theme.text_muted,
+                                        )),
                                 ),
                         )
                     }),

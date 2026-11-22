@@ -647,20 +647,28 @@ impl Render for DetailView {
                                     .focusable()
                                     .role(Role::Button)
                                     .aria_label("What the AI sees")
-                                    .tooltip(tooltip_view("What the AI sees", theme))
+                                    .tooltip(tooltip_view(
+                                        "Exactly what your AI receives for this memory",
+                                        theme,
+                                    ))
                                     .cursor_pointer()
-                                    .w(px(28.))
                                     .h(px(28.))
+                                    .px(px(8.))
                                     .rounded(px(6.))
+                                    .bg(theme.accent_soft)
                                     .hover(move |s| s.bg(theme.bg_elevated))
                                     .focus_visible(move |s| s.border_1().border_color(theme.accent))
                                     .flex()
                                     .items_center()
-                                    .justify_center()
+                                    .gap(px(5.))
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(theme.accent_text)
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(DetailEvent::PreviewContext);
                                     }))
-                                    .child(eye_icon(theme)),
+                                    .child(eye_icon(theme))
+                                    .child("AI view"),
                             )
                             .child(
                                 div()

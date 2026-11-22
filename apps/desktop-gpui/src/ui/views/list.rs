@@ -15,7 +15,6 @@ use crate::core::model::{
 };
 use crate::ui::motion::{DURATION_FAST_MS, DURATION_NORMAL_MS, ease_out_cubic, lerp_hsla};
 use crate::ui::views::momo::render_momo_button;
-use crate::ui::views::onboarding::CLI_STORE_COMMAND;
 use crate::ui::views::{
     ThemePalette, UiIcon, render_ui_icon, render_vertical_scroll_overlay, status_dot, tabular_nums,
 };
@@ -1481,64 +1480,50 @@ impl Render for MemoryListView {
                                 .line_height(px(21.))
                                 .text_color(theme.text_muted)
                                 .text_center()
-                                .child("Add a memory using the CLI or connect an AI tool."),
-                        )
-                        .child(
-                            div()
-                                .w_full()
-                                .px(px(12.))
-                                .py(px(8.))
-                                .rounded(px(6.))
-                                .bg(theme.bg_panel)
-                                .border_1()
-                                .border_color(theme.border_subtle)
-                                .text_size(px(13.))
-                                .text_color(theme.text_primary)
-                                .child(CLI_STORE_COMMAND),
+                                .child("Connect an AI tool so it can start remembering, or add the first memory yourself."),
                         )
                         .child(
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(8.))
+                                .gap(px(10.))
                                 .child(
                                     div()
-                                        .id("copy-store-cmd")
+                                        .id("empty-connect-tool")
                                         .focusable()
+                                        .role(Role::Button)
+                                        .aria_label("Connect an AI tool")
                                         .cursor_pointer()
                                         .h(px(34.))
                                         .px(px(14.))
                                         .rounded(px(6.))
                                         .bg(theme.accent)
+                                        .hover(move |s| s.opacity(0.92))
                                         .text_size(px(13.))
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme.primary_btn_fg)
                                         .flex()
                                         .items_center()
-                                        .child("Copy add command")
+                                        .child("Connect an AI tool")
                                         .on_click(cx.listener(|_, _, _, cx| {
-                                            cx.emit(ListEvent::CopyStoreCommand);
+                                            cx.emit(ListEvent::OpenTools);
                                         })),
                                 )
                                 .child(
                                     div()
-                                        .id("empty-connect-tool")
+                                        .id("copy-store-cmd")
                                         .focusable()
+                                        .role(Role::Button)
+                                        .aria_label("Copy CLI command")
                                         .cursor_pointer()
-                                        .h(px(34.))
-                                        .px(px(14.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_elevated)
-                                        .border_1()
-                                        .border_color(theme.border_subtle)
-                                        .hover(move |s| s.bg(theme.bg_selected))
-                                        .text_size(px(13.))
-                                        .text_color(theme.text_primary)
-                                        .flex()
-                                        .items_center()
-                                        .child("Connect a tool")
+                                        .px(px(4.))
+                                        .rounded(px(4.))
+                                        .hover(move |s| s.bg(theme.bg_elevated))
+                                        .text_size(px(12.))
+                                        .text_color(theme.text_muted)
+                                        .child("Copy CLI command")
                                         .on_click(cx.listener(|_, _, _, cx| {
-                                            cx.emit(ListEvent::OpenTools);
+                                            cx.emit(ListEvent::CopyStoreCommand);
                                         })),
                                 ),
                         ),

@@ -8967,6 +8967,21 @@ impl Render for MemOSApp {
                                                     }))
                                                     .child("Clear"),
                                             )
+                                        })
+                                        .when(self.filter.query.trim().is_empty(), |el| {
+                                            el.child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .pr(px(2.))
+                                                    .child(keycap(
+                                                        if cfg!(target_os = "macos") {
+                                                            "⌘ K"
+                                                        } else {
+                                                            "Ctrl K"
+                                                        },
+                                                        &theme,
+                                                    )),
+                                            )
                                         }),
                                 )
                                 .when(!scope_chips.is_empty(), |col| {
