@@ -50,6 +50,24 @@ describe("rankMemories", () => {
     ).toEqual([]);
   });
 
+  it("filters stopwords whose stems change form", () => {
+    const stopwordHeavy: RankableMemory = {
+      id: "stopword-heavy",
+      content: "This does not answer anything about the actual question.",
+      type: "fact",
+      tags: [],
+      source: "user_input",
+      trustScore: 1,
+    };
+    const results = rankMemories(
+      [...memories, stopwordHeavy],
+      "How does this work?",
+    );
+    expect(results.map((result) => result.memory.id)).not.toContain(
+      "stopword-heavy",
+    );
+  });
+
   it("returns an empty list for an empty or stopword-only query", () => {
     expect(rankMemories(memories, "")).toEqual([]);
     expect(rankMemories(memories, "the and of")).toEqual([]);

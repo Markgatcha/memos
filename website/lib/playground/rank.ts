@@ -34,6 +34,10 @@ const DEFAULT_LIMIT = 5;
 
 function tokenize(text: string): string[] {
   return (text.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    // Stopwords are checked before and after stemming: Porter rewrites some
+    // ("this" -> "thi", "does" -> "doe") and stems others into stopwords
+    // ("uses" -> "use"), so neither pass alone filters them all.
+    .filter((token) => token.length > 1 && !STOPWORDS.has(token))
     .map((token) => stemmer(token).toLowerCase())
     .filter((token) => token.length > 1 && !STOPWORDS.has(token));
 }
