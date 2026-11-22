@@ -12,8 +12,8 @@ use crate::core::model::{
     format_timestamp_ms,
 };
 use crate::ui::views::{
-    ThemePalette, UiIcon, render_ui_icon, render_vertical_scroll_overlay, status_dot, tabular_nums,
-    tooltip_view,
+    ThemePalette, UiIcon, render_ui_icon, render_vertical_scroll_overlay,
+    resolved_mono_font_family, status_dot, tabular_nums, tooltip_view,
 };
 
 #[derive(Clone, Debug)]
@@ -162,7 +162,7 @@ impl DetailView {
             .text_size(px(12.))
             .line_height(px(17.))
             .text_color(theme.text_primary)
-            .when(monospace, |el| el.font_family("Consolas"))
+            .when(monospace, |el| el.font_family(resolved_mono_font_family()))
             .child(SharedString::from(wrapped.to_string()));
 
         div()
@@ -1169,7 +1169,7 @@ impl Render for DetailView {
                                         )
                                         .child(
                                             div()
-                                                .font_family("Consolas")
+                                                .font_family(resolved_mono_font_family())
                                                 .text_size(px(12.))
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(theme.text_primary)
@@ -1418,7 +1418,7 @@ impl DetailView {
                                 )
                                 .child(
                                     div()
-                                        .font_family("Consolas")
+                                        .font_family(resolved_mono_font_family())
                                         .text_size(px(11.))
                                         .text_color(theme.text_muted)
                                         .flex_shrink_0()
@@ -1465,7 +1465,7 @@ impl DetailView {
                                 )
                                 .child(
                                     div()
-                                        .font_family("Consolas")
+                                        .font_family(resolved_mono_font_family())
                                         .text_size(px(11.))
                                         .text_color(theme.text_muted)
                                         .flex_shrink_0()

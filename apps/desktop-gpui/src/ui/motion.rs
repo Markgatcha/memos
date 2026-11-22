@@ -67,7 +67,48 @@ pub fn prefers_reduced_motion(no_fun: bool) -> bool {
             return true;
         }
     }
+    #[cfg(target_os = "macos")]
+    {
+        if macos_reduce_motion_enabled() {
+            return true;
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if linux_reduce_motion_enabled() {
+            return true;
+        }
+    }
     false
+}
+
+#[cfg(target_os = "macos")]
+fn macos_reduce_motion_enabled() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::process::Command::new("defaults")
+            .args(["read", "com.apple.universalaccess", "reduceMotion"])
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .is_some_and(|val| parse_bool_flag(&val))
+    })
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn linux_reduce_motion_enabled() -> bool {
+    std::env::var("GTK_ENABLE_ANIMATIONS")
+        .ok()
+        .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no"))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_bool_flag(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes"
+    )
 }
 
 #[cfg(target_os = "windows")]
@@ -125,5 +166,8 @@ mod tests {
     #[test]
     fn prefers_reduced_motion_honors_no_fun_flag() {
         assert!(prefers_reduced_motion(true));
+        assert!(parse_bool_flag("1\n"));
+        assert!(parse_bool_flag("true"));
+        assert!(!parse_bool_flag("0\n"));
     }
 }

@@ -24,14 +24,14 @@ jobs:
   verify:
     name: Verify (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/desktop-gpui
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout repository
@@ -112,7 +112,11 @@ jobs:
           MEMOS_DESKTOP_HOME: ${{ runner.temp }}/memos-desktop-home
         run: |
           set -o pipefail
-          ./target/release/memos-desktop --self-test 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/self-test.log"
+          BIN="./target/release/memos-desktop"
+          if [ -f "./target/release/memos-desktop.exe" ]; then
+            BIN="./target/release/memos-desktop.exe"
+          fi
+          "$BIN" --self-test 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/self-test.log"
 
       - name: Upload logs on failure
         if: failure()
