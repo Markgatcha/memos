@@ -625,8 +625,11 @@ impl MemOSApp {
         subs.push(cx.subscribe_in(
             &brief_view,
             window,
-            |this, _, event, _window, cx| match event {
-                BriefEvent::OpenMemory(id) => this.select_memory(id.clone(), false, cx),
+            |this, _, event, window, cx| match event {
+                BriefEvent::OpenMemory(id) => {
+                    this.select_memory(id.clone(), false, cx);
+                    window.focus(&this.focus_handle, cx);
+                }
                 BriefEvent::ViewAll(section) => this.open_brief_section_in_list(*section, cx),
                 BriefEvent::ViewAllMemories => {
                     this.active_surface = WorkspaceSurface::Memories;
@@ -644,7 +647,10 @@ impl MemOSApp {
             window,
             |this, _, event, window, cx| match event {
                 ReviewEvent::Refresh => this.refresh_review_view(cx),
-                ReviewEvent::OpenMemory(id) => this.select_memory(id.clone(), false, cx),
+                ReviewEvent::OpenMemory(id) => {
+                    this.select_memory(id.clone(), false, cx);
+                    window.focus(&this.focus_handle, cx);
+                }
                 ReviewEvent::Approve(id) => this.execute_review_decision(id.clone(), true, cx),
                 ReviewEvent::Reject(id) => this.execute_review_decision(id.clone(), false, cx),
                 ReviewEvent::OpenSettings => this.open_settings_modal(window, cx),
@@ -686,7 +692,10 @@ impl MemOSApp {
             &list_view,
             window,
             |this, _, event, window, cx| match event {
-                ListEvent::Select(id) => this.select_memory(id.clone(), false, cx),
+                ListEvent::Select(id) => {
+                    this.select_memory(id.clone(), false, cx);
+                    window.focus(&this.focus_handle, cx);
+                }
                 ListEvent::Highlight(id) => {
                     this.selected_id = Some(id.clone());
                     this.graph_view
@@ -764,12 +773,18 @@ impl MemOSApp {
             &detail_view,
             window,
             |this, _, event, window, cx| match event {
-                DetailEvent::SelectMemory(id) => this.select_memory(id.clone(), true, cx),
+                DetailEvent::SelectMemory(id) => {
+                    this.select_memory(id.clone(), true, cx);
+                    window.focus(&this.focus_handle, cx);
+                }
                 DetailEvent::RevealInGraph(id) => this.reveal_in_graph(id.clone(), cx),
                 DetailEvent::PreviewContext => this.open_selected_context_modal(window, cx),
                 DetailEvent::EditSelected => this.open_edit_memory_composer(window, cx),
                 DetailEvent::ForgetSelected => this.open_forget_confirm(cx),
-                DetailEvent::Close => this.close_detail(cx),
+                DetailEvent::Close => {
+                    this.close_detail(cx);
+                    window.focus(&this.focus_handle, cx);
+                }
             },
         ));
 
@@ -903,13 +918,14 @@ impl MemOSApp {
         subs.push(cx.subscribe_in(
             &graph_view,
             window,
-            |this, _, event, _window, cx| match event {
+            |this, _, event, window, cx| match event {
                 GraphEvent::SwitchMode(mode) => {
                     this.graph_mode = *mode;
                     this.spawn_graph_load(cx);
                 }
                 GraphEvent::SelectMemory(id) => {
                     this.select_memory(id.clone(), true, cx);
+                    window.focus(&this.focus_handle, cx);
                 }
                 GraphEvent::Hover(hovered_id) => {
                     this.sync_linked_hover(HoverOrigin::Graph, hovered_id.clone(), cx);
