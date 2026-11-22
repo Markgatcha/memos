@@ -721,7 +721,10 @@ pub fn run_self_test(
                     )
                 })
             });
-            cx.quit();
+            cx.spawn(async move |cx| {
+                cx.update(|cx| cx.quit());
+            })
+            .detach();
         });
         ensure!(crate::ui::views::detail::is_sticky_header_visible(60.0));
         Ok(())

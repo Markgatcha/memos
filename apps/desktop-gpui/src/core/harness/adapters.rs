@@ -183,12 +183,14 @@ impl ScaffoldAdapter {
             let dir = self.dsh_dir();
             return vec![dir.join("memos.patch.yml"), dir.join("cordis.patch.yml")];
         }
-        let mut out: Vec<PathBuf> = self
+        let out: Vec<PathBuf> = self
             .spec
             .config_files_rel
             .iter()
             .map(|rel| self.home_dir.join(rel))
             .collect();
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let mut out = out;
         if self.use_system_dirs {
             #[cfg(target_os = "windows")]
             {
