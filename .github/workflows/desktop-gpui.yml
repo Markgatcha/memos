@@ -198,6 +198,7 @@ jobs:
         run: |
           choco install wixtoolset --yes --no-progress
           cargo install cargo-wix --locked
+          cargo wix init
           cargo wix
 
       - name: Upload release binary and package artifacts
@@ -231,6 +232,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install Flatpak build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
 
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
