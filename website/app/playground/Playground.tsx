@@ -21,24 +21,23 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 export default function Playground() {
   const [text, setText] = useState(SAMPLE);
   const [maxTokens, setMaxTokens] = useState(120);
-  // The fold runs during render, and foldingTimeMs comes from performance.now(),
-  // which differs between the server render and the client's first render. That
-  // mismatch triggers a hydration error on every load. Fold on an effect-driven
-  // flag instead so the first client render matches the server's empty state.
-  const [ready, setReady] = useState(false);
+  // foldingTimeMs comes from performance.now(), so it differs between the
+  // server render and the client's first render. The folded text is
+  // deterministic; only the measured time is client-only.
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setReady(true);
+    setMounted(true);
   }, []);
 
   const result = useMemo(() => {
-    if (!ready || !text.trim()) return null;
+    if (!text.trim()) return null;
     try {
       return foldText(text, { maxTokens });
     } catch {
       return null;
     }
-  }, [ready, text, maxTokens]);
+  }, [text, maxTokens]);
 
   const savedPct = result
     ? Math.max(0, Math.round((1 - result.foldedTokens / Math.max(1, result.metadata.originalTokens)) * 100))
@@ -93,7 +92,7 @@ export default function Playground() {
           <Stat label="original tok" value={result ? String(result.metadata.originalTokens) : "—"} />
           <Stat label="folded tok" value={result ? String(result.foldedTokens) : "—"} />
           <Stat label="smaller" value={result ? `${savedPct}%` : "—"} accent />
-          <Stat label="fold time" value={result ? `${result.foldingTimeMs.toFixed(1)} ms` : "—"} />
+          <Stat label="fold time" value={result && mounted ? `${result.foldingTimeMs.toFixed(1)} ms` : "—"} />
         </div>
 
         <div className="window flex-1">
