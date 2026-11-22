@@ -5,6 +5,7 @@ edition = "2024"
 description = "Native GPUI desktop browser for the MemOS memory store"
 license = "MIT"
 publish = false
+authors = ["Mark Gatcha <markiegatcha@gmail.com>"]
 
 [features]
 default = ["gui"]
