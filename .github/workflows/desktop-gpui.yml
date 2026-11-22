@@ -92,6 +92,14 @@ jobs:
           set -o pipefail
           cargo test --release --test crash_scrubber 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/crash-scrubber-tests.log"
 
+      - name: Run headless smoke benchmarks
+        shell: bash
+        env:
+          MEMOS_DESKTOP_HOME: ${{ runner.temp }}/memos-desktop-home
+        run: |
+          set -o pipefail
+          cargo test --release --test smoke_bench -- --nocapture 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/smoke-bench.log"
+
       - name: Build release desktop binary
         shell: bash
         run: |
