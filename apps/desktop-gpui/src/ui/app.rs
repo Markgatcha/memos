@@ -213,6 +213,7 @@ pub struct LaunchOptions {
 
 pub fn register_app_key_bindings(cx: &mut App) {
     register_input_key_bindings(cx);
+    cx.on_action(|_: &QuitApp, cx| cx.quit());
 
     #[cfg(target_os = "macos")]
     cx.bind_keys([
@@ -5289,10 +5290,6 @@ impl MemOSApp {
         self.open_settings_modal(window, cx);
     }
 
-    fn on_quit_app(&mut self, _: &QuitApp, _: &mut Window, cx: &mut Context<Self>) {
-        cx.quit();
-    }
-
     fn render_consent_modal(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let has_dsn = telemetry::resolve_dsn().is_some();
@@ -8880,7 +8877,6 @@ impl Render for MemOSApp {
                 .on_action(cx.listener(Self::on_switch_graph))
                 .on_action(cx.listener(Self::on_toggle_theme))
                 .on_action(cx.listener(Self::on_open_settings))
-                .on_action(cx.listener(Self::on_quit_app))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, event: &MouseDownEvent, _, cx| {
