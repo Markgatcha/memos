@@ -2,9 +2,9 @@
 /**
  * Keep every published surface on one version and one Python package name.
  *
- * Historically the npm package, PyPI package, README release status, plugin
- * manifests, and pinned `npx` args drifted independently. This script is the
- * single gate for those surfaces.
+ * Historically the npm package, PyPI package, README release status,
+ * citation metadata, plugin manifests, and pinned `npx` args drifted
+ * independently. This script is the single gate for those surfaces.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -27,6 +27,13 @@ const pyprojectVersion = match(pyproject, /^version\s*=\s*"([^"]+)"/m);
 
 expect("pyproject.toml name", pyprojectName, "mem-os-python");
 expect("pyproject.toml version", pyprojectVersion, version);
+
+const citation = readText("CITATION.cff");
+expect(
+  "CITATION.cff version",
+  match(citation, /^version:\s*"?([^"\s]+)"?/m),
+  version,
+);
 
 for (const [label, relative] of [
   ["plugin/plugin.json", "plugin/plugin.json"],
