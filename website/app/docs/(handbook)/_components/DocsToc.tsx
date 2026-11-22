@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 type Item = { id: string; text: string; level: number };
@@ -14,6 +15,7 @@ function slugify(value: string) {
 }
 
 export default function DocsToc() {
+  const pathname = usePathname();
   const [items, setItems] = useState<Item[]>([]);
   const [active, setActive] = useState("");
 
@@ -51,7 +53,7 @@ export default function DocsToc() {
 
     headings.forEach((heading) => observer.observe(heading));
     return () => observer.disconnect();
-  }, []);
+  }, [pathname]);
 
   if (items.length === 0) return <aside className="hidden xl:block" />;
 
