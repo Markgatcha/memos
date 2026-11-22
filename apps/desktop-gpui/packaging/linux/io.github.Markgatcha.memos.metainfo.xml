@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.Markgatcha.memos</id>
+  <name>MemOS Desktop</name>
+  <summary>Native memory explorer and graph viewer for the MemOS memory store</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer>
+    <name>Mark Gatcha</name>
+  </developer>
+  <launchable type="desktop-id">io.github.Markgatcha.memos.desktop</launchable>
+  <description>
+    <p>
+      MemOS Desktop is a native GPUI application for browsing the MemOS
+      SQLite memory store. It opens the store strictly read-only, renders
+      searchable, keyset-paginated memory lists, and visualizes five graph
+      modes (namespace, tag, entity, temporal, and contradictions) with a
+      warm obsidian interface.
+    </p>
+    <p>
+      An optional Write mode delegates creates, edits, deletes, review
+      actions, and document ingest to a MemOS MCP stdio child so
+      embeddings, provenance, and tamper logs stay intact.
+    </p>
+  </description>
+  <url type="homepage">https://github.com/Markgatcha/memos</url>
+  <url type="bugtracker">https://github.com/Markgatcha/memos/issues</url>
+  <provides>
+    <binary>memos-desktop</binary>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2026-11-22" />
+  </releases>
+</component>

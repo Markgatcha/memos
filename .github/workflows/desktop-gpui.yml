@@ -238,13 +238,38 @@ jobs:
             ls -lh target/release/memos-desktop
           fi
 
-      - name: Upload release binary artifact
+      - name: Package .deb and .rpm (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo install cargo-deb cargo-generate-rpm --locked
+          cargo deb
+          cargo generate-rpm
+
+      - name: Package .app and .dmg (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ./packaging/macos/build-dmg.sh
+
+      - name: Package .msi (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          choco install wixtoolset --yes --no-progress
+          cargo install cargo-wix --locked
+          cargo wix
+
+      - name: Upload release binary and package artifacts
         uses: actions/upload-artifact@v4
         with:
           name: memos-desktop-${{ matrix.os }}
           path: |
             apps/desktop-gpui/target/release/memos-desktop
             apps/desktop-gpui/target/release/memos-desktop.exe
+            apps/desktop-gpui/target/release/MemOS-Desktop.dmg
+            apps/desktop-gpui/target/debian/*.deb
+            apps/desktop-gpui/target/generate-rpm/*.rpm
+            apps/desktop-gpui/target/wix/*.msi
           retention-days: 7
           if-no-files-found: error
 
@@ -258,3 +283,29 @@ jobs:
             ${{ runner.temp }}/memos-desktop-home/logs
           retention-days: 7
           if-no-files-found: ignore
+
+  flatpak:
+    name: Flatpak bundle
+    needs: [check, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: memos-desktop.flatpak
+          manifest-path: apps/desktop-gpui/packaging/flatpak/io.github.Markgatcha.memos.yml
+          run-tests: false
+          restore-cache: true
+          cache-key: flatpak-builder-${{ hashFiles('apps/desktop-gpui/packaging/flatpak/cargo-sources.json') }}
+
+      - name: Upload Flatpak bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memos-desktop-flatpak
+          path: memos-desktop.flatpak
+          retention-days: 7
+          if-no-files-found: error

@@ -61,6 +61,51 @@ open = { version = "5.4", optional = true }
 time = { version = "0.3", features = ["formatting", "macros"] }
 uuid = { version = "1.1", features = ["v4"] }
 
+# Debian package (`cargo install cargo-deb && cargo deb`)
+[package.metadata.deb]
+maintainer = "Mark Gatcha <markiegatcha@gmail.com>"
+copyright = "2026, Mark Gatcha"
+license-file = ["packaging/LICENSE", "0"]
+extended-description = """Native GPUI memory explorer and interactive graph viewer for the MemOS
+ SQLite store. Opens the database strictly read-only, with an optional
+ MCP-backed write mode."""
+section = "utils"
+priority = "optional"
+depends = "$auto, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libvulkan1, libfontconfig1, libasound2t64, libxcb1"
+assets = [
+    ["target/release/memos-desktop", "usr/bin/memos-desktop", "755"],
+    ["packaging/linux/memos-desktop.desktop", "usr/share/applications/memos-desktop.desktop", "644"],
+    ["packaging/linux/icons/memos-desktop-128.png", "usr/share/icons/hicolor/128x128/apps/memos-desktop.png", "644"],
+    ["packaging/linux/icons/memos-desktop-256.png", "usr/share/icons/hicolor/256x256/apps/memos-desktop.png", "644"],
+    ["packaging/linux/icons/memos-desktop-512.png", "usr/share/icons/hicolor/512x512/apps/memos-desktop.png", "644"],
+    ["packaging/linux/io.github.Markgatcha.memos.metainfo.xml", "usr/share/metainfo/io.github.Markgatcha.memos.metainfo.xml", "644"],
+]
+
+# RPM package (`cargo install cargo-generate-rpm && cargo generate-rpm`)
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/memos-desktop", dest = "/usr/bin/memos-desktop", mode = "755" },
+    { source = "packaging/linux/memos-desktop.desktop", dest = "/usr/share/applications/memos-desktop.desktop", mode = "644" },
+    { source = "packaging/linux/icons/memos-desktop-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/memos-desktop.png", mode = "644" },
+    { source = "packaging/linux/icons/memos-desktop-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/memos-desktop.png", mode = "644" },
+    { source = "packaging/linux/icons/memos-desktop-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/memos-desktop.png", mode = "644" },
+    { source = "packaging/linux/io.github.Markgatcha.memos.metainfo.xml", dest = "/usr/share/metainfo/io.github.Markgatcha.memos.metainfo.xml", mode = "644" },
+]
+[package.metadata.generate-rpm.requires]
+libxkbcommon = "*"
+libxkbcommon-x11 = "*"
+wayland = "*"
+vulkan = "*"
+fontconfig = "*"
+alsa-lib = "*"
+libxcb = "*"
+
+# Windows installer (`choco install wixtoolset`, `cargo install cargo-wix`, `cargo wix`)
+[package.metadata.wix]
+upgrade-guid = "032E3396-DAEF-48CF-85C3-500416DF6E2F"
+product-icon = "assets/memos-icon.ico"
+license = false
+
 [profile.dev]
 debug = 0
 incremental = false

@@ -1,0 +1,58 @@
+app-id: io.github.Markgatcha.memos
+runtime: org.freedesktop.Platform
+runtime-version: "25.08"
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: memos-desktop
+rename-desktop-file: memos-desktop.desktop
+rename-icon: memos-desktop
+copy-icon: true
+rename-appdata-file: io.github.Markgatcha.memos.metainfo.xml
+finish-args:
+  # GPUI windowing + GPU rendering
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Optional crash reporting (off by default, user opt-in)
+  - --share=network
+  # Browse/open and store the .db anywhere under $HOME (default ~/.memos/memos.db)
+  - --filesystem=home
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/memos-desktop/cargo
+cleanup:
+  - "*.la"
+  - "*.a"
+modules:
+  - name: memos-desktop
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --offline --locked
+      - install -Dm755 target/release/memos-desktop /app/bin/memos-desktop
+      - install -Dm644 packaging/linux/memos-desktop.desktop /app/share/applications/memos-desktop.desktop
+      - install -Dm644 packaging/linux/icons/memos-desktop-128.png
+        /app/share/icons/hicolor/128x128/apps/memos-desktop.png
+      - install -Dm644 packaging/linux/icons/memos-desktop-256.png
+        /app/share/icons/hicolor/256x256/apps/memos-desktop.png
+      - install -Dm644 packaging/linux/icons/memos-desktop-512.png
+        /app/share/icons/hicolor/512x512/apps/memos-desktop.png
+      - install -Dm644 packaging/linux/io.github.Markgatcha.memos.metainfo.xml
+        /app/share/metainfo/io.github.Markgatcha.memos.metainfo.xml
+      - desktop-file-validate /app/share/applications/memos-desktop.desktop
+      - appstreamcli validate --no-net --pedantic
+        /app/share/metainfo/io.github.Markgatcha.memos.metainfo.xml || true
+    sources:
+      - type: dir
+        path: ../../
+      - cargo-sources.json
+      - type: inline
+        dest: cargo
+        dest-filename: config.toml
+        contents: |
+          [source.crates-io]
+          replace-with = "vendored-sources"
+          [source.vendored-sources]
+          directory = "/run/build/memos-desktop/cargo/vendor"
