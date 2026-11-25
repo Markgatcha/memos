@@ -102,6 +102,8 @@ pub(super) struct SearchUiState {
     pub help_closed_at: Option<Instant>,
     pub manage_view_id: Option<String>,
     pub manage_input: Entity<TextInput>,
+    /// First click on Delete arms it; the second deletes.
+    pub confirm_delete: bool,
 }
 
 impl SearchUiState {
@@ -126,6 +128,7 @@ impl SearchUiState {
                 help_closed_at: None,
                 manage_view_id: None,
                 manage_input,
+                confirm_delete: false,
             },
             sub,
         )
@@ -443,6 +446,7 @@ impl MemOSApp {
         self.dismiss_popovers(super::PopoverOwner::None, cx);
         self.close_all_modals();
         self.search_ui.manage_view_id = Some(view.id);
+        self.search_ui.confirm_delete = false;
         self.search_ui
             .manage_input
             .update(cx, |i, cx| i.set_text(view.name, cx));
@@ -504,6 +508,11 @@ impl MemOSApp {
     }
 
     fn delete_managed_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.search_ui.confirm_delete {
+            self.search_ui.confirm_delete = true;
+            cx.notify();
+            return;
+        }
         if let Some(id) = self.search_ui.manage_view_id.clone() {
             self.close_manage_view(window, cx);
             self.delete_saved_view(&id, cx);
@@ -553,7 +562,11 @@ impl MemOSApp {
             .footer_note(
                 button(
                     "manage-view-delete",
-                    "Delete view",
+                    if self.search_ui.confirm_delete {
+                        "Click again to delete"
+                    } else {
+                        "Delete view"
+                    },
                     ButtonKind::Danger,
                     &theme,
                 )
