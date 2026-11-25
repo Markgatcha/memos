@@ -4,6 +4,12 @@ All notable changes to MemOS Desktop are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the desktop app is
 versioned independently from the `@mem-os/sdk` package.
 
+## [Unreleased]
+
+### Changed
+
+- **Event-driven store watching.** Replaced the fixed `1.5 s`/`8 s` database change-detection poll with a `notify` kernel watch on the store's parent directory (`src/ui/db_watch.rs`), waking the reload task only when the database or its `-wal`/`-shm` files change (250 ms burst debounce). A slow fallback poll (`15 s` active / `60 s` inactive) covers missed events, and the legacy cadence remains when no watch can be installed (onboarding, missing directory, unsupported backend). Targets the idle-CPU regression where the poll was a suspected contributor.
+
 ## [0.1.0] - 2026-11-17
 
 ### Added
