@@ -80,6 +80,8 @@ impl BriefSectionKind {
 pub enum BriefEvent {
     OpenMemory(String),
     ViewAll(BriefSectionKind),
+    /// Open the side-by-side comparison for a contradiction pair.
+    Compare(String, String),
     ViewAllMemories,
 }
 
@@ -260,13 +262,14 @@ impl BriefView {
             .aria_selected(is_selected)
             .cursor_pointer()
             .w_full()
+            .min_w(px(0.))
             .px(px(12.))
             .py(px(9.))
             .rounded(px(6.))
             .bg(if is_selected {
                 theme.bg_selected
             } else {
-                theme.bg_panel
+                gpui::transparent_black()
             })
             .hover(move |s| {
                 s.bg(if is_selected {
@@ -300,6 +303,8 @@ impl BriefView {
                             .child(status_dot(type_color))
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_w(px(0.))
                                     .text_size(px(14.))
                                     .line_height(px(19.))
                                     .font_weight(FontWeight::MEDIUM)
@@ -381,15 +386,39 @@ impl BriefView {
                     )
                     .child(
                         div()
-                            .text_size(px(11.))
-                            .font_features(tabular_nums())
-                            .text_color(theme.text_muted)
-                            .child(SharedString::from(detected)),
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_features(tabular_nums())
+                                    .text_color(theme.text_muted)
+                                    .child(SharedString::from(detected)),
+                            )
+                            .child({
+                                let (ca, cb) = (pair.node_a_id.clone(), pair.node_b_id.clone());
+                                crate::ui::views::kit::button(
+                                    ("brief-compare", ix),
+                                    "Compare",
+                                    crate::ui::views::kit::ButtonKind::Secondary,
+                                    &theme,
+                                )
+                                .h(px(24.))
+                                .text_size(px(12.))
+                                .on_click(cx.listener(
+                                    move |_, _, _, cx| {
+                                        cx.emit(BriefEvent::Compare(ca.clone(), cb.clone()));
+                                    },
+                                ))
+                            }),
                     ),
             )
             .child(
                 div()
                     .id(("brief-contra-a", ix))
+                    .w_full()
+                    .min_w(px(0.))
                     .cursor_pointer()
                     .px(px(8.))
                     .py(px(5.))
@@ -425,6 +454,8 @@ impl BriefView {
             .child(
                 div()
                     .id(("brief-contra-b", ix))
+                    .w_full()
+                    .min_w(px(0.))
                     .cursor_pointer()
                     .px(px(8.))
                     .py(px(5.))
@@ -560,7 +591,7 @@ impl Render for BriefView {
             .gap(px(3.))
             .child(
                 div()
-                    .text_size(px(21.))
+                    .text_size(px(20.))
                     .line_height(px(26.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.text_primary)

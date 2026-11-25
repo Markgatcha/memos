@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{
@@ -79,6 +80,62 @@ pub struct MemoryListView {
     theme: ThemePalette,
     momo_status: StoreHealthStatus,
     no_fun: bool,
+    pinned_ids: Arc<HashSet<String>>,
+}
+
+/// The single most important state to call out on a row, in priority order.
+/// Rows show one marker so a busy store does not turn into a wall of badges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowMarker {
+    Quarantined,
+    Conflict,
+    LowTrust,
+    Pinned,
+}
+
+impl RowMarker {
+    pub fn label(self) -> &'static str {
+        match self {
+            RowMarker::Quarantined => "Quarantined",
+            RowMarker::Conflict => "Conflict",
+            RowMarker::LowTrust => "Low trust",
+            RowMarker::Pinned => "Pinned",
+        }
+    }
+}
+
+/// Trust below this reads as "low trust" in rows, matching Store health.
+pub const LOW_TRUST_THRESHOLD: f32 = 0.5;
+
+pub fn row_marker(item: &MemoryListItem, pinned: bool) -> Option<RowMarker> {
+    if item.quarantined {
+        Some(RowMarker::Quarantined)
+    } else if item.has_contradiction {
+        Some(RowMarker::Conflict)
+    } else if item.trust_score < LOW_TRUST_THRESHOLD {
+        Some(RowMarker::LowTrust)
+    } else if pinned {
+        Some(RowMarker::Pinned)
+    } else {
+        None
+    }
+}
+
+/// Secondary line for a row: type, namespace (when not `default`) and up to
+/// two tags. Kept short so it never fights the title for width.
+pub fn row_meta_line(item: &MemoryListItem) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(4);
+    let ns = item.namespace.trim();
+    if !ns.is_empty() && ns != "default" {
+        parts.push(ns.to_string());
+    }
+    for tag in item.tags.iter().take(2) {
+        parts.push(format!("#{tag}"));
+    }
+    if item.tags.len() > 2 {
+        parts.push(format!("+{}", item.tags.len() - 2));
+    }
+    parts.join(" · ")
 }
 
 pub(crate) fn is_row_hovered(
@@ -123,7 +180,13 @@ impl MemoryListView {
             theme,
             momo_status: StoreHealthStatus::Empty,
             no_fun: false,
+            pinned_ids: Arc::new(HashSet::new()),
         }
+    }
+
+    pub fn set_pinned_ids(&mut self, ids: Arc<HashSet<String>>, cx: &mut Context<Self>) {
+        self.pinned_ids = ids;
+        cx.notify();
     }
 
     pub fn set_external_hovered_id(&mut self, hovered_id: Option<String>, cx: &mut Context<Self>) {
@@ -417,6 +480,7 @@ impl MemoryListView {
 
         let compact = self.row_density == RowDensity::Compact;
         let row_h = self.row_density.row_height_px();
+        let right_inset = self.overlay_right_inset;
 
         range
             .filter_map(|ix| self.items.get(ix).map(|item| (ix, item)))
@@ -424,13 +488,22 @@ impl MemoryListView {
                 let is_selected = selected_id.as_deref() == Some(item.id.as_str());
                 let id_for_click = item.id.clone();
                 let preview: SharedString = item.preview.to_string().into();
-                let age = format_relative_age(item.updated_at, now);
-
-                let mut meta_parts = vec![item.node_type.to_string(), age];
-                for tag in item.tags.iter().take(2) {
-                    meta_parts.push(format!("#{tag}"));
+                let age: SharedString = format_relative_age(item.updated_at, now).into();
+                let meta_line: SharedString = row_meta_line(item).into();
+                let type_label: SharedString = item.node_type.to_string().into();
+                let type_color = theme.type_color(&item.node_type);
+                let marker = row_marker(item, self.pinned_ids.contains(&item.id));
+                let marker_color = match marker {
+                    Some(RowMarker::Quarantined | RowMarker::Conflict) => theme.danger,
+                    Some(RowMarker::LowTrust) => theme.text_secondary,
+                    Some(RowMarker::Pinned) => theme.accent,
+                    None => theme.text_muted,
+                };
+                let aria: SharedString = match marker {
+                    Some(m) => format!("{preview}. {}, {type_label}, {age} ago", m.label()),
+                    None => format!("{preview}. {type_label}, {age} ago"),
                 }
-                let meta_line: SharedString = meta_parts.join(" · ").into();
+                .into();
 
                 let is_hovered = is_row_hovered(
                     self.hovered_row,
@@ -445,19 +518,78 @@ impl MemoryListView {
                     gpui::transparent_black()
                 };
 
+                let meta = div()
+                    .w_full()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.))
+                    .text_size(px(12.))
+                    .line_height(px(16.))
+                    .text_color(theme.text_muted)
+                    .child(
+                        div()
+                            .w(px(6.))
+                            .h(px(6.))
+                            .rounded_full()
+                            .flex_shrink_0()
+                            .bg(type_color),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_color(theme.text_secondary)
+                            .child(type_label),
+                    )
+                    .when(!meta_line.is_empty(), |el| {
+                        el.child(div().flex_shrink_0().child("·")).child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(meta_line),
+                        )
+                    });
+
+                let right_col = div()
+                    .w(px(84.))
+                    .flex_shrink_0()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .justify_center()
+                    .gap(px(if compact { 1. } else { 4. }))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(px(16.))
+                            .font_features(tabular_nums())
+                            .text_color(theme.text_muted)
+                            .child(age),
+                    )
+                    .when_some(marker, |col, m| {
+                        col.child(crate::ui::views::kit::state_marker(m.label(), marker_color))
+                    });
+
                 let row = div()
                     .id(("memory-row", ix))
                     .focusable()
                     .cursor_pointer()
                     .role(Role::ListItem)
-                    .aria_label(preview.clone())
+                    .aria_label(aria)
                     .aria_selected(is_selected)
                     .h(px(row_h))
                     .w_full()
                     .min_w(px(0.))
                     .overflow_hidden()
-                    .px(px(16.))
-                    .py(px(if compact { 4. } else { 8. }))
+                    .pl(px(12.))
+                    .pr(px(16.) + right_inset)
+                    .py(px(if compact { 5. } else { 10. }))
+                    .border_b_1()
+                    .border_color(theme.border_subtle)
                     .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                         if this.suppress_hover_until_move {
                             if !*hovered && this.hovered_row == Some(ix) {
@@ -486,16 +618,15 @@ impl MemoryListView {
                     .focus_visible(move |s| s.border_1().border_color(theme.accent))
                     .flex()
                     .items_stretch()
-                    .gap(px(12.))
+                    .gap(px(10.))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_popover = HeaderPopover::None;
                         cx.emit(ListEvent::Select(id_for_click.clone()));
                     }))
                     .child(
                         div()
-                            .w(px(3.))
-                            .my(px(if compact { 3. } else { 4. }))
-                            .rounded(px(1.5))
+                            .w(px(2.))
+                            .rounded(px(1.))
                             .flex_shrink_0()
                             .bg(bar_color),
                     )
@@ -507,26 +638,27 @@ impl MemoryListView {
                             .flex()
                             .flex_col()
                             .justify_center()
-                            .gap(px(if compact { 1. } else { 3. }))
+                            .gap(px(if compact { 1. } else { 4. }))
                             .child(
                                 div()
+                                    .w_full()
+                                    .min_w(px(0.))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
                                     .text_size(px(14.))
                                     .line_height(px(if compact { 18. } else { 20. }))
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .font_weight(if is_selected {
+                                        FontWeight::MEDIUM
+                                    } else {
+                                        FontWeight::NORMAL
+                                    })
                                     .text_color(theme.text_primary)
-                                    .truncate()
                                     .child(preview),
                             )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .line_height(px(16.))
-                                    .font_features(tabular_nums())
-                                    .text_color(theme.text_muted)
-                                    .truncate()
-                                    .child(meta_line),
-                            ),
-                    );
+                            .child(meta),
+                    )
+                    .child(right_col);
 
                 if is_hovered && !is_selected {
                     row.with_animation(
@@ -981,8 +1113,8 @@ impl Render for MemoryListView {
             .w_full()
             .min_w(px(0.))
             .overflow_hidden()
-            .pt(px(22.))
-            .pb(px(14.))
+            .pt(px(18.))
+            .pb(px(12.))
             .pl(px(16.))
             .pr(px(16.) + self.overlay_right_inset)
             .border_b_1()
@@ -1003,9 +1135,9 @@ impl Render for MemoryListView {
                         div()
                             .flex_1()
                             .min_w(px(0.))
-                            .text_size(px(26.))
-                            .line_height(px(32.))
-                            .font_weight(FontWeight::BOLD)
+                            .text_size(px(20.))
+                            .line_height(px(26.))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.text_primary)
                             .truncate()
                             .child(page_title)
@@ -1677,7 +1809,7 @@ impl Render for MemoryListView {
                 container.child(
                     div()
                         .absolute()
-                        .top(px(78.))
+                        .top(px(66.))
                         .right(px(16.) + self.overlay_right_inset)
                         .child(popover),
                 )

@@ -35,7 +35,12 @@ pub enum SidebarEvent {
     ClearFilters,
     OpenHarnesses,
     OpenHealth,
+    /// Rename, refilter or delete a custom saved view.
+    ManageView(String),
 }
+
+/// Tags shown before "Show all" so the sidebar stays scannable.
+pub const SIDEBAR_TAG_PREVIEW: usize = 8;
 
 /// Pure UI/filter state for the redesigned sidebar, covered by unit tests.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -43,6 +48,7 @@ pub struct SidebarState {
     pub compact: bool,
     pub rail_expanded: bool,
     pub tags_collapsed: bool,
+    pub tags_expanded: bool,
 }
 
 impl SidebarState {
@@ -422,6 +428,20 @@ impl SidebarView {
         on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        self.render_nav_row_with_manage(row_id, label, count, active, None, on_click, cx)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_nav_row_with_manage(
+        &self,
+        row_id: (&'static str, usize),
+        label: SharedString,
+        count: Option<usize>,
+        active: bool,
+        manage_id: Option<String>,
+        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let theme = self.theme;
         let bg = if active {
             theme.bg_selected
@@ -465,6 +485,13 @@ impl SidebarView {
                 gpui::MouseButton::Left,
                 cx.listener(move |this, _, _, cx| on_click(this, cx)),
             )
+            .when_some(manage_id.clone(), |row, id| {
+                // Right-click opens the manager, like a native context action.
+                row.on_mouse_down(
+                    gpui::MouseButton::Right,
+                    cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::ManageView(id.clone()))),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -506,6 +533,29 @@ impl SidebarView {
                         .text_color(theme.text_muted)
                         .flex_shrink_0()
                         .child(format!("{n}")),
+                )
+            })
+            .when(active && manage_id.is_some(), |el| {
+                let id = manage_id.clone().unwrap_or_default();
+                el.child(
+                    div()
+                        .id((row_id.0, row_id.1 + 10_000))
+                        .focusable()
+                        .role(Role::Button)
+                        .aria_label("Edit saved view")
+                        .tooltip(tooltip_view("Rename, update or delete", theme))
+                        .flex_shrink_0()
+                        .px(px(4.))
+                        .rounded(px(4.))
+                        .text_size(px(12.))
+                        .text_color(theme.text_muted)
+                        .hover(move |s| s.text_color(theme.text_primary).bg(theme.bg_hover))
+                        .focus_visible(move |s| s.border_1().border_color(theme.accent))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(SidebarEvent::ManageView(id.clone()));
+                        }))
+                        .child("Edit"),
                 )
             })
             .into_any_element()
@@ -794,11 +844,13 @@ impl Render for SidebarView {
                 let active = self.is_saved_view_row_active(view);
                 let count = SidebarState::view_count(&view.id, self.overview.as_ref());
                 let view_clone = view.clone();
-                rows.push(self.render_nav_row(
+                let manage_id = (!view.built_in).then(|| view.id.clone());
+                rows.push(self.render_nav_row_with_manage(
                     ("sidebar-view", ix),
                     view.name.clone().into(),
                     count,
                     active,
+                    manage_id,
                     move |_, cx| {
                         let filter = view_clone.resolved_filter(now_unix_ms());
                         cx.emit(SidebarEvent::SelectSavedView {
@@ -819,9 +871,14 @@ impl Render for SidebarView {
             self.overview
                 .as_ref()
                 .map(|ov| {
+                    let limit = if self.state.tags_expanded {
+                        40
+                    } else {
+                        SIDEBAR_TAG_PREVIEW
+                    };
                     ov.tags
                         .iter()
-                        .take(40)
+                        .take(limit)
                         .enumerate()
                         .map(|(ix, facet)| {
                             let tag_name = facet.name.clone();
@@ -928,15 +985,14 @@ impl Render for SidebarView {
                                 .cursor_pointer()
                                 .role(Role::Button)
                                 .aria_label("Open health")
-                                .mx(px(12.))
-                                .mb(px(12.))
-                                .px(px(12.))
-                                .py(px(10.))
-                                .rounded(px(10.))
-                                .bg(theme.bg_elevated)
+                                .mx(px(8.))
+                                .mb(px(8.))
+                                .px(px(10.))
+                                .py(px(8.))
+                                .rounded(px(8.))
                                 .border_1()
-                                .border_color(theme.border_subtle)
-                                .hover(move |s| s.border_color(theme.border_strong))
+                                .border_color(gpui::transparent_black())
+                                .hover(move |s| s.bg(theme.bg_hover))
                                 .focus_visible(move |s| s.border_color(theme.accent))
                                 .on_click(cx.listener(|_, _, _, cx| {
                                     cx.emit(SidebarEvent::OpenHealth);
@@ -1009,10 +1065,10 @@ impl Render for SidebarView {
                                 .justify_between()
                                 .child(
                                     div()
-                                        .text_size(px(10.))
-                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_size(px(12.))
+                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme.text_muted)
-                                        .child("VIEWS"),
+                                        .child("Views"),
                                 )
                                 .when(has_secondary_filter, |hdr| {
                                     hdr.child(
@@ -1057,10 +1113,10 @@ impl Render for SidebarView {
                                 }))
                                 .child(
                                     div()
-                                        .text_size(px(10.))
-                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_size(px(12.))
+                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme.text_muted)
-                                        .child("TAGS"),
+                                        .child("Tags"),
                                 )
                                 .child(render_ui_icon(
                                     if self.state.tags_collapsed {
@@ -1073,7 +1129,44 @@ impl Render for SidebarView {
                                 )),
                         )
                         .when(!self.state.tags_collapsed, |tags_col| {
-                            tags_col.child(div().flex().flex_col().gap(px(2.)).children(tag_rows))
+                            let total_tags = self.overview.as_ref().map_or(0, |o| o.tags.len());
+                            let expanded = self.state.tags_expanded;
+                            tags_col
+                                .child(div().flex().flex_col().gap(px(2.)).children(tag_rows))
+                                .when(total_tags > SIDEBAR_TAG_PREVIEW, |col| {
+                                    col.child(
+                                        div()
+                                            .id("sidebar-tags-more")
+                                            .focusable()
+                                            .role(Role::Button)
+                                            .cursor_pointer()
+                                            .mx(px(8.))
+                                            .mt(px(2.))
+                                            .h(px(28.))
+                                            .px(px(19.))
+                                            .rounded(px(6.))
+                                            .flex()
+                                            .items_center()
+                                            .text_size(px(12.))
+                                            .text_color(theme.text_muted)
+                                            .hover(move |s| {
+                                                s.bg(theme.bg_hover).text_color(theme.text_primary)
+                                            })
+                                            .focus_visible(move |s| {
+                                                s.border_1().border_color(theme.accent)
+                                            })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.state.tags_expanded =
+                                                    !this.state.tags_expanded;
+                                                cx.notify();
+                                            }))
+                                            .child(if expanded {
+                                                "Show fewer".to_string()
+                                            } else {
+                                                format!("Show all {}", total_tags.min(40))
+                                            }),
+                                    )
+                                })
                         })
                     }),
             )
