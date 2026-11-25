@@ -8,6 +8,14 @@ versioned independently from the `@mem-os/sdk` package.
 
 ### Added
 
+- **Batch review.** In write mode, tick Review candidates (click or `Space`, or **Select all**) and **Approve N** / **Reject N** after an inline confirmation. Each memory is a separate `memos_review` call through the existing writer, with per-item progress, **Stop after this one**, and an honest summary ("Approved 3 of 4. 1 failed."); failed items stay in the queue. Rows explain why each candidate is pending and flag low confidence. Read-only mode explains instead of showing disabled controls.
+- **Persistent pins.** Pins are saved per store in `settings.json` (local UI state, never written to the store or treated as memory metadata), pruned when their memories disappear, reorderable in the pack, shown as a **Pinned** sidebar row, and reachable from the palette (**Show pinned memories**, **Clear all pins**).
+- **Export.** **Save…** in the context pack (or `Ctrl/Cmd+E`, or **Export…** in the inspector's More menu) writes the selection, pins or current view (up to 1,000 memories with **No limit**) as Markdown, JSON or text through the native save dialog, atomically and off the UI thread. Without a save dialog it saves to the documents/home folder and says where. Exports carry ids, created/updated dates, namespaces, tags and provenance; Markdown keeps the full id in an HTML comment.
+- **Store switcher.** **Switch store…** (palette, Settings) reopens a recent store or browses for one. Candidates are probed read-only before the window switches; nothing is merged or copied. The sidebar summary names the open store, and recent stores appear directly in the palette.
+- **Graph card detail.** The selected node's full title and a link breakdown ("1 contradicts · 1 relates to") load lazily; focus mode shows a **Show all** banner and `Esc` leaves it.
+- **Reading size.** Standard or large text for the inspector and comparison (Settings, palette), persisted.
+- **Ingest plan.** The Ingest dialog checks the path off the UI thread, states in one sentence what will happen, and reports grouped results with **Show ingested**.
+
 - **Context pack builder (`C`).** Replaces the single "What the AI sees" preview. Choose the source (**Selected**, **Current view** in list order, or **Pinned**), a token budget (**1k / 2k / 4k / 8k / No limit**, estimated as chars ÷ 4) and a format (**Plain**, **Markdown**, **Citations** digest, or **JSON**). Memories that do not fit are left out whole and counted; text is never cut. Pin or unpin the selection with `P` or **Pin** in the inspector (session-only, up to 100); the status bar shows `N pinned`.
 - **Quick capture (`Ctrl/Cmd+N`, header **Capture**, palette).** One field; `#tag`, `ns:name` and `type:kind` at the start or end become fields, inline hashtags stay in the text and are also tagged. Defaults come from the current filter. `Ctrl/Cmd+Enter` saves through `memos_store`; **More fields…** hands the draft to the full composer. In read-only mode the command explains why and opens Settings.
 - **Contradiction comparison (`X`, inspector **Compare**, Today **Compare**).** Side-by-side text, newer / more-trusted markers, aligned fact rows with differences called out, **Open** and **Pin** per side, and **Forget…** per side only in write mode.
@@ -17,6 +25,8 @@ versioned independently from the `@mem-os/sdk` package.
 - **Keyboard.** `Ctrl/Cmd+3` Today, `Ctrl/Cmd+4` Review, `I` toggles the inspector without losing the selection; a regrouped shortcut sheet (`?`) covers every key.
 
 ### Changed
+
+- **Design system completion.** The full editor, Ingest, Forget, Save view, Settings controls and onboarding buttons now use the shared kit; Forget is an explicit "Keep it / Forget" confirmation. The inspector's copy/citation/graph glyph buttons became one **More** menu, and its receipts and linked memories are hairline sections. Today is ordered as *Needs your attention*, *What changed*, *Coming up*, with a one-line explanation per section. Palette rows ellipsize and no longer repeat a Memory badge.
 
 - **Shared UI kit (`ui/views/kit.rs`).** One set of buttons (primary, secondary, subtle, danger, icon, disabled-with-reason), segmented control, dialog shell, notices, empty states and markers, on a 4 px spacing scale and 11/12/13/14/20 px type scale.
 - **List rows.** Real ellipsis, an aligned age column, a type dot, namespace and up to two tags, and at most one state marker (*Quarantined*, *Conflict*, *Low trust*, *Pinned*) spelled out rather than color-only. Rows no longer slide under the overlay inspector.
