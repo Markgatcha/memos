@@ -18,9 +18,7 @@ use lyon::path::Event as LyonEvent;
 use crate::core::model::{
     GraphEdgeData, GraphMode, GraphNodeData, GraphSnapshot, short_citation_id,
 };
-use crate::ui::views::{
-    ThemePalette, UiIcon, render_ui_icon, status_dot, tooltip_view,
-};
+use crate::ui::views::{ThemePalette, UiIcon, render_ui_icon, status_dot, tooltip_view};
 
 const MAX_PAN_WORLD: f32 = 12_000.0;
 const MIN_ZOOM: f32 = 0.08;
@@ -582,7 +580,9 @@ impl GraphView {
             .keyboard_index
             .and_then(|k| indices.iter().position(|&i| i == k));
         let next = match current {
-            Some(p) => (p as isize).saturating_add(delta).clamp(0, indices.len() as isize - 1) as usize,
+            Some(p) => (p as isize)
+                .saturating_add(delta)
+                .clamp(0, indices.len() as isize - 1) as usize,
             None => {
                 if delta < 0 {
                     indices.len() - 1
@@ -592,10 +592,7 @@ impl GraphView {
             }
         };
         let ix = indices[next];
-        let memory_id = layout
-            .nodes
-            .get(ix)
-            .and_then(|n| n.data.memory_id.clone());
+        let memory_id = layout.nodes.get(ix).and_then(|n| n.data.memory_id.clone());
         self.keyboard_index = Some(ix);
         self.selected_id = memory_id;
         cx.notify();
@@ -1890,10 +1887,7 @@ fn finalize_layout(
             let anchor_x = core_xs[core_xs.len() / 2];
             // Clear every node in the group, not just the core, so a heading
             // never lands on top of an outlier node.
-            let top_y = pts
-                .iter()
-                .map(|p| p.1 - p.2)
-                .fold(f32::INFINITY, f32::min);
+            let top_y = pts.iter().map(|p| p.1 - p.2).fold(f32::INFINITY, f32::min);
 
             group_labels.push(GroupAnchorLabel {
                 text: sanitize_single_line(name, 26),
@@ -2134,14 +2128,8 @@ fn paint_graph_canvas(
         let dy = p1.y.as_f32() - ctrl.y.as_f32();
         let len = (dx * dx + dy * dy).sqrt().max(0.001);
         let (ux, uy) = (dx / len, dy / len);
-        let tip = point(
-            px(p1.x.as_f32() - ux * 11.0),
-            px(p1.y.as_f32() - uy * 11.0),
-        );
-        let base = point(
-            px(tip.x.as_f32() - ux * 9.0),
-            px(tip.y.as_f32() - uy * 9.0),
-        );
+        let tip = point(px(p1.x.as_f32() - ux * 11.0), px(p1.y.as_f32() - uy * 11.0));
+        let base = point(px(tip.x.as_f32() - ux * 9.0), px(tip.y.as_f32() - uy * 9.0));
         let left = point(
             px(base.x.as_f32() - uy * 5.0),
             px(base.y.as_f32() + ux * 5.0),
@@ -2156,10 +2144,7 @@ fn paint_graph_canvas(
                 px((a.y.as_f32() + b.y.as_f32()) * 0.5),
             )
         };
-        [
-            (tip, mid(tip, left), left),
-            (tip, mid(tip, right), right),
-        ]
+        [(tip, mid(tip, left), left), (tip, mid(tip, right), right)]
     }
 
     let mut regular_edges: Vec<EdgeCurve> = Vec::new();
@@ -3016,9 +3001,21 @@ mod tests {
     fn graph_label_zoom_gate_collision_and_bounds_clamp() {
         // Below the ambient threshold, only selected or hovered labels appear.
         let gate = GRAPH_AMBIENT_LABEL_MIN_ZOOM;
-        assert!(!should_show_node_label(true, false, false, gate - 0.01, true));
+        assert!(!should_show_node_label(
+            true,
+            false,
+            false,
+            gate - 0.01,
+            true
+        ));
         assert!(should_show_node_label(true, false, false, gate, true));
-        assert!(!should_show_node_label(true, false, false, gate - 0.01, false));
+        assert!(!should_show_node_label(
+            true,
+            false,
+            false,
+            gate - 0.01,
+            false
+        ));
         assert!(should_show_node_label(true, true, false, 0.25, false));
         assert!(should_show_node_label(true, false, true, 0.25, false));
 

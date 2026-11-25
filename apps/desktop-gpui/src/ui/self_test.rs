@@ -18,8 +18,8 @@ use crate::core::settings::{AppSettings, ResolvedDbPath, ThemeMode, WindowBounds
 use crate::core::write_bridge::{BridgeError, WriteBridge};
 use crate::telemetry::{self, StartupTimeline, TelemetryHandle};
 use crate::ui::app::{LaunchOptions, MemOSApp, register_app_key_bindings};
-use crate::ui::views::ThemePalette;
 use crate::ui::views::TextInput;
+use crate::ui::views::ThemePalette;
 use crate::ui::views::detail::DetailView;
 use crate::ui::views::graph::GraphView;
 use crate::ui::views::list::MemoryListView;
@@ -758,4 +758,3 @@ fn ensure_eq_msg<T: PartialEq + std::fmt::Debug>(
     }
     Ok(())
 }
-

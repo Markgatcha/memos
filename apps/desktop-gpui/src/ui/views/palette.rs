@@ -98,12 +98,8 @@ pub struct CommandPalette {
 impl CommandPalette {
     pub fn new(theme: ThemePalette, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| {
-            TextInput::new(
-                cx,
-                "Search memories or run a command",
-                theme,
-            )
-            .with_leading_icon(crate::ui::views::UiIcon::Search)
+            TextInput::new(cx, "Search memories or run a command", theme)
+                .with_leading_icon(crate::ui::views::UiIcon::Search)
         });
         let sub = cx.subscribe_in(&input, window, |this, _, event, _window, cx| match event {
             InputEvent::Changed(query) => {

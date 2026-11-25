@@ -2779,7 +2779,9 @@ impl ReadOnlyStore {
         let Some(predicate) = self.review_pending_predicate("n") else {
             return Ok(Vec::new());
         };
-        let id_expr = self.schema.node_col_expr("n", "id", "CAST(n.rowid AS TEXT)");
+        let id_expr = self
+            .schema
+            .node_col_expr("n", "id", "CAST(n.rowid AS TEXT)");
         let content_expr = self.schema.node_col_expr("n", "content", "''");
         let summary_expr = self.schema.node_col_expr("n", "summary", "''");
         let type_expr = self.schema.node_col_expr("n", "type", "'fact'");
@@ -3737,12 +3739,7 @@ mod tests {
         assert_eq!(page1.items.len(), 2);
         assert!(page1.has_more);
         let page2 = store
-            .query_nodes_page(
-                &filter,
-                &HashSet::new(),
-                page1.next_cursor.as_ref(),
-                2,
-            )
+            .query_nodes_page(&filter, &HashSet::new(), page1.next_cursor.as_ref(), 2)
             .expect("page 2");
         assert_eq!(page2.items.len(), 1);
         assert!(!page2.has_more);

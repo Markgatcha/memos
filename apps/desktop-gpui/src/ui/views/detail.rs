@@ -1097,15 +1097,13 @@ impl Render for DetailView {
                                                                     .text_color(theme.text_muted)
                                                                     .child("Metadata"),
                                                             )
-                                                            .children(
-                                                                metadata_entries.iter().map(
-                                                                    |(k, v)| {
-                                                                        self.render_meta_row_text(
-                                                                            k, v, true,
-                                                                        )
-                                                                    },
-                                                                ),
-                                                            ),
+                                                            .children(metadata_entries.iter().map(
+                                                                |(k, v)| {
+                                                                    self.render_meta_row_text(
+                                                                        k, v, true,
+                                                                    )
+                                                                },
+                                                            )),
                                                     )
                                                 }),
                                         )

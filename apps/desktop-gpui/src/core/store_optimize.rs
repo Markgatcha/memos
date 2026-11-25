@@ -141,8 +141,9 @@ pub fn optimize_store(path: &Path) -> Result<OptimizeReport, OptimizeError> {
     }
 
     let existing: HashSet<String> = {
-        let mut stmt =
-            conn.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'nodes'")?;
+        let mut stmt = conn.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'nodes'",
+        )?;
         let mut rows = stmt.query([])?;
         let mut names = HashSet::new();
         while let Some(row) = rows.next()? {

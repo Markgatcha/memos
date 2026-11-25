@@ -365,7 +365,10 @@ mod tests {
         std::fs::write(&occupied, "not a database").unwrap();
         let err = create_store(&occupied).expect_err("must refuse a foreign file");
         assert!(matches!(err, StoreInitError::PathOccupied(_)));
-        assert_eq!(std::fs::read_to_string(&occupied).unwrap(), "not a database");
+        assert_eq!(
+            std::fs::read_to_string(&occupied).unwrap(),
+            "not a database"
+        );
 
         let leftover = dir.join("empty.db");
         std::fs::write(&leftover, "").unwrap();
