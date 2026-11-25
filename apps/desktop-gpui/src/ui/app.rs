@@ -2476,6 +2476,12 @@ impl MemOSApp {
                                 .timer(Duration::from_millis(250))
                                 .await;
                             while w.receiver().try_recv().is_ok() {}
+                        } else {
+                            // Fallback-poll wake: refresh the watch so a
+                            // deleted-then-recreated store directory regains
+                            // live watching (kernel watches die with the
+                            // directory). Recreated on the next iteration.
+                            watcher = None;
                         }
                     }
                     _ => {
