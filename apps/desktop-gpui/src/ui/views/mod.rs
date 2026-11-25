@@ -17,6 +17,7 @@ use crate::core::settings::ThemeMode;
 pub mod brief;
 pub mod detail;
 pub mod graph;
+pub mod kit;
 pub mod list;
 pub mod logo;
 pub mod momo;
@@ -517,6 +518,7 @@ actions!(
         Cut,
         Copy,
         SubmitInput,
+        CommitInput,
         CancelInput,
         MoveUp,
         MoveDown,
@@ -541,6 +543,7 @@ pub fn register_input_key_bindings(cx: &mut App) {
         KeyBinding::new("cmd-v", Paste, Some("TextInput")),
         KeyBinding::new("cmd-c", Copy, Some("TextInput")),
         KeyBinding::new("cmd-x", Cut, Some("TextInput")),
+        KeyBinding::new("cmd-enter", CommitInput, Some("TextInput")),
     ];
     #[cfg(not(target_os = "macos"))]
     let platform_bindings = [
@@ -548,6 +551,7 @@ pub fn register_input_key_bindings(cx: &mut App) {
         KeyBinding::new("ctrl-v", Paste, Some("TextInput")),
         KeyBinding::new("ctrl-c", Copy, Some("TextInput")),
         KeyBinding::new("ctrl-x", Cut, Some("TextInput")),
+        KeyBinding::new("ctrl-enter", CommitInput, Some("TextInput")),
     ];
 
     cx.bind_keys([
@@ -815,6 +819,12 @@ impl TextInput {
         } else {
             cx.emit(InputEvent::Submit(self.content.to_string()));
         }
+    }
+
+    /// Ctrl/Cmd+Enter submits even a multiline field, so dialogs built on a
+    /// multiline input can be saved without reaching for the mouse.
+    fn commit(&mut self, _: &CommitInput, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(InputEvent::Submit(self.content.to_string()));
     }
 
     fn cancel(&mut self, _: &CancelInput, _: &mut Window, cx: &mut Context<Self>) {
@@ -1235,6 +1245,7 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::submit))
+            .on_action(cx.listener(Self::commit))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::move_down))

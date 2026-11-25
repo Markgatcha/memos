@@ -520,7 +520,7 @@ impl Render for ReviewView {
                     .gap(px(8.))
                     .child(
                         div()
-                            .text_size(px(21.))
+                            .text_size(px(20.))
                             .line_height(px(26.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.text_primary)

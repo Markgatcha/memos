@@ -510,6 +510,7 @@ pub fn run_self_test(
             last_view_mode: Some(ViewMode::Graph),
             last_saved_view_id: Some("all".to_string()),
             row_density: RowDensity::Compact,
+            recent_searches: vec!["tag:auth".to_string()],
             write_mode: true,
             writer_command: "memos mcp".to_string(),
         };
