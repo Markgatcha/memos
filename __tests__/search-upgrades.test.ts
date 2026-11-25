@@ -131,7 +131,11 @@ describe("fusion config threading", () => {
 
 describe("ftsOperator", () => {
   async function seed(): Promise<MemOS> {
-    const memos = makeMemos(null);
+    // MarkerProvider keeps the semantic leg deterministic AND active, so
+    // fusion normalization re-sorts by capped scores — the path where a
+    // filler/full-match tie can surface a partial first. (With no
+    // embedding provider sqlite's row order leaks through untested.)
+    const memos = makeMemos(new MarkerProvider());
     await memos.init();
     await memos.store("zebra plains roaming");
     await memos.store("zebra habitat savanna");
@@ -143,14 +147,14 @@ describe("ftsOperator", () => {
     // Two full-term matches: filler must sit strictly below EVERY full
     // match, never tie the weakest one (ties break by id and can
     // surface a partial first).
-    await memos.store("zebra habitat oasis");
+    await memos.store("zebra habitat oasis watering hole");
     const results = await memos.search({ query: "zebra habitat", limit: 5 });
     const contents = results.map((r) => r.node.content);
     expect(contents[0]).toBe("zebra habitat savanna");
     expect(contents.length).toBeGreaterThanOrEqual(3);
     const partial = contents.indexOf("zebra plains roaming");
     expect(partial).toBeGreaterThan(0);
-    const secondFull = contents.indexOf("zebra habitat oasis");
+    const secondFull = contents.indexOf("zebra habitat oasis watering hole");
     expect(secondFull).toBeGreaterThanOrEqual(0);
     expect(partial).toBeGreaterThan(secondFull);
     await memos.close();
