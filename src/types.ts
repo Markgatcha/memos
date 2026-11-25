@@ -3753,6 +3753,8 @@ export interface TraceRetrievalConfig {
   rerank: {
     enabled: boolean;
     candidates: number;
+    /** CE/fused ordering blend captured at trace time (see experimental.rerank.blend). */
+    blend: number;
   };
   relevanceGate: {
     enabled: boolean;

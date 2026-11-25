@@ -955,7 +955,13 @@ export function buildContextPack(opts: BuildContextPackOptions): ContextPack {
 
   // Sort by descending score, node id as the final tiebreak (cache-prefix
   // stability: equal scores must not surface input-order noise).
-  const sorted = [...items].sort(compareScoredMemories);
+  // Exception: when the cross-encoder reranker ran (any item carries
+  // `scores.rerank`) the input order IS the authoritative ranking — the
+  // head's sigmoid CE scores and the tail's fused scores are incompatible
+  // scales, and comparator re-sorting would interleave them wrongly.
+  const sorted = items.some((r) => r.scores?.rerank !== undefined)
+    ? items.slice()
+    : [...items].sort(compareScoredMemories);
 
   // Fidelity level: "adaptive" routes per-query; a fixed level renders
   // every item at that level; undefined keeps the historical default of

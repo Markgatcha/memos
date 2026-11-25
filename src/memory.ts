@@ -3562,8 +3562,14 @@ export class MemOS {
   private applyRankingModulators(
     results: ScoredMemory[],
     filter: SearchFilter,
+    opts?: { preserveOrder?: boolean },
   ): ScoredMemory[] {
     if (results.length === 0) return results;
+    // When the reranker ran, its ordering IS the ranking (see
+    // hybridSearch): re-sorting by raw score would mix the head's
+    // sigmoid CE scale with the tail's fused scale. Score adjustments
+    // still apply in place — only the re-sort is suppressed.
+    const preserveOrder = opts?.preserveOrder === true;
 
     let scored = results;
     let modulated = false;
@@ -3600,8 +3606,8 @@ export class MemOS {
                 ? { ...r.scores, hybrid: r.score * factor }
                 : r.scores,
             };
-          })
-          .sort(compareScoredMemories);
+          });
+        if (!preserveOrder) scored = scored.sort(compareScoredMemories);
         modulated = true;
       }
     }
@@ -3610,12 +3616,11 @@ export class MemOS {
     // forgetting-curve score as a small additive term.
     if (this.config.experimental?.ebbinghaus) {
       const now = Date.now();
-      scored = scored
-        .map((r) => ({
-          ...r,
-          score: r.score + EBBINGHAUS_WEIGHT * recallStrength(r.node, now),
-        }))
-        .sort((a, b) => b.score - a.score);
+      scored = scored.map((r) => ({
+        ...r,
+        score: r.score + EBBINGHAUS_WEIGHT * recallStrength(r.node, now),
+      }));
+      if (!preserveOrder) scored = scored.sort((a, b) => b.score - a.score);
       // Fire-and-forget: bump access counters for reinforcement.
       this.bumpAccessCounters(scored).catch(() => {});
       modulated = true;
@@ -9871,7 +9876,9 @@ export class MemOS {
     // `multiStreamSearch()`, and the store-time evidence pass rank the
     // same way `search()` does. Idempotent: `postSortResults` recognizes
     // the marked objects and does not re-run the chain.
-    const modulated = this.applyRankingModulators(deduped, filter);
+    const modulated = this.applyRankingModulators(deduped, filter, {
+      preserveOrder: rerankApplied,
+    });
 
     // ── Relevance gate (src/retrieval.ts) ── abstention + tail trimming.
     // The LAST scoring stage, after graph / PPR / session expansion and
@@ -10369,7 +10376,9 @@ export class MemOS {
       }
     }
 
-    const modulated = this.applyRankingModulators(deduped, filter);
+    const modulated = this.applyRankingModulators(deduped, filter, {
+      preserveOrder: rerankApplied,
+    });
 
     const gateResolved = opts.skipGate ? null : this.resolveRelevanceGate();
     const gated = opts.skipGate
@@ -10484,6 +10493,7 @@ export class MemOS {
         applied: rerankApplied,
         timingMs: rerankMs,
         candidates: rerankWindow,
+        blend: resolveRerankBlend(this.experimental?.rerank?.blend),
       },
       dedupDroppedIds,
       ...(relativeTimeWindowIds ? { relativeTimeWindowIds } : {}),
@@ -10908,16 +10918,41 @@ export class MemOS {
 
     if (scored.length === 0) return results;
 
-    const reranked = scored.map((row) => ({
-      node: head[row.index].node,
-      score: row.score,
-      scores: { ...head[row.index].scores, rerank: row.score },
-    }));
-    // Candidates the endpoint did not rank keep their fused order behind
-    // the reranked head.
-    const rankedSet = new Set(scored.map((row) => row.index));
-    const unranked = head.filter((_, index) => !rankedSet.has(index));
-    return [...reranked, ...unranked, ...tail];
+    const ceByIndex = new Map(scored.map((row) => [row.index, row.score]));
+    // Merge the WHOLE head by ordering key rather than appending unranked
+    // candidates behind the ranked ones: a partial endpoint response used
+    // to jump scored hits ahead of omitted hits regardless of the fused
+    // order — visible under blend: 1, where the contract is pure fused
+    // ordering. Unscored candidates key as -inf when the CE signal
+    // matters (blend < 1: they sink below every scored hit, same as
+    // before) and as pure fusedNorm under blend: 1, where the CE score
+    // is irrelevant. NaN-safe comparator: -inf minus -inf would poison
+    // the sort, so equal/degenerate keys fall back to fused position.
+    const headEntries = head.map((row, index) => {
+      const ce = ceByIndex.get(index);
+      return {
+        row,
+        index,
+        key: orderKey(index, ce ?? Number.NEGATIVE_INFINITY),
+        ce,
+      };
+    });
+    headEntries.sort((a, b) => {
+      const d = b.key - a.key;
+      return Number.isNaN(d) || d === 0 ? a.index - b.index : d;
+    });
+    return [
+      ...headEntries.map((entry) =>
+        entry.ce === undefined
+          ? entry.row
+          : {
+              node: entry.row.node,
+              score: entry.ce,
+              scores: { ...entry.row.scores, rerank: entry.ce },
+            },
+      ),
+      ...tail,
+    ];
   }
 
   /**
