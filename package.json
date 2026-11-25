@@ -164,7 +164,7 @@
     "jest": "^30.5.2",
     "oxlint": "^1.94.0",
     "tsx": "^4.23.15",
-    "typescript": "7.1.0-beta",
+    "typescript": "7.1.0-dev.20261121.1",
     "unpdf": "^2.2.1"
   },
   "engines": {
