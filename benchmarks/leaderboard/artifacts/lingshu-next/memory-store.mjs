@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { indexTerms, rankMemoryRows } from './retrieval-ranking.mjs';
 
-// Mirrored verbatim from the Next product revision named in fingerprints.json.
+// Mirrored verbatim from the Next product revision identified by product_memory_store_sha256 in measurement.json.
 function memoryOptOut(text) {
   const normalized = text.normalize('NFKC').replace(/[’‘]/g, "'");
   return /(?:\boff[\s-]+the[\s-]+record\b|\b(?:just|only)\s+this\s+time\b|\b(?:do\s+not|don't|never|must\s+not|should\s+not)\s+(?:(?:ever|automatically)\s+)*(?:remember|save|store|record|retain|memorize|log|keep)\b|\b(?:don't|do not|never)\s+(?:add|put|write)\b[^.!?\n]{0,80}\b(?:memory|memories)\b|(?:仅(?:限)?|只(?:限)?)\s*(?:这|本|此)\s*次|不留(?:下)?(?:任何)?(?:记录|痕迹)|(?:不要|别|请勿|切勿|不得|禁止|不必|不需要|不想让你)\s*(?:再|长期|自动|替我|帮我|把[^。！？\n]{0,40})*\s*(?:记(?:住|录|忆|下来)|保存|存储|留存|留下|写入|加入))/iu.test(normalized);

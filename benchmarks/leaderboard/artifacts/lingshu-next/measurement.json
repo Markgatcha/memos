@@ -2,9 +2,9 @@
   "dataset_sha256": "08d8dad4be43ee2049a22ff5674eb86725d0ce5ff434cde2627e5e8e7e117894",
   "product_memory_store_sha256": "2e7ea26594ccc53162a75d492791f97f061dba87fa3fc4669b6f223506415616",
   "product_ranker_sha256": "5bc1bb52c6b7c4129a3996cf3ffeb61b560c3dc320d8bf9bab9f4aaa74d35c32",
+  "public_adapter_sha256": "9f3945d807fac15f908397f4f9d7774785554a0258f4378e83232787bd17666b",
+  "per_question_sha256": "9fdcbf3d7fc12c40d36dcf63d9e88eac4be4752bac5993344b12e6e5df02e455",
   "product_target": "Next desktop memory retrieval",
-  "public_adapter_sha256": "a4be9a2614c08f8b418e30386c3e9e82fee8c4adb03346413515181f3bf007e1",
-  "per_question_sha256": "569d9e659d5ba31b0b2b77b4b8371647fe36ba415cc42d7c2d5d150116838a9f",
   "hardware": {
     "cpu": "AMD Ryzen 9 7845HX with Radeon Graphics",
     "logicalCpus": 24,
@@ -44,8 +44,8 @@
         "abstentions": 30,
         "indexSeconds": 18.679063499999945,
         "latencyP50Ms": 4.064650000000256,
-        "meanSessionsReturned": 19.316,
-        "belowTopK": 77,
+        "meanSessionsReturned": 19.32,
+        "belowTopK": 75,
         "minSessionsReturned": 7,
         "maxSessionsReturned": 20,
         "count": 500,
@@ -72,6 +72,12 @@
           "evidence_recall_at_k": 0.925,
           "all_evidence_at_k": 0.8666666666666667,
           "microEvidenceRecall": 0.896551724137931
+        },
+        "uniqueBenchmarkIdCounts": {
+          "meanSessionsReturned": 19.316,
+          "belowTopK": 77,
+          "minSessionsReturned": 7,
+          "maxSessionsReturned": 20
         }
       },
       {
@@ -81,8 +87,8 @@
         "abstentions": 30,
         "indexSeconds": 18.28079829999998,
         "latencyP50Ms": 3.931249999999636,
-        "meanSessionsReturned": 19.316,
-        "belowTopK": 77,
+        "meanSessionsReturned": 19.32,
+        "belowTopK": 75,
         "minSessionsReturned": 7,
         "maxSessionsReturned": 20,
         "count": 500,
@@ -109,6 +115,12 @@
           "evidence_recall_at_k": 0.925,
           "all_evidence_at_k": 0.8666666666666667,
           "microEvidenceRecall": 0.896551724137931
+        },
+        "uniqueBenchmarkIdCounts": {
+          "meanSessionsReturned": 19.316,
+          "belowTopK": 77,
+          "minSessionsReturned": 7,
+          "maxSessionsReturned": 20
         }
       },
       {
@@ -118,8 +130,8 @@
         "abstentions": 30,
         "indexSeconds": 18.558343199999996,
         "latencyP50Ms": 3.9473499999985506,
-        "meanSessionsReturned": 19.316,
-        "belowTopK": 77,
+        "meanSessionsReturned": 19.32,
+        "belowTopK": 75,
         "minSessionsReturned": 7,
         "maxSessionsReturned": 20,
         "count": 500,
@@ -146,10 +158,61 @@
           "evidence_recall_at_k": 0.925,
           "all_evidence_at_k": 0.8666666666666667,
           "microEvidenceRecall": 0.896551724137931
+        },
+        "uniqueBenchmarkIdCounts": {
+          "meanSessionsReturned": 19.316,
+          "belowTopK": 77,
+          "minSessionsReturned": 7,
+          "maxSessionsReturned": 20
         }
       }
     ]
   },
   "model_calls": 0,
-  "model_tokens": 0
+  "model_tokens": 0,
+  "second_round_experiment": {
+    "status": "development comparison only; existing submission retained",
+    "frozen_ranker_sha256": "431a30339fecdf7135033909be30981c70b9234145c1d6f21dd204d4f20f1882",
+    "frozen_tree_sha256": "ca92cc36d01bbbe043ca545bb22a49bd7e080c1a5ba22c5af8d3578d79db806b",
+    "metric_means": {
+      "hit_at_k": 0.99,
+      "evidence_recall_at_k": 0.9689333333333335,
+      "all_evidence_at_k": 0.944
+    },
+    "metric_stddev": {
+      "hit_at_k": 0,
+      "evidence_recall_at_k": 0,
+      "all_evidence_at_k": 0
+    },
+    "paired": {
+      "hit_at_k": {
+        "improved": 0,
+        "regressed": 0,
+        "unchanged": 500,
+        "delta": 0
+      },
+      "evidence_recall_at_k": {
+        "improved": 0,
+        "regressed": 0,
+        "unchanged": 500,
+        "delta": 0
+      },
+      "all_evidence_at_k": {
+        "improved": 0,
+        "regressed": 0,
+        "unchanged": 500,
+        "delta": 0
+      }
+    },
+    "ordered_rankings_changed": 53,
+    "runs": 3,
+    "cases_per_run": 500,
+    "model_calls": 0,
+    "timing": {
+      "tokens_per_query": 0,
+      "latency_p50_ms": 5.792300000000978,
+      "index_build_seconds": 17.827735400000005
+    },
+    "timing_scope": "Product measurements taken in different runs and host load conditions"
+  }
 }

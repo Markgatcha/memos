@@ -16,7 +16,7 @@ const sha=value=>createHash('sha256').update(value).digest('hex');
 const identity=(...fields)=>sha(JSON.stringify(fields)).slice(0,32);
 const k=20;
 const maxChars=24000;
-const input=spawn('python',['-s',path.join(here,'project-data.py'),'product',path.resolve(dataset)],{windowsHide:true,stdio:['ignore','pipe','ignore']});
+const input=spawn(process.env.NEXT_REPLAY_PYTHON || 'python',['-s',path.join(here,'project-data.py'),'product',path.resolve(dataset)],{windowsHide:true,stdio:['ignore','pipe','inherit']});
 const getExit=new Promise((resolve,reject)=>{input.once('error',reject);input.once('close',resolve);});
 const results=fs.openSync(resultPath,'wx');
 const stream=createInterface({input:input.stdout,crlfDelay:Infinity});
