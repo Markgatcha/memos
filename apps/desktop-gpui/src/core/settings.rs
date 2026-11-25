@@ -183,6 +183,9 @@ fn default_writer_command_string() -> String {
     crate::core::write_bridge::recommended_writer_command()
 }
 
+/// How many recent search expressions are kept.
+pub const RECENT_SEARCH_LIMIT: usize = 8;
+
 /// Persistent application settings (never stores memory content).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -207,6 +210,9 @@ pub struct AppSettings {
     pub writer_command: String,
     /// List row density preference (`Comfortable` 64 px / `Compact` 48 px).
     pub row_density: crate::core::model::RowDensity,
+    /// Recently submitted search expressions, newest first. Local to this
+    /// settings file only (like saved views); never sent anywhere.
+    pub recent_searches: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -227,6 +233,7 @@ impl Default for AppSettings {
             write_mode: false,
             writer_command: default_writer_command_string(),
             row_density: crate::core::model::RowDensity::Comfortable,
+            recent_searches: Vec::new(),
         }
     }
 }
@@ -354,6 +361,60 @@ impl AppSettings {
         self.saved_views.push(view.clone());
         self.last_saved_view_id = Some(view.id.clone());
         view
+    }
+
+    /// Rename a custom view. Returns the final (deduplicated) name, or `None`
+    /// when the view does not exist or is built in.
+    pub fn rename_custom_saved_view(&mut self, id: &str, desired: &str) -> Option<String> {
+        let current = self
+            .saved_views
+            .iter()
+            .find(|v| v.id == id && !v.built_in)?
+            .name
+            .clone();
+        let trimmed = desired.trim();
+        let name = if trimmed.is_empty() || trimmed.eq_ignore_ascii_case(&current) {
+            if trimmed.is_empty() {
+                current
+            } else {
+                trimmed.to_string()
+            }
+        } else {
+            self.dedupe_saved_view_name(trimmed)
+        };
+        let view = self.saved_views.iter_mut().find(|v| v.id == id)?;
+        view.name = name.clone();
+        Some(name)
+    }
+
+    /// Replace a custom view's filter (including sort). Built-in views are fixed.
+    pub fn update_custom_saved_view_filter(&mut self, id: &str, filter: QueryFilter) -> bool {
+        match self
+            .saved_views
+            .iter_mut()
+            .find(|v| v.id == id && !v.built_in)
+        {
+            Some(view) => {
+                view.filter = filter;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Remember a search expression, newest first, without duplicates.
+    pub fn record_recent_search(&mut self, expression: &str) -> bool {
+        let expr = expression.split_whitespace().collect::<Vec<_>>().join(" ");
+        if expr.is_empty() {
+            return false;
+        }
+        if self.recent_searches.first().map(String::as_str) == Some(expr.as_str()) {
+            return false;
+        }
+        self.recent_searches.retain(|r| r != &expr);
+        self.recent_searches.insert(0, expr);
+        self.recent_searches.truncate(RECENT_SEARCH_LIMIT);
+        true
     }
 
     /// Remove a custom (non-built-in) view by ID. Built-in views cannot be removed.
@@ -538,6 +599,50 @@ fn expand_tilde(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_views_can_be_renamed_and_refiltered_but_built_ins_cannot() {
+        let mut settings = AppSettings::default();
+        let view = settings.add_custom_saved_view("Auth", QueryFilter::default());
+        settings.add_custom_saved_view("Infra", QueryFilter::default());
+        assert_eq!(
+            settings.rename_custom_saved_view(&view.id, "  Infra "),
+            Some("Infra 2".to_string())
+        );
+        assert_eq!(
+            settings.rename_custom_saved_view(&view.id, "infra 2"),
+            Some("infra 2".to_string())
+        );
+        assert_eq!(settings.rename_custom_saved_view("all", "Everything"), None);
+        let narrowed = QueryFilter {
+            tag: Some("auth".into()),
+            ..Default::default()
+        };
+        assert!(settings.update_custom_saved_view_filter(&view.id, narrowed.clone()));
+        assert!(!settings.update_custom_saved_view_filter("all", narrowed.clone()));
+        let saved = settings
+            .saved_views
+            .iter()
+            .find(|v| v.id == view.id)
+            .unwrap();
+        assert_eq!(saved.filter, narrowed);
+    }
+
+    #[test]
+    fn recent_searches_dedupe_normalize_and_cap() {
+        let mut settings = AppSettings::default();
+        assert!(!settings.record_recent_search("   "));
+        assert!(settings.record_recent_search("tag:auth  pkce"));
+        assert!(!settings.record_recent_search("tag:auth pkce"));
+        assert!(settings.record_recent_search("oauth"));
+        assert!(settings.record_recent_search("tag:auth pkce"));
+        assert_eq!(settings.recent_searches, vec!["tag:auth pkce", "oauth"]);
+        for i in 0..20 {
+            settings.record_recent_search(&format!("q{i}"));
+        }
+        assert_eq!(settings.recent_searches.len(), RECENT_SEARCH_LIMIT);
+        assert_eq!(settings.recent_searches[0], "q19");
+    }
 
     #[test]
     fn cli_flag_takes_precedence_over_env_and_default() {

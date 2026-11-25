@@ -40,6 +40,9 @@ macro_rules! core_warn {
     ($($t:tt)*) => {};
 }
 
+pub mod capture;
+pub mod compare;
+pub mod context_pack;
 pub mod db;
 pub mod easter_eggs;
 pub mod harness;
