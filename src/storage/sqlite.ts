@@ -1990,7 +1990,11 @@ export class SQLiteStorage implements StorageAdapter {
       // better-sqlite3 charges ~20-60µs of parse/plan time per
       // `db.prepare()` call. Reusing the prepared object for repeated
       // identical shapes removes that cost from the hot search path.
-      const runFts = (ftsQuery: string): Record<string, unknown>[] => {
+      const runFts = (
+        ftsQuery: string,
+        limitOverride?: number,
+        offsetOverride?: number,
+      ): Record<string, unknown>[] => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const params: any[] = [ftsQuery];
         if (filter.tags && filter.tags.length > 0) {
@@ -2000,7 +2004,10 @@ export class SQLiteStorage implements StorageAdapter {
         }
         params.push(...metadata.params);
         params.push(...extraParams);
-        params.push(filter.limit ?? 50, filter.offset ?? 0);
+        params.push(
+          limitOverride ?? filter.limit ?? 50,
+          offsetOverride ?? filter.offset ?? 0,
+        );
         return this.getPreparedStatement(`fts::${ftsSql}`, ftsSql).all(
           ...params,
         ) as Record<string, unknown>[];
@@ -2034,34 +2041,53 @@ export class SQLiteStorage implements StorageAdapter {
         // recall filler, never a keyword-leg takeover.
         // `ftsOperator: "OR"` forces the recall-first query (benchmark
         // ablation for multi-evidence work).
-        const want = (filter.limit ?? 50) + (filter.offset ?? 0);
-        const andIds = new Set(andRows.map((row) => row.id));
-        const orRows = runFts(ftsTerms.join(" OR "));
-        rows = andRows.slice();
+        const pageOffset = filter.offset ?? 0;
+        const want = (filter.limit ?? 50) + pageOffset;
+        // Merge on the FULL ordering, then paginate the merged list.
+        // Merging two already-paginated legs would repeat hits across
+        // pages whenever AND and OR rank the same row differently, and
+        // could return more rows than `limit`.
+        const andFull =
+          pageOffset === 0
+            ? andRows
+            : runFts(ftsTerms.join(" AND "), want, 0);
+        const orRows = runFts(ftsTerms.join(" OR "), want, 0);
+        const andIds = new Set(andFull.map((row) => row.id));
         const filler: Record<string, unknown>[] = [];
         for (const row of orRows) {
-          if (andRows.length + filler.length >= want) break;
+          if (andFull.length + filler.length >= want) break;
           if (!andIds.has(row.id)) filler.push(row);
         }
-        if (andRows.length > 0 && filler.length > 0 && !this.largeCorpus()) {
+        if (andFull.length > 0 && filler.length > 0 && !this.largeCorpus()) {
           // bm25 ranks sort ascending (more negative = better): the first
           // AND row is the best full match, the last is the worst, and
-          // filler must be larger (worse) than the worst. Band width for
-          // a normalized cap c is c/(1-c) of the full-match spread.
-          const bestAnd = Number(andRows[0]?.["rank"] ?? 0);
-          const worstAnd = Number(andRows[andRows.length - 1]?.["rank"] ?? 0);
-          const spread = Math.max(
-            worstAnd - bestAnd,
-            Math.abs(bestAnd) * 1e-3,
-            1e-6,
+          // filler must be larger (worse) than the worst.
+          const bestAnd = Number(andFull[0]?.["rank"] ?? 0);
+          const worstAnd = Number(andFull[andFull.length - 1]?.["rank"] ?? 0);
+          const spread = Math.max(worstAnd - bestAnd, 0);
+          const m = filler.length;
+          // Gap beyond the worst full match sized so the worst full match
+          // keeps normalized weight >= cap: gap/(spread+gap) >= c.
+          const gap = Math.max(
+            (FTS_BACKFILL_CAP / (1 - FTS_BACKFILL_CAP)) * spread,
+            Math.max(Math.abs(bestAnd), 1) * 1e-9,
           );
-          const band =
-            (FTS_BACKFILL_CAP / (1 - FTS_BACKFILL_CAP)) * spread;
-          for (let i = 0; i < filler.length; i++) {
-            filler[i]!["rank"] = worstAnd + (band * (i + 1)) / filler.length;
+          const span = spread + gap;
+          const legMax = bestAnd + span; // worst filler lands exactly here
+          // Place filler at exact target normalized weights
+          // c·(m-1-i)/(m-1), best filler precisely AT the cap. Naive
+          // linear spacing inside the band rescales to fill
+          // [0, (m-1)/m] when full matches tie (spread 0) — blowing past
+          // the cap — because normalization is relative to the realized
+          // leg range; target-norm placement is exact for every spread.
+          for (let i = 0; i < m; i++) {
+            const t = m > 1 ? (FTS_BACKFILL_CAP * (m - 1 - i)) / (m - 1) : 0;
+            filler[i]!["rank"] = legMax - t * span;
           }
         }
+        rows = andFull.slice();
         rows.push(...filler);
+        rows = rows.slice(pageOffset, want);
       } else {
         rows = andRows;
       }

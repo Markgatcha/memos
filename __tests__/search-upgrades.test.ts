@@ -142,12 +142,12 @@ describe("ftsOperator", () => {
     const memos = await seed();
     const results = await memos.search({ query: "zebra habitat", limit: 5 });
     const contents = results.map((r) => r.node.content);
-    // The full-term match always leads. When the AND leg is thin, AUTO
-    // backfills partial-term matches as recall filler — capped below
-    // every full match, never ahead of it.
+    // The full-term match always leads. The AND leg is thin here (one
+    // row), so AUTO must backfill the partial-term match as recall
+    // filler — capped below every full match, never ahead of it.
     expect(contents[0]).toBe("zebra habitat savanna");
-    const partial = contents.indexOf("zebra plains roaming");
-    if (partial !== -1) expect(partial).toBeGreaterThan(0);
+    expect(contents.length).toBeGreaterThanOrEqual(2);
+    expect(contents.indexOf("zebra plains roaming")).toBeGreaterThan(0);
     await memos.close();
   });
 
@@ -161,6 +161,31 @@ describe("ftsOperator", () => {
     const contents = results.map((r) => r.node.content);
     expect(contents).toContain("zebra habitat savanna");
     expect(contents).toContain("zebra plains roaming");
+    await memos.close();
+  });
+
+  test("AUTO pagination never repeats hits across pages or overshoots limit", async () => {
+    const memos = makeMemos(null);
+    await memos.init();
+    for (let i = 0; i < 3; i++) await memos.store(`alpha beta full match ${i}`);
+    for (let i = 0; i < 5; i++) await memos.store(`alpha partial filler ${i}`);
+
+    const page0 = await memos.search({
+      query: "alpha beta",
+      limit: 3,
+      offset: 0,
+    });
+    const page1 = await memos.search({
+      query: "alpha beta",
+      limit: 3,
+      offset: 3,
+    });
+    expect(page0.length).toBeLessThanOrEqual(3);
+    expect(page1.length).toBeLessThanOrEqual(3);
+    // Full-term matches lead page 0.
+    for (const r of page0) expect(r.node.content).toContain("beta");
+    const ids0 = new Set(page0.map((r) => r.node.id));
+    for (const r of page1) expect(ids0.has(r.node.id)).toBe(false);
     await memos.close();
   });
 });
