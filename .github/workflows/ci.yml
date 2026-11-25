@@ -154,14 +154,14 @@ jobs:
         run: pnpm lint
       - name: Build
         run: pnpm build
-      # `--coverage` instruments every module and roughly doubles the suite
-      # (measured: 108 s -> 222 s for 60 suites / 1002 tests, plus 31 MB of
-      # report files). It ran on all nine cells to produce nine identical
-      # reports, none of which anything read. It now runs on a single cell —
-      # ubuntu + the recommended Node — and the lcov summary is uploaded, so
-      # the report is kept for the same price as before instead of nine
-      # times over. Every test still runs on every cell; only the
-      # instrumentation is deduplicated.
+      # `--coverage` used to instrument every module with istanbul and
+      # roughly 6x'd the suite. jest.config.js now uses the V8 coverage
+      # provider (Node's built-in profiler), which costs about 2 s over the
+      # plain run — so it runs on a single cell — ubuntu + the recommended
+      # Node — and the lcov summary is uploaded. Running it on all nine
+      # cells produced nine identical reports, none of which anything read.
+      # Every test still runs on every cell; only the coverage collection
+      # is deduplicated.
       - name: Test
         if: ${{ !(matrix.os == 'ubuntu-26.04' && matrix.node-version == 26) }}
         run: pnpm test --ci
@@ -330,6 +330,18 @@ jobs:
   # `ignore-error` keeps a cache export failure (quota,
   # or the read-only cache scope some PR events get)
   # from failing an otherwise-good build.
+  #
+  # The build goes through build-push-action's
+  # docker-container driver on purpose: type=gha cache
+  # with the built-in docker driver only works when the
+  # daemon has the containerd image store enabled, which
+  # GitHub-hosted runners do not — the cache would be
+  # silently dropped and every run would rebuild from
+  # scratch. The container driver does pay an OCI
+  # export/import round trip when loading the image, but
+  # the Dockerfile no longer ships the 1.3 GB dead
+  # node_modules layer, so the image — and that export —
+  # is less than half its old size.
   #
   # .dockerignore keeps the build context at ~2 MB
   # instead of ~40 MB of benchmark fixtures.
