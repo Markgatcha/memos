@@ -149,6 +149,15 @@ pub(crate) fn shortcut_groups() -> Vec<ShortcutGroup> {
                 ("Context pack", vec!["C"]),
                 ("Pin to context pack", vec!["P"]),
                 ("Compare with conflict", vec!["X"]),
+                ("Export", vec![m, "E"]),
+            ],
+        ),
+        (
+            "Review queue",
+            vec![
+                ("Add or remove from batch", vec!["Space"]),
+                ("Clear the batch", vec!["Esc"]),
+                ("Open the candidate", vec!["Enter"]),
             ],
         ),
         (
@@ -158,6 +167,7 @@ pub(crate) fn shortcut_groups() -> Vec<ShortcutGroup> {
                 ("Focus neighborhood", vec!["F"]),
                 ("Zoom in / out", vec!["+", "-"]),
                 ("Fit to view", vec!["0"]),
+                ("Leave focus", vec!["Esc"]),
             ],
         ),
     ]
