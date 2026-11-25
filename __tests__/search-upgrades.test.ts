@@ -140,14 +140,19 @@ describe("ftsOperator", () => {
 
   test("AUTO ranks full-term matches above any backfilled partial matches", async () => {
     const memos = await seed();
+    // Two full-term matches: filler must sit strictly below EVERY full
+    // match, never tie the weakest one (ties break by id and can
+    // surface a partial first).
+    await memos.store("zebra habitat oasis");
     const results = await memos.search({ query: "zebra habitat", limit: 5 });
     const contents = results.map((r) => r.node.content);
-    // The full-term match always leads. The AND leg is thin here (one
-    // row), so AUTO must backfill the partial-term match as recall
-    // filler — capped below every full match, never ahead of it.
     expect(contents[0]).toBe("zebra habitat savanna");
-    expect(contents.length).toBeGreaterThanOrEqual(2);
-    expect(contents.indexOf("zebra plains roaming")).toBeGreaterThan(0);
+    expect(contents.length).toBeGreaterThanOrEqual(3);
+    const partial = contents.indexOf("zebra plains roaming");
+    expect(partial).toBeGreaterThan(0);
+    const secondFull = contents.indexOf("zebra habitat oasis");
+    expect(secondFull).toBeGreaterThanOrEqual(0);
+    expect(partial).toBeGreaterThan(secondFull);
     await memos.close();
   });
 
@@ -182,6 +187,8 @@ describe("ftsOperator", () => {
     });
     expect(page0.length).toBeLessThanOrEqual(3);
     expect(page1.length).toBeLessThanOrEqual(3);
+    // Five partials were seeded: page 2 must not come back empty.
+    expect(page1.length).toBeGreaterThan(0);
     // Full-term matches lead page 0.
     for (const r of page0) expect(r.node.content).toContain("beta");
     const ids0 = new Set(page0.map((r) => r.node.id));
