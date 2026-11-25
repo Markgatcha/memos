@@ -13,7 +13,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use futures::channel::mpsc::UnboundedReceiver;
-use notify::{Event, RecursiveMode, Watcher};
+use notify::{Event, EventKind, RecursiveMode, Watcher};
 
 pub struct DbWatcher {
     db_path: PathBuf,
@@ -51,6 +51,15 @@ impl DbWatcher {
             let Ok(event) = res else {
                 return;
             };
+            // Only lifecycle/content changes matter; access events (e.g.
+            // inotify open notifications from read-only clients) would wake
+            // the reload loop for nothing.
+            if !matches!(
+                event.kind,
+                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+            ) {
+                return;
+            }
             let hit = event.paths.iter().any(|p| {
                 p.file_name()
                     .is_some_and(|n| file_names.iter().any(|w| w == n))
