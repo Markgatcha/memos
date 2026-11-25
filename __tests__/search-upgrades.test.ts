@@ -131,11 +131,7 @@ describe("fusion config threading", () => {
 
 describe("ftsOperator", () => {
   async function seed(): Promise<MemOS> {
-    // MarkerProvider keeps the semantic leg deterministic AND active, so
-    // fusion normalization re-sorts by capped scores — the path where a
-    // filler/full-match tie can surface a partial first. (With no
-    // embedding provider sqlite's row order leaks through untested.)
-    const memos = makeMemos(new MarkerProvider());
+    const memos = makeMemos(null);
     await memos.init();
     await memos.store("zebra plains roaming");
     await memos.store("zebra habitat savanna");
@@ -143,20 +139,37 @@ describe("ftsOperator", () => {
   }
 
   test("AUTO ranks full-term matches above any backfilled partial matches", async () => {
-    const memos = await seed();
-    // Two full-term matches: filler must sit strictly below EVERY full
-    // match, never tie the weakest one (ties break by id and can
-    // surface a partial first).
-    await memos.store("zebra habitat oasis watering hole");
+    const memos = makeMemos(null);
+    await memos.init();
+    const now = Date.now();
+    const rec = (id: string, content: string) => ({
+      id,
+      content,
+      type: "fact" as const,
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Deterministic cap-tie geometry: two unequal-length full matches
+    // (nonzero bm25 spread) and TWO partials — with a single filler the
+    // placement loop uses t=0 and never approaches the cap, so m>=2 is
+    // required for the best filler to land exactly AT it. No semantic
+    // leg: the partials must arrive through the keyword backfill itself,
+    // not through vector similarity. compareScoredMemories breaks exact
+    // score ties by SMALLER id, so these pinned ids surface a partial
+    // FIRST on any tie with the weakest full match — if filler placement
+    // ever regresses from strict-below to a tie, this test fails.
+    await memos.importRecord(rec("zz-full-1", "zebra habitat savanna"));
+    await memos.importRecord(
+      rec("zz-full-2", "zebra habitat oasis watering hole"),
+    );
+    await memos.importRecord(rec("aa-part-1", "zebra plains roaming"));
+    await memos.importRecord(rec("aa-part-2", "zebra highlands wandering"));
     const results = await memos.search({ query: "zebra habitat", limit: 5 });
     const contents = results.map((r) => r.node.content);
     expect(contents[0]).toBe("zebra habitat savanna");
-    expect(contents.length).toBeGreaterThanOrEqual(3);
-    const partial = contents.indexOf("zebra plains roaming");
-    expect(partial).toBeGreaterThan(0);
-    const secondFull = contents.indexOf("zebra habitat oasis watering hole");
-    expect(secondFull).toBeGreaterThanOrEqual(0);
-    expect(partial).toBeGreaterThan(secondFull);
+    expect(contents[1]).toBe("zebra habitat oasis watering hole");
+    expect(contents.indexOf("zebra plains roaming")).toBeGreaterThan(1);
+    expect(contents.indexOf("zebra highlands wandering")).toBeGreaterThan(1);
     await memos.close();
   });
 
