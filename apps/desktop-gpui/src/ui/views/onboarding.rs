@@ -171,7 +171,7 @@ impl OnboardingState {
 #[derive(Clone, Debug)]
 pub enum OnboardingEvent {
     Complete {
-        settings: AppSettings,
+        settings: Box<AppSettings>,
         selected_db: PathBuf,
     },
     ThemeChanged(ThemeMode),
@@ -388,7 +388,7 @@ impl OnboardingView {
         };
         next_settings.save_async();
         cx.emit(OnboardingEvent::Complete {
-            settings: next_settings,
+            settings: Box::new(next_settings),
             selected_db,
         });
     }

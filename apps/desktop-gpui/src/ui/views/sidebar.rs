@@ -37,6 +37,8 @@ pub enum SidebarEvent {
     OpenHealth,
     /// Rename, refilter or delete a custom saved view.
     ManageView(String),
+    /// Open the context pack on the pinned memories.
+    OpenPins,
 }
 
 /// Tags shown before "Show all" so the sidebar stays scannable.
@@ -165,6 +167,7 @@ pub struct SidebarView {
     momo_status: StoreHealthStatus,
     health_score: Option<u8>,
     health_review_count: usize,
+    pin_count: usize,
     no_fun: bool,
     _logo_anim_task: Option<Task<()>>,
     _logo_hold_task: Option<Task<()>>,
@@ -190,6 +193,7 @@ impl SidebarView {
             momo_status: StoreHealthStatus::Empty,
             health_score: None,
             health_review_count: 0,
+            pin_count: 0,
             no_fun: false,
             _logo_anim_task: None,
             _logo_hold_task: None,
@@ -404,6 +408,13 @@ impl SidebarView {
                 self.active_saved_view_id.as_deref(),
                 &self.saved_views,
             )
+    }
+
+    pub fn set_pin_count(&mut self, count: usize, cx: &mut Context<Self>) {
+        if self.pin_count != count {
+            self.pin_count = count;
+            cx.notify();
+        }
     }
 
     pub fn set_harness_summary(&mut self, installed: usize, total: usize, cx: &mut Context<Self>) {
@@ -840,6 +851,16 @@ impl Render for SidebarView {
                 },
                 cx,
             ));
+            if self.pin_count > 0 {
+                rows.push(self.render_nav_row(
+                    ("sidebar-pins", 0),
+                    "Pinned".into(),
+                    Some(self.pin_count),
+                    false,
+                    |_, cx| cx.emit(SidebarEvent::OpenPins),
+                    cx,
+                ));
+            }
             for (ix, view) in self.saved_views.iter().enumerate() {
                 let active = self.is_saved_view_row_active(view);
                 let count = SidebarState::view_count(&view.id, self.overview.as_ref());
@@ -999,7 +1020,21 @@ impl Render for SidebarView {
                                 }))
                                 .flex()
                                 .flex_col()
-                                .gap(px(6.))
+                                .gap(px(4.))
+                                .child(
+                                    // Which store this window reads, now that it can switch.
+                                    div()
+                                        .text_size(px(12.))
+                                        .line_height(px(16.))
+                                        .text_color(theme.text_muted)
+                                        .truncate()
+                                        .child(SharedString::from(
+                                            ov.db_path
+                                                .file_name()
+                                                .map(|f| f.to_string_lossy().into_owned())
+                                                .unwrap_or_default(),
+                                        )),
+                                )
                                 .child(
                                     div()
                                         .flex()

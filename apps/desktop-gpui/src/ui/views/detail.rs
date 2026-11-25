@@ -46,6 +46,7 @@ pub struct DetailView {
     write_mode: bool,
     scroll_handle: ScrollHandle,
     pinned_ids: Arc<HashSet<String>>,
+    large_text: bool,
     _copy_clear_task: Option<Task<()>>,
     theme: ThemePalette,
 }
@@ -66,6 +67,7 @@ impl DetailView {
             write_mode: false,
             scroll_handle: ScrollHandle::new(),
             pinned_ids: Arc::new(HashSet::new()),
+            large_text: false,
             _copy_clear_task: None,
             theme,
         }
@@ -74,6 +76,13 @@ impl DetailView {
     pub fn set_write_mode(&mut self, write_mode: bool, cx: &mut Context<Self>) {
         if self.write_mode != write_mode {
             self.write_mode = write_mode;
+            cx.notify();
+        }
+    }
+
+    pub fn set_large_text(&mut self, large: bool, cx: &mut Context<Self>) {
+        if self.large_text != large {
+            self.large_text = large;
             cx.notify();
         }
     }
@@ -929,8 +938,8 @@ impl Render for DetailView {
                                     .id("detail-content-body")
                                     .w_full()
                                     .min_w(px(0.))
-                                    .text_size(px(15.))
-                                    .line_height(px(22.))
+                                    .text_size(px(if self.large_text { 17. } else { 15. }))
+                                    .line_height(px(if self.large_text { 26. } else { 23. }))
                                     .text_color(if is_empty_body {
                                         theme.text_muted
                                     } else {

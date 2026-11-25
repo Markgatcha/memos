@@ -106,8 +106,33 @@ impl PackBudget {
 /// Upper bound of memories fetched for a "current view" pack. The budget
 /// usually binds first; this keeps the background query bounded.
 pub const PACK_VIEW_FETCH_LIMIT: usize = 60;
+/// Upper bound for a "No limit" view pack or export. Content loads on a
+/// background thread; this keeps a single export bounded in memory.
+pub const PACK_EXPORT_VIEW_LIMIT: usize = 1_000;
+
 /// Upper bound of pinned memories, so a pack stays reviewable.
 pub const PACK_PIN_LIMIT: usize = 100;
+
+impl PackFormat {
+    pub fn file_extension(self) -> &'static str {
+        match self {
+            PackFormat::Markdown => "md",
+            PackFormat::Json => "json",
+            PackFormat::Plain | PackFormat::Citations => "txt",
+        }
+    }
+}
+
+/// Suggested export file name, e.g. `memos-pinned-2026-11-25.md`.
+pub fn export_file_name(source: PackSource, format: PackFormat, now_ms: i64) -> String {
+    let slug = match source {
+        PackSource::Selected => "memory",
+        PackSource::CurrentView => "view",
+        PackSource::Pinned => "pinned",
+    };
+    let date = format_date(now_ms).unwrap_or_else(|| "export".to_string());
+    format!("memos-{slug}-{date}.{}", format.file_extension())
+}
 
 /// Estimated tokens for `chars` characters (chars / 4, rounded up).
 pub fn estimate_tokens(chars: usize) -> usize {
@@ -204,9 +229,15 @@ fn segment(format: PackFormat, item: &ContextPreviewItem) -> String {
             if let Some(date) = format_date(item.updated_at) {
                 meta.push(format!("updated {date}"));
             }
+            if !item.provenance.trim().is_empty() {
+                meta.push(item.provenance.trim().to_string());
+            }
+            // The full id rides along as an HTML comment: invisible when the
+            // Markdown renders, stable for tools that re-import it.
             format!(
-                "## [mem:{}] {heading}\n\n_{}_\n\n{body}",
+                "## [mem:{}] {heading}\n<!-- memos-id: {} -->\n\n_{}_\n\n{body}",
                 item.short_id,
+                item.id,
                 meta.join(" · ")
             )
         }
@@ -231,6 +262,12 @@ fn segment(format: PackFormat, item: &ContextPreviewItem) -> String {
             }
             if let Some(date) = format_date(item.updated_at) {
                 obj["updated"] = Value::String(date);
+            }
+            if let Some(date) = format_date(item.created_at) {
+                obj["created"] = Value::String(date);
+            }
+            if !item.provenance.trim().is_empty() {
+                obj["provenance"] = Value::String(item.provenance.trim().to_string());
             }
             obj.to_string()
         }
@@ -384,6 +421,8 @@ mod tests {
             summary: String::new(),
             tags: vec!["oauth".to_string()],
             updated_at: 1_793_577_600_000,
+            created_at: 1_793_491_200_000,
+            provenance: "verified".to_string(),
         }
     }
 
@@ -453,6 +492,14 @@ mod tests {
         assert_eq!(parsed["memories"][0]["summary"], "PKCE decision");
         assert_eq!(parsed["memories"][0]["tags"][0], "oauth");
         assert_eq!(parsed["memories"][1]["updated"], "2026-11-02");
+        assert_eq!(parsed["memories"][1]["created"], "2026-11-01");
+        assert_eq!(parsed["memories"][1]["provenance"], "verified");
+        assert_eq!(parsed["memories"][1]["id"], "bbbb2");
+        assert!(
+            build_context_pack(&items, 2, "x", PackFormat::Markdown, PackBudget::Unlimited)
+                .payload
+                .contains("<!-- memos-id: aaaa1 -->")
+        );
     }
 
     #[test]
@@ -472,7 +519,7 @@ mod tests {
         assert!(md.payload.contains("## [mem:aaaa] Line one Line two"));
         assert!(
             md.payload
-                .contains("_fact · auth · #oauth · updated 2026-11-02_")
+                .contains("_fact · auth · #oauth · updated 2026-11-02 · verified_")
         );
         // Markdown keeps the original line breaks in the body.
         assert!(md.payload.ends_with("Line one\nLine two"));
@@ -491,6 +538,23 @@ mod tests {
         assert!(pack.payload.is_empty());
         assert_eq!(pack.included_count(), 0);
         assert!(!pack.first_exceeds_budget);
+    }
+
+    #[test]
+    fn export_names_use_source_date_and_extension() {
+        let now = 1_793_577_600_000;
+        assert_eq!(
+            export_file_name(PackSource::Pinned, PackFormat::Markdown, now),
+            "memos-pinned-2026-11-02.md"
+        );
+        assert_eq!(
+            export_file_name(PackSource::CurrentView, PackFormat::Json, now),
+            "memos-view-2026-11-02.json"
+        );
+        assert_eq!(
+            export_file_name(PackSource::Selected, PackFormat::Citations, now),
+            "memos-memory-2026-11-02.txt"
+        );
     }
 
     #[test]

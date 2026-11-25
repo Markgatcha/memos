@@ -213,6 +213,30 @@ pub(crate) fn neighborhood(layout: &ComputedLayout, memory_id: &str) -> Option<H
     Some(set)
 }
 
+/// Full title and link breakdown for the inspected node, loaded lazily from
+/// the store because graph labels are deliberately short.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectorDetail {
+    pub memory_id: String,
+    pub title: String,
+    /// `(relation, count)`, most common first.
+    pub relations: Vec<(String, usize)>,
+}
+
+/// Count linked edges by relation, most common first, ties alphabetical.
+pub fn relation_breakdown<'a>(relations: impl Iterator<Item = &'a str>) -> Vec<(String, usize)> {
+    let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+    for r in relations {
+        let key = r.trim().replace('_', " ");
+        if !key.is_empty() {
+            *counts.entry(key).or_default() += 1;
+        }
+    }
+    let mut out: Vec<(String, usize)> = counts.into_iter().collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out
+}
+
 /// Facts for the compact graph inspector card.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NodeSummary {
@@ -282,6 +306,7 @@ pub struct GraphView {
     focus_mode: bool,
     focus_set: Option<Arc<HashSet<usize>>>,
     inspector_dismissed: bool,
+    inspector_detail: Option<InspectorDetail>,
     label_cache: Rc<RefCell<LabelShapeCache>>,
     _layout_task: Option<Task<()>>,
     _drift_task: Option<Task<()>>,
@@ -447,6 +472,7 @@ impl GraphView {
             focus_mode: false,
             focus_set: None,
             inspector_dismissed: false,
+            inspector_detail: None,
             label_cache: Rc::new(RefCell::new(LabelShapeCache::default())),
             _layout_task: None,
             _drift_task: None,
@@ -458,6 +484,25 @@ impl GraphView {
         if self.external_hovered_id != hovered_id {
             self.external_hovered_id = hovered_id;
             cx.notify();
+        }
+    }
+
+    pub fn set_inspector_detail(
+        &mut self,
+        detail: Option<InspectorDetail>,
+        cx: &mut Context<Self>,
+    ) {
+        self.inspector_detail = detail;
+        cx.notify();
+    }
+
+    /// Leave focus mode if it is on (Esc). Returns whether anything changed.
+    pub fn exit_focus_mode(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.focus_mode {
+            self.toggle_focus_mode(cx);
+            true
+        } else {
+            false
         }
     }
 
@@ -983,7 +1028,23 @@ impl GraphView {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        let label: SharedString = sanitize_single_line(&summary.label, 120).into();
+        let full = self
+            .inspector_detail
+            .as_ref()
+            .filter(|d| self.selected_id.as_deref() == Some(d.memory_id.as_str()));
+        let label: SharedString = match full {
+            Some(d) => d.title.clone().into(),
+            None => sanitize_single_line(&summary.label, 120).into(),
+        };
+        let relations: Option<SharedString> = full.filter(|d| !d.relations.is_empty()).map(|d| {
+            d.relations
+                .iter()
+                .take(3)
+                .map(|(r, n)| format!("{n} {r}"))
+                .collect::<Vec<_>>()
+                .join(" · ")
+                .into()
+        });
         let mut facts: Vec<String> = vec![summary.node_type.clone()];
         if !summary.group.trim().is_empty() && summary.group != summary.node_type {
             facts.push(summary.group.clone());
@@ -1089,6 +1150,15 @@ impl GraphView {
                         ))
                     }),
             )
+            .when_some(relations, |col, rel| {
+                col.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(theme.text_muted)
+                        .truncate()
+                        .child(rel),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -1486,12 +1556,12 @@ impl Render for GraphView {
                     .when(self.error.is_none(), |el| {
                         let empty_msg = match self.mode {
                             GraphMode::Contradictions => {
-                                "No contradictions detected in the active filter slice."
+                                "No conflicts in this view. Memories that contradict each other appear here as linked pairs."
                             }
                             GraphMode::Entity => {
-                                "No entity-indexed memories match the active filters."
+                                "No memories in this view mention a known entity yet."
                             }
-                            _ => "No memories match the active filter slice.",
+                            _ => "Nothing to draw. Clear a filter or search to see more of the store.",
                         };
                         let is_empty = self
                             .layout
@@ -1551,6 +1621,55 @@ impl Render for GraphView {
                     })
                     .child(self.render_zoom_cluster(cx))
                     .when_some(inspector, |el, card| el.child(card))
+                    .when(self.focus_mode && self.focus_set.is_some(), |el| {
+                        let n = self.focus_set.as_ref().map_or(0, |f| f.len().saturating_sub(1));
+                        el.child(
+                            div()
+                                .absolute()
+                                .bottom(px(56.))
+                                .left(px(0.))
+                                .right(px(0.))
+                                .flex()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .id("graph-focus-banner")
+                                        .role(Role::Status)
+                                        .px(px(10.))
+                                        .h(px(28.))
+                                        .rounded(px(6.))
+                                        .bg(theme.bg_panel)
+                                        .border_1()
+                                        .border_color(theme.border)
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .text_size(px(12.))
+                                        .text_color(theme.text_secondary)
+                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .child(SharedString::from(if n == 1 {
+                                            "Focused on 1 linked memory".to_string()
+                                        } else {
+                                            format!("Focused on {n} linked memories")
+                                        }))
+                                        .child(
+                                            crate::ui::views::kit::button(
+                                                "graph-focus-exit",
+                                                "Show all",
+                                                crate::ui::views::kit::ButtonKind::Subtle,
+                                                &theme,
+                                            )
+                                            .h(px(22.))
+                                            .text_size(px(12.))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.toggle_focus_mode(cx)
+                                            })),
+                                        ),
+                                ),
+                        )
+                    })
                     .when(self.is_loading, |el| {
                         el.child(
                             div()
@@ -3292,6 +3411,19 @@ mod tests {
         assert_eq!(
             strip_short_id_prefix("Live migration plan", Some("0042")),
             "Live migration plan"
+        );
+    }
+
+    #[test]
+    fn relation_breakdown_counts_and_orders_relations() {
+        let rels = ["supports", "contradicts", "supports", "relates_to", " "];
+        assert_eq!(
+            relation_breakdown(rels.iter().copied()),
+            vec![
+                ("supports".to_string(), 2),
+                ("contradicts".to_string(), 1),
+                ("relates to".to_string(), 1),
+            ]
         );
     }
 

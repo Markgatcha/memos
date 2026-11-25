@@ -14,8 +14,8 @@ use gpui::{
 
 use super::MemOSApp;
 use crate::core::context_pack::{
-    ContextPack, PACK_PIN_LIMIT, PACK_VIEW_FETCH_LIMIT, PackBudget, PackFormat, PackSource,
-    build_context_pack, toggle_pin,
+    ContextPack, PACK_EXPORT_VIEW_LIMIT, PACK_PIN_LIMIT, PACK_VIEW_FETCH_LIMIT, PackBudget,
+    PackFormat, PackSource, build_context_pack, export_file_name, toggle_pin,
 };
 use crate::core::db::DbError;
 use crate::core::model::{ContextPreviewItem, describe_filter_target, make_single_line_preview};
@@ -32,7 +32,8 @@ pub(super) struct PackState {
     pub source: PackSource,
     pub format: PackFormat,
     pub budget: PackBudget,
-    /// Ordered pin list; session-only so nothing about the store is written to disk.
+    /// Ordered pin list for the open store, persisted in `settings.json`
+    /// (never in the store itself).
     pub pins: Vec<String>,
     pub pin_set: Arc<HashSet<String>>,
     pub loading: bool,
@@ -45,6 +46,7 @@ pub(super) struct PackState {
     pub scroll: ScrollHandle,
     pub generation: RequestToken,
     pub task: Option<Task<()>>,
+    pub export_task: Option<Task<()>>,
 }
 
 impl PackState {
@@ -102,9 +104,88 @@ impl MemOSApp {
     }
 
     fn set_pack_budget(&mut self, budget: PackBudget, cx: &mut Context<Self>) {
+        let was_unlimited = self.pack.budget == PackBudget::Unlimited;
         self.pack.budget = budget;
-        self.rebuild_pack();
-        cx.notify();
+        // "No limit" draws from a larger slice of the view (for exports), so
+        // crossing that line re-fetches; other budget changes only re-slice.
+        if self.pack.source == PackSource::CurrentView
+            && was_unlimited != (budget == PackBudget::Unlimited)
+        {
+            self.load_pack_items(cx);
+        } else {
+            self.rebuild_pack();
+            cx.notify();
+        }
+    }
+
+    fn view_fetch_limit(&self) -> usize {
+        if self.pack.budget == PackBudget::Unlimited {
+            PACK_EXPORT_VIEW_LIMIT
+        } else {
+            PACK_VIEW_FETCH_LIMIT
+        }
+    }
+
+    /// Open the pack ready to export: no budget, so nothing is left out.
+    pub(super) fn open_export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pack.budget = PackBudget::Unlimited;
+        if matches!(self.pack.format, PackFormat::Plain | PackFormat::Citations) {
+            self.pack.format = PackFormat::Markdown;
+        }
+        self.open_context_pack(None, window, cx);
+    }
+
+    /// Save the built pack to a file the user picks. Only reads the store.
+    fn save_pack_to_file(&mut self, cx: &mut Context<Self>) {
+        let Some(pack) = self.pack.built.clone() else {
+            return;
+        };
+        let name = export_file_name(
+            self.pack.source,
+            self.pack.format,
+            crate::core::health::now_unix_ms(),
+        );
+        let dir = directories::UserDirs::new()
+            .and_then(|u| u.document_dir().map(|d| d.to_path_buf()))
+            .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()))
+            .unwrap_or_else(std::env::temp_dir);
+        let receiver = cx.prompt_for_new_path(&dir, Some(&name));
+        let count = pack.included_count();
+        self.pack.export_task = Some(cx.spawn(async move |this, cx| {
+            let (target, used_fallback) = match receiver.await {
+                Ok(Ok(Some(path))) => (path, false),
+                // The user cancelled the dialog.
+                Ok(Ok(None)) => return,
+                // No save dialog in this session (e.g. no desktop portal):
+                // save into the suggested folder and say exactly where.
+                _ => (unique_path(&dir, &name), true),
+            };
+            let payload = pack.payload;
+            let write_target = target.clone();
+            let res = cx
+                .background_executor()
+                .spawn(async move { write_atomically(&write_target, payload.as_bytes()) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                let file = target
+                    .file_name()
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let noun = if count == 1 { "memory" } else { "memories" };
+                let msg = match res {
+                    Ok(()) if used_fallback => {
+                        let folder = dir
+                            .file_name()
+                            .map(|f| f.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        format!("No save dialog available; saved {count} {noun} to {folder}/{file}")
+                    }
+                    Ok(()) => format!("Saved {count} {noun} to {file}"),
+                    Err(_) => format!("Couldn't save {file}. Check that the folder is writable."),
+                };
+                app.set_notice(msg, cx);
+            });
+        }));
     }
 
     fn rebuild_pack(&mut self) {
@@ -157,6 +238,8 @@ impl MemOSApp {
                                 summary: d.summary.clone(),
                                 tags: d.tags.clone(),
                                 updated_at: d.updated_at,
+                                created_at: d.created_at,
+                                provenance: d.provenance.clone(),
                             }],
                             1,
                         )
@@ -204,6 +287,7 @@ impl MemOSApp {
         let shared = self.shared_store.clone();
         let filter = self.filter.clone();
         let overview = self.overview.clone();
+        let fetch_limit = self.view_fetch_limit();
         self.pack.task = Some(cx.spawn(async move |this, cx| {
             let res = cx
                 .background_executor()
@@ -222,7 +306,7 @@ impl MemOSApp {
                             store.load_context_items_for_filter(
                                 &filter,
                                 &contradiction_ids,
-                                PACK_VIEW_FETCH_LIMIT,
+                                fetch_limit,
                             )
                         }
                         Load::Ready(items, n) => Ok((items, n)),
@@ -238,6 +322,29 @@ impl MemOSApp {
                     Ok((items, total)) => {
                         for item in &items {
                             crate::telemetry::register_sensitive_text(&item.content);
+                        }
+                        // Pins whose memories were forgotten or superseded are
+                        // dropped so the list never shows ghosts.
+                        if app.pack.source == PackSource::Pinned
+                            && items.len() < app.pack.pins.len()
+                        {
+                            let present: HashSet<&str> =
+                                items.iter().map(|i| i.id.as_str()).collect();
+                            let before = app.pack.pins.len();
+                            app.pack.pins.retain(|p| present.contains(p.as_str()));
+                            let gone = before - app.pack.pins.len();
+                            app.sync_pins(cx);
+                            app.set_notice(
+                                if gone == 1 {
+                                    "1 pinned memory is no longer in the store and was unpinned"
+                                        .to_string()
+                                } else {
+                                    format!(
+                                        "{gone} pinned memories are no longer in the store and were unpinned"
+                                    )
+                                },
+                                cx,
+                            );
                         }
                         app.pack.items = items;
                         app.pack.total_matching = total;
@@ -291,7 +398,42 @@ impl MemOSApp {
         self.set_notice("Cleared pinned memories", cx);
     }
 
+    /// Load the pin list saved for the current store (startup, store switch).
+    pub(super) fn load_pins_for_store(&mut self, cx: &mut Context<Self>) {
+        self.pack.pins = self.settings.pins_for(&self.resolved_db.path);
+        self.pack.pins.truncate(PACK_PIN_LIMIT);
+        self.publish_pins(cx);
+    }
+
+    /// Move a pin up (`-1`) or down (`+1`) in the pack order.
+    pub(super) fn move_pin(&mut self, id: &str, delta: isize, cx: &mut Context<Self>) {
+        let Some(pos) = self.pack.pins.iter().position(|p| p == id) else {
+            return;
+        };
+        let next = pos as isize + delta;
+        if next < 0 || next as usize >= self.pack.pins.len() {
+            return;
+        }
+        self.pack.pins.swap(pos, next as usize);
+        self.sync_pins(cx);
+        if self.pack.open && self.pack.source == PackSource::Pinned {
+            self.load_pack_items(cx);
+        }
+    }
+
+    /// Persist the pin list and push it to the views.
     fn sync_pins(&mut self, cx: &mut Context<Self>) {
+        self.settings
+            .set_pins(&self.resolved_db.path, &self.pack.pins);
+        if !self.smoke_exit_after_first_frame {
+            self.settings.save_async();
+        }
+        self.publish_pins(cx);
+    }
+
+    fn publish_pins(&mut self, cx: &mut Context<Self>) {
+        let count = self.pack.pins.len();
+        self.sidebar.update(cx, |s, cx| s.set_pin_count(count, cx));
         let set: Arc<HashSet<String>> = Arc::new(self.pack.pins.iter().cloned().collect());
         self.pack.pin_set = set.clone();
         self.list_view
@@ -444,6 +586,27 @@ impl MemOSApp {
                                 .child("over budget"),
                         )
                     })
+                    .child({
+                        let e_up = entity.clone();
+                        let id_up = item.id.clone();
+                        icon_button(("pack-pin-up", ix), UiIcon::ChevronUp, "Move up", &theme)
+                            .on_click(move |_, _, cx| {
+                                e_up.update(cx, |app, cx| app.move_pin(&id_up, -1, cx));
+                            })
+                    })
+                    .child({
+                        let e_down = entity.clone();
+                        let id_down = item.id.clone();
+                        icon_button(
+                            ("pack-pin-down", ix),
+                            UiIcon::ChevronDown,
+                            "Move down",
+                            &theme,
+                        )
+                        .on_click(move |_, _, cx| {
+                            e_down.update(cx, |app, cx| app.move_pin(&id_down, 1, cx));
+                        })
+                    })
                     .child(
                         icon_button(("pack-unpin", ix), UiIcon::Close, "Unpin", &theme)
                             .tooltip(crate::ui::views::tooltip_view("Unpin", theme))
@@ -510,13 +673,12 @@ impl MemOSApp {
                     &theme,
                 ));
             }
-            if self.pack.source == PackSource::CurrentView
-                && pack.total_matching > PACK_VIEW_FETCH_LIMIT
-            {
+            let limit = self.view_fetch_limit();
+            if self.pack.source == PackSource::CurrentView && pack.total_matching > limit {
                 shell = shell.child(notice(
                     NoticeKind::Info,
                     format!(
-                        "Packs draw from the first {PACK_VIEW_FETCH_LIMIT} memories of this view, in list order. Narrow the filter or pin memories for a precise set."
+                        "Packs draw from the first {limit} memories of this view, in list order. Narrow the filter or pin memories for a precise set."
                     ),
                     &theme,
                 ));
@@ -621,6 +783,17 @@ impl MemOSApp {
             ),
         );
         if self.pack.built.is_some() {
+            let save_entity = entity.clone();
+            shell = shell.action(
+                button("pack-save", "Save…", ButtonKind::Secondary, &theme)
+                    .tooltip(crate::ui::views::tooltip_view(
+                        "Save this pack as a file. Reads the store only.",
+                        theme,
+                    ))
+                    .on_click(move |_, _, cx| {
+                        save_entity.update(cx, |app, cx| app.save_pack_to_file(cx));
+                    }),
+            );
             let copy_entity = entity.clone();
             shell = shell.action(
                 button("pack-copy", "Copy pack", ButtonKind::Primary, &theme).on_click(
@@ -646,6 +819,34 @@ impl MemOSApp {
             }),
         )
     }
+}
+
+/// Pick `dir/name`, or `dir/name (2)`… when it already exists.
+fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), format!(".{e}")),
+        None => (name.to_string(), String::new()),
+    };
+    (2..1000)
+        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .find(|p| !p.exists())
+        .unwrap_or(first)
+}
+
+/// Write through a temporary sibling and rename, so a failed export never
+/// leaves a half-written file behind.
+fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = path.with_file_name(tmp_name);
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 /// `12,345`-style grouping for counts shown in the footer.

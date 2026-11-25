@@ -47,6 +47,25 @@ impl MemOSApp {
         self.active_surface == WorkspaceSurface::Memories && self.view_mode == ViewMode::Graph
     }
 
+    /// Switch between standard and large reading text (persisted).
+    pub(super) fn toggle_reading_size(&mut self, cx: &mut Context<Self>) {
+        self.settings.large_reading_text = !self.settings.large_reading_text;
+        let large = self.settings.large_reading_text;
+        if !self.smoke_exit_after_first_frame {
+            self.settings.save_async();
+        }
+        self.detail_view
+            .update(cx, |d, cx| d.set_large_text(large, cx));
+        self.set_notice(
+            if large {
+                "Reading text: large"
+            } else {
+                "Reading text: standard"
+            },
+            cx,
+        );
+    }
+
     /// Show or hide the inspector without losing the selection.
     pub(super) fn toggle_inspector(&mut self, cx: &mut Context<Self>) {
         if self.detail_open {
@@ -65,6 +84,7 @@ impl MemOSApp {
     /// act on it) without opening the full inspector over the graph.
     pub(super) fn inspect_from_graph(&mut self, id: Option<String>, cx: &mut Context<Self>) {
         self.selected_id = id.clone();
+        self.load_graph_card_detail(id.clone(), cx);
         let has_selection = id.is_some();
         self.list_view
             .update(cx, |l, cx| l.set_selected(id.clone(), false, cx));
@@ -218,5 +238,58 @@ impl MemOSApp {
                     })
                 }),
             )
+    }
+}
+
+/// Background load for the graph card's full title and link breakdown.
+#[derive(Default)]
+pub(super) struct GraphCardState {
+    pub generation: crate::ui::request::RequestToken,
+    pub task: Option<gpui::Task<()>>,
+}
+
+impl MemOSApp {
+    fn load_graph_card_detail(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        let request = self.graph_card.generation.advance();
+        let Some(id) = id else {
+            self.graph_card.task = None;
+            self.graph_view
+                .update(cx, |g, cx| g.set_inspector_detail(None, cx));
+            return;
+        };
+        let db_path = self.resolved_db.path.clone();
+        let shared = self.shared_store.clone();
+        self.graph_card.task = Some(cx.spawn(async move |this, cx| {
+            let res = cx
+                .background_executor()
+                .spawn(async move { shared.with_store(&db_path, |s| s.load_node_detail(&id)) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                if !app.graph_card.generation.is_current(request) {
+                    return;
+                }
+                let detail = match res {
+                    Ok(Some(d)) => {
+                        let source = if d.summary.trim().is_empty() {
+                            d.content.as_str()
+                        } else {
+                            d.summary.as_str()
+                        };
+                        crate::telemetry::register_sensitive_text(&d.content);
+                        Some(crate::ui::views::graph::InspectorDetail {
+                            memory_id: d.id.clone(),
+                            title: crate::core::model::make_single_line_preview(source, 200),
+                            relations: crate::ui::views::graph::relation_breakdown(
+                                d.edges.iter().map(|e| e.relation.as_str()),
+                            ),
+                        })
+                    }
+                    // The card falls back to the short graph label.
+                    _ => None,
+                };
+                app.graph_view
+                    .update(cx, |g, cx| g.set_inspector_detail(detail, cx));
+            });
+        }));
     }
 }

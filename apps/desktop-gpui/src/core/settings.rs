@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -183,6 +184,11 @@ fn default_writer_command_string() -> String {
     crate::core::write_bridge::recommended_writer_command()
 }
 
+/// How many stores the switcher remembers.
+pub const RECENT_STORE_LIMIT: usize = 6;
+/// How many stores keep their own pin list before the oldest entries drop.
+pub const PINNED_STORE_LIMIT: usize = 20;
+
 /// How many recent search expressions are kept.
 pub const RECENT_SEARCH_LIMIT: usize = 8;
 
@@ -213,6 +219,13 @@ pub struct AppSettings {
     /// Recently submitted search expressions, newest first. Local to this
     /// settings file only (like saved views); never sent anywhere.
     pub recent_searches: Vec<String>,
+    /// Pinned memory ids per store path, in the user's order. Local UI state:
+    /// never written into the store and never treated as memory metadata.
+    pub pins: BTreeMap<String, Vec<String>>,
+    /// Stores opened successfully, newest first, for the store switcher.
+    pub recent_stores: Vec<PathBuf>,
+    /// Larger reading text in the inspector and comparison.
+    pub large_reading_text: bool,
 }
 
 impl Default for AppSettings {
@@ -234,6 +247,9 @@ impl Default for AppSettings {
             writer_command: default_writer_command_string(),
             row_density: crate::core::model::RowDensity::Comfortable,
             recent_searches: Vec::new(),
+            pins: BTreeMap::new(),
+            recent_stores: Vec::new(),
+            large_reading_text: false,
         }
     }
 }
@@ -414,6 +430,49 @@ impl AppSettings {
         self.recent_searches.retain(|r| r != &expr);
         self.recent_searches.insert(0, expr);
         self.recent_searches.truncate(RECENT_SEARCH_LIMIT);
+        true
+    }
+
+    fn store_key(db_path: &Path) -> String {
+        db_path.to_string_lossy().into_owned()
+    }
+
+    /// Pins saved for `db_path`, in order.
+    pub fn pins_for(&self, db_path: &Path) -> Vec<String> {
+        self.pins
+            .get(&Self::store_key(db_path))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Replace the pins for `db_path`. Empty lists are removed so stores the
+    /// user no longer pins in do not linger in the file.
+    pub fn set_pins(&mut self, db_path: &Path, ids: &[String]) {
+        let key = Self::store_key(db_path);
+        if ids.is_empty() {
+            self.pins.remove(&key);
+            return;
+        }
+        self.pins.insert(key, ids.to_vec());
+        while self.pins.len() > PINNED_STORE_LIMIT {
+            let Some(first) = self.pins.keys().next().cloned() else {
+                break;
+            };
+            if first == Self::store_key(db_path) {
+                break;
+            }
+            self.pins.remove(&first);
+        }
+    }
+
+    /// Remember a store that opened successfully. Returns `true` if the list changed.
+    pub fn record_recent_store(&mut self, db_path: &Path) -> bool {
+        if self.recent_stores.first().map(PathBuf::as_path) == Some(db_path) {
+            return false;
+        }
+        self.recent_stores.retain(|p| p != db_path);
+        self.recent_stores.insert(0, db_path.to_path_buf());
+        self.recent_stores.truncate(RECENT_STORE_LIMIT);
         true
     }
 
@@ -599,6 +658,43 @@ fn expand_tilde(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pins_are_kept_per_store_and_empty_lists_are_dropped() {
+        let mut settings = AppSettings::default();
+        let a = Path::new("/stores/a.db");
+        let b = Path::new("/stores/b.db");
+        settings.set_pins(a, &["1".to_string(), "2".to_string()]);
+        settings.set_pins(b, &["9".to_string()]);
+        assert_eq!(settings.pins_for(a), vec!["1", "2"]);
+        assert_eq!(settings.pins_for(b), vec!["9"]);
+        settings.set_pins(a, &[]);
+        assert!(settings.pins_for(a).is_empty());
+        assert_eq!(settings.pins.len(), 1);
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.pins_for(b), vec!["9"]);
+        // Older settings files without the field still load.
+        let legacy: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(legacy.pins.is_empty() && legacy.recent_stores.is_empty());
+    }
+
+    #[test]
+    fn recent_stores_are_mru_and_capped() {
+        let mut settings = AppSettings::default();
+        assert!(settings.record_recent_store(Path::new("/a.db")));
+        assert!(!settings.record_recent_store(Path::new("/a.db")));
+        assert!(settings.record_recent_store(Path::new("/b.db")));
+        assert!(settings.record_recent_store(Path::new("/a.db")));
+        assert_eq!(
+            settings.recent_stores,
+            vec![PathBuf::from("/a.db"), PathBuf::from("/b.db")]
+        );
+        for i in 0..10 {
+            settings.record_recent_store(Path::new(&format!("/s{i}.db")));
+        }
+        assert_eq!(settings.recent_stores.len(), RECENT_STORE_LIMIT);
+    }
 
     #[test]
     fn custom_views_can_be_renamed_and_refiltered_but_built_ins_cannot() {
