@@ -23,11 +23,23 @@ pub enum DetailEvent {
     RevealInGraph(String),
     PreviewContext,
     TogglePin,
+    CopyMarkdown,
+    /// Export the selection (opens the context pack on Selected, no budget).
+    Export,
     /// Open the side-by-side comparison with the contradicting memory.
     Compare(String),
     EditSelected,
     ForgetSelected,
     Close,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DetailMenuAction {
+    CopyText,
+    CopyCitation,
+    CopyMarkdown,
+    Export,
+    RevealInGraph,
 }
 
 pub fn is_sticky_header_visible(scroll_y: f32) -> bool {
@@ -47,6 +59,7 @@ pub struct DetailView {
     scroll_handle: ScrollHandle,
     pinned_ids: Arc<HashSet<String>>,
     large_text: bool,
+    menu_open: bool,
     _copy_clear_task: Option<Task<()>>,
     theme: ThemePalette,
 }
@@ -68,6 +81,7 @@ impl DetailView {
             scroll_handle: ScrollHandle::new(),
             pinned_ids: Arc::new(HashSet::new()),
             large_text: false,
+            menu_open: false,
             _copy_clear_task: None,
             theme,
         }
@@ -391,10 +405,6 @@ fn cite_icon(theme: ThemePalette) -> AnyElement {
     render_ui_icon(UiIcon::Citation, 16.0, theme.text_primary)
 }
 
-fn graph_icon(theme: ThemePalette) -> AnyElement {
-    render_ui_icon(UiIcon::RevealInGraph, 16.0, theme.text_primary)
-}
-
 impl Render for DetailView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
@@ -595,12 +605,15 @@ impl Render for DetailView {
                 div()
                     .id(("detail-edge", ix))
                     .focusable()
+                    .role(Role::Link)
                     .cursor_pointer()
                     .w_full()
-                    .p(px(10.))
+                    .min_w(px(0.))
+                    .px(px(8.))
+                    .py(px(6.))
+                    .mx(px(-8.))
                     .rounded(px(6.))
-                    .bg(theme.bg_elevated)
-                    .hover(move |s| s.bg(theme.bg_selected))
+                    .hover(move |s| s.bg(theme.bg_hover))
                     .focus_visible(move |s| s.border_1().border_color(theme.accent))
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(DetailEvent::SelectMemory(peer_id.clone()));
@@ -734,75 +747,104 @@ impl Render for DetailView {
                                     }))
                                     .child("Context"),
                             )
-                            .child(
+                            .child({
+                                let menu_open = self.menu_open;
                                 div()
-                                    .id("btn-copy-content")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Copy content")
-                                    .tooltip(tooltip_view("Copy content", theme))
-                                    .cursor_pointer()
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            content_to_copy.clone(),
-                                        ));
-                                        this.flash_copied("Copied content", cx);
-                                    }))
-                                    .child(copy_icon(theme)),
-                            )
-                            .child(
-                                div()
-                                    .id("btn-copy-citation")
-                                    .focusable()
-                                    .cursor_pointer()
-                                    .role(Role::Button)
-                                    .aria_label("Copy citation")
-                                    .tooltip(tooltip_view("Copy citation", theme))
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            citation_to_copy.clone(),
-                                        ));
-                                        this.flash_copied("Copied citation", cx);
-                                    }))
-                                    .child(cite_icon(theme)),
-                            )
-                            .child(
-                                div()
-                                    .id("btn-reveal-graph")
-                                    .focusable()
-                                    .cursor_pointer()
-                                    .role(Role::Button)
-                                    .aria_label("Reveal in graph")
-                                    .tooltip(tooltip_view("Reveal in graph", theme))
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        cx.emit(DetailEvent::RevealInGraph(reveal_id.clone()));
-                                    }))
-                                    .child(graph_icon(theme)),
-                            )
+                                    .relative()
+                                    .child(
+                                        crate::ui::views::kit::icon_button(
+                                            "btn-detail-more",
+                                            UiIcon::Overflow,
+                                            "More actions",
+                                            &theme,
+                                        )
+                                        .aria_expanded(menu_open)
+                                        .when(!menu_open, |el| {
+                                            el.tooltip(tooltip_view("Copy, export, show in graph", theme))
+                                        })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.menu_open = !this.menu_open;
+                                            cx.notify();
+                                        })),
+                                    )
+                                    .when(menu_open, |wrap| {
+                                        let items: Vec<(&'static str, &'static str, DetailMenuAction)> = vec![
+                                            ("detail-menu-copy", "Copy text", DetailMenuAction::CopyText),
+                                            ("detail-menu-cite", "Copy citation", DetailMenuAction::CopyCitation),
+                                            ("detail-menu-md", "Copy as Markdown", DetailMenuAction::CopyMarkdown),
+                                            ("detail-menu-export", "Export…", DetailMenuAction::Export),
+                                            ("detail-menu-graph", "Show in graph", DetailMenuAction::RevealInGraph),
+                                        ];
+                                        let content = content_to_copy.clone();
+                                        let citation = citation_to_copy.clone();
+                                        let reveal = reveal_id.clone();
+                                        wrap.child(
+                                            gpui::deferred(
+                                                div()
+                                                    .id("detail-more-menu")
+                                                    .role(Role::Menu)
+                                                    .absolute()
+                                                    .top(px(32.))
+                                                    .right(px(0.))
+                                                    .w(px(184.))
+                                                    .p(px(4.))
+                                                    .rounded(px(8.))
+                                                    .bg(theme.glass_floating)
+                                                    .border_1()
+                                                    .border_color(theme.glass_border)
+                                                    .shadow_lg()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                                        this.menu_open = false;
+                                                        cx.notify();
+                                                    }))
+                                                    .children(items.into_iter().map(|(id, label, action)| {
+                                                        let content = content.clone();
+                                                        let citation = citation.clone();
+                                                        let reveal = reveal.clone();
+                                                        div()
+                                                            .id(id)
+                                                            .focusable()
+                                                            .role(Role::MenuItem)
+                                                            .aria_label(label)
+                                                            .h(px(28.))
+                                                            .px(px(8.))
+                                                            .rounded(px(5.))
+                                                            .cursor_pointer()
+                                                            .flex()
+                                                            .items_center()
+                                                            .text_size(px(13.))
+                                                            .text_color(theme.text_primary)
+                                                            .hover(move |s| s.bg(theme.bg_hover))
+                                                            .focus_visible(move |s| s.bg(theme.bg_hover))
+                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                                this.menu_open = false;
+                                                                match action {
+                                                                    DetailMenuAction::CopyText => {
+                                                                        cx.write_to_clipboard(ClipboardItem::new_string(content.clone()));
+                                                                        this.flash_copied("Copied text", cx);
+                                                                    }
+                                                                    DetailMenuAction::CopyCitation => {
+                                                                        cx.write_to_clipboard(ClipboardItem::new_string(citation.clone()));
+                                                                        this.flash_copied("Copied citation", cx);
+                                                                    }
+                                                                    DetailMenuAction::CopyMarkdown => cx.emit(DetailEvent::CopyMarkdown),
+                                                                    DetailMenuAction::Export => cx.emit(DetailEvent::Export),
+                                                                    DetailMenuAction::RevealInGraph => {
+                                                                        cx.emit(DetailEvent::RevealInGraph(reveal.clone()))
+                                                                    }
+                                                                }
+                                                                cx.notify();
+                                                            }))
+                                                            .child(label)
+                                                    })),
+                                            )
+                                            .with_priority(15),
+                                        )
+                                    })
+                            })
                             .child(
                                 div()
                                     .id("btn-close-detail")
@@ -1033,7 +1075,7 @@ impl Render for DetailView {
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(theme.text_muted)
                                                 .child(format!(
-                                                    "Contradictions ({})",
+                                                    "Conflicts · {}",
                                                     contradiction_rows.len()
                                                 )),
                                         )
@@ -1052,7 +1094,7 @@ impl Render for DetailView {
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(theme.text_muted)
                                                 .child(format!(
-                                                    "Connections ({})",
+                                                    "Linked memories · {}",
                                                     edge_rows.len()
                                                 )),
                                         )
@@ -1423,10 +1465,8 @@ impl DetailView {
             .id("detail-receipts")
             .w_full()
             .min_w(px(0.))
-            .p(px(12.))
-            .rounded(px(8.))
-            .bg(theme.bg_sunken)
-            .border_1()
+            .pt(px(12.))
+            .border_t_1()
             .border_color(theme.border_subtle)
             .flex()
             .flex_col()

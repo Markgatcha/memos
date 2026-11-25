@@ -210,6 +210,8 @@ pub fn segmented(
         .role(Role::TabList)
         .aria_label(aria.into())
         .flex_shrink_0()
+        // Size to the options, never stretch across a form column.
+        .self_start()
         .p(px(2.))
         .rounded(px(CONTROL_RADIUS + 1.0))
         .bg(theme.bg_sunken)
@@ -577,4 +579,98 @@ impl ModalShell {
             )
             .into_any_element()
     }
+}
+
+/// Labelled form field: label (and optional right-aligned hint) above the control.
+pub fn field(
+    label: impl Into<SharedString>,
+    hint: Option<SharedString>,
+    control: impl IntoElement,
+    theme: &ThemePalette,
+) -> Div {
+    div()
+        .w_full()
+        .min_w(px(0.))
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .child(
+            div()
+                .flex()
+                .items_baseline()
+                .justify_between()
+                .gap(px(space::S2))
+                .child(
+                    div()
+                        .text_size(px(text::SM))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.text_secondary)
+                        .child(label.into()),
+                )
+                .when_some(hint, |row, h| {
+                    row.child(
+                        div()
+                            .text_size(px(text::XS))
+                            .text_color(theme.text_muted)
+                            .truncate()
+                            .child(h),
+                    )
+                }),
+        )
+        .child(control)
+}
+
+/// Checkbox row (box + label). Attach `.on_click(...)` at the call site.
+pub fn checkbox(
+    id: impl Into<ElementId>,
+    checked: bool,
+    label: impl Into<SharedString>,
+    theme: &ThemePalette,
+) -> Stateful<Div> {
+    let theme = *theme;
+    let label: SharedString = label.into();
+    div()
+        .id(id)
+        .focusable()
+        .role(Role::CheckBox)
+        .aria_label(label.clone())
+        .aria_toggled(checked.into())
+        .cursor_pointer()
+        .flex()
+        .items_center()
+        .gap(px(space::S2))
+        .rounded(px(4.))
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .focus_visible(move |s| s.border_color(theme.accent))
+        .child(
+            div()
+                .w(px(16.))
+                .h(px(16.))
+                .flex_shrink_0()
+                .rounded(px(4.))
+                .border_1()
+                .border_color(if checked {
+                    theme.accent
+                } else {
+                    theme.border_strong
+                })
+                .bg(if checked {
+                    theme.accent
+                } else {
+                    gpui::transparent_black()
+                })
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(checked, |b| {
+                    b.child(render_ui_icon(UiIcon::Check, 11.0, theme.primary_btn_fg))
+                }),
+        )
+        .child(
+            div()
+                .text_size(px(text::BASE))
+                .text_color(theme.text_primary)
+                .child(label),
+        )
 }

@@ -8,7 +8,7 @@ use gpui::{
     MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Render, Role, ScrollHandle,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowOptions, actions, div, point,
-    prelude::FluentBuilder, px, rgb, rgba, size,
+    prelude::FluentBuilder, px, rgba, size,
 };
 
 use crate::core::context_pack::PackSource;
@@ -60,6 +60,7 @@ use crate::ui::views::{
 
 mod capture_ui;
 mod compare_ui;
+mod dialogs_ui;
 mod health_ui;
 mod pack_ui;
 mod review_batch;
@@ -398,6 +399,7 @@ pub struct MemOSApp {
     review_batch: review_batch::ReviewBatchState,
     store_switch: store_ui::StoreSwitchState,
     graph_card: shortcuts::GraphCardState,
+    ingest_ui: dialogs_ui::IngestUiState,
     show_save_view_modal: bool,
     save_view_input: Entity<TextInput>,
     health_filter: HealthPanelFilter,
@@ -596,6 +598,11 @@ impl MemOSApp {
         subs.push(capture_sub);
         let (search_ui, search_ui_sub) = search_ui::SearchUiState::new(theme, window, cx);
         subs.push(search_ui_sub);
+        subs.push(dialogs_ui::IngestUiState::subscribe(
+            &ingest_path_input,
+            window,
+            cx,
+        ));
 
         let onboarding = if show_onboarding {
             let ob = cx.new(|cx| {
@@ -807,6 +814,11 @@ impl MemOSApp {
                     this.open_context_pack(Some(PackSource::Selected), window, cx)
                 }
                 DetailEvent::TogglePin => this.toggle_pin_selected(cx),
+                DetailEvent::CopyMarkdown => this.copy_active_memory_markdown(cx),
+                DetailEvent::Export => {
+                    this.pack.budget = crate::core::context_pack::PackBudget::Unlimited;
+                    this.open_context_pack(Some(PackSource::Selected), window, cx);
+                }
                 DetailEvent::Compare(peer) => {
                     if let Some(sel) = this.selected_id.clone() {
                         this.open_compare(sel, peer.clone(), window, cx);
@@ -886,10 +898,9 @@ impl MemOSApp {
                     window.focus(&this.focus_handle, cx);
                     cx.notify();
                 }
-                InputEvent::Submit(_)
-                | InputEvent::MoveUp
-                | InputEvent::MoveDown
-                | InputEvent::BackspaceWhenEmpty => {}
+                // Ctrl/Cmd+Enter in the content field saves.
+                InputEvent::Submit(_) => this.submit_composer(window, cx),
+                InputEvent::MoveUp | InputEvent::MoveDown | InputEvent::BackspaceWhenEmpty => {}
             },
         ));
 
@@ -1050,6 +1061,7 @@ impl MemOSApp {
             review_batch: review_batch::ReviewBatchState::default(),
             store_switch: store_ui::StoreSwitchState::default(),
             graph_card: shortcuts::GraphCardState::default(),
+            ingest_ui: dialogs_ui::IngestUiState::default(),
             show_save_view_modal: false,
             save_view_input,
             health_filter: HealthPanelFilter::All,
@@ -3533,503 +3545,6 @@ impl MemOSApp {
         }));
     }
 
-    fn render_ingest_modal(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        let current_ns = self
-            .ingest_namespace_input
-            .read(cx)
-            .text()
-            .trim()
-            .to_string();
-
-        div()
-            .id("ingest-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(theme.glass_scrim)
-            .px(px(24.))
-            .py(px(20.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.show_ingest_modal = false;
-                    window.focus(&this.focus_handle, cx);
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .id("ingest-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Ingest documents")
-                    .w_full()
-                    .max_w(px(560.))
-                    .max_h(gpui::relative(0.9))
-                    .rounded(px(16.))
-                    .bg(theme.glass_panel)
-                    .border_1()
-                    .border_color(theme.glass_border)
-                    .shadow_lg()
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .px(px(16.))
-                            .py(px(12.))
-                            .border_b_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.))
-                                    .child(
-                                        div()
-                                            .text_size(px(15.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(theme.text_primary)
-                                            .child("Ingest files or folder"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.text_muted)
-                                            .child("Chunk and index Markdown, text, HTML, or PDF via memos_ingest."),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("ingest-close-x")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close ingest dialog")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_hover))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_ingest_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(UiIcon::Close, 14.0, theme.text_secondary)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .p(px(16.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(5.))
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("File or folder path"),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(8.))
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w(px(0.))
-                                                    .child(self.ingest_path_input.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .id("ingest-browse-btn")
-                                                    .focusable()
-                                                    .role(Role::Button)
-                                                    .cursor_pointer()
-                                                    .h(px(32.))
-                                                    .px(px(12.))
-                                                    .rounded(px(6.))
-                                                    .bg(theme.bg_elevated)
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .hover(move |s| s.bg(theme.bg_selected))
-                                                    .flex()
-                                                    .items_center()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_primary)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.browse_ingest_path(cx);
-                                                    }))
-                                                    .child("Browse…"),
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(5.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .gap(px(8.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Namespace"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap(px(6.))
-                                                    .children(["default", "documents"].into_iter().enumerate().map(|(ix, preset)| {
-                                                        let active = current_ns == preset;
-                                                        div()
-                                                            .id(("ingest-ns-preset", ix))
-                                                            .cursor_pointer()
-                                                            .px(px(7.))
-                                                            .py(px(2.))
-                                                            .rounded(px(4.))
-                                                            .bg(if active { theme.bg_selected } else { theme.bg_elevated })
-                                                            .border_1()
-                                                            .border_color(if active { theme.accent } else { theme.border_subtle })
-                                                            .text_size(px(11.))
-                                                            .text_color(theme.text_secondary)
-                                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                                this.ingest_namespace_input.update(cx, |i, cx| i.set_text(preset, cx));
-                                                            }))
-                                                            .child(preset)
-                                                    })),
-                                            ),
-                                    )
-                                    .child(self.ingest_namespace_input.clone()),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .flex()
-                                    .items_start()
-                                    .gap(px(10.))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(5.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Extensions"),
-                                            )
-                                            .child(self.ingest_extensions_input.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .w(px(150.))
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(5.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Chunk size (chars)"),
-                                            )
-                                            .child(self.ingest_chunk_input.clone()),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("ingest-recursive-toggle")
-                                    .focusable()
-                                    .role(Role::CheckBox)
-                                    .cursor_pointer()
-                                    .py(px(4.))
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.ingest_recursive = !this.ingest_recursive;
-                                        cx.notify();
-                                    }))
-                                    .child(
-                                        div()
-                                            .w(px(16.))
-                                            .h(px(16.))
-                                            .rounded(px(4.))
-                                            .border_1()
-                                            .border_color(if self.ingest_recursive {
-                                                theme.accent
-                                            } else {
-                                                theme.border_strong
-                                            })
-                                            .bg(if self.ingest_recursive {
-                                                theme.accent
-                                            } else {
-                                                theme.bg_sunken
-                                            })
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .when(self.ingest_recursive, |b| {
-                                                b.child(render_ui_icon(
-                                                    UiIcon::Check,
-                                                    11.0,
-                                                    theme.primary_btn_fg,
-                                                ))
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.text_primary)
-                                            .child("Include subfolders recursively"),
-                                    ),
-                            )
-                            .when(self.ingest_in_flight, |col| {
-                                col.child(
-                                    div()
-                                        .id("ingest-spinner")
-                                        .px(px(12.))
-                                        .py(px(8.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_sunken)
-                                        .border_1()
-                                        .border_color(theme.border_subtle)
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.))
-                                        .child(status_dot(theme.accent))
-                                        .child(
-                                            div()
-                                                .text_size(px(12.))
-                                                .text_color(theme.text_secondary)
-                                                .child("Ingesting files via memos_ingest…"),
-                                        ),
-                                )
-                            })
-                            .when_some(self.ingest_result.clone(), |col, counts| {
-                                let stats = [
-                                    ("Added", counts.added),
-                                    ("Updated", counts.updated),
-                                    ("Unchanged", counts.unchanged),
-                                    ("Removed", counts.removed),
-                                    ("Skipped", counts.skipped),
-                                    ("Errors", counts.errors),
-                                    ("Chunks", counts.chunks),
-                                ];
-                                col.child(
-                                    div()
-                                        .id("ingest-result-card")
-                                        .p(px(10.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_sunken)
-                                        .border_1()
-                                        .border_color(theme.success)
-                                        .flex()
-                                        .flex_wrap()
-                                        .gap(px(10.))
-                                        .children(stats.into_iter().map(|(label, val)| {
-                                            div()
-                                                .px(px(8.))
-                                                .py(px(4.))
-                                                .rounded(px(5.))
-                                                .bg(theme.bg_elevated)
-                                                .flex()
-                                                .items_center()
-                                                .gap(px(5.))
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(theme.text_muted)
-                                                        .child(label),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(12.))
-                                                        .font_weight(FontWeight::SEMIBOLD)
-                                                        .font_features(tabular_nums())
-                                                        .text_color(theme.text_primary)
-                                                        .child(SharedString::from(val.to_string())),
-                                                )
-                                        })),
-                                )
-                            })
-                            .when_some(self.ingest_error.clone(), |col, err| {
-                                col.child(
-                                    div()
-                                        .id("ingest-error-box")
-                                        .p(px(10.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_sunken)
-                                        .border_1()
-                                        .border_color(theme.danger)
-                                        .flex()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap(px(8.))
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .text_size(px(12.))
-                                                .text_color(theme.danger)
-                                                .child(SharedString::from(err)),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .flex()
-                                                .items_center()
-                                                .gap(px(6.))
-                                                .child(
-                                                    div()
-                                                        .id("ingest-settings-btn")
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label("Open Settings")
-                                                        .cursor_pointer()
-                                                        .h(px(26.))
-                                                        .px(px(10.))
-                                                        .rounded(px(5.))
-                                                        .bg(theme.bg_elevated)
-                                                        .border_1()
-                                                        .border_color(theme.border_subtle)
-                                                        .hover(move |s| s.bg(theme.bg_selected))
-                                                        .flex()
-                                                        .items_center()
-                                                        .text_size(px(12.))
-                                                        .text_color(theme.text_primary)
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.show_ingest_modal = false;
-                                                                this.open_settings_modal(
-                                                                    window, cx,
-                                                                );
-                                                            },
-                                                        ))
-                                                        .child("Settings"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .id("ingest-retry-btn")
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .cursor_pointer()
-                                                        .h(px(26.))
-                                                        .px(px(10.))
-                                                        .rounded(px(5.))
-                                                        .bg(theme.bg_elevated)
-                                                        .border_1()
-                                                        .border_color(theme.border_subtle)
-                                                        .hover(move |s| s.bg(theme.bg_selected))
-                                                        .flex()
-                                                        .items_center()
-                                                        .text_size(px(12.))
-                                                        .text_color(theme.text_primary)
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.submit_ingest(window, cx);
-                                                            },
-                                                        ))
-                                                        .child("Retry"),
-                                                ),
-                                        ),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .px(px(16.))
-                            .py(px(12.))
-                            .border_t_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .id("ingest-cancel-btn")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .cursor_pointer()
-                                    .h(px(32.))
-                                    .px(px(12.))
-                                    .rounded(px(6.))
-                                    .bg(theme.bg_elevated)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .hover(move |s| s.bg(theme.bg_selected))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .text_color(theme.text_primary)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_ingest_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(if self.ingest_result.is_some() {
-                                        "Done"
-                                    } else {
-                                        "Cancel"
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .id("ingest-submit-btn")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .cursor_pointer()
-                                    .h(px(32.))
-                                    .px(px(14.))
-                                    .rounded(px(6.))
-                                    .bg(theme.accent)
-                                    .hover(move |s| s.opacity(0.92))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.primary_btn_fg)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.submit_ingest(window, cx);
-                                    }))
-                                    .child(if self.ingest_in_flight {
-                                        "Ingesting…"
-                                    } else {
-                                        "Ingest"
-                                    }),
-                            ),
-                    ),
-            )
-            .into_any_element()
-    }
-
     fn render_write_error_banner(
         &self,
         banner: BridgeErrorBanner,
@@ -4162,631 +3677,6 @@ impl MemOSApp {
                                 cx.notify();
                             }))
                             .child(render_ui_icon(UiIcon::Close, 13.0, theme.text_muted)),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_composer_modal(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        let is_edit = self.composer_editing_id.is_some();
-        let title = if is_edit { "Edit memory" } else { "New memory" };
-        let submit_label = if self.write_in_flight {
-            "Saving…"
-        } else if is_edit {
-            "Save new version"
-        } else {
-            "Save memory"
-        };
-
-        let mut type_choices = vec!["fact", "preference", "decision", "procedure", "note"];
-        if !type_choices.contains(&self.composer_type.as_str())
-            && !self.composer_type.trim().is_empty()
-        {
-            type_choices.push("custom");
-        }
-        let active_type = self.composer_type.clone();
-        let pool_choices = [
-            ("event", "event"),
-            ("note", "note"),
-            ("procedure", "procedure"),
-        ];
-
-        div()
-            .id("composer-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(theme.glass_scrim)
-            .px(px(24.))
-            .py(px(20.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.show_composer_modal = false;
-                    window.focus(&this.focus_handle, cx);
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .id("composer-dialog")
-                    .role(Role::Dialog)
-                    .aria_label(title)
-                    .w_full()
-                    .max_w(px(580.))
-                    .max_h(gpui::relative(0.9))
-                    .rounded(px(16.))
-                    .bg(theme.glass_panel)
-                    .border_1()
-                    .border_color(theme.glass_border)
-                    .shadow_lg()
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    })
-                    .child(
-                        div()
-                            .px(px(16.))
-                            .py(px(12.))
-                            .border_b_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.))
-                                    .child(
-                                        div()
-                                            .text_size(px(15.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(theme.text_primary)
-                                            .child(title),
-                                    )
-                                    .when(is_edit, |col| {
-                                        col.child(
-                                            div()
-                                                .text_size(px(12.))
-                                                .text_color(theme.text_muted)
-                                                .child("Creates a new version via memos_store and supersedes the original."),
-                                        )
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .id("close-composer-modal")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close composer")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_composer_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(
-                                        UiIcon::Close,
-                                        14.0,
-                                        theme.text_secondary,
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("composer-scroll-body")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .p(px(16.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(6.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Content"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_muted)
-                                                    .child("Required"),
-                                            ),
-                                    )
-                                    .child(self.composer_content_input.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(6.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Type"),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_wrap()
-                                            .gap(px(6.))
-                                            .children(type_choices.into_iter().enumerate().map(
-                                                |(ix, ty_key)| {
-                                                    let value = if ty_key == "custom" {
-                                                        active_type.clone()
-                                                    } else {
-                                                        ty_key.to_string()
-                                                    };
-                                                    let selected = self.composer_type == value;
-                                                    let val_for_click = value.clone();
-                                                    div()
-                                                        .id(("composer-type-pill", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!("Type {value}"))
-                                                        .aria_selected(selected)
-                                                        .h(px(28.))
-                                                        .px(px(10.))
-                                                        .rounded(px(6.))
-                                                        .cursor_pointer()
-                                                        .bg(if selected {
-                                                            theme.bg_selected
-                                                        } else {
-                                                            theme.bg_elevated
-                                                        })
-                                                        .border_1()
-                                                        .border_color(if selected {
-                                                            theme.accent
-                                                        } else {
-                                                            theme.border_subtle
-                                                        })
-                                                        .hover(move |s| s.bg(theme.bg_selected))
-                                                        .flex()
-                                                        .items_center()
-                                                        .text_size(px(12.))
-                                                        .text_color(if selected {
-                                                            theme.text_primary
-                                                        } else {
-                                                            theme.text_secondary
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
-                                                                this.composer_type =
-                                                                    val_for_click.clone();
-                                                                cx.notify();
-                                                            },
-                                                        ))
-                                                        .child(SharedString::from(value))
-                                                },
-                                            )),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(6.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Pool"),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_wrap()
-                                            .gap(px(6.))
-                                            .children(pool_choices.into_iter().enumerate().map(
-                                                |(ix, (pool_val, label))| {
-                                                    let selected = self.composer_pool == pool_val;
-                                                    div()
-                                                        .id(("composer-pool-pill", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!("Pool {label}"))
-                                                        .aria_selected(selected)
-                                                        .h(px(28.))
-                                                        .px(px(10.))
-                                                        .rounded(px(6.))
-                                                        .cursor_pointer()
-                                                        .bg(if selected {
-                                                            theme.bg_selected
-                                                        } else {
-                                                            theme.bg_elevated
-                                                        })
-                                                        .border_1()
-                                                        .border_color(if selected {
-                                                            theme.accent
-                                                        } else {
-                                                            theme.border_subtle
-                                                        })
-                                                        .hover(move |s| s.bg(theme.bg_selected))
-                                                        .flex()
-                                                        .items_center()
-                                                        .text_size(px(12.))
-                                                        .text_color(if selected {
-                                                            theme.text_primary
-                                                        } else {
-                                                            theme.text_secondary
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
-                                                                this.composer_pool =
-                                                                    pool_val.to_string();
-                                                                cx.notify();
-                                                            },
-                                                        ))
-                                                        .child(label)
-                                                },
-                                            )),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(6.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Tags"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_muted)
-                                                    .child("Comma-separated"),
-                                            ),
-                                    )
-                                    .child(self.composer_tags_input.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .when(self.compact_layout, |f| f.flex_col())
-                                    .gap(px(10.))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(6.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Namespace"),
-                                            )
-                                            .child(self.composer_namespace_input.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(6.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Context"),
-                                            )
-                                            .child(self.composer_context_input.clone()),
-                                    ),
-                            )
-                            .when_some(self.composer_validation_error.clone(), |col, msg| {
-                                col.child(
-                                    div()
-                                        .px(px(10.))
-                                        .py(px(8.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_app)
-                                        .border_1()
-                                        .border_color(theme.danger)
-                                        .text_size(px(12.))
-                                        .text_color(theme.danger)
-                                        .child(SharedString::from(msg)),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .px(px(16.))
-                            .py(px(12.))
-                            .bg(theme.bg_sunken)
-                            .border_t_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(theme.text_muted)
-                                    .child("via MemOS MCP"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .id("composer-cancel-btn")
-                                            .focusable()
-                                            .role(Role::Button)
-                                            .aria_label("Cancel")
-                                            .h(px(32.))
-                                            .px(px(12.))
-                                            .rounded(px(6.))
-                                            .cursor_pointer()
-                                            .bg(theme.bg_elevated)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .hover(move |s| s.bg(theme.bg_selected))
-                                            .flex()
-                                            .items_center()
-                                            .text_size(px(13.))
-                                            .text_color(theme.text_primary)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.show_composer_modal = false;
-                                                window.focus(&this.focus_handle, cx);
-                                                cx.notify();
-                                            }))
-                                            .child("Cancel"),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("composer-submit-btn")
-                                            .focusable()
-                                            .role(Role::Button)
-                                            .aria_label(submit_label)
-                                            .h(px(32.))
-                                            .px(px(14.))
-                                            .rounded(px(6.))
-                                            .cursor_pointer()
-                                            .bg(theme.accent)
-                                            .hover(move |s| s.opacity(0.92))
-                                            .flex()
-                                            .items_center()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.primary_btn_fg)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.submit_composer(window, cx);
-                                            }))
-                                            .child(submit_label),
-                                    ),
-                            ),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_forget_confirm_modal(
-        &self,
-        target: ForgetTarget,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = self.theme;
-        div()
-            .id("forget-confirm-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000088))
-            .px(px(24.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.forget_confirm_target = None;
-                    window.focus(&this.focus_handle, cx);
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .id("forget-confirm-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Forget memory")
-                    .w_full()
-                    .max_w(px(440.))
-                    .rounded(px(10.))
-                    .bg(theme.bg_panel)
-                    .border_1()
-                    .border_color(theme.border_subtle)
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    })
-                    .child(
-                        div()
-                            .h(px(44.))
-                            .px(px(16.))
-                            .border_b_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_size(px(15.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.text_primary)
-                                    .child("Forget memory?"),
-                            )
-                            .child(
-                                div()
-                                    .id("close-forget-modal")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close forget dialog")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.forget_confirm_target = None;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(
-                                        UiIcon::Close,
-                                        14.0,
-                                        theme.text_secondary,
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .p(px(16.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .line_height(px(18.))
-                                    .text_color(theme.text_secondary)
-                                    .child("Calls memos_forget through your configured MemOS MCP server and removes this memory from the active store."),
-                            )
-                            .child(
-                                div()
-                                    .p(px(10.))
-                                    .rounded(px(6.))
-                                    .bg(theme.bg_app)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(4.))
-                                    .child(
-                                        div()
-                                            .font_family(crate::ui::views::kit::MONO_FONT)
-                                            .text_size(px(11.))
-                                            .text_color(theme.text_muted)
-                                            .child(SharedString::from(format!(
-                                                "mem:{}",
-                                                target.short_id
-                                            ))),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .text_color(theme.text_primary)
-                                            .child(SharedString::from(target.preview)),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .px(px(16.))
-                            .py(px(12.))
-                            .bg(theme.bg_sunken)
-                            .border_t_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .id("forget-cancel-btn")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Cancel")
-                                    .h(px(30.))
-                                    .px(px(12.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .bg(theme.bg_elevated)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .hover(move |s| s.bg(theme.bg_selected))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .text_color(theme.text_primary)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.forget_confirm_target = None;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child("Cancel"),
-                            )
-                            .child(
-                                div()
-                                    .id("forget-confirm-btn")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Confirm forget memory")
-                                    .h(px(30.))
-                                    .px(px(14.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .bg(theme.danger)
-                                    .hover(move |s| s.opacity(0.92))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(rgb(0xFFFFFF))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.confirm_forget(window, cx);
-                                    }))
-                                    .child("Forget memory"),
-                            ),
                     ),
             )
             .into_any_element()
@@ -6349,8 +5239,8 @@ impl MemOSApp {
         ];
         let default_views = [(ViewMode::List, "List"), (ViewMode::Graph, "Graph")];
         let densities = [
-            (RowDensity::Comfortable, "Comfortable (64 px)"),
-            (RowDensity::Compact, "Compact (48 px)"),
+            (RowDensity::Comfortable, "Comfortable"),
+            (RowDensity::Compact, "Compact"),
         ];
 
         div()
@@ -6381,7 +5271,7 @@ impl MemOSApp {
                     .max_w(gpui::relative(0.92))
                     .h(px(dialog_h))
                     .max_h(gpui::relative(0.92))
-                    .rounded(px(16.))
+                    .rounded(px(12.))
                     .bg(theme.glass_panel)
                     .border_1()
                     .border_color(theme.glass_border)
@@ -6395,7 +5285,7 @@ impl MemOSApp {
                     .child(
                         div()
                             .h(px(52.))
-                            .px(px(24.))
+                            .px(px(20.))
                             .border_b_1()
                             .border_color(theme.border_subtle)
                             .flex()
@@ -6403,7 +5293,7 @@ impl MemOSApp {
                             .justify_between()
                             .child(
                                 div()
-                                    .text_size(px(17.))
+                                    .text_size(px(16.))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.text_primary)
                                     .child("Settings"),
@@ -6452,207 +5342,122 @@ impl MemOSApp {
                                     .overflow_y_scroll()
                                     .overflow_x_hidden()
                                     .track_scroll(&self.settings_scroll)
-                                    .p(px(24.))
+                                    .p(px(20.))
                             .flex()
                             .flex_col()
                             .gap(px(16.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Appearance"),
-                                    )
-                                    .child(
-                                        div()
-                                            .p(px(3.))
-                                            .rounded(px(8.))
-                                            .bg(theme.bg_app)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(3.))
-                                            .children(themes.into_iter().enumerate().map(
-                                                |(ix, (mode, label))| {
-                                                    let active = self.settings.theme == mode;
-                                                    div()
-                                                        .id(("settings-theme", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!("Theme {label}"))
-                                                        .aria_selected(active)
-                                                        .cursor_pointer()
-                                                        .flex_1()
-                                                        .h(px(30.))
-                                                        .rounded(px(6.))
-                                                        .bg(if active {
-                                                            theme.bg_elevated
-                                                        } else {
-                                                            gpui::transparent_black()
-                                                        })
-                                                        .when(active, |el| {
-                                                            el.border_1().border_color(theme.border)
-                                                        })
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .text_size(px(13.))
-                                                        .text_color(if active {
-                                                            theme.text_primary
-                                                        } else {
-                                                            theme.text_muted
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            move |this, _, window, cx| {
-                                                                this.settings.theme = mode;
-                                                                this.settings.save_async();
-                                                                let resolved =
-                                                                    ThemePalette::resolve(
-                                                                        mode,
-                                                                        window.appearance(),
-                                                                    );
-                                                                this.apply_theme_palette(
-                                                                    resolved, window, cx,
-                                                                );
-                                                            },
-                                                        ))
-                                                        .child(label)
+                            .child(kit::field(
+                                "Appearance",
+                                None,
+                                kit::segmented(
+                                    "settings-theme",
+                                    "Appearance",
+                                    themes
+                                        .into_iter()
+                                        .map(|(mode, label)| {
+                                            let e = cx.entity();
+                                            kit::Segment::new(
+                                                label,
+                                                self.settings.theme == mode,
+                                                move |_, window, cx| {
+                                                    e.update(cx, |this, cx| {
+                                                        this.settings.theme = mode;
+                                                        this.settings.save_async();
+                                                        let resolved = ThemePalette::resolve(
+                                                            mode,
+                                                            window.appearance(),
+                                                        );
+                                                        this.apply_theme_palette(resolved, window, cx);
+                                                    })
                                                 },
-                                            )),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Default view"),
-                                    )
-                                    .child(
-                                        div()
-                                            .p(px(3.))
-                                            .rounded(px(8.))
-                                            .bg(theme.bg_app)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(3.))
-                                            .children(default_views.into_iter().enumerate().map(
-                                                |(ix, (vm, label))| {
-                                                    let active = self.settings.default_view == vm;
-                                                    div()
-                                                        .id(("settings-view", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!("Default view {label}"))
-                                                        .aria_selected(active)
-                                                        .cursor_pointer()
-                                                        .flex_1()
-                                                        .h(px(30.))
-                                                        .rounded(px(6.))
-                                                        .bg(if active {
-                                                            theme.bg_elevated
-                                                        } else {
-                                                            gpui::transparent_black()
-                                                        })
-                                                        .when(active, |el| {
-                                                            el.border_1().border_color(theme.border)
-                                                        })
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .text_size(px(13.))
-                                                        .text_color(if active {
-                                                            theme.text_primary
-                                                        } else {
-                                                            theme.text_muted
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
-                                                                this.settings.default_view = vm;
-                                                                this.settings.save_async();
-                                                                cx.notify();
-                                                            },
-                                                        ))
-                                                        .child(label)
+                                            )
+                                        })
+                                        .collect(),
+                                    &theme,
+                                ),
+                                &theme,
+                            ))
+                            .child(kit::field(
+                                "Default view",
+                                Some("used when the app starts".into()),
+                                kit::segmented(
+                                    "settings-default-view",
+                                    "Default view",
+                                    default_views
+                                        .into_iter()
+                                        .map(|(vm, label)| {
+                                            let e = cx.entity();
+                                            kit::Segment::new(
+                                                label,
+                                                self.settings.default_view == vm,
+                                                move |_, _, cx| {
+                                                    e.update(cx, |this, cx| {
+                                                        this.settings.default_view = vm;
+                                                        this.settings.save_async();
+                                                        cx.notify();
+                                                    })
                                                 },
-                                            )),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Row density"),
-                                    )
-                                    .child(
-                                        div()
-                                            .p(px(3.))
-                                            .rounded(px(8.))
-                                            .bg(theme.bg_app)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(3.))
-                                            .children(densities.into_iter().enumerate().map(
-                                                |(ix, (density, label))| {
-                                                    let active = self.settings.row_density == density;
-                                                    div()
-                                                        .id(("settings-density", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!("Row density {label}"))
-                                                        .aria_selected(active)
-                                                        .cursor_pointer()
-                                                        .flex_1()
-                                                        .h(px(30.))
-                                                        .rounded(px(6.))
-                                                        .bg(if active {
-                                                            theme.bg_elevated
-                                                        } else {
-                                                            gpui::transparent_black()
-                                                        })
-                                                        .when(active, |el| {
-                                                            el.border_1().border_color(theme.border)
-                                                        })
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .text_size(px(13.))
-                                                        .text_color(if active {
-                                                            theme.text_primary
-                                                        } else {
-                                                            theme.text_muted
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
-                                                                this.set_row_density(density, cx);
-                                                            },
-                                                        ))
-                                                        .child(label)
+                                            )
+                                        })
+                                        .collect(),
+                                    &theme,
+                                ),
+                                &theme,
+                            ))
+                            .child(kit::field(
+                                "Row density",
+                                None,
+                                kit::segmented(
+                                    "settings-density",
+                                    "Row density",
+                                    densities
+                                        .into_iter()
+                                        .map(|(density, label)| {
+                                            let e = cx.entity();
+                                            kit::Segment::new(
+                                                label,
+                                                self.settings.row_density == density,
+                                                move |_, _, cx| {
+                                                    e.update(cx, |this, cx| this.set_row_density(density, cx))
                                                 },
-                                            )),
-                                    ),
-                            )
+                                            )
+                                        })
+                                        .collect(),
+                                    &theme,
+                                ),
+                                &theme,
+                            ))
+                            .child(kit::field(
+                                "Reading size",
+                                Some("inspector and comparison text".into()),
+                                {
+                                    let e_std = cx.entity();
+                                    let e_lg = cx.entity();
+                                    let large = self.settings.large_reading_text;
+                                    kit::segmented(
+                                        "settings-reading-size",
+                                        "Reading size",
+                                        vec![
+                                            kit::Segment::new("Standard", !large, move |_, _, cx| {
+                                                e_std.update(cx, |app, cx| {
+                                                    if app.settings.large_reading_text {
+                                                        app.toggle_reading_size(cx);
+                                                    }
+                                                })
+                                            }),
+                                            kit::Segment::new("Large", large, move |_, _, cx| {
+                                                e_lg.update(cx, |app, cx| {
+                                                    if !app.settings.large_reading_text {
+                                                        app.toggle_reading_size(cx);
+                                                    }
+                                                })
+                                            }),
+                                        ],
+                                        &theme,
+                                    )
+                                },
+                                &theme,
+                            ))
                             .child(
                                 div()
                                     .border_t_1()
@@ -7012,7 +5817,7 @@ impl MemOSApp {
                                                     .text_size(px(13.))
                                                     .font_weight(FontWeight::MEDIUM)
                                                     .text_color(theme.text_primary)
-                                                    .child("Database"),
+                                                    .child("Memory store"),
                                             )
                                             .child(
                                                 div()
@@ -7035,50 +5840,38 @@ impl MemOSApp {
                                             .justify_start()
                                             .gap(px(8.))
                                             .child(
-                                                div()
-                                                    .id("settings-reveal-db")
-                                                    .focusable()
-                                                    .role(Role::Button)
-                                                    .aria_label("Reveal database")
-                                                    .h(px(28.))
-                                                    .px(px(10.))
-                                                    .rounded(px(6.))
-                                                    .cursor_pointer()
-                                                    .bg(theme.bg_elevated)
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .hover(move |s| s.bg(theme.bg_selected))
-                                                    .flex()
-                                                    .items_center()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_primary)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.reveal_database_file(cx);
-                                                    }))
-                                                    .child("Reveal database"),
+                                                kit::button(
+                                                    "settings-switch-store",
+                                                    "Switch store…",
+                                                    kit::ButtonKind::Secondary,
+                                                    &theme,
+                                                )
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.flush_dirty_settings();
+                                                    this.open_store_switcher(window, cx);
+                                                })),
                                             )
                                             .child(
-                                                div()
-                                                    .id("settings-copy-db-path")
-                                                    .focusable()
-                                                    .role(Role::Button)
-                                                    .aria_label("Copy database path")
-                                                    .h(px(28.))
-                                                    .px(px(10.))
-                                                    .rounded(px(6.))
-                                                    .cursor_pointer()
-                                                    .bg(gpui::transparent_black())
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                                    .flex()
-                                                    .items_center()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_secondary)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.copy_database_path(cx);
-                                                    }))
-                                                    .child("Copy path"),
+                                                kit::button(
+                                                    "settings-reveal-db",
+                                                    "Reveal",
+                                                    kit::ButtonKind::Subtle,
+                                                    &theme,
+                                                )
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.reveal_database_file(cx);
+                                                })),
+                                            )
+                                            .child(
+                                                kit::button(
+                                                    "settings-copy-db-path",
+                                                    "Copy path",
+                                                    kit::ButtonKind::Subtle,
+                                                    &theme,
+                                                )
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.copy_database_path(cx);
+                                                })),
                                             )
                                             .child(
                                                 div()
@@ -7721,148 +6514,6 @@ impl MemOSApp {
                             .children(pills),
                     )
                     .child(feed_content),
-            )
-            .into_any_element()
-    }
-
-    fn render_save_view_modal(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        let summary = crate::core::model::describe_filter_target(&self.filter);
-
-        div()
-            .id("save-view-modal-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000099))
-            .px(px(24.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.show_save_view_modal = false;
-                    cx.notify();
-                }),
-            )
-            .on_scroll(|_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .id("save-view-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Save current view")
-                    .w(px(400.))
-                    .max_w(gpui::relative(0.92))
-                    .p(px(20.))
-                    .rounded(px(10.))
-                    .bg(theme.bg_panel)
-                    .border_1()
-                    .border_color(theme.border_strong)
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .text_size(px(17.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.text_primary)
-                                    .child("Save current view"),
-                            )
-                            .child(
-                                div()
-                                    .id("close-save-view-modal")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close save view dialog")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_hover))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_save_view_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(
-                                        UiIcon::Close,
-                                        14.0,
-                                        theme.text_secondary,
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(theme.text_muted)
-                            .truncate()
-                            .child(summary),
-                    )
-                    .child(div().w_full().child(self.save_view_input.clone()))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .id("btn-save-view-cancel")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Cancel")
-                                    .h(px(32.))
-                                    .px(px(12.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .bg(theme.bg_elevated)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .hover(move |s| s.bg(theme.bg_selected))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .text_color(theme.text_primary)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.show_save_view_modal = false;
-                                        cx.notify();
-                                    }))
-                                    .child("Cancel"),
-                            )
-                            .child(
-                                div()
-                                    .id("btn-save-view-confirm")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Save view")
-                                    .h(px(32.))
-                                    .px(px(14.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .bg(theme.accent)
-                                    .hover(move |s| s.opacity(0.9))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.primary_btn_fg)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.confirm_save_view(window, cx);
-                                    }))
-                                    .child("Save"),
-                            ),
-                    ),
             )
             .into_any_element()
     }
@@ -8644,16 +7295,16 @@ impl Render for MemOSApp {
                     el.child(self.render_manage_view(cx))
                 })
                 .when(self.show_save_view_modal, |el| {
-                    el.child(self.render_save_view_modal(cx))
+                    el.child(self.render_save_view_dialog(cx))
                 })
                 .when(self.show_composer_modal, |el| {
-                    el.child(self.render_composer_modal(cx))
+                    el.child(self.render_composer_dialog(cx))
                 })
                 .when(self.show_ingest_modal, |el| {
-                    el.child(self.render_ingest_modal(cx))
+                    el.child(self.render_ingest_dialog(cx))
                 })
                 .when_some(self.forget_confirm_target.clone(), |el, target| {
-                    el.child(self.render_forget_confirm_modal(target, cx))
+                    el.child(self.render_forget_dialog(target, cx))
                 })
                 .when(self.show_consent_modal, |el| {
                     el.child(self.render_consent_modal(cx))

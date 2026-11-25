@@ -860,6 +860,7 @@ impl Render for CommandPalette {
             let title_for_recent = entry.clone();
             let subtitle: SharedString = entry.subtitle.clone().into();
             let segments = split_highlight_segments(&entry.title, &entry.title_matches);
+            let seg_count = segments.len();
 
             list_elements.push(
                 div()
@@ -915,23 +916,34 @@ impl Render for CommandPalette {
                                     } else {
                                         theme.text_secondary
                                     })
-                                    .children(segments.into_iter().map(|(seg, is_match)| {
-                                        div()
-                                            .flex_shrink_0()
-                                            .font_weight(if is_match {
-                                                FontWeight::BOLD
-                                            } else if selected {
-                                                FontWeight::MEDIUM
-                                            } else {
-                                                FontWeight::NORMAL
-                                            })
-                                            .text_color(if is_match || selected {
-                                                theme.text_primary
-                                            } else {
-                                                theme.text_secondary
-                                            })
-                                            .child(SharedString::from(seg))
-                                    })),
+                                    .children(segments.into_iter().enumerate().map(
+                                        |(seg_ix, (seg, is_match))| {
+                                            // Only the tail may shrink, so long titles end in "…".
+                                            let is_last = seg_ix + 1 == seg_count;
+                                            div()
+                                                .when(!is_last, |d| d.flex_shrink_0())
+                                                .when(is_last, |d| {
+                                                    d.flex_shrink(1.)
+                                                        .min_w(px(0.))
+                                                        .overflow_hidden()
+                                                        .whitespace_nowrap()
+                                                        .text_ellipsis()
+                                                })
+                                                .font_weight(if is_match {
+                                                    FontWeight::BOLD
+                                                } else if selected {
+                                                    FontWeight::MEDIUM
+                                                } else {
+                                                    FontWeight::NORMAL
+                                                })
+                                                .text_color(if is_match || selected {
+                                                    theme.text_primary
+                                                } else {
+                                                    theme.text_secondary
+                                                })
+                                                .child(SharedString::from(seg))
+                                        },
+                                    )),
                             )
                             .child(
                                 div()
@@ -949,12 +961,16 @@ impl Render for CommandPalette {
                             .gap(px(6.))
                             .flex_shrink_0()
                             .when_some(entry.shortcut, |row, sc| row.child(keycap(sc, &theme)))
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(theme.text_muted)
-                                    .child(entry.badge),
-                            ),
+                            // Memory rows already read as memories; the badge only
+                            // labels commands.
+                            .when(entry.badge != "Memory", |row| {
+                                row.child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(theme.text_muted)
+                                        .child(entry.badge),
+                                )
+                            }),
                     )
                     .into_any_element(),
             );
