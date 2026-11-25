@@ -62,8 +62,10 @@ mod capture_ui;
 mod compare_ui;
 mod health_ui;
 mod pack_ui;
+mod review_batch;
 mod search_ui;
 mod shortcuts;
+mod store_ui;
 
 const APP_BUILD_DATE: &str = env!("MEMOS_BUILD_DATE");
 
@@ -78,7 +80,8 @@ actions!(
         QuickCapture,
         OpenTodaySurface,
         OpenReviewSurface,
-        ToggleSearchSyntax
+        ToggleSearchSyntax,
+        ExportMemories
     ]
 );
 
@@ -233,6 +236,7 @@ pub fn register_app_key_bindings(cx: &mut App) {
         KeyBinding::new("cmd-4", OpenReviewSurface, None),
         KeyBinding::new("cmd-n", QuickCapture, None),
         KeyBinding::new("cmd-/", ToggleSearchSyntax, None),
+        KeyBinding::new("cmd-e", ExportMemories, None),
     ]);
 
     #[cfg(not(target_os = "macos"))]
@@ -245,6 +249,7 @@ pub fn register_app_key_bindings(cx: &mut App) {
         KeyBinding::new("ctrl-4", OpenReviewSurface, None),
         KeyBinding::new("ctrl-n", QuickCapture, None),
         KeyBinding::new("ctrl-/", ToggleSearchSyntax, None),
+        KeyBinding::new("ctrl-e", ExportMemories, None),
     ]);
 }
 
@@ -390,6 +395,9 @@ pub struct MemOSApp {
     compare: compare_ui::CompareState,
     capture: capture_ui::CaptureState,
     search_ui: search_ui::SearchUiState,
+    review_batch: review_batch::ReviewBatchState,
+    store_switch: store_ui::StoreSwitchState,
+    graph_card: shortcuts::GraphCardState,
     show_save_view_modal: bool,
     save_view_input: Entity<TextInput>,
     health_filter: HealthPanelFilter,
@@ -566,6 +574,7 @@ impl MemOSApp {
         let detail_view = cx.new(|cx| {
             let mut v = DetailView::new(theme);
             v.set_write_mode(settings.write_mode, cx);
+            v.set_large_text(settings.large_reading_text, cx);
             v
         });
         let graph_view = cx.new(|cx| {
@@ -598,7 +607,12 @@ impl MemOSApp {
                         settings,
                         selected_db,
                     } => {
-                        this.complete_onboarding(settings.clone(), selected_db.clone(), window, cx);
+                        this.complete_onboarding(
+                            (**settings).clone(),
+                            selected_db.clone(),
+                            window,
+                            cx,
+                        );
                     }
                     OnboardingEvent::ThemeChanged(mode) => {
                         this.settings.theme = *mode;
@@ -664,6 +678,10 @@ impl MemOSApp {
                 ReviewEvent::Approve(id) => this.execute_review_decision(id.clone(), true, cx),
                 ReviewEvent::Reject(id) => this.execute_review_decision(id.clone(), false, cx),
                 ReviewEvent::OpenSettings => this.open_settings_modal(window, cx),
+                ReviewEvent::Batch { ids, approve } => {
+                    this.start_review_batch(ids.clone(), *approve, cx)
+                }
+                ReviewEvent::StopBatch => this.stop_review_batch(cx),
             },
         ));
 
@@ -1029,6 +1047,9 @@ impl MemOSApp {
             compare: compare_ui::CompareState::default(),
             capture,
             search_ui,
+            review_batch: review_batch::ReviewBatchState::default(),
+            store_switch: store_ui::StoreSwitchState::default(),
+            graph_card: shortcuts::GraphCardState::default(),
             show_save_view_modal: false,
             save_view_input,
             health_filter: HealthPanelFilter::All,
@@ -1181,6 +1202,7 @@ impl MemOSApp {
     }
 
     fn spawn_initial_load(&mut self, cx: &mut Context<Self>) {
+        self.load_pins_for_store(cx);
         let db_path = self.resolved_db.path.clone();
         let filter = self.filter.clone();
         let timeline = self.timeline.clone();
@@ -1980,6 +2002,10 @@ impl MemOSApp {
                 self.open_harnesses_modal(window, cx);
                 return;
             }
+            SidebarEvent::OpenPins => {
+                self.open_context_pack(Some(PackSource::Pinned), window, cx);
+                return;
+            }
             SidebarEvent::ManageView(id) => {
                 self.open_manage_view(id, window, cx);
                 return;
@@ -2150,6 +2176,7 @@ impl MemOSApp {
         self.pack.open = false;
         self.compare.open = false;
         self.capture.open = false;
+        self.store_switch.open = false;
         self.search_ui.manage_view_id = None;
         self.search_ui.help_open = false;
         self.show_save_view_modal = false;
@@ -2389,6 +2416,7 @@ impl MemOSApp {
             || self.pack.open
             || self.compare.open
             || self.capture.open
+            || self.store_switch.open
             || self.search_ui.manage_view_id.is_some()
             || self.show_save_view_modal
             || self.show_composer_modal
@@ -2490,6 +2518,7 @@ impl MemOSApp {
         total_matching: usize,
         cx: &mut Context<Self>,
     ) {
+        self.remember_current_store();
         if self.active_surface != WorkspaceSurface::Memories {
             return;
         }
@@ -2522,6 +2551,7 @@ impl MemOSApp {
         jump_to_id: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        self.remember_current_store();
         self.last_db_stamp = stamp;
         self.pending_live_reload = None;
         let total = loaded.overview.node_count;
@@ -4869,6 +4899,10 @@ impl MemOSApp {
                 self.close_quick_capture(window, cx);
                 return;
             }
+            if self.store_switch.open {
+                self.close_store_switcher(window, cx);
+                return;
+            }
             if self.search_ui.manage_view_id.is_some() {
                 self.close_manage_view(window, cx);
                 return;
@@ -4911,6 +4945,19 @@ impl MemOSApp {
             }
             if self.has_any_popover_open(cx) {
                 self.dismiss_popovers(PopoverOwner::None, cx);
+                return;
+            }
+            if self.active_surface == WorkspaceSurface::Memories
+                && self.view_mode == ViewMode::Graph
+                && !self.has_overlay_open(cx)
+                && self.graph_view.update(cx, |g, cx| g.exit_focus_mode(cx))
+            {
+                return;
+            }
+            if self.active_surface == WorkspaceSurface::Review
+                && !self.has_overlay_open(cx)
+                && self.review_view.update(cx, |r, cx| r.clear_checked(cx))
+            {
                 return;
             }
             if self.detail_open && !self.has_overlay_open(cx) {
@@ -4967,6 +5014,10 @@ impl MemOSApp {
                     .update(cx, |r, cx| r.select_relative(-1, cx)),
                 "enter" if !event.is_held => {
                     self.review_view.update(cx, |r, cx| r.open_selected(cx));
+                }
+                "space" if !event.is_held => {
+                    self.review_view
+                        .update(cx, |r, cx| r.toggle_checked_selected(cx));
                 }
                 _ => {}
             },
@@ -5115,8 +5166,17 @@ impl MemOSApp {
         let saved_views = self.settings.saved_views.clone();
         let write_mode = self.settings.write_mode;
         let has_selection = self.selected_id.is_some();
+        let current = self.resolved_db.path.clone();
+        let stores: Vec<PathBuf> = self
+            .settings
+            .recent_stores
+            .iter()
+            .filter(|p| **p != current)
+            .cloned()
+            .collect();
         self.palette.update(cx, |p, cx| {
             p.set_write_context(write_mode, has_selection, cx);
+            p.set_recent_stores(stores);
             p.open(&items, &saved_views, window, cx);
         });
     }
@@ -5208,6 +5268,23 @@ impl MemOSApp {
                 self.toggle_search_help(window, cx);
                 return;
             }
+            PaletteAction::ExportMemories => {
+                self.open_export(window, cx);
+                return;
+            }
+            PaletteAction::ShowPinned => {
+                self.open_context_pack(Some(PackSource::Pinned), window, cx);
+                return;
+            }
+            PaletteAction::ClearPins => self.clear_pins(cx),
+            PaletteAction::SwitchStore => {
+                self.open_store_switcher(window, cx);
+                return;
+            }
+            PaletteAction::OpenRecentStore(path) => {
+                self.try_switch_store(path, cx);
+            }
+            PaletteAction::ToggleReadingSize => self.toggle_reading_size(cx),
             PaletteAction::ManageSavedView(id) => {
                 self.open_manage_view(id, window, cx);
                 return;
@@ -7924,6 +8001,11 @@ impl Render for MemOSApp {
                 .on_action(cx.listener(|this, _: &ToggleSearchSyntax, window, cx| {
                     this.toggle_search_help(window, cx);
                 }))
+                .on_action(cx.listener(|this, _: &ExportMemories, window, cx| {
+                    if !this.has_overlay_open(cx) || this.pack.open {
+                        this.open_export(window, cx);
+                    }
+                }))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -8554,6 +8636,9 @@ impl Render for MemOSApp {
                 })
                 .when(self.capture.open, |el| {
                     el.child(self.render_quick_capture(cx))
+                })
+                .when(self.store_switch.open, |el| {
+                    el.child(self.render_store_switcher(cx))
                 })
                 .when(self.search_ui.manage_view_id.is_some(), |el| {
                     el.child(self.render_manage_view(cx))

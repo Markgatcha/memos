@@ -41,6 +41,12 @@ pub enum PaletteAction {
     ToggleGraphFocus,
     OpenSearchSyntax,
     ManageSavedView(String),
+    ExportMemories,
+    ShowPinned,
+    ClearPins,
+    SwitchStore,
+    OpenRecentStore(std::path::PathBuf),
+    ToggleReadingSize,
     SaveCurrentView,
     DeleteSavedView(String),
     OpenShortcuts,
@@ -101,6 +107,8 @@ pub struct CommandPalette {
     memories_snapshot: Vec<MemoryListItem>,
     saved_views_snapshot: Vec<SavedView>,
     recent_titles: Vec<String>,
+    /// Other stores the user opened recently, offered as direct switches.
+    recent_stores: Vec<std::path::PathBuf>,
     write_mode: bool,
     has_selection: bool,
     theme: ThemePalette,
@@ -158,6 +166,7 @@ impl CommandPalette {
             memories_snapshot: Vec::new(),
             saved_views_snapshot: Vec::new(),
             recent_titles: Vec::new(),
+            recent_stores: Vec::new(),
             write_mode: false,
             has_selection: false,
             theme,
@@ -180,6 +189,10 @@ impl CommandPalette {
             self.rebuild_entries(&q);
             cx.notify();
         }
+    }
+
+    pub fn set_recent_stores(&mut self, stores: Vec<std::path::PathBuf>) {
+        self.recent_stores = stores;
     }
 
     pub fn is_open(&self) -> bool {
@@ -240,6 +253,35 @@ impl CommandPalette {
             self.write_mode,
             self.has_selection,
         );
+        let trimmed = query.trim();
+        for path in &self.recent_stores {
+            let name = path
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let title = format!("Open store: {name}");
+            let matched = if trimmed.is_empty() {
+                Some((0, Vec::new()))
+            } else {
+                fuzzy_match_ranges(&title, trimmed)
+            };
+            if let Some((score, ranges)) = matched {
+                self.entries.push(PaletteEntry {
+                    title,
+                    subtitle: path
+                        .parent()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    badge: "Store",
+                    shortcut: None,
+                    group: PaletteGroup::Actions,
+                    action: PaletteAction::OpenRecentStore(path.clone()),
+                    keywords: "",
+                    match_score: score,
+                    title_matches: ranges,
+                });
+            }
+        }
         self.selected_ix = 0;
     }
 }
@@ -381,6 +423,11 @@ fn static_palette_commands() -> Vec<PaletteEntry> {
         ("Show or hide inspector", "Toggle the detail pane for the selection", "View", Some("I"), Actions, PaletteAction::ToggleInspector, "detail panel"),
         ("Store health", "Cleanup suggestions: conflicts, stale and duplicate memories", "Health", None, Actions, PaletteAction::OpenHealth, "fix issues score what to fix"),
         ("Dream diff timeline", "Promotions, merges, decay and conflicts over time", "Timeline", None, Actions, PaletteAction::OpenDreamDiff, "history activity"),
+        ("Export memories…", "Save the selection, pins or this view as Markdown, JSON or text", "Export", Some("Ctrl E"), Actions, PaletteAction::ExportMemories, "save file download backup markdown json"),
+        ("Show pinned memories", "Your hand-picked set, saved for this store", "Pins", None, Actions, PaletteAction::ShowPinned, "pins pinned basket collection"),
+        ("Clear all pins", "Unpin every memory in this store", "Pins", None, Actions, PaletteAction::ClearPins, "unpin remove reset"),
+        ("Switch store…", "Open another MemOS store in this window", "Store", None, Actions, PaletteAction::SwitchStore, "database file open recent change"),
+        ("Toggle reading size", "Larger text in the inspector and comparison", "Look", None, Actions, PaletteAction::ToggleReadingSize, "font text zoom bigger accessibility"),
         ("Copy selected memory as Markdown", "Heading, metadata line, body and citation", "Copy", None, Actions, PaletteAction::CopyActiveMarkdown, "clipboard export"),
         ("Toggle theme", "Switch between dark and light", "Look", None, Actions, PaletteAction::ToggleTheme, "color appearance dark light mode"),
         ("Toggle row density", "Comfortable or compact list rows", "Look", None, Actions, PaletteAction::ToggleRowDensity, "compact spacing"),

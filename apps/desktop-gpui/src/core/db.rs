@@ -3226,10 +3226,11 @@ impl ReadOnlyStore {
         let tags_expr = self.schema.node_col_expr("n", "tags", "'[]'");
         let updated_expr = self.schema.node_col_expr("n", "updated_at", "0");
         let created_expr = self.schema.node_col_expr("n", "created_at", "0");
+        let prov_expr = self.schema.node_col_expr("n", "provenance", "''");
         let placeholders = vec!["?"; ids.len()].join(", ");
         let sql = format!(
             "SELECT {id_expr}, {content_expr}, {summary_expr}, {type_expr}, {ns_expr}, \
-             {tags_expr}, {updated_expr}, {created_expr} \
+             {tags_expr}, {updated_expr}, {created_expr}, {prov_expr} \
              FROM nodes n WHERE {id_expr} IN ({placeholders})"
         );
 
@@ -3255,6 +3256,7 @@ impl ReadOnlyStore {
             }
             let updated_at = row.get::<_, Option<i64>>(6).ok().flatten().unwrap_or(0);
             let created_at = row.get::<_, Option<i64>>(7).ok().flatten().unwrap_or(0);
+            let provenance = get_string(row, 8);
             let short_id = short_citation_id(&id);
             by_id.insert(
                 id.clone(),
@@ -3271,6 +3273,8 @@ impl ReadOnlyStore {
                     } else {
                         created_at
                     },
+                    created_at,
+                    provenance,
                 },
             );
         }

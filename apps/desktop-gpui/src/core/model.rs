@@ -627,6 +627,10 @@ pub struct ContextPreviewItem {
     pub tags: Vec<String>,
     /// Last update (or creation) time in the store's native unit; `0` if unknown.
     pub updated_at: i64,
+    /// Creation time in the store's native unit; `0` if unknown.
+    pub created_at: i64,
+    /// Provenance tier (`user`, `verified`, `agent-inferred`, …); empty if unknown.
+    pub provenance: String,
 }
 
 /// Formatted agent context payload plus char/token estimates.
@@ -1018,6 +1022,8 @@ mod tests {
                 summary: "PKCE OAuth decision".to_string(),
                 tags: Vec::new(),
                 updated_at: 0,
+                created_at: 0,
+                provenance: String::new(),
             },
             ContextPreviewItem {
                 id: "5678ef90-0000".to_string(),
@@ -1028,6 +1034,8 @@ mod tests {
                 summary: "Token lifetime is 15 minutes.".to_string(),
                 tags: Vec::new(),
                 updated_at: 0,
+                created_at: 0,
+                provenance: String::new(),
             },
         ];
         let formatted = format_ai_context_payload(&items, 42, "Current view");

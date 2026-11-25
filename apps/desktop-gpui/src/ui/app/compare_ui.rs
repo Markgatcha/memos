@@ -362,8 +362,16 @@ impl MemOSApp {
                     .id(SharedString::from(format!("compare-body-{key}")))
                     .max_h(px(content_max_h))
                     .overflow_y_scroll()
-                    .text_size(px(kit::text::READ))
-                    .line_height(px(21.))
+                    .text_size(px(if self.settings.large_reading_text {
+                        16.
+                    } else {
+                        kit::text::READ
+                    }))
+                    .line_height(px(if self.settings.large_reading_text {
+                        24.
+                    } else {
+                        21.
+                    }))
                     .text_color(theme.text_primary)
                     .child(SharedString::from(body)),
             )
