@@ -138,12 +138,16 @@ describe("ftsOperator", () => {
     return memos;
   }
 
-  test("AUTO keeps the precise AND result set", async () => {
+  test("AUTO ranks full-term matches above any backfilled partial matches", async () => {
     const memos = await seed();
     const results = await memos.search({ query: "zebra habitat", limit: 5 });
-    expect(results.map((r) => r.node.content)).toEqual([
-      "zebra habitat savanna",
-    ]);
+    const contents = results.map((r) => r.node.content);
+    // The full-term match always leads. When the AND leg is thin, AUTO
+    // backfills partial-term matches as recall filler — capped below
+    // every full match, never ahead of it.
+    expect(contents[0]).toBe("zebra habitat savanna");
+    const partial = contents.indexOf("zebra plains roaming");
+    if (partial !== -1) expect(partial).toBeGreaterThan(0);
     await memos.close();
   });
 
@@ -506,6 +510,10 @@ describe("experimental.rerank", () => {
           endpoint: "http://127.0.0.1:8081",
           model: "test-reranker",
           candidates: 10,
+          // Pure cross-encoder ordering: with the default blend (0.5)
+          // the fused signal can override weak CE margins, so CE scores
+          // are intentionally not monotonic in output order.
+          blend: 0,
         },
       },
       embeddings: { enabled: true, provider: new MarkerProvider() },

@@ -221,8 +221,13 @@ describe("MemOS", () => {
     await memos.store("Light mode preference", { tags: ["ui", "preference"] });
 
     const uiResults = await memos.search({ query: "dark mode", tags: ["ui"] });
-    expect(uiResults).toHaveLength(1);
-    expect(uiResults[0].node.tags).toContain("ui");
+    // FTS AUTO backfill may append partial-term matches (e.g. "Light mode
+    // preference" matches "mode") below every full-term match — the tag
+    // filter must still hold for every returned row, and the full match
+    // must rank first.
+    expect(uiResults.length).toBeGreaterThanOrEqual(1);
+    expect(uiResults[0].node.content).toBe("Dark mode preference");
+    for (const r of uiResults) expect(r.node.tags).toContain("ui");
   });
 
   test("export as json", async () => {

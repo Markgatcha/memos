@@ -430,6 +430,47 @@ function sigmoid(x: number): number {
 }
 
 /**
+ * Resolve the rerank blend fraction: how much of each head item's
+ * min-max-normalized FUSED score is mixed into the cross-encoder ordering
+ * key. 0 = pure cross-encoder ordering; 1 = pure fused order.
+ * Cross-encoder logits are sharp but brittle on adversarially-phrased
+ * queries, where literal-match traps can outscore genuine evidence —
+ * measured on LoCoMo, pure-CE ordering regresses the adversarial
+ * category by 8.4 hit@10 points while blend 0.5 (the default) keeps
+ * every category at or above the no-rerank baseline. The emitted
+ * `score` stays the sigmoid CE score either way, so downstream gates see
+ * one consistent scale.
+ */
+function resolveRerankBlend(cfgBlend: number | undefined): number {
+  const env = Number.parseFloat(process.env.MEMOS_RERANK_BLEND ?? "");
+  const raw = Number.isFinite(env) ? env : (cfgBlend ?? 0.5);
+  return Math.min(1, Math.max(0, raw));
+}
+
+/**
+ * Build the head ordering key for a rerank pass. When `blend` is 0 the key
+ * is the CE score itself; otherwise it is
+ * `(1 - blend) * ceScore + blend * fusedNorm` with `fusedNorm` min-max
+ * normalized across the head.
+ */
+function makeRerankOrderKey(
+  head: ScoredMemory[],
+  blend: number,
+): (index: number, ceScore: number) => number {
+  if (blend <= 0) return (_index, ceScore) => ceScore;
+  let fusedMin = Infinity;
+  let fusedMax = -Infinity;
+  for (const row of head) {
+    if (row.score < fusedMin) fusedMin = row.score;
+    if (row.score > fusedMax) fusedMax = row.score;
+  }
+  const span = fusedMax - fusedMin;
+  if (span <= 0) return (_index, ceScore) => ceScore;
+  return (index, ceScore) =>
+    (1 - blend) * ceScore + blend * ((head[index]!.score - fusedMin) / span);
+}
+
+/**
  * JSON.stringify with object keys recursively sorted, so semantically
  * identical filter objects always produce the same search-cache key
  * regardless of property insertion order. Arrays keep their order.
@@ -9807,10 +9848,16 @@ export class MemOS {
     }
 
     let reranked = withSessions;
+    // True only when the reranker actually re-scored the head — detectable
+    // by array identity because every no-op path in applyRerank returns the
+    // input array unchanged, while a successful rerank builds a new one.
+    let rerankApplied = false;
     if (!opts.internal) {
       if (planAllowsStage(plan, "rerank")) {
         const started = performance.now();
-        reranked = await this.applyRerank(withSessions, filter);
+        const next = await this.applyRerank(withSessions, filter);
+        rerankApplied = next !== withSessions;
+        reranked = next;
         recordRecallStage(plan, "rerank", performance.now() - started, true);
       } else {
         recordSkippedStage(plan, "rerank");
@@ -9860,10 +9907,19 @@ export class MemOS {
     // equal-score results deterministic by id, so `search({multiHop:false})`
     // and a default search cannot disagree on tie order. MMR output is left
     // untouched: its reordering IS the ranking.
+    //
+    // The same exemption applies when the reranker ran: it re-scores only
+    // the head with cross-encoder logits (sigmoid-squashed to [0,1]) while
+    // tail items keep their fused scores — two incompatible scales. A
+    // comparator re-sort would interleave tail items back above reranked
+    // head items whose sigmoid happens to sit below the tail's fused
+    // scores, silently undoing the rerank. The reranker's ordering IS the
+    // ranking, so it is left untouched exactly like MMR output.
     const mmrActive = !opts.skipMmr && this.resolveMmr(filter) !== null;
-    const ordered = mmrActive
-      ? diversified
-      : [...diversified].sort(compareScoredMemories);
+    const ordered =
+      mmrActive || rerankApplied
+        ? diversified
+        : [...diversified].sort(compareScoredMemories);
 
     // The planner enables second-hop expansion for multi-session and
     // aggregation questions unless the caller pinned `multiHop`.
@@ -10330,10 +10386,14 @@ export class MemOS {
       : this.applyMmrStage(gated.results, filter);
     const mmrMs = performance.now() - mmrStart;
 
+    // When the reranker ran, its cross-encoder ordering IS the ranking —
+    // re-sorting by score would mix the head's sigmoid scale with the
+    // tail's fused scale and undo the rerank (see hybridSearch).
     const mmrActive = mmrResolved !== null;
-    const ordered = mmrActive
-      ? diversified
-      : [...diversified].sort(compareScoredMemories);
+    const ordered =
+      mmrActive || rerankApplied
+        ? diversified
+        : [...diversified].sort(compareScoredMemories);
 
     let finalResults: ScoredMemory[];
     if (offset === 0 && !opts.internal && !gated.gate.abstained) {
@@ -10772,9 +10832,10 @@ export class MemOS {
         }
         return results;
       }
+      const orderKey = makeRerankOrderKey(head, resolveRerankBlend(cfg?.blend));
       const order = scores
-        .map((score, index) => ({ score, index }))
-        .sort((a, b) => b.score - a.score)
+        .map((score, index) => ({ key: orderKey(index, score), index }))
+        .sort((a, b) => b.key - a.key)
         .map((row) => row.index);
       return [
         ...order.map((index) => ({
@@ -10836,13 +10897,14 @@ export class MemOS {
       return results;
     }
 
+    const orderKey = makeRerankOrderKey(head, resolveRerankBlend(cfg?.blend));
     const scored = (payload.results ?? [])
       .map((row) => ({
         index: row.index ?? -1,
         score: sigmoid(row.relevance_score ?? row.score ?? 0),
       }))
       .filter((row) => row.index >= 0 && row.index < head.length)
-      .sort((a, b) => b.score - a.score);
+      .sort((a, b) => orderKey(b.index, b.score) - orderKey(a.index, a.score));
 
     if (scored.length === 0) return results;
 

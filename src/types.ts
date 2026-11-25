@@ -2126,6 +2126,20 @@ export interface ExperimentalConfig {
      * GPU waves on the rerank server. Default 0 = send full documents.
      */
     maxDocChars?: number;
+    /**
+     * How much of each head item's min-max-normalized fused score is mixed
+     * into the cross-encoder ordering key: 0 = pure cross-encoder
+     * ordering, 1 = pure fused order. Cross-encoder logits are sharp but
+     * brittle on adversarially-phrased queries, where literal-match traps
+     * can outscore genuine evidence — a blend keeps the retrieval signal
+     * a voice in the ordering. Default 0.5 (measured on LoCoMo: pure CE
+     * ordering regresses the adversarial category by 8.4 hit@10 points;
+     * 0.5 keeps every category at or above the no-rerank baseline). Set
+     * 0 for maximum raw precision when adversarial robustness does not
+     * matter. The emitted `score` stays the sigmoid CE score either way.
+     * Overridable for experiments with `MEMOS_RERANK_BLEND`.
+     */
+    blend?: number;
     /** Request timeout in ms. Default 5000. */
     timeoutMs?: number;
   };

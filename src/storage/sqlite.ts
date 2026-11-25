@@ -341,6 +341,16 @@ const FTS_STOPWORDS = new Set([
 ]);
 
 /**
+ * Upper bound on the min-max-normalized weight any AUTO-backfilled
+ * partial match can carry in the keyword leg: filler is remapped into a
+ * band below every full match sized so the best filler normalizes to at
+ * most this fraction of the leg range. 0.25 keeps recall filler from
+ * ever outscoring a genuine full match while still giving cross-leg
+ * agreement something to amplify.
+ */
+const FTS_BACKFILL_CAP = 0.25;
+
+/**
  * Tokenize a natural-language query into individually quoted FTS5
  * terms.
  *
@@ -1809,6 +1819,21 @@ export class SQLiteStorage implements StorageAdapter {
     return stmt;
   }
 
+  /**
+   * Is the corpus large enough for FTS5 bm25 idf statistics to be
+   * meaningful? Used by the AUTO backfill path to decide whether partial
+   * matches may keep their native rank. Existence probe (`LIMIT 200`) —
+   * O(threshold), no COUNT(*) scan, never cached so ingestion growth is
+   * picked up immediately.
+   */
+  private largeCorpus(): boolean {
+    const probe = this.getPreparedStatement(
+      "probe::largeCorpus",
+      "SELECT 1 AS x FROM nodes LIMIT 200",
+    );
+    return (probe.all() as unknown[]).length >= 200;
+  }
+
   async getEdge(id: string): Promise<MemoryEdge | null> {
     const row = this.db.prepare("SELECT * FROM edges WHERE id = ?").get(id) as
       Record<string, unknown> | undefined;
@@ -1987,14 +2012,56 @@ export class SQLiteStorage implements StorageAdapter {
         rows = runFts(ftsTerms.join(" OR "));
       } else if (
         operator === "AUTO" &&
-        andRows.length === 0 &&
+        andRows.length <
+          Math.min(5, (filter.limit ?? 50) + (filter.offset ?? 0)) &&
         ftsTerms.length > 1
       ) {
-        // AUTO (default): precision AND first; only when it matches
-        // NOTHING relax to OR so partial-term matches still surface
-        // instead of an empty result set. `ftsOperator: "OR"` forces the
-        // recall-first query (benchmark ablation for multi-evidence work).
-        rows = runFts(ftsTerms.join(" OR "));
+        // AUTO (default): precision AND first. Only when AND is genuinely
+        // thin (<5 rows — the classic empty case included) backfill with
+        // the OR query's partial-term matches; firing on an already-rich
+        // leg just injects noise above real evidence.
+        //
+        // Filler scoring is corpus-size aware. bm25's idf term depends on
+        // GLOBAL index statistics: on a large corpus a partial match on a
+        // rare term carrying a strong native rank is genuinely informative
+        // (measured: LoCoMo hit@10 +1.9 with flat MRR), so filler keeps
+        // its native rank. On a small corpus idf is degenerate and the
+        // same pathology (single-rare-term match outscoring multi-term
+        // full matches) floods the ranking — and downstream fusion
+        // normalizes by SCORE, not array position — so filler is remapped
+        // into a bounded band below every full match, capping its
+        // normalized weight at FTS_BACKFILL_CAP. Either way filler is
+        // recall filler, never a keyword-leg takeover.
+        // `ftsOperator: "OR"` forces the recall-first query (benchmark
+        // ablation for multi-evidence work).
+        const want = (filter.limit ?? 50) + (filter.offset ?? 0);
+        const andIds = new Set(andRows.map((row) => row.id));
+        const orRows = runFts(ftsTerms.join(" OR "));
+        rows = andRows.slice();
+        const filler: Record<string, unknown>[] = [];
+        for (const row of orRows) {
+          if (andRows.length + filler.length >= want) break;
+          if (!andIds.has(row.id)) filler.push(row);
+        }
+        if (andRows.length > 0 && filler.length > 0 && !this.largeCorpus()) {
+          // bm25 ranks sort ascending (more negative = better): the first
+          // AND row is the best full match, the last is the worst, and
+          // filler must be larger (worse) than the worst. Band width for
+          // a normalized cap c is c/(1-c) of the full-match spread.
+          const bestAnd = Number(andRows[0]?.["rank"] ?? 0);
+          const worstAnd = Number(andRows[andRows.length - 1]?.["rank"] ?? 0);
+          const spread = Math.max(
+            worstAnd - bestAnd,
+            Math.abs(bestAnd) * 1e-3,
+            1e-6,
+          );
+          const band =
+            (FTS_BACKFILL_CAP / (1 - FTS_BACKFILL_CAP)) * spread;
+          for (let i = 0; i < filler.length; i++) {
+            filler[i]!["rank"] = worstAnd + (band * (i + 1)) / filler.length;
+          }
+        }
+        rows.push(...filler);
       } else {
         rows = andRows;
       }
