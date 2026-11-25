@@ -466,12 +466,9 @@ impl ReviewView {
                                                 == Some(id_reject.as_str())
                                             {
                                                 this.pending_reject = None;
-                                                cx.emit(ReviewEvent::Reject(
-                                                    id_reject.clone(),
-                                                ));
+                                                cx.emit(ReviewEvent::Reject(id_reject.clone()));
                                             } else {
-                                                this.pending_reject =
-                                                    Some(id_reject.clone());
+                                                this.pending_reject = Some(id_reject.clone());
                                                 cx.notify();
                                             }
                                         }
@@ -498,7 +495,8 @@ impl Render for ReviewView {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         let scroll_handle = self.scroll_handle.clone();
-        let pending_label = review_header_subtitle(self.loading, self.items.len(), self.error.as_ref());
+        let pending_label =
+            review_header_subtitle(self.loading, self.items.len(), self.error.as_ref());
 
         let header = div()
             .id("review-page-header")

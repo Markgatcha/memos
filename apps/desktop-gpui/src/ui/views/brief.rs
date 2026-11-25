@@ -122,7 +122,8 @@ pub fn format_brief_date_utc(now_ms: i64) -> String {
 pub fn format_brief_date_label(now_ms: i64) -> String {
     let secs = now_ms.div_euclid(1000);
     if let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(secs) {
-        let format = time::macros::format_description!("[weekday repr:short], [month repr:short] [day]");
+        let format =
+            time::macros::format_description!("[weekday repr:short], [month repr:short] [day]");
         dt.format(&format).unwrap_or_else(|_| "Today".to_string())
     } else {
         "Today".to_string()
@@ -409,10 +410,7 @@ impl BriefView {
                             .font_features(tabular_nums())
                             .text_color(theme.text_muted)
                             .flex_shrink_0()
-                            .child(SharedString::from(format!(
-                                "#{}",
-                                pair.node_a_short_id
-                            ))),
+                            .child(SharedString::from(format!("#{}", pair.node_a_short_id))),
                     )
                     .child(
                         div()
@@ -447,10 +445,7 @@ impl BriefView {
                             .font_features(tabular_nums())
                             .text_color(theme.text_muted)
                             .flex_shrink_0()
-                            .child(SharedString::from(format!(
-                                "#{}",
-                                pair.node_b_short_id
-                            ))),
+                            .child(SharedString::from(format!("#{}", pair.node_b_short_id))),
                     )
                     .child(
                         div()
@@ -499,12 +494,12 @@ impl BriefView {
                                     .child(kind.title()),
                             )
                             .child({
-                                let (pill_bg, pill_fg) =
-                                    if kind == BriefSectionKind::Contradictions {
-                                        (theme.danger_soft, theme.danger)
-                                    } else {
-                                        (theme.bg_badge, theme.text_muted)
-                                    };
+                                let (pill_bg, pill_fg) = if kind == BriefSectionKind::Contradictions
+                                {
+                                    (theme.danger_soft, theme.danger)
+                                } else {
+                                    (theme.bg_badge, theme.text_muted)
+                                };
                                 div()
                                     .px(px(7.))
                                     .py(px(1.))

@@ -70,7 +70,9 @@ impl SharedStore {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Slot> {
-        self.slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.slot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     #[cfg(test)]
@@ -137,7 +139,11 @@ mod tests {
                 .node_count;
             assert_eq!(count, 0);
         }
-        assert_eq!(shared.open_count(), 1, "repeated reads must reuse the connection");
+        assert_eq!(
+            shared.open_count(),
+            1,
+            "repeated reads must reuse the connection"
+        );
 
         {
             let writer = rusqlite::Connection::open(&path).expect("open for write");

@@ -34,8 +34,7 @@ fn whole_event_scrub_covers_nested_fields() {
     let _cleanup = GuardCleanup;
     let secret = "NESTED_SECRET_MEMORY_abc123";
     register_sensitive_text(secret);
-    let ctx = ScrubContext::from_environment("test-install-nested")
-        .with_extra_sensitive(secret);
+    let ctx = ScrubContext::from_environment("test-install-nested").with_extra_sensitive(secret);
 
     let mut event = Event::default();
     event.contexts.insert(

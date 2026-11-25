@@ -477,8 +477,8 @@ impl MemOSApp {
             initial_filter.sort = settings.last_sort;
         }
         let search_input = cx.new(|cx| {
-            let mut input = TextInput::new(cx, "Search memories", theme)
-                .with_leading_icon(UiIcon::Search);
+            let mut input =
+                TextInput::new(cx, "Search memories", theme).with_leading_icon(UiIcon::Search);
             if !initial_filter.query.trim().is_empty() {
                 input.set_text(initial_filter.query.clone(), cx);
             }
@@ -1171,11 +1171,8 @@ impl MemOSApp {
                         fast_timeline.record_span("db_open", db_open_start, Instant::now());
                         fast_shared.with_store(&fast_db, |store| {
                             let (node_count, contradiction_ids) = store.load_list_fast_meta()?;
-                            let overview = DbOverview::fast(
-                                fast_db.clone(),
-                                node_count,
-                                contradiction_ids,
-                            );
+                            let overview =
+                                DbOverview::fast(fast_db.clone(), node_count, contradiction_ids);
                             let list_start = Instant::now();
                             let page = store.query_nodes_page(
                                 &fast_filter,
@@ -1188,7 +1185,9 @@ impl MemOSApp {
                             } else if fast_filter.is_empty() {
                                 node_count
                             } else {
-                                store.count_matching_nodes(&fast_filter)?.max(page.items.len())
+                                store
+                                    .count_matching_nodes(&fast_filter)?
+                                    .max(page.items.len())
                             };
                             Ok::<_, DbError>((overview, page, total_matching, list_start))
                         })
@@ -1237,8 +1236,11 @@ impl MemOSApp {
                             })
                         } else {
                             let list_start = Instant::now();
-                            let loaded =
-                                load_initial_snapshot_with_overview(store, overview.clone(), &filter)?;
+                            let loaded = load_initial_snapshot_with_overview(
+                                store,
+                                overview.clone(),
+                                &filter,
+                            )?;
                             Ok(PhaseTwo {
                                 overview,
                                 health: None,
@@ -1514,103 +1516,102 @@ impl MemOSApp {
         let shared = self.shared_store.clone();
         self.list_view.update(cx, |l, cx| l.set_loading(true, cx));
 
-        self._search_task = Some(cx.spawn(async move |this, cx| {
-            if debounce_ms > 0 {
-                cx.background_executor()
-                    .timer(Duration::from_millis(debounce_ms))
-                    .await;
-            }
-
-            let started = Instant::now();
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    shared.with_store(&db_path, |store| {
-                        let overview = match overview_clone {
-                            Some(ov) => ov,
-                            None => store.load_overview()?,
-                        };
-                        let page = store.query_nodes_page(
-                            &filter,
-                            &overview.contradiction_node_ids,
-                            None,
-                            crate::core::db::LIST_PAGE_SIZE,
-                        )?;
-                        let total_matching = if !page.has_more {
-                            page.items.len()
-                        } else if filter.is_empty() {
-                            overview.node_count
-                        } else {
-                            store.count_matching_nodes(&filter)?.max(page.items.len())
-                        };
-                        Ok::<(DbOverview, crate::core::db::ListPageResult, usize), DbError>((
-                            overview,
-                            page,
-                            total_matching,
-                        ))
-                    })
-                })
-                .await;
-
-            let _ = this.update(cx, |app, cx| {
-                if !app.query_generation.is_current(request_gen) {
-                    return;
+        self._search_task =
+            Some(cx.spawn(async move |this, cx| {
+                if debounce_ms > 0 {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(debounce_ms))
+                        .await;
                 }
-                let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
-                match result {
-                    Ok((ov, page, total_matching)) => {
-                        tracing::info!(
-                            results = page.items.len(),
-                            total_matching,
-                            has_more = page.has_more,
-                            elapsed_ms,
-                            has_query = !app.filter.query.trim().is_empty(),
-                            "filtered query complete"
-                        );
-                        let total = ov.node_count;
-                        let selected_still_present = app
-                            .selected_id
-                            .as_deref()
-                            .is_some_and(|sel| page.items.iter().any(|it| it.id == sel));
-                        app.list_cursor = page.next_cursor;
-                        app.list_total_matching = total_matching;
-                        app.loading_next_page = false;
-                        app.list_view.update(cx, |list, cx| {
-                            list.set_items(
-                                page.items,
-                                !app.filter.is_empty(),
+
+                let started = Instant::now();
+                let result =
+                    cx.background_executor()
+                        .spawn(async move {
+                            shared.with_store(&db_path, |store| {
+                                let overview = match overview_clone {
+                                    Some(ov) => ov,
+                                    None => store.load_overview()?,
+                                };
+                                let page = store.query_nodes_page(
+                                    &filter,
+                                    &overview.contradiction_node_ids,
+                                    None,
+                                    crate::core::db::LIST_PAGE_SIZE,
+                                )?;
+                                let total_matching = if !page.has_more {
+                                    page.items.len()
+                                } else if filter.is_empty() {
+                                    overview.node_count
+                                } else {
+                                    store.count_matching_nodes(&filter)?.max(page.items.len())
+                                };
+                                Ok::<(DbOverview, crate::core::db::ListPageResult, usize), DbError>(
+                                    (overview, page, total_matching),
+                                )
+                            })
+                        })
+                        .await;
+
+                let _ = this.update(cx, |app, cx| {
+                    if !app.query_generation.is_current(request_gen) {
+                        return;
+                    }
+                    let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
+                    match result {
+                        Ok((ov, page, total_matching)) => {
+                            tracing::info!(
+                                results = page.items.len(),
                                 total_matching,
-                                total,
-                                page.has_more,
-                                cx,
+                                has_more = page.has_more,
+                                elapsed_ms,
+                                has_query = !app.filter.query.trim().is_empty(),
+                                "filtered query complete"
                             );
-                        });
-                        if !selected_still_present {
-                            app.selected_id = None;
-                            app.detail_open = false;
+                            let total = ov.node_count;
+                            let selected_still_present = app
+                                .selected_id
+                                .as_deref()
+                                .is_some_and(|sel| page.items.iter().any(|it| it.id == sel));
+                            app.list_cursor = page.next_cursor;
+                            app.list_total_matching = total_matching;
+                            app.loading_next_page = false;
+                            app.list_view.update(cx, |list, cx| {
+                                list.set_items(
+                                    page.items,
+                                    !app.filter.is_empty(),
+                                    total_matching,
+                                    total,
+                                    page.has_more,
+                                    cx,
+                                );
+                            });
+                            if !selected_still_present {
+                                app.selected_id = None;
+                                app.detail_open = false;
+                                app.list_view
+                                    .update(cx, |list, cx| list.set_selected(None, false, cx));
+                                app.graph_view
+                                    .update(cx, |graph, cx| graph.set_selected(None, false, cx));
+                                app.detail_view.update(cx, |d, cx| d.set_detail(None, cx));
+                            }
+                            if app.view_mode == ViewMode::Graph {
+                                app.spawn_graph_load(cx);
+                            }
+                        }
+                        Err(DbError::NotFound) => {
+                            let path_str = app.resolved_db.path.display().to_string();
                             app.list_view
-                                .update(cx, |list, cx| list.set_selected(None, false, cx));
-                            app.graph_view
-                                .update(cx, |graph, cx| graph.set_selected(None, false, cx));
-                            app.detail_view.update(cx, |d, cx| d.set_detail(None, cx));
+                                .update(cx, |list, cx| list.set_missing_db(Some(path_str), cx));
                         }
-                        if app.view_mode == ViewMode::Graph {
-                            app.spawn_graph_load(cx);
+                        Err(err) => {
+                            let msg = sanitize_db_error(&err, &app.resolved_db.path);
+                            app.list_view
+                                .update(cx, |list, cx| list.set_error(Some(msg), cx));
                         }
                     }
-                    Err(DbError::NotFound) => {
-                        let path_str = app.resolved_db.path.display().to_string();
-                        app.list_view
-                            .update(cx, |list, cx| list.set_missing_db(Some(path_str), cx));
-                    }
-                    Err(err) => {
-                        let msg = sanitize_db_error(&err, &app.resolved_db.path);
-                        app.list_view
-                            .update(cx, |list, cx| list.set_error(Some(msg), cx));
-                    }
-                }
-            });
-        }));
+                });
+            }));
     }
 
     fn spawn_next_page_load(&mut self, cx: &mut Context<Self>) {
@@ -1712,9 +1713,9 @@ impl MemOSApp {
         self._detail_task = Some(cx.spawn(async move |this, cx| {
             let detail_res = cx
                 .background_executor()
-                .spawn(async move {
-                    shared.with_store(&db_path, |store| store.load_node_detail(&id))
-                })
+                .spawn(
+                    async move { shared.with_store(&db_path, |store| store.load_node_detail(&id)) },
+                )
                 .await;
 
             let _ = this.update(cx, |app, cx| {
@@ -2166,9 +2167,9 @@ impl MemOSApp {
         self._dream_diff_task = Some(cx.spawn(async move |this, cx| {
             let loaded = cx
                 .background_executor()
-                .spawn(async move {
-                    shared.with_store(&db_path, |store| store.load_dream_diff(120))
-                })
+                .spawn(
+                    async move { shared.with_store(&db_path, |store| store.load_dream_diff(120)) },
+                )
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.dream_diff_loading = false;
@@ -8969,19 +8970,16 @@ impl Render for MemOSApp {
                                             )
                                         })
                                         .when(self.filter.query.trim().is_empty(), |el| {
-                                            el.child(
-                                                div()
-                                                    .flex_shrink_0()
-                                                    .pr(px(2.))
-                                                    .child(keycap(
-                                                        if cfg!(target_os = "macos") {
-                                                            "⌘ K"
-                                                        } else {
-                                                            "Ctrl K"
-                                                        },
-                                                        &theme,
-                                                    )),
-                                            )
+                                            el.child(div().flex_shrink_0().pr(px(2.)).child(
+                                                keycap(
+                                                    if cfg!(target_os = "macos") {
+                                                        "⌘ K"
+                                                    } else {
+                                                        "Ctrl K"
+                                                    },
+                                                    &theme,
+                                                ),
+                                            ))
                                         }),
                                 )
                                 .when(!scope_chips.is_empty(), |col| {
@@ -9403,20 +9401,17 @@ impl Render for MemOSApp {
                                         .child(footer_left),
                                 ),
                         )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(12.))
-                                .when_some(self.status_notice.clone(), |el, msg| {
-                                    el.child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.success)
-                                            .child(SharedString::from(msg)),
-                                    )
-                                }),
-                        ),
+                        .child(div().flex().items_center().gap(px(12.)).when_some(
+                            self.status_notice.clone(),
+                            |el, msg| {
+                                el.child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(theme.success)
+                                        .child(SharedString::from(msg)),
+                                )
+                            },
+                        )),
                 )
                 .when(self.momo_hovered && !self.has_overlay_open(cx), |el| {
                     el.child(
