@@ -556,6 +556,8 @@ impl ModalShell {
                                     div()
                                         .flex_1()
                                         .min_w(px(0.))
+                                        .flex()
+                                        .items_center()
                                         .text_size(px(text::SM))
                                         .text_color(theme.text_muted)
                                         .font_features(tabular_nums())

@@ -64,8 +64,9 @@ impl MemOSApp {
     ) {
         self.dismiss_popovers(super::PopoverOwner::None, cx);
         self.close_all_modals();
-        let source = source.unwrap_or(if self.pack.open || !self.pack.pins.is_empty() {
-            self.pack.source
+        // Pins are an explicit choice, so they win over the selection.
+        let source = source.unwrap_or(if !self.pack.pins.is_empty() {
+            PackSource::Pinned
         } else if self.selected_id.is_some() {
             PackSource::Selected
         } else {

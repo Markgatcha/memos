@@ -4,6 +4,28 @@ All notable changes to MemOS Desktop are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the desktop app is
 versioned independently from the `@mem-os/sdk` package.
 
+## [Unreleased]
+
+### Added
+
+- **Context pack builder (`C`).** Replaces the single "What the AI sees" preview. Choose the source (**Selected**, **Current view** in list order, or **Pinned**), a token budget (**1k / 2k / 4k / 8k / No limit**, estimated as chars ÷ 4) and a format (**Plain**, **Markdown**, **Citations** digest, or **JSON**). Memories that do not fit are left out whole and counted; text is never cut. Pin or unpin the selection with `P` or **Pin** in the inspector (session-only, up to 100); the status bar shows `N pinned`.
+- **Quick capture (`Ctrl/Cmd+N`, header **Capture**, palette).** One field; `#tag`, `ns:name` and `type:kind` at the start or end become fields, inline hashtags stay in the text and are also tagged. Defaults come from the current filter. `Ctrl/Cmd+Enter` saves through `memos_store`; **More fields…** hands the draft to the full composer. In read-only mode the command explains why and opens Settings.
+- **Contradiction comparison (`X`, inspector **Compare**, Today **Compare**).** Side-by-side text, newer / more-trusted markers, aligned fact rows with differences called out, **Open** and **Pin** per side, and **Forget…** per side only in write mode.
+- **Search workflow.** **Syntax** popover (`Ctrl/Cmd+/`) lists every scope with an insertable example and the store's most common values as one-click completions, plus the last searches (local, up to 8, clearable). Saved views can be renamed, re-pointed at the current filters, or deleted (two-step) from the sidebar (**Edit** on the active view or right-click) or the palette.
+- **Store health action center.** Issues are grouped as *Needs attention*, *Worth a review* and *Good to know*, each with its consequence in plain words and one button to the exact memories (list filter, Today or Review). Includes expired, held-for-review and missing full-text index cases.
+- **Graph inspector and focus.** Clicking a node selects it and shows a compact card (type, group, age, links, importance, conflicts) instead of covering the graph with the full inspector; **Open** or `Enter` opens it. **Focus** (`F`) dims everything outside the node's direct neighborhood. Zoom controls (`-`, `+`, `0`) sit bottom-right.
+- **Keyboard.** `Ctrl/Cmd+3` Today, `Ctrl/Cmd+4` Review, `I` toggles the inspector without losing the selection; a regrouped shortcut sheet (`?`) covers every key.
+
+### Changed
+
+- **Shared UI kit (`ui/views/kit.rs`).** One set of buttons (primary, secondary, subtle, danger, icon, disabled-with-reason), segmented control, dialog shell, notices, empty states and markers, on a 4 px spacing scale and 11/12/13/14/20 px type scale.
+- **List rows.** Real ellipsis, an aligned age column, a type dot, namespace and up to two tags, and at most one state marker (*Quarantined*, *Conflict*, *Low trust*, *Pinned*) spelled out rather than color-only. Rows no longer slide under the overlay inspector.
+- **Inspector.** Header shows type and citation with **Pin** and **Context**; a one-line strip summarises namespace, freshness, trust and conflicts; **Edit** and **Forget…** move from the header to below the text.
+- **Shell.** The in-app "MemOS" label is gone (the title bar already says it) and search lines up with the content column. The accent-filled **New memory** button became a quiet **Capture**, **Ingest** became an icon button, and the status bar shows the mode as a word with a dot (*View only*, *Editing on*, *Saving…*). Page titles are 20 px everywhere.
+- **Sidebar.** Sentence-case sections, a lighter store summary, and the top 8 tags with **Show all**.
+- **Command palette.** Sentence-case titles, hidden keyword aliases (e.g. "what the ai sees" finds the context pack), and new actions.
+- Monospace text uses each platform's stock face (Consolas, Menlo, DejaVu Sans Mono) instead of Windows-only Consolas.
+
 ## [0.1.0] - 2026-11-17
 
 ### Added
