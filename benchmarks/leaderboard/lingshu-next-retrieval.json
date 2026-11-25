@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "system": "Lingshu Next (灵枢 Next)",
   "system_version": "2026-11-25 session retrieval",
-  "system_commit": "75a0741d8f734e4ac5e9e7adbda75cf562a135e6",
+  "system_commit": "bda9c517aa9edec7890a837544bd4dd933f65bfe",
   "system_build_sha256": "d3efa0e68f315191e7dbbc73541ab6188d9194dcca9b51fb7daa310a3e4ff843",
   "track": "retrieval",
   "dataset": "longmemeval-s",
@@ -31,7 +31,7 @@
     "chunking": "Original user messages grouped into sessions at evaluation time",
     "contextual_header": false,
     "top_k": 20,
-    "lexical_ranker": "Local IDF-weighted query terms, bounded inflections, cross-turn coverage and repeated-session discount"
+    "lexical_ranker": "Session-aware local lexical ranking; see the release README and frozen source."
   },
   "disclosures": {
     "judge_model": null,
@@ -40,8 +40,8 @@
     "post_processing": "Stable first-hit grouping of ranked user-message results into unique session ordinals; cap at 20; never fill unused slots.",
     "known_limitations": "Retrieval only. User messages are indexed. Opted-out and sensitive text is excluded from returned context. Up to 64 sources and 24000 context characters, with fewer than 20 unique sessions possible. No model, reader, judge or separate question-date input. Three fresh in-memory databases per case across the three runs. Product timings exclude input projection and scoring. See README for the public replay's narrower runtime scope."
   },
-  "artifacts_url": "https://github.com/Chenyueqiao1029/memos/tree/leaderboard/lingshu-next-longmemeval-s/benchmarks/leaderboard/artifacts/lingshu-next",
-  "reproduction_command": "python benchmarks/leaderboard/artifacts/lingshu-next/replay.py <original-longmemeval_s-file> <new-output-directory>",
+  "artifacts_url": "https://github.com/Chenyueqiao1029/memos/tree/bda9c517aa9edec7890a837544bd4dd933f65bfe/benchmarks/leaderboard/artifacts/lingshu-next",
+  "reproduction_command": "python3 benchmarks/leaderboard/artifacts/lingshu-next/replay.py longmemeval_s replay-output",
   "submitted_by": "Chenyueqiao1029",
   "submitted_at": "2026-11-25"
 }
