@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "system": "Lingshu Next (灵枢 Next)",
+  "system_version": "2026-11-25 session retrieval",
+  "system_commit": "75a0741d8f734e4ac5e9e7adbda75cf562a135e6",
+  "system_build_sha256": "d3efa0e68f315191e7dbbc73541ab6188d9194dcca9b51fb7daa310a3e4ff843",
+  "track": "retrieval",
+  "dataset": "longmemeval-s",
+  "dataset_version": "original S; HF 2ec2a557f339b6c0369619b1ed5793734cc87533",
+  "split": "full-500",
+  "k": 20,
+  "runs": 3,
+  "metrics": {
+    "hit_at_k": 0.99,
+    "evidence_recall_at_k": 0.9689333333333335,
+    "all_evidence_at_k": 0.944
+  },
+  "stddev": {
+    "hit_at_k": 0,
+    "evidence_recall_at_k": 0,
+    "all_evidence_at_k": 0
+  },
+  "cost": {
+    "tokens_per_query": 0,
+    "latency_p50_ms": 3.972100000001319,
+    "index_build_seconds": 18.506068333333307
+  },
+  "config": {
+    "embedder": null,
+    "reranker": null,
+    "chunking": "Original user messages grouped into sessions at evaluation time",
+    "contextual_header": false,
+    "top_k": 20,
+    "lexical_ranker": "Local IDF-weighted query terms, bounded inflections, cross-turn coverage and repeated-session discount"
+  },
+  "disclosures": {
+    "judge_model": null,
+    "judge_prompt_sha256": null,
+    "reader_model": null,
+    "post_processing": "Stable first-hit grouping of ranked user-message results into unique session ordinals; cap at 20; never fill unused slots.",
+    "known_limitations": "Retrieval only. User messages are indexed. Opted-out and sensitive text is excluded from returned context. Up to 64 sources and 24000 context characters, with fewer than 20 unique sessions possible. No model, reader, judge or separate question-date input. Three fresh in-memory databases per case across the three runs. Product timings exclude input projection and scoring. See README for the public replay's narrower runtime scope."
+  },
+  "artifacts_url": "https://github.com/Chenyueqiao1029/memos/tree/leaderboard/lingshu-next-longmemeval-s/benchmarks/leaderboard/artifacts/lingshu-next",
+  "reproduction_command": "python benchmarks/leaderboard/artifacts/lingshu-next/replay.py <original-longmemeval_s-file> <new-output-directory>",
+  "submitted_by": "Chenyueqiao1029",
+  "submitted_at": "2026-11-25"
+}

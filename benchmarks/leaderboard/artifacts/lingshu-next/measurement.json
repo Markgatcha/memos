@@ -1,0 +1,155 @@
+{
+  "dataset_sha256": "08d8dad4be43ee2049a22ff5674eb86725d0ce5ff434cde2627e5e8e7e117894",
+  "product_memory_store_sha256": "2e7ea26594ccc53162a75d492791f97f061dba87fa3fc4669b6f223506415616",
+  "product_ranker_sha256": "5bc1bb52c6b7c4129a3996cf3ffeb61b560c3dc320d8bf9bab9f4aaa74d35c32",
+  "product_target": "Next desktop memory retrieval",
+  "public_adapter_sha256": "a4be9a2614c08f8b418e30386c3e9e82fee8c4adb03346413515181f3bf007e1",
+  "per_question_sha256": "569d9e659d5ba31b0b2b77b4b8371647fe36ba415cc42d7c2d5d150116838a9f",
+  "hardware": {
+    "cpu": "AMD Ryzen 9 7845HX with Radeon Graphics",
+    "logicalCpus": 24,
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.19.0",
+    "sqlite": "3.53.3"
+  },
+  "baseline": {
+    "metrics": {
+      "hit_at_k": 0.942,
+      "evidence_recall_at_k": 0.8973000000000001,
+      "all_evidence_at_k": 0.838
+    },
+    "stddev": {
+      "hit_at_k": 0,
+      "evidence_recall_at_k": 0,
+      "all_evidence_at_k": 0
+    }
+  },
+  "candidate": {
+    "metrics": {
+      "hit_at_k": 0.99,
+      "evidence_recall_at_k": 0.9689333333333335,
+      "all_evidence_at_k": 0.944
+    },
+    "stddev": {
+      "hit_at_k": 0,
+      "evidence_recall_at_k": 0,
+      "all_evidence_at_k": 0
+    },
+    "runs": [
+      {
+        "run": 1,
+        "processed": 500,
+        "scored": 500,
+        "abstentions": 30,
+        "indexSeconds": 18.679063499999945,
+        "latencyP50Ms": 4.064650000000256,
+        "meanSessionsReturned": 19.316,
+        "belowTopK": 77,
+        "minSessionsReturned": 7,
+        "maxSessionsReturned": 20,
+        "count": 500,
+        "hitCount": 495,
+        "allEvidenceCount": 472,
+        "hit_at_k": 0.99,
+        "evidence_recall_at_k": 0.9689333333333335,
+        "all_evidence_at_k": 0.944,
+        "microEvidenceRecall": 0.9651898734177216,
+        "nonAbstention": {
+          "count": 470,
+          "hitCount": 465,
+          "allEvidenceCount": 446,
+          "hit_at_k": 0.9893617021276596,
+          "evidence_recall_at_k": 0.9717375886524825,
+          "all_evidence_at_k": 0.948936170212766,
+          "microEvidenceRecall": 0.9696629213483146
+        },
+        "annotatedAbstention": {
+          "count": 30,
+          "hitCount": 30,
+          "allEvidenceCount": 26,
+          "hit_at_k": 1,
+          "evidence_recall_at_k": 0.925,
+          "all_evidence_at_k": 0.8666666666666667,
+          "microEvidenceRecall": 0.896551724137931
+        }
+      },
+      {
+        "run": 2,
+        "processed": 500,
+        "scored": 500,
+        "abstentions": 30,
+        "indexSeconds": 18.28079829999998,
+        "latencyP50Ms": 3.931249999999636,
+        "meanSessionsReturned": 19.316,
+        "belowTopK": 77,
+        "minSessionsReturned": 7,
+        "maxSessionsReturned": 20,
+        "count": 500,
+        "hitCount": 495,
+        "allEvidenceCount": 472,
+        "hit_at_k": 0.99,
+        "evidence_recall_at_k": 0.9689333333333335,
+        "all_evidence_at_k": 0.944,
+        "microEvidenceRecall": 0.9651898734177216,
+        "nonAbstention": {
+          "count": 470,
+          "hitCount": 465,
+          "allEvidenceCount": 446,
+          "hit_at_k": 0.9893617021276596,
+          "evidence_recall_at_k": 0.9717375886524825,
+          "all_evidence_at_k": 0.948936170212766,
+          "microEvidenceRecall": 0.9696629213483146
+        },
+        "annotatedAbstention": {
+          "count": 30,
+          "hitCount": 30,
+          "allEvidenceCount": 26,
+          "hit_at_k": 1,
+          "evidence_recall_at_k": 0.925,
+          "all_evidence_at_k": 0.8666666666666667,
+          "microEvidenceRecall": 0.896551724137931
+        }
+      },
+      {
+        "run": 3,
+        "processed": 500,
+        "scored": 500,
+        "abstentions": 30,
+        "indexSeconds": 18.558343199999996,
+        "latencyP50Ms": 3.9473499999985506,
+        "meanSessionsReturned": 19.316,
+        "belowTopK": 77,
+        "minSessionsReturned": 7,
+        "maxSessionsReturned": 20,
+        "count": 500,
+        "hitCount": 495,
+        "allEvidenceCount": 472,
+        "hit_at_k": 0.99,
+        "evidence_recall_at_k": 0.9689333333333335,
+        "all_evidence_at_k": 0.944,
+        "microEvidenceRecall": 0.9651898734177216,
+        "nonAbstention": {
+          "count": 470,
+          "hitCount": 465,
+          "allEvidenceCount": 446,
+          "hit_at_k": 0.9893617021276596,
+          "evidence_recall_at_k": 0.9717375886524825,
+          "all_evidence_at_k": 0.948936170212766,
+          "microEvidenceRecall": 0.9696629213483146
+        },
+        "annotatedAbstention": {
+          "count": 30,
+          "hitCount": 30,
+          "allEvidenceCount": 26,
+          "hit_at_k": 1,
+          "evidence_recall_at_k": 0.925,
+          "all_evidence_at_k": 0.8666666666666667,
+          "microEvidenceRecall": 0.896551724137931
+        }
+      }
+    ]
+  },
+  "model_calls": 0,
+  "model_tokens": 0
+}
