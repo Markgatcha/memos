@@ -30,7 +30,12 @@ impl DbWatcher {
     /// Returns `None` when the path has no existing parent directory or the
     /// platform backend fails; callers then fall back to polling.
     pub fn watch(db_path: &Path) -> Option<Self> {
-        let dir = db_path.parent()?;
+        // A bare filename (`--db memos.db`) has an empty parent path; anchor
+        // the watch at the working directory instead of giving up.
+        let dir = match db_path.parent()? {
+            d if d.as_os_str().is_empty() => Path::new("."),
+            d => d,
+        };
         if !dir.is_dir() {
             return None;
         }
@@ -128,6 +133,14 @@ mod tests {
             "expected a watch event after writing the wal file"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bare_filename_watches_working_directory() {
+        assert!(
+            DbWatcher::watch(Path::new("memos.db")).is_some(),
+            "a bare filename should anchor the watch at the working directory"
+        );
     }
 
     #[test]
