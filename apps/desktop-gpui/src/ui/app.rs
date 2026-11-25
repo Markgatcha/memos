@@ -2481,7 +2481,15 @@ impl MemOSApp {
                             // deleted-then-recreated store directory regains
                             // live watching (kernel watches die with the
                             // directory). Recreated on the next iteration.
-                            watcher = None;
+                            // Teardown joins the backend thread (FSEvents on
+                            // macOS), so drop it off the foreground task.
+                            if let Some(w) = watcher.take() {
+                                cx.background_executor()
+                                    .spawn(async move {
+                                        drop(w);
+                                    })
+                                    .detach();
+                            }
                         }
                     }
                     _ => {
