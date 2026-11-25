@@ -2080,9 +2080,15 @@ export class SQLiteStorage implements StorageAdapter {
           // [0, (m-1)/m] when full matches tie (spread 0) — blowing past
           // the cap — because normalization is relative to the realized
           // leg range; target-norm placement is exact for every spread.
+          // eps keeps the best filler strictly WORSE than the weakest full
+          // match: at exactly legMax - c·span == worstAnd the two tie, and
+          // compareScoredMemories breaks score ties by id, which can surface
+          // a partial match ahead of a full one. bm25 ranks worsen as they
+          // grow, so +eps is the "strictly below" direction.
+          const eps = Math.max(Math.abs(bestAnd), 1) * 1e-9;
           for (let i = 0; i < m; i++) {
             const t = m > 1 ? (FTS_BACKFILL_CAP * (m - 1 - i)) / (m - 1) : 0;
-            filler[i]!["rank"] = legMax - t * span;
+            filler[i]!["rank"] = legMax - t * span + eps;
           }
         }
         rows = andFull.slice();
