@@ -618,11 +618,15 @@ pub const CONTEXT_PREVIEW_VIEW_LIMIT: usize = 12;
 /// Full-text fields of a single memory formatted for the read-only AI context preview modal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContextPreviewItem {
+    pub id: String,
     pub short_id: String,
     pub node_type: String,
     pub namespace: String,
     pub content: String,
     pub summary: String,
+    pub tags: Vec<String>,
+    /// Last update (or creation) time in the store's native unit; `0` if unknown.
+    pub updated_at: i64,
 }
 
 /// Formatted agent context payload plus char/token estimates.
@@ -1006,18 +1010,24 @@ mod tests {
     fn formats_ai_context_payload_with_summary_when_different_and_token_estimate() {
         let items = vec![
             ContextPreviewItem {
+                id: "1234abcd-0000".to_string(),
                 short_id: "1234abcd".to_string(),
                 node_type: "decision".to_string(),
                 namespace: "auth".to_string(),
                 content: "Use PKCE for OAuth flows.".to_string(),
                 summary: "PKCE OAuth decision".to_string(),
+                tags: Vec::new(),
+                updated_at: 0,
             },
             ContextPreviewItem {
+                id: "5678ef90-0000".to_string(),
                 short_id: "5678ef90".to_string(),
                 node_type: "fact".to_string(),
                 namespace: "auth".to_string(),
                 content: "Token lifetime is 15 minutes.".to_string(),
                 summary: "Token lifetime is 15 minutes.".to_string(),
+                tags: Vec::new(),
+                updated_at: 0,
             },
         ];
         let formatted = format_ai_context_payload(&items, 42, "Current view");

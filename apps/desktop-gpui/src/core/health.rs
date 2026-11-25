@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::core::db::{DbError, HealthRawStats, ReadOnlyStore};
-use crate::core::model::DbOverview;
+use crate::core::model::{DbOverview, QueryFilter};
 
 pub const STALE_STORE_AGE_DAYS: i64 = 90;
 pub const MANY_MEMORIES_THRESHOLD: usize = 1_000;
@@ -250,9 +250,254 @@ pub fn assess_store_health(
     })
 }
 
+/// How urgently an issue deserves a look. Wording, not color, carries this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum IssueSeverity {
+    /// Recall can return wrong or outdated answers.
+    Attention,
+    /// Quality problems worth a pass when convenient.
+    Review,
+    /// Background facts; nothing is wrong yet.
+    Info,
+}
+
+impl IssueSeverity {
+    pub fn heading(self) -> &'static str {
+        match self {
+            IssueSeverity::Attention => "Needs attention",
+            IssueSeverity::Review => "Worth a review",
+            IssueSeverity::Info => "Good to know",
+        }
+    }
+}
+
+/// What the action button on an issue does.
+#[derive(Clone, Debug, PartialEq)]
+pub enum HealthIssueAction {
+    /// Show the matching memories in the list.
+    Filter(Box<QueryFilter>),
+    OpenReview,
+    OpenToday,
+    /// No in-app fix; the impact text says what to do.
+    None,
+}
+
+/// One row of the Store health action center.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HealthIssue {
+    pub id: &'static str,
+    pub severity: IssueSeverity,
+    pub count: usize,
+    pub title: String,
+    /// Plain-language consequence and next step.
+    pub impact: &'static str,
+    pub action_label: &'static str,
+    pub action: HealthIssueAction,
+    /// Which panel tab the issue belongs to (Momo opens a tab directly).
+    pub panel: HealthPanelFilter,
+}
+
+fn plural(n: usize, one: &str, many: &str) -> String {
+    if n == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{n} {many}")
+    }
+}
+
+/// Turn a health report into ordered, actionable issues (most urgent first).
+pub fn health_issues(
+    report: &StoreHealthReport,
+    pending_review: usize,
+    now_ms: i64,
+) -> Vec<HealthIssue> {
+    let mut out = Vec::new();
+    if report.contradiction_count > 0 {
+        out.push(HealthIssue {
+            id: "contradictions",
+            severity: IssueSeverity::Attention,
+            count: report.contradiction_count,
+            title: plural(report.contradiction_count, "unresolved conflict", "unresolved conflicts"),
+            impact: "Agents may recall either side, so answers can flip. Compare each pair from Today and keep the one that holds.",
+            action_label: "Compare in Today",
+            action: HealthIssueAction::OpenToday,
+            panel: HealthPanelFilter::Contradictions,
+        });
+    }
+    if report.expired_count > 0 {
+        out.push(HealthIssue {
+            id: "expired",
+            severity: IssueSeverity::Attention,
+            count: report.expired_count,
+            title: plural(report.expired_count, "memory past its expiry", "memories past their expiry"),
+            impact: "They are still in the store and can still be recalled. Forget or refresh them.",
+            action_label: "Show",
+            action: HealthIssueAction::Filter(Box::new(QueryFilter {
+                expiring_window_ms: Some((1, now_ms)),
+                ..Default::default()
+            })),
+            panel: HealthPanelFilter::Stale,
+        });
+    }
+    if pending_review > 0 || report.quarantined_count > 0 {
+        let n = pending_review.max(report.quarantined_count);
+        out.push(HealthIssue {
+            id: "quarantined",
+            severity: IssueSeverity::Review,
+            count: n,
+            title: plural(n, "memory held for review", "memories held for review"),
+            impact: "Held back from recall until someone approves or rejects them.",
+            action_label: if pending_review > 0 {
+                "Open Review"
+            } else {
+                "Show"
+            },
+            action: if pending_review > 0 {
+                HealthIssueAction::OpenReview
+            } else {
+                HealthIssueAction::Filter(Box::new(QueryFilter {
+                    quarantined_only: true,
+                    ..Default::default()
+                }))
+            },
+            panel: HealthPanelFilter::Contradictions,
+        });
+    }
+    if report.duplicate_count > 0 {
+        out.push(HealthIssue {
+            id: "duplicates",
+            severity: IssueSeverity::Review,
+            count: report.duplicate_count,
+            title: plural(report.duplicate_count, "exact duplicate", "exact duplicates"),
+            impact: "Copies crowd other memories out of recall results. Keep one and forget the rest.",
+            action_label: "Show",
+            action: HealthIssueAction::Filter(Box::new(QueryFilter {
+                duplicates_only: true,
+                ..Default::default()
+            })),
+            panel: HealthPanelFilter::All,
+        });
+    }
+    if report.low_trust_count > 0 {
+        out.push(HealthIssue {
+            id: "low-trust",
+            severity: IssueSeverity::Review,
+            count: report.low_trust_count,
+            title: plural(report.low_trust_count, "low-trust memory", "low-trust memories"),
+            impact: "Written on weak evidence (trust under 50%). Recall ranks them lower but still returns them.",
+            action_label: "Show",
+            action: HealthIssueAction::Filter(Box::new(QueryFilter {
+                max_trust: Some(0.5),
+                ..Default::default()
+            })),
+            panel: HealthPanelFilter::Stale,
+        });
+    }
+    if report.drifted_source_count > 0 {
+        out.push(HealthIssue {
+            id: "drifted",
+            severity: IssueSeverity::Review,
+            count: report.drifted_source_count,
+            title: plural(report.drifted_source_count, "memory from a changed file", "memories from changed files"),
+            impact: "The file they were ingested from has changed since. Ingest it again to refresh them.",
+            action_label: "",
+            action: HealthIssueAction::None,
+            panel: HealthPanelFilter::Stale,
+        });
+    }
+    if report.stale_count > 0 {
+        out.push(HealthIssue {
+            id: "stale",
+            severity: IssueSeverity::Info,
+            count: report.stale_count,
+            title: plural(
+                report.stale_count,
+                "memory untouched for 90 days",
+                "memories untouched for 90 days",
+            ),
+            impact: "Old is not wrong, but facts drift. Skim them and forget what no longer holds.",
+            action_label: "Show",
+            action: HealthIssueAction::Filter(Box::new(QueryFilter {
+                stale_before_ms: Some(
+                    now_ms.saturating_sub(STALE_STORE_AGE_DAYS.saturating_mul(86_400_000)),
+                ),
+                ..Default::default()
+            })),
+            panel: HealthPanelFilter::Stale,
+        });
+    }
+    if !report.has_fts5 && report.node_count > 0 {
+        out.push(HealthIssue {
+            id: "fts",
+            severity: IssueSeverity::Info,
+            count: 0,
+            title: "No full-text index".to_string(),
+            impact: "Search falls back to slower substring matching. Opening the store once with the MemOS CLI rebuilds it.",
+            action_label: "",
+            action: HealthIssueAction::None,
+            panel: HealthPanelFilter::All,
+        });
+    }
+    out.sort_by_key(|i| i.severity);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn health_issues_order_by_severity_and_link_to_filters() {
+        let now = 1_800_000_000_000_i64;
+        let report = StoreHealthReport {
+            db_path: PathBuf::from("x.db"),
+            status: StoreHealthStatus::Contradictions,
+            score: 60,
+            node_count: 100,
+            edge_count: 10,
+            contradiction_count: 2,
+            quarantined_count: 0,
+            expired_count: 0,
+            stale_count: 5,
+            drifted_source_count: 0,
+            low_trust_count: 1,
+            duplicate_count: 3,
+            has_fts5: true,
+            missing_tables: Vec::new(),
+            newest_updated_at: None,
+            oldest_created_at: None,
+            notes: Vec::new(),
+        };
+        let issues = health_issues(&report, 4, now);
+        let ids: Vec<&str> = issues.iter().map(|i| i.id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "contradictions",
+                "quarantined",
+                "duplicates",
+                "low-trust",
+                "stale"
+            ]
+        );
+        assert_eq!(issues[0].title, "2 unresolved conflicts");
+        assert_eq!(issues[0].action, HealthIssueAction::OpenToday);
+        assert_eq!(issues[1].action, HealthIssueAction::OpenReview);
+        assert_eq!(issues[3].title, "1 low-trust memory");
+        match &issues[4].action {
+            HealthIssueAction::Filter(f) => assert!(f.stale_before_ms.is_some()),
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let clean = StoreHealthReport {
+            contradiction_count: 0,
+            stale_count: 0,
+            low_trust_count: 0,
+            duplicate_count: 0,
+            ..report
+        };
+        assert!(health_issues(&clean, 0, now).is_empty());
+    }
 
     #[test]
     fn classifies_all_five_health_states() {
