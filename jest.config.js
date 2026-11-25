@@ -25,6 +25,9 @@ export default {
   extensionsToTreatAsEsm: [".ts"],
   testEnvironment: "node",
   testMatch: ["**/__tests__/**/*.test.ts"],
+  // website/ is a separate package with its own lockfile and dependencies;
+  // the root install does not provide them, so its tests cannot run here.
+  testPathIgnorePatterns: ["/node_modules/", "/website/"],
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
   },

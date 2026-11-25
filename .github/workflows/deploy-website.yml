@@ -38,6 +38,11 @@ jobs:
           cd website
           pnpm typecheck
 
+      - name: Test
+        run: |
+          cd website
+          pnpm test
+
       - name: Build
         run: |
           cd website
