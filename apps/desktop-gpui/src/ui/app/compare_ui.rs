@@ -55,6 +55,16 @@ impl MemOSApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.load_compare(left_id, Some(right_id), window, cx);
+    }
+
+    fn load_compare(
+        &mut self,
+        left_id: String,
+        right_id: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.dismiss_popovers(super::PopoverOwner::None, cx);
         self.close_all_modals();
         self.compare.open = true;
@@ -74,8 +84,15 @@ impl MemOSApp {
                 .spawn(async move {
                     shared.with_store(&db_path, |store| {
                         let a = store.load_node_detail(&left_id)?;
-                        let b = store.load_node_detail(&right_id)?;
-                        Ok::<_, DbError>((a, b))
+                        let peer = right_id.or_else(|| {
+                            a.as_ref()?.contradictions.first().map(|c| c.peer_id.clone())
+                        });
+                        let has_peer = peer.is_some();
+                        let b = match peer {
+                            Some(id) => store.load_node_detail(&id)?,
+                            None => None,
+                        };
+                        Ok::<_, DbError>((a, b, has_peer))
                     })
                 })
                 .await;
@@ -85,12 +102,15 @@ impl MemOSApp {
                 }
                 app.compare.loading = false;
                 match res {
-                    Ok((Some(a), Some(b))) => {
+                    Ok((Some(a), Some(b), _)) => {
                         for d in [&a, &b] {
                             crate::telemetry::register_sensitive_text(&d.content);
                         }
                         app.compare.left = Some(a);
                         app.compare.right = Some(b);
+                    }
+                    Ok((Some(_), None, false)) => {
+                        app.compare.error = Some("This memory has no recorded conflict.".into());
                     }
                     Ok(_) => {
                         app.compare.error = Some(
@@ -114,16 +134,7 @@ impl MemOSApp {
             self.set_notice("Select a memory with a conflict to compare", cx);
             return;
         };
-        let peer = self
-            .detail_view
-            .read(cx)
-            .detail()
-            .filter(|d| d.id == sel)
-            .and_then(|d| d.contradictions.first().map(|c| c.peer_id.clone()));
-        match peer {
-            Some(peer) => self.open_compare(sel, peer, window, cx),
-            None => self.set_notice("This memory has no recorded conflict", cx),
-        }
+        self.load_compare(sel, None, window, cx);
     }
 
     pub(super) fn close_compare(&mut self, window: &mut Window, cx: &mut Context<Self>) {
