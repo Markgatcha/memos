@@ -1,0 +1,30 @@
+{
+  "registeredAt": "2026-11-27T11:07:18.032624+00:00",
+  "questions": 500,
+  "plannedRuns": 1,
+  "baselineCorrect": 328,
+  "baselineAccuracy": 0.656,
+  "relativeLatencyRangeInclusiveMs": [
+    6305.85,
+    7707.15
+  ],
+  "relativeAccuracyRangeInclusive": [
+    0.5904,
+    0.7216
+  ],
+  "acceptableCorrectInclusive": [
+    296,
+    360
+  ],
+  "readerTimer": "After memory DB copy, before openNextHost through stream drain and request/event result availability, captured before receipt write and history verification.",
+  "judgeTimer": "After DshAccountRuntime.open, before catalog and SDK initialization, through wait, confirmed shutdown, event and verdict verification, before receipt write.",
+  "concurrency": {
+    "reader": 1,
+    "judge": 1,
+    "overlap": false
+  },
+  "dispatch": "Original sequential await loop without added pacing. Same retry and close behavior. No adjustment based on timing or scores.",
+  "nullHandling": "Unresolved count separately; denominator 500. Timing comparisons paired by row, report denominator.",
+  "note": "Extract of the locally registered protocol. Private manifest digest is provided for later comparison. The published commit was made after the run.",
+  "privatePreregistrationSha256": "aeae14bb33df338921e163fd433012e54a46ee86d7a215a45d96fc91f6e1e9dc"
+}

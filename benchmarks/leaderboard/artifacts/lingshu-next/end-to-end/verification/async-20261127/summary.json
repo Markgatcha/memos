@@ -1,0 +1,40 @@
+{
+  "questions": 500,
+  "reader_terminal": 500,
+  "generated": 495,
+  "rows": 500,
+  "judged": 495,
+  "correct": 296,
+  "unresolved": 5,
+  "accuracy": 0.592,
+  "provisional": true,
+  "partial": false,
+  "concurrency": 4,
+  "originalAccuracy": 0.656,
+  "wallMs": 687236,
+  "questionsPerMinute": 43.65,
+  "matchingPromptHashes": 500,
+  "doubleDispatches": 0,
+  "judgeStatuses": {
+    "judged": 495,
+    "generation-unconfirmed": 5
+  },
+  "readerTokensKnown": 1443482,
+  "judgeTokensKnown": 227478,
+  "perQuestionSha256": "54915cdb1e5458d17d2ebb8899c9d50baf7d20056f1c9d57d398a49ad02f16a0",
+  "runner_commit": "1e465f0793acb4431e668239493d58d0ecdbae9f",
+  "route": "deepseek-account",
+  "reader": "deepseek-flash",
+  "judge": "deepseek-v4-pro",
+  "purpose": "Separate author-run verification with rolling concurrency four. The submitted single-run desktop score is unchanged.",
+  "sameFirst16WallComparison": {
+    "fixedConcurrency": 4,
+    "originalWallMs": 31940,
+    "rollingWallMs": 29162,
+    "observedReductionPercent": 8.7,
+    "matchingReaderPayloads": 16,
+    "originalJudged": 16,
+    "rollingJudged": 16,
+    "comparison": "Single sequential before/after comparison on the hosted account; wall times include initialization and both phases."
+  }
+}

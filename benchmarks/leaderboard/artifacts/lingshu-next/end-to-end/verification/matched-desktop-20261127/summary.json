@@ -1,0 +1,66 @@
+{
+  "purpose": "Single author-run matched desktop validation; separate from the portable SDK checks",
+  "original": {
+    "questions": 500,
+    "correct": 328,
+    "judged": 500,
+    "timingPairs": 500,
+    "readerP50Ms": 5524.0,
+    "judgeP50Ms": 1479.5,
+    "p50Ms": 7006.5
+  },
+  "matched": {
+    "questions": 500,
+    "correct": 333,
+    "judged": 500,
+    "timingPairs": 500,
+    "readerP50Ms": 5723.0,
+    "judgeP50Ms": 1577.0,
+    "p50Ms": 7329.5
+  },
+  "baselineOnPairedQuestions": {
+    "questions": 500,
+    "correct": 328,
+    "judged": 500,
+    "timingPairs": 500,
+    "readerP50Ms": 5524.0,
+    "judgeP50Ms": 1479.5,
+    "p50Ms": 7006.5
+  },
+  "originalDesktopBuildSha256": "d4bf1671bfc2a0eba4b897e2821669af93e1c2fb1a884a7a3bdd42ba1fab6417",
+  "datasetSha256": "08d8dad4be43ee2049a22ff5674eb86725d0ce5ff434cde2627e5e8e7e117894",
+  "concurrency": 1,
+  "matchedAccuracy": 0.666,
+  "netCorrect": 5,
+  "accuracyRelativeDelta": 0.01524390243902439,
+  "latencyRelativeDelta": 0.046100049953614504,
+  "accuracyWithin10Percent": true,
+  "timedSubsetLatencyWithin10Percent": true,
+  "fullLatencyVerdict": "within-tolerance",
+  "unresolved": 0,
+  "matchingVerifiedReaderPayloads": 500,
+  "newlyCorrect": 27,
+  "noLongerCorrect": 22,
+  "generationStatuses": {
+    "complete": 500
+  },
+  "judgeStatuses": {
+    "judged": 500
+  },
+  "readerTokensKnown": 1452397,
+  "judgeTokensKnown": 224045,
+  "originalPerQuestionSha256": "0774e4566ea965888204aa99b70ea3981e80fe8d97bfa8127bab95e2161df024",
+  "matchedPerQuestionSha256": "5a1582700ebd85efc36e43cbff3388d3c9493d0ba2b34dc18d17550d96f21840",
+  "wallFromGenerationStartToFinalVerification": {
+    "baseline": {
+      "generatingUtc": "2026-11-27T07:18:20.590Z",
+      "completeUtc": "2026-11-27T08:39:55.274Z",
+      "wallMs": 4894684
+    },
+    "matched": {
+      "generatingUtc": "2026-11-27T11:07:42.758Z",
+      "completeUtc": "2026-11-27T12:40:57.440Z",
+      "wallMs": 5594682
+    }
+  }
+}

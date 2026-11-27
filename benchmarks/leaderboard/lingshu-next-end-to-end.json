@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "system": "Lingshu Next (灵枢 Next)",
+  "system_version": "2026-11-27 chat evidence v5, desktop",
+  "system_commit": "d99b6e54f1f76b3d36edad1c588cf1dc7053da59",
+  "system_build_sha256": "d4bf1671bfc2a0eba4b897e2821669af93e1c2fb1a884a7a3bdd42ba1fab6417",
+  "track": "end_to_end",
+  "dataset": "longmemeval-s",
+  "dataset_version": "Original S, HF 2ec2a557f339b6c0369619b1ed5793734cc87533",
+  "split": "full-500",
+  "k": null,
+  "runs": 1,
+  "provisional": true,
+  "metrics": {
+    "accuracy": 0.656
+  },
+  "stddev": {
+    "accuracy": null
+  },
+  "cost": {
+    "tokens_per_query": 3350.86,
+    "latency_p50_ms": 7006.5,
+    "index_build_seconds": null
+  },
+  "config": {
+    "embedder": null,
+    "reranker": null,
+    "chunking": "Original user turns with adjacent eligible user messages. No model used for ingestion.",
+    "contextual_header": false,
+    "top_k": null,
+    "retrieval_max_source_messages": 64,
+    "retrieval_max_chars": 24000,
+    "reader_max_prompt_chars": 8000,
+    "reader_max_output_tokens": 2048,
+    "judge_max_output_tokens": 64,
+    "reasoning_effort": "off",
+    "temperature": null
+  },
+  "disclosures": {
+    "judge_model": "deepseek-v4-pro, DeepSeek Harness 0.2.2-rc.3, deepseek-account",
+    "judge_prompt_sha256": "50d4f70a1a66ef13e0ee932b825adfb232a3b366cdc1684b6532db100eb10be1",
+    "judge_prompt_file": "benchmarks/leaderboard/artifacts/lingshu-next/end-to-end/judge-prompt.json",
+    "reader_model": "deepseek-flash, DeepSeek Harness 0.2.2-rc.3, deepseek-account",
+    "reader_system_prompt_sha256": "5fa0f76b41fd78d65dcb1d541d0dff7c5aaa382c7da9e0494b43b6bd7ea5f539",
+    "temperature": "Provider default for both models. The account SDK does not expose a numeric temperature.",
+    "post_processing": "Answers are sealed verbatim. Trim and lowercase the judge reply, accepting exact yes/no only. Unresolved verdicts count zero.",
+    "known_limitations": "One full run, provisional. A dedicated accessible account and the matching Windows x64 SDK are required for fresh generation. Source retrieval indexes user messages. Public results use digests for reader answers. Hosted sampling and model revisions can cause variation. Duration sums reader and judge stage timings. No account-debit or ingestion timing for this run."
+  },
+  "artifacts_url": "https://github.com/Chenyueqiao1029/memos/tree/d99b6e54f1f76b3d36edad1c588cf1dc7053da59/benchmarks/leaderboard/artifacts/lingshu-next/end-to-end",
+  "reproduction_command": "node benchmarks/leaderboard/artifacts/lingshu-next/end-to-end/run.mjs run longmemeval_s ../next-rerun-private",
+  "submitted_by": "Chenyueqiao1029",
+  "submitted_at": "2026-11-27"
+}
