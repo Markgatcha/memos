@@ -339,27 +339,31 @@ pub fn health_issues(
             panel: HealthPanelFilter::Stale,
         });
     }
-    if pending_review > 0 || report.quarantined_count > 0 {
-        let n = pending_review.max(report.quarantined_count);
+    if pending_review > 0 {
+        out.push(HealthIssue {
+            id: "pending-review",
+            severity: IssueSeverity::Review,
+            count: pending_review,
+            title: plural(pending_review, "memory awaiting approval", "memories awaiting approval"),
+            impact: "Open the review queue to approve or reject pending memories.",
+            action_label: "Open Review",
+            action: HealthIssueAction::OpenReview,
+            panel: HealthPanelFilter::Contradictions,
+        });
+    }
+    if report.quarantined_count > 0 {
+        let n = report.quarantined_count;
         out.push(HealthIssue {
             id: "quarantined",
             severity: IssueSeverity::Review,
             count: n,
-            title: plural(n, "memory held for review", "memories held for review"),
-            impact: "Held back from recall until someone approves or rejects them.",
-            action_label: if pending_review > 0 {
-                "Open Review"
-            } else {
-                "Show"
-            },
-            action: if pending_review > 0 {
-                HealthIssueAction::OpenReview
-            } else {
-                HealthIssueAction::Filter(Box::new(QueryFilter {
-                    quarantined_only: true,
-                    ..Default::default()
-                }))
-            },
+            title: plural(n, "quarantined memory", "quarantined memories"),
+            impact: "Quarantine holds these memories back from recall.",
+            action_label: "Show",
+            action: HealthIssueAction::Filter(Box::new(QueryFilter {
+                quarantined_only: true,
+                ..Default::default()
+            })),
             panel: HealthPanelFilter::Contradictions,
         });
     }
@@ -474,7 +478,7 @@ mod tests {
             ids,
             vec![
                 "contradictions",
-                "quarantined",
+                "pending-review",
                 "duplicates",
                 "low-trust",
                 "stale"
@@ -483,6 +487,11 @@ mod tests {
         assert_eq!(issues[0].title, "2 unresolved conflicts");
         assert_eq!(issues[0].action, HealthIssueAction::OpenToday);
         assert_eq!(issues[1].action, HealthIssueAction::OpenReview);
+        let mixed = StoreHealthReport { quarantined_count: 2, ..report.clone() };
+        let actions = health_issues(&mixed, 1, now);
+        let quarantine = actions.iter().find(|issue| issue.id == "quarantined").unwrap();
+        assert_eq!(quarantine.count, 2);
+        assert!(matches!(&quarantine.action, HealthIssueAction::Filter(filter) if filter.quarantined_only));
         assert_eq!(issues[3].title, "1 low-trust memory");
         match &issues[4].action {
             HealthIssueAction::Filter(f) => assert!(f.updated_before_ms.is_some()),
