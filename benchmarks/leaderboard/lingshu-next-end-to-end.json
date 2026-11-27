@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "system": "Lingshu Next (灵枢 Next)",
   "system_version": "2026-11-27 chat evidence v5, desktop",
-  "system_commit": "5e3099c8bd393dd5bbbdfb49a92531e3cf524b97",
+  "system_commit": "4424cd897f15dbaa7ca6496dcbe49d7e673b79a3",
   "system_build_sha256": "d4bf1671bfc2a0eba4b897e2821669af93e1c2fb1a884a7a3bdd42ba1fab6417",
   "track": "end_to_end",
   "dataset": "longmemeval-s",
@@ -46,7 +46,7 @@
     "post_processing": "Answers are sealed verbatim. Trim and lowercase the judge reply, accepting exact yes/no only. Unresolved verdicts count zero.",
     "known_limitations": "One full run, provisional. A dedicated accessible account and the matching Windows x64 SDK are required for fresh generation. Source retrieval indexes user messages. Public results use digests for reader answers. Hosted sampling and model revisions can cause variation. Duration sums reader and judge stage timings. No account-debit or ingestion timing for this run."
   },
-  "artifacts_url": "https://github.com/Chenyueqiao1029/memos/tree/5e3099c8bd393dd5bbbdfb49a92531e3cf524b97/benchmarks/leaderboard/artifacts/lingshu-next/end-to-end",
+  "artifacts_url": "https://github.com/Chenyueqiao1029/memos/tree/4424cd897f15dbaa7ca6496dcbe49d7e673b79a3/benchmarks/leaderboard/artifacts/lingshu-next/end-to-end",
   "reproduction_command": "node benchmarks/leaderboard/artifacts/lingshu-next/end-to-end/run.mjs run longmemeval_s ../next-rerun-private",
   "submitted_by": "Chenyueqiao1029",
   "submitted_at": "2026-11-27"
