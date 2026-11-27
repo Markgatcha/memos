@@ -394,11 +394,18 @@ async function main() {
   }
   const recipe = {limit, toolSha256:await fileHash(fileURLToPath(import.meta.url)), helperSha256, account:values.account, pins};
   if (mode === 'run') {
-    fs.mkdirSync(output);
-    for (const folder of ['host', 'input', 'intent', 'memory', 'reader', 'reader-receipt', 'judge', 'judge-attempt']) {
-      fs.mkdirSync(path.join(output, folder));
+    assert.ok(!fs.existsSync(output), 'OUTPUT_ALREADY_EXISTS');
+    const staging = fs.mkdtempSync(path.join(path.dirname(output), '.next-replay-init-'));
+    try {
+      for (const folder of ['host', 'input', 'intent', 'memory', 'reader', 'reader-receipt', 'judge', 'judge-attempt']) {
+        fs.mkdirSync(path.join(staging, folder));
+      }
+      save(path.join(staging, 'recipe.json'), recipe);
+      fs.renameSync(staging, output);
+    } finally {
+      // After a successful rename the private staging path no longer exists.
+      if (fs.existsSync(staging)) fs.rmSync(staging, {recursive:true});
     }
-    save(path.join(output, 'recipe.json'), recipe);
   } else {
     assert.deepEqual(read(path.join(output, 'recipe.json')), recipe, 'Resume settings changed');
   }
