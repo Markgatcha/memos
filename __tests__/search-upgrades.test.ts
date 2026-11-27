@@ -138,12 +138,38 @@ describe("ftsOperator", () => {
     return memos;
   }
 
-  test("AUTO keeps the precise AND result set", async () => {
-    const memos = await seed();
+  test("AUTO ranks full-term matches above any backfilled partial matches", async () => {
+    const memos = makeMemos(null);
+    await memos.init();
+    const now = Date.now();
+    const rec = (id: string, content: string) => ({
+      id,
+      content,
+      type: "fact" as const,
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Deterministic cap-tie geometry: two unequal-length full matches
+    // (nonzero bm25 spread) and TWO partials — with a single filler the
+    // placement loop uses t=0 and never approaches the cap, so m>=2 is
+    // required for the best filler to land exactly AT it. No semantic
+    // leg: the partials must arrive through the keyword backfill itself,
+    // not through vector similarity. compareScoredMemories breaks exact
+    // score ties by SMALLER id, so these pinned ids surface a partial
+    // FIRST on any tie with the weakest full match — if filler placement
+    // ever regresses from strict-below to a tie, this test fails.
+    await memos.importRecord(rec("zz-full-1", "zebra habitat savanna"));
+    await memos.importRecord(
+      rec("zz-full-2", "zebra habitat oasis watering hole"),
+    );
+    await memos.importRecord(rec("aa-part-1", "zebra plains roaming"));
+    await memos.importRecord(rec("aa-part-2", "zebra highlands wandering"));
     const results = await memos.search({ query: "zebra habitat", limit: 5 });
-    expect(results.map((r) => r.node.content)).toEqual([
-      "zebra habitat savanna",
-    ]);
+    const contents = results.map((r) => r.node.content);
+    expect(contents[0]).toBe("zebra habitat savanna");
+    expect(contents[1]).toBe("zebra habitat oasis watering hole");
+    expect(contents.indexOf("zebra plains roaming")).toBeGreaterThan(1);
+    expect(contents.indexOf("zebra highlands wandering")).toBeGreaterThan(1);
     await memos.close();
   });
 
@@ -157,6 +183,33 @@ describe("ftsOperator", () => {
     const contents = results.map((r) => r.node.content);
     expect(contents).toContain("zebra habitat savanna");
     expect(contents).toContain("zebra plains roaming");
+    await memos.close();
+  });
+
+  test("AUTO pagination never repeats hits across pages or overshoots limit", async () => {
+    const memos = makeMemos(null);
+    await memos.init();
+    for (let i = 0; i < 3; i++) await memos.store(`alpha beta full match ${i}`);
+    for (let i = 0; i < 5; i++) await memos.store(`alpha partial filler ${i}`);
+
+    const page0 = await memos.search({
+      query: "alpha beta",
+      limit: 3,
+      offset: 0,
+    });
+    const page1 = await memos.search({
+      query: "alpha beta",
+      limit: 3,
+      offset: 3,
+    });
+    expect(page0.length).toBeLessThanOrEqual(3);
+    expect(page1.length).toBeLessThanOrEqual(3);
+    // Five partials were seeded: page 2 must not come back empty.
+    expect(page1.length).toBeGreaterThan(0);
+    // Full-term matches lead page 0.
+    for (const r of page0) expect(r.node.content).toContain("beta");
+    const ids0 = new Set(page0.map((r) => r.node.id));
+    for (const r of page1) expect(ids0.has(r.node.id)).toBe(false);
     await memos.close();
   });
 });
@@ -506,6 +559,10 @@ describe("experimental.rerank", () => {
           endpoint: "http://127.0.0.1:8081",
           model: "test-reranker",
           candidates: 10,
+          // Pure cross-encoder ordering: with the default blend (0.5)
+          // the fused signal can override weak CE margins, so CE scores
+          // are intentionally not monotonic in output order.
+          blend: 0,
         },
       },
       embeddings: { enabled: true, provider: new MarkerProvider() },

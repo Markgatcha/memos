@@ -1,12 +1,12 @@
 # MemOS Retrieval Quality — Local Run
 
-> Generated 2026-09-16T21:02:09.127Z on this machine. Re-run with `npx tsx scripts/bench-quality.ts`.
+> Generated 2026-11-25T02:23:34.763Z on this machine. Re-run with `npx tsx scripts/bench-quality.ts`.
 
 ## Setup
 
-- Provider: `local-hash` (model: `local-hash-384`, 384-d)
+- Provider: `bench-hash` (model: `bench-hash-v1`, 256-d)
 - Dataset: 30 synthetic conversation memories, 19 ground-truth queries
-- Wall time: 41 ms
+- Wall time: 2450 ms
 
 ## Aggregate
 
@@ -14,15 +14,15 @@
 |---|---|
 | recall@5 | 100.0% |
 | recall@10 | 100.0% |
-| MRR | 0.868 |
+| MRR | 0.947 |
 
 ## Per category
 
 | Category | Queries | recall@10 | MRR |
 |---|---|---|---|
-| factual | 11 | 100.0% | 0.864 |
+| factual | 11 | 100.0% | 0.955 |
 | preference | 5 | 100.0% | 0.900 |
-| temporal | 2 | 100.0% | 0.750 |
+| temporal | 2 | 100.0% | 1.000 |
 | entity | 1 | 100.0% | 1.000 |
 
 ## Per query
@@ -33,19 +33,19 @@
 | what color does the user like | preference | ✓ | ✓ | 1.000 |
 | tell me about Pixel the corgi | entity | ✓ | ✓ | 1.000 |
 | where does the user work and what industry | factual | ✓ | ✓ | 1.000 |
-| when did the user start at their company | temporal | ✓ | ✓ | 0.500 |
+| when did the user start at their company | temporal | ✓ | ✓ | 1.000 |
 | dark mode preference editor | preference | ✓ | ✓ | 1.000 |
 | what extensions on vscode | factual | ✓ | ✓ | 1.000 |
 | instrument hobby and how long | factual | ✓ | ✓ | 1.000 |
 | coffee preference and brand | preference | ✓ | ✓ | 1.000 |
-| exercise routine | factual | ✓ | ✓ | 0.500 |
+| exercise routine | factual | ✓ | ✓ | 1.000 |
 | favorite podcast | preference | ✓ | ✓ | 1.000 |
 | last vacation destination and when | temporal | ✓ | ✓ | 1.000 |
 | partner and their job | factual | ✓ | ✓ | 1.000 |
 | book author preferences | preference | ✓ | ✓ | 0.500 |
 | siblings and where they live | factual | ✓ | ✓ | 0.500 |
 | transportation method and bike | factual | ✓ | ✓ | 1.000 |
-| allergies and health restrictions | factual | ✓ | ✓ | 0.500 |
+| allergies and health restrictions | factual | ✓ | ✓ | 1.000 |
 | online games and skill level | factual | ✓ | ✓ | 1.000 |
 | language study tool and duration | factual | ✓ | ✓ | 1.000 |
 

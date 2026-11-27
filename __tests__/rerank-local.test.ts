@@ -107,13 +107,22 @@ describe("scorePairsLocal", () => {
 });
 
 describe("applyRerank with the local provider", () => {
-  function makeLocalRerankMemos(): MemOS {
+  function makeLocalRerankMemos(blend?: number): MemOS {
     const storage = new SQLiteStorage(":memory:", true);
     return new MemOS({
       storage,
       experimental: {
         semanticSearch: true,
-        rerank: { provider: "local", localModel: "stub-model", candidates: 10 },
+        rerank: {
+          provider: "local",
+          localModel: "stub-model",
+          candidates: 10,
+          // Tests asserting pure cross-encoder ordering pin blend: 0 —
+          // the default 0.5 intentionally lets the fused signal override
+          // weak CE margins, so CE scores are not monotonic in output
+          // order under the default.
+          ...(blend !== undefined ? { blend } : {}),
+        },
       },
       embeddings: { enabled: true, provider: new MarkerProvider() },
     });
@@ -129,7 +138,7 @@ describe("applyRerank with the local provider", () => {
       },
     }));
 
-    const memos = makeLocalRerankMemos();
+    const memos = makeLocalRerankMemos(0);
     await memos.init();
     await memos.store("zebra sighting at the zoo");
     await memos.store("zebra habitat savanna");
@@ -145,6 +154,33 @@ describe("applyRerank with the local provider", () => {
       ),
     ).toBe(true);
     expect(results[0].scores?.rerank).toBeCloseTo(1 / (1 + Math.exp(-5)), 5);
+    await memos.close();
+  });
+
+  test("blend: 1 keeps the fused order regardless of cross-encoder logits", async () => {
+    // The stub insists the FIRST candidate is the worst one — a strong
+    // CE signal that pure-CE ordering would follow. blend: 1 must ignore
+    // it entirely and keep the fused order.
+    __setLocalRerankLoaderForTests(async (): Promise<LocalRerankModel> => ({
+      async scorePairs(pairs: Array<[string, string]>): Promise<number[]> {
+        return pairs.map((_, index) => (index === 0 ? -5 : 5));
+      },
+    }));
+
+    const memos = makeLocalRerankMemos(1);
+    await memos.init();
+    await memos.store("zebra sighting at the zoo");
+    await memos.store("zebra habitat savanna");
+    await memos.store("zebra feeding schedule here");
+
+    const fused = await memos.search("zebra", { limit: 3, rerank: false });
+    const blended = await memos.search("zebra", { limit: 3 });
+    expect(blended.length).toBeGreaterThan(1);
+    expect(blended.map((r) => r.node.id)).toEqual(
+      fused.map((r) => r.node.id),
+    );
+    // CE tagging still happens — only the ordering key changes.
+    for (const r of blended) expect(r.scores?.rerank).toBeDefined();
     await memos.close();
   });
 

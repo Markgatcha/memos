@@ -567,6 +567,8 @@ export interface BuildRecallTraceInput {
     applied: boolean;
     timingMs: number;
     candidates: number;
+    /** CE/fused ordering blend used by the live run (default 0.5). */
+    blend?: number;
   };
   dedupDroppedIds: Set<string>;
   relativeTimeWindowIds?: Set<string>;
@@ -649,6 +651,7 @@ export function buildRecallTraceRecord(
     rerank: {
       enabled: input.rerankConfig.enabled,
       candidates: input.rerankConfig.candidates,
+      blend: input.rerankConfig.blend ?? 0.5,
     },
     relevanceGate: {
       enabled: input.relevanceGateConfig.enabled,
@@ -1676,13 +1679,36 @@ export function replayRecallTrace(
         effectiveConfig.rerank.candidates || 20,
         ranked.length,
       );
-      const head = ranked.slice(0, windowSize).map((item) => ({
-        ...item,
-        score: item.rerankScore ?? item.score,
-      }));
-      head.sort(compareByScoreThenId);
+      // Blend-aware replay: the live run orders the head by
+      // (1-blend)*ce + blend*fusedNorm, not by CE alone — replaying
+      // with pure CE scores would report reorderings that never
+      // happened whenever blend > 0 (the default is 0.5).
+      const blend = effectiveConfig.rerank.blend ?? 0.5;
+      const headBase = ranked.slice(0, windowSize);
+      let fusedMin = Infinity;
+      let fusedMax = -Infinity;
+      for (const item of headBase) {
+        if (item.score < fusedMin) fusedMin = item.score;
+        if (item.score > fusedMax) fusedMax = item.score;
+      }
+      const span = fusedMax - fusedMin;
+      const head = headBase.map((item) => {
+        const ce = item.rerankScore ?? item.score;
+        const key =
+          blend > 0 && span > 0
+            ? (1 - blend) * ce + blend * ((item.score - fusedMin) / span)
+            : ce;
+        return { item, key };
+      });
+      head.sort((a, b) => b.key - a.key);
       const tail = ranked.slice(windowSize);
-      ranked = [...head, ...tail];
+      ranked = [
+        ...head.map((entry) => ({
+          ...entry.item,
+          score: entry.item.rerankScore ?? entry.item.score,
+        })),
+        ...tail,
+      ];
     }
   }
 
