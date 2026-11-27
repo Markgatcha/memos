@@ -490,18 +490,10 @@ impl ReadOnlyStore {
         } else {
             "0"
         };
-        let drift_expr = match (
-            self.schema.has_col("nodes", "provenance"),
-            self.schema.has_col("nodes", "quarantined"),
-        ) {
-            (true, true) => {
-                "SUM(CASE WHEN COALESCE(quarantined, 0) != 0 OR lower(COALESCE(provenance, '')) LIKE '%drift%' OR lower(COALESCE(provenance, '')) LIKE '%stale%' THEN 1 ELSE 0 END)"
-            }
-            (true, false) => {
-                "SUM(CASE WHEN lower(COALESCE(provenance, '')) LIKE '%drift%' OR lower(COALESCE(provenance, '')) LIKE '%stale%' THEN 1 ELSE 0 END)"
-            }
-            (false, true) => "SUM(CASE WHEN COALESCE(quarantined, 0) != 0 THEN 1 ELSE 0 END)",
-            (false, false) => "0",
+        let drift_expr = if self.schema.has_col("nodes", "provenance") {
+            "SUM(CASE WHEN lower(COALESCE(provenance, '')) LIKE '%drift%' OR lower(COALESCE(provenance, '')) LIKE '%stale%' THEN 1 ELSE 0 END)"
+        } else {
+            "0"
         };
 
         let low_trust_expr = if self.schema.has_col("nodes", "trust_score") {
@@ -4080,6 +4072,8 @@ mod tests {
         assert_eq!(raw.duplicate_count, 1);
         assert_eq!(raw.low_trust_count, 1);
         assert_eq!(raw.stale_count, 1);
+        assert_eq!(raw.drifted_source_count, 1);
+        assert_eq!(raw.quarantined_count, 1);
 
         let no_contras = std::collections::HashSet::new();
         let dups = store

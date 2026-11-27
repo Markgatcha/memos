@@ -204,7 +204,7 @@ pub fn assess_store_health(
     }
     if raw.drifted_source_count > 0 {
         notes.push(format!(
-            "{} quarantined or drifted source record(s).",
+            "{} record(s) with drifted or stale provenance.",
             raw.drifted_source_count
         ));
     }
@@ -402,8 +402,8 @@ pub fn health_issues(
             id: "drifted",
             severity: IssueSeverity::Review,
             count: report.drifted_source_count,
-            title: plural(report.drifted_source_count, "memory from a changed file", "memories from changed files"),
-            impact: "The file they were ingested from has changed since. Ingest it again to refresh them.",
+            title: plural(report.drifted_source_count, "memory with stale provenance", "memories with stale provenance"),
+            impact: "Their provenance indicates possible drift. Check the source before refreshing them.",
             action_label: "",
             action: HealthIssueAction::None,
             panel: HealthPanelFilter::Stale,
