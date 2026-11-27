@@ -64,19 +64,12 @@ impl MemOSApp {
     /// A node picked on the graph canvas becomes the selection (so P, C and X
     /// act on it) without opening the full inspector over the graph.
     pub(super) fn inspect_from_graph(&mut self, id: Option<String>, cx: &mut Context<Self>) {
-        self.selected_id = id.clone();
-        let has_selection = id.is_some();
-        self.list_view
-            .update(cx, |l, cx| l.set_selected(id.clone(), false, cx));
-        let write_mode = self.settings.write_mode;
-        self.palette.update(cx, |p, cx| {
-            p.set_write_context(write_mode, has_selection, cx)
-        });
-        if self.detail_open {
-            match id {
-                Some(id) => self.select_memory(id, false, cx),
-                None => self.detail_open = false,
-            }
+        if let Some(id) = id {
+            let inspector_was_open = self.detail_open;
+            self.select_memory(id, false, cx);
+            self.detail_open = inspector_was_open;
+        } else {
+            self.close_detail(cx);
         }
         cx.notify();
     }

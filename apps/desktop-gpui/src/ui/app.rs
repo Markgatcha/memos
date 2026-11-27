@@ -5235,7 +5235,10 @@ impl MemOSApp {
     }
 
     fn copy_active_memory_markdown(&mut self, cx: &mut Context<Self>) {
-        let md = if let Some(detail) = self.detail_view.read(cx).detail() {
+        let selected_detail = self.detail_view.read(cx).detail().filter(|detail| {
+            Some(detail.id.as_str()) == self.selected_id.as_deref()
+        });
+        let md = if let Some(detail) = selected_detail {
             let mut lines = Vec::new();
             let trimmed_summary = detail.summary.trim();
             let heading = if trimmed_summary.is_empty() {
