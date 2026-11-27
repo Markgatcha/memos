@@ -90,6 +90,14 @@ pub(crate) const SCOPE_HELP: &[ScopeHelp] = &[
 /// Append `token` to the search text with exactly one separating space.
 pub(crate) fn append_search_token(current: &str, token: &str) -> String {
     let trimmed = current.trim_end();
+    if let Some((scope, _)) = token.split_once(':') {
+        let prefix = format!("{scope}:");
+        if let Some(before) = trimmed.strip_suffix(&prefix)
+            && (before.is_empty() || before.ends_with(char::is_whitespace))
+        {
+            return format!("{before}{token}");
+        }
+    }
     if trimmed.is_empty() {
         token.to_string()
     } else {
@@ -608,6 +616,8 @@ mod tests {
     #[test]
     fn tokens_append_with_single_space() {
         assert_eq!(append_search_token("", "tag:"), "tag:");
+        assert_eq!(append_search_token("oauth tag:", "tag:auth "), "oauth tag:auth ");
+        assert_eq!(append_search_token("hashtag:", "tag:auth "), "hashtag: tag:auth ");
         assert_eq!(append_search_token("oauth  ", "tag:"), "oauth tag:");
         assert_eq!(append_search_token("oauth", "is:stale "), "oauth is:stale ");
     }
