@@ -860,16 +860,6 @@ pub fn extract_search_scopes(
     }
 }
 
-fn format_trust_threshold(value: f32) -> String {
-    let s = format!("{value:.2}");
-    let trimmed = s.trim_end_matches('0').trim_end_matches('.');
-    if trimmed.is_empty() {
-        "0".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
 /// Materialize active removable chips representing `filter`'s structured scopes.
 pub fn scopes_from_filter(filter: &QueryFilter) -> Vec<SearchScopeChip> {
     let mut chips = Vec::new();
@@ -927,7 +917,7 @@ pub fn scopes_from_filter(filter: &QueryFilter) -> Vec<SearchScopeChip> {
     if let Some(max_trust) = filter.max_trust {
         chips.push(SearchScopeChip {
             kind: SearchScopeKind::MaxTrust,
-            label: format!("trust:<{}", format_trust_threshold(max_trust)),
+            label: format!("trust:<{max_trust}"),
         });
     }
     if filter.quarantined_only {
