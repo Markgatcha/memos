@@ -259,7 +259,11 @@ impl MemOSApp {
                 .flex_col()
                 .gap(px(16.))
                 .child(
+                    // Width-bound so the description wraps instead of running
+                    // past the dialog edge.
                     div()
+                        .w_full()
+                        .min_w_0()
                         .flex()
                         .flex_col()
                         .gap(px(6.))
@@ -764,6 +768,7 @@ impl MemOSApp {
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
                     .min_h_0()
                     .flex()
                     .child(

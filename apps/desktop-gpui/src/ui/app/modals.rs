@@ -196,7 +196,7 @@ impl MemOSApp {
         let entity = cx.entity();
         ModalShell::new("consent-dialog", "Crash reporting")
             .subtitle("Off by default")
-            .width(480.)
+            .width(520.)
             .child(
                 div()
                     .text_size(px(kit::text::BASE))
@@ -213,7 +213,7 @@ impl MemOSApp {
                 },
                 &theme,
             ))
-            .footer_note("You can change this later in Settings.")
+            .footer_note("Change it later in Settings.")
             .action(
                 button("consent-decline", "Keep off", ButtonKind::Secondary, &theme)
                     .aria_label("Keep crash reports off")
