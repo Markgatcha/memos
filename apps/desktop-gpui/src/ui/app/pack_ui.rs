@@ -47,6 +47,9 @@ pub(super) struct PackState {
     pub generation: RequestToken,
     pub task: Option<Task<()>>,
     pub export_task: Option<Task<()>>,
+    /// Opened with Ctrl/Cmd+E: saving is the point, so Save is the primary
+    /// action and pressing the shortcut again saves.
+    pub export_mode: bool,
 }
 
 impl PackState {
@@ -75,6 +78,7 @@ impl MemOSApp {
             PackSource::CurrentView
         });
         self.pack.open = true;
+        self.pack.export_mode = false;
         self.pack.source = source;
         self.pack.scroll.set_offset(point(px(0.), px(0.)));
         window.focus(&self.focus_handle, cx);
@@ -83,6 +87,7 @@ impl MemOSApp {
 
     pub(super) fn close_context_pack(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.pack.open = false;
+        self.pack.export_mode = false;
         self.pack.task = None;
         self.pack.generation.advance();
         window.focus(&self.focus_handle, cx);
@@ -128,11 +133,19 @@ impl MemOSApp {
 
     /// Open the pack ready to export: no budget, so nothing is left out.
     pub(super) fn open_export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A second Ctrl/Cmd+E with the export already open saves it.
+        if self.pack.open && self.pack.export_mode {
+            if self.pack.built.is_some() {
+                self.save_pack_to_file(cx);
+            }
+            return;
+        }
         self.pack.budget = PackBudget::Unlimited;
         if matches!(self.pack.format, PackFormat::Plain | PackFormat::Citations) {
             self.pack.format = PackFormat::Markdown;
         }
         self.open_context_pack(None, window, cx);
+        self.pack.export_mode = true;
     }
 
     /// Save the built pack to a file the user picks. Only reads the store.
@@ -802,25 +815,35 @@ impl MemOSApp {
             ),
         );
         if self.pack.built.is_some() {
+            // Export mode puts Save on the right as the one primary action.
+            let (save_kind, copy_kind) = if self.pack.export_mode {
+                (ButtonKind::Primary, ButtonKind::Secondary)
+            } else {
+                (ButtonKind::Secondary, ButtonKind::Primary)
+            };
             let save_entity = entity.clone();
-            shell = shell.action(
-                button("pack-save", "Save…", ButtonKind::Secondary, &theme)
-                    .tooltip(crate::ui::views::tooltip_view(
-                        "Save this pack as a file. Reads the store only.",
-                        theme,
-                    ))
-                    .on_click(move |_, _, cx| {
-                        save_entity.update(cx, |app, cx| app.save_pack_to_file(cx));
-                    }),
-            );
-            let copy_entity = entity.clone();
-            shell = shell.action(
-                button("pack-copy", "Copy pack", ButtonKind::Primary, &theme).on_click(
-                    move |_, _, cx| {
-                        copy_entity.update(cx, |app, cx| app.copy_pack(cx));
+            let save = button("pack-save", "Save…", save_kind, &theme)
+                .tooltip(crate::ui::views::tooltip_view(
+                    if self.pack.export_mode {
+                        "Save this pack as a file (Ctrl+E again). Reads the store only."
+                    } else {
+                        "Save this pack as a file. Reads the store only."
                     },
-                ),
-            );
+                    theme,
+                ))
+                .on_click(move |_, _, cx| {
+                    save_entity.update(cx, |app, cx| app.save_pack_to_file(cx));
+                });
+            let copy_entity = entity.clone();
+            let copy =
+                button("pack-copy", "Copy pack", copy_kind, &theme).on_click(move |_, _, cx| {
+                    copy_entity.update(cx, |app, cx| app.copy_pack(cx));
+                });
+            shell = if self.pack.export_mode {
+                shell.action(copy).action(save)
+            } else {
+                shell.action(save).action(copy)
+            };
         } else {
             shell = shell.action(button_disabled(
                 "pack-copy",

@@ -350,7 +350,13 @@ impl MemOSApp {
             .footer_note(
                 div()
                     .font_features(tabular_nums())
-                    .child("Stores always open read-only."),
+                    // Accurate in both modes: the app reads directly, and
+                    // edits (when on) still go through the writer.
+                    .child(if self.settings.write_mode {
+                        "Read directly; edits go through the writer."
+                    } else {
+                        "Opened for reading only."
+                    }),
             )
             .action(
                 button(
