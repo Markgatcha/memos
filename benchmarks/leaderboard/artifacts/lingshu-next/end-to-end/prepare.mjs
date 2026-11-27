@@ -11,9 +11,19 @@ export const here = path.dirname(fileURLToPath(import.meta.url));
 export const sha = value => createHash('sha256').update(value).digest('hex');
 const identity = (...values) => sha(JSON.stringify(values)).slice(0,32);
 export const read = name => JSON.parse(fs.readFileSync(path.join(here,name),'utf8'));
-export const reader = read('reader-prompt.json');
-export const judge = read('judge-prompt.json');
 export const measurement = read('measurement.json');
+function loadPrompt(name,expectedHash) {
+  const bytes=fs.readFileSync(path.join(here,name));
+  const digest=sha(bytes);
+  assert.equal(digest,expectedHash,'Prompt file changed: '+name);
+  return {template:JSON.parse(bytes),digest};
+}
+const readerFile=loadPrompt('reader-prompt.json',measurement.reader_prompt_file_sha256);
+const judgeFile=loadPrompt('judge-prompt.json',measurement.judge_prompt_file_sha256);
+export const reader=readerFile.template;
+export const judge=judgeFile.template;
+export const readerFileSha256=readerFile.digest;
+export const judgeFileSha256=judgeFile.digest;
 
 export async function* project(dataset, mode, limit=500) {
   const child = spawn(process.env.PYTHON || (process.platform==='win32'?'python':'python3'),

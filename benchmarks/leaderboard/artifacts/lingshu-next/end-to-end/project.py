@@ -107,7 +107,8 @@ def main() -> None:
                 "ordinal": index,
                 "questionId": row["question_id"],
                 "task": row["question_type"],
-                "question": row["question"], "answer": str(row["answer"]),
+                "question": row["question"],
+                "answer": str(row["answer"]),
             }
         print(json.dumps(record, ensure_ascii=True, separators=(",", ":")))
         if index == limit:
