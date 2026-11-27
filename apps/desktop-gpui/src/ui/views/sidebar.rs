@@ -972,10 +972,10 @@ impl Render for SidebarView {
                             "memories"
                         };
                         let review_count = self.health_review_count;
-                        let status_text = if review_count > 0 {
-                            format!("{review_count} to check")
-                        } else {
-                            "All caught up".to_string()
+                        let status_text = match review_count {
+                            0 => "All caught up".to_string(),
+                            1 => "1 health issue".to_string(),
+                            n => format!("{n} health issues"),
                         };
                         let status_color = if review_count > 0 {
                             theme.accent
