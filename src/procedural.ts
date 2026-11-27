@@ -131,7 +131,9 @@ export function rankProceduralLessons(
 ): RankedProceduralLesson[] {
   // queryTokens yields only ASCII letters and digits. Allow short inflections
   // such as "APIs" while rejecting embedded matches such as "rapid".
-  const words = queryTokens(query).map((t) => new RegExp(`\\b${t}[a-z0-9]{0,2}\\b`));
+  const words = queryTokens(query).map(
+    (t) => new RegExp(`(?:^|[^a-z0-9])${t}[a-z0-9]{0,2}(?![a-z0-9])`),
+  );
   const ranked: RankedProceduralLesson[] = [];
   for (const lesson of lessons) {
     const effectiveScore = effectiveLessonScore(lesson, nowMs);

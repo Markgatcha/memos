@@ -157,6 +157,12 @@ describe("retrieval ranking (pure)", () => {
     expect(ranked.map((item) => [item.id, item.relevance])).toEqual([["match", 1]]);
   });
 
+  test("matches both parts of a snake_case identifier", () => {
+    const candidates = [lesson({ lesson: "Rotate api_key", context: "" })];
+    const [match] = rankProceduralLessons(candidates, "api_key", 1, NOW);
+    expect(match?.relevance).toBe(1);
+  });
+
   test("empty query ranks by effective score alone", () => {
     const ranked = rankProceduralLessons(lessons, "", 3, NOW);
     expect(ranked.map((r) => r.id)).toEqual(["l2", "l1", "l3"]);
