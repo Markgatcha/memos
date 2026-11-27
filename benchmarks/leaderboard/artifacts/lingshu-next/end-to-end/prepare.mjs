@@ -25,10 +25,35 @@ export const judge=judgeFile.template;
 export const readerFileSha256=readerFile.digest;
 export const judgeFileSha256=judgeFile.digest;
 
-export async function* project(dataset, mode, limit=500) {
+// Stop the input stream on failure. Already-dispatched work retains its receipt.
+export async function runConcurrent(openSource, concurrency, worker) {
+  assert.ok(Number.isInteger(concurrency) && concurrency >= 1);
+  const source = new AbortController();
+  const active = new Set();
+  try {
+    for await (const row of openSource(source.signal)) {
+      source.signal.throwIfAborted();
+      const task = Promise.resolve().then(() => worker(row))
+        .catch(error => source.abort(error))
+        .finally(() => active.delete(task));
+      active.add(task);
+      if (active.size === concurrency) {
+        await Promise.race(active);
+        source.signal.throwIfAborted();
+      }
+    }
+  } catch (error) {
+    source.abort(error);
+  } finally {
+    await Promise.all(active);
+  }
+  source.signal.throwIfAborted();
+}
+
+export async function* project(dataset, mode, limit=500, signal) {
   const child = spawn(process.env.PYTHON || (process.platform==='win32'?'python':'python3'),
     ['-B',path.join(here,'project.py'),mode,path.resolve(dataset),String(limit)],
-    {windowsHide:true,stdio:['ignore','pipe','inherit']});
+    {windowsHide:true,stdio:['ignore','pipe','inherit'],signal});
   const exit = new Promise((resolve,reject) => {child.once('error',reject);child.once('close',resolve);});
   exit.catch(()=>{});
   try {

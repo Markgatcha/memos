@@ -5,15 +5,25 @@ import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {installation,invoke} from './harness.mjs';
-import {assemble,judge,judgePrompt,measurement,project,reader,readerFileSha256,judgeFileSha256,sha,validateData} from './prepare.mjs';
+import {assemble,judge,judgePrompt,measurement,project,reader,readerFileSha256,judgeFileSha256,runConcurrent,sha,validateData} from './prepare.mjs';
 
 const [mode,dataset,directory,limitArg='500']=process.argv.slice(2);
 const limit=Number(limitArg);
-const concurrency=Number(process.env.DSH_BENCH_CONCURRENCY??'1');
-assert.ok(Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=4,'Invalid DSH_BENCH_CONCURRENCY');
 assert.ok(['probe','run','resume'].includes(mode)&&dataset&&directory&&Number.isInteger(limit)&&limit>=1&&limit<=500,
   'Usage: node run.mjs probe|run|resume DATASET PRIVATE_OUTPUT [QUESTION_COUNT]');
 const output=path.resolve(directory);
+let configuredConcurrency=process.env.DSH_BENCH_CONCURRENCY;
+if(mode==='resume' && configuredConcurrency===undefined){
+  for(const name of ['run-config.json','measurement.json']){
+    const file=path.join(output,name);
+    if(fs.existsSync(file)){
+      configuredConcurrency=JSON.parse(fs.readFileSync(file,'utf8')).concurrency;
+      break;
+    }
+  }
+}
+const concurrency=Number(configuredConcurrency??4);
+assert.ok(Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=4,'Invalid DSH_BENCH_CONCURRENCY');
 const install=await installation();
 if(mode==='probe')await validateData(dataset);
 const credentialStore=mode==='probe'?path.join(output,'probe-unused.yaml'):process.env.DSH_BENCH_ACCOUNT_STORE;
@@ -31,19 +41,8 @@ const writeAtomic=(file,bytes)=>{
 };
 const save=(file,obj)=>writeAtomic(file,JSON.stringify(obj)+'\n');
 
-async function runPhase(view,worker) {
-  let batch=[];
-  const flush=async()=>{
-    const results=await Promise.allSettled(batch.map(worker));
-    batch=[];
-    const failure=results.find(result=>result.status==='rejected');
-    if(failure)throw failure.reason;
-  };
-  for await(const row of project(snapshot,view,limit)){
-    batch.push(row);
-    if(batch.length===concurrency)await flush();
-  }
-  if(batch.length)await flush();
+function runPhase(view,worker) {
+  return runConcurrent(signal=>project(snapshot,view,limit,signal),concurrency,worker);
 }
 
 async function call(phase,ordinal,model,system,prompt,maxTokens) {
