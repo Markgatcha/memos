@@ -16,6 +16,7 @@ const pins = {
   ingestionTreeSha256: '0f62525c261e079d599050156f485b4371f83287fd650e77611b53221f59c2d6',
   readerTreeSha256: 'd4bf1671bfc2a0eba4b897e2821669af93e1c2fb1a884a7a3bdd42ba1fab6417',
   judgeTreeSha256: 'eee9552ce02f98f7db2483dcc81d7f68e71255d571fb90f6e8100c34a9e8329e',
+  readerPromptSha256: '646418a66dd8e9282ebd5c0f228336db7511fd57f130a98047770c62ef4901cf',
   judgePromptSha256: '50d4f70a1a66ef13e0ee932b825adfb232a3b366cdc1684b6532db100eb10be1',
   harnessExeSha256: '93e0e6e31a2db74eb2e4905b3c79e339537f2c7cc9c9ff72eac2ff5d226f6780',
   harnessArchiveSha256: '14cfd81c9135bf0afb89417543c94f9ecfe09266574452a9b106890c698725ae',
@@ -356,7 +357,23 @@ async function main() {
     assert.ok(values[name], '--' + name + ' is required');
     values[name] = path.resolve(values[name]);
   }
+  const helperSources = new Map();
+  const helperSha256 = {};
+  for (const name of ['host-project.py', '../../project.py', '../../prepare.mjs', '../../judge-prompt.json',
+    '../../reader-prompt.json', '../../measurement.json', '../../memory-store.mjs', '../../retrieval-ranking.mjs']) {
+    const bytes = fs.readFileSync(path.join(here, name));
+    helperSources.set(name, bytes);
+    helperSha256[name] = sha(bytes);
+  }
+  assert.equal(helperSha256['../../judge-prompt.json'], pins.judgePromptSha256, 'Judge template changed');
+  assert.equal(helperSha256['../../reader-prompt.json'], pins.readerPromptSha256, 'Reader template changed');
   await preflight(values);
+  if (mode === 'preflight' || mode === 'prepare') {
+    const bundle = await import('../../prepare.mjs');
+    assert.equal(bundle.readerFileSha256, pins.readerPromptSha256, 'Offline reader template mismatch');
+    assert.equal(bundle.judgeFileSha256, pins.judgePromptSha256, 'Offline judge template mismatch');
+    assert.ok(typeof bundle.project === 'function' && typeof bundle.judgePrompt === 'function', 'Offline helper exports missing');
+  }
   if (mode === 'preflight') {
     console.log(JSON.stringify({mode, ...pins, modelCalls:0}, null, 2));
     return;
@@ -385,15 +402,6 @@ async function main() {
   };
   assert.ok(separate(values.account, output) && separate(output, values.account),
     '--output must be outside the benchmark account profile');
-  const helperSources = new Map();
-  const helperSha256 = {};
-  for (const name of ['host-project.py', '../../project.py', '../../prepare.mjs', '../../judge-prompt.json',
-    '../../reader-prompt.json', '../../measurement.json', '../../memory-store.mjs', '../../retrieval-ranking.mjs']) {
-    const bytes = fs.readFileSync(path.join(here, name));
-    helperSources.set(name, bytes);
-    helperSha256[name] = sha(bytes);
-  }
-  assert.equal(helperSha256['../../judge-prompt.json'], pins.judgePromptSha256, 'Judge template changed');
   const recipe = {limit, toolSha256:await fileHash(fileURLToPath(import.meta.url)), helperSha256, account:values.account, pins};
   if (mode === 'run') {
     assert.ok(!fs.existsSync(output), 'OUTPUT_ALREADY_EXISTS');

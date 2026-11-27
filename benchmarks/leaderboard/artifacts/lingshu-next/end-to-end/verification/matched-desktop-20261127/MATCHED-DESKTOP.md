@@ -59,7 +59,7 @@ node "$m/host-replay.mjs" preflight @inputs
 node "$m/host-replay.mjs" prepare @inputs --limit 1 --output 'D:\Benchmark\ingestion-check-private'
 ```
 
-The preflight and optional ingestion check make zero model calls. The ingestion check rebuilds a local SQLite template from the organizer's histories using the frozen ingestion product. The first regenerated template matched the corresponding recorded template byte for byte. The full launcher pins a private dataset snapshot, validates it before and after each projection, and verifies the prepared inputs and SQLite templates before use.
+The preflight and optional ingestion check make zero model calls. Both read the required helper files, load the prompt bundle and verify the reader and judge template pins before reporting success. The ingestion check rebuilds a local SQLite template from the organizer's histories using the frozen ingestion product. The first regenerated template matched the corresponding recorded template byte for byte. The full launcher pins a private dataset snapshot, validates it before and after each projection, and verifies the prepared inputs and SQLite templates before use.
 
 For a new account profile, start the frozen reader product's authorization-only host with the following command.
 
