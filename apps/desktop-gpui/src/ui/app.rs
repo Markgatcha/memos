@@ -598,7 +598,12 @@ impl MemOSApp {
                         settings,
                         selected_db,
                     } => {
-                        this.complete_onboarding(settings.clone(), selected_db.clone(), window, cx);
+                        this.complete_onboarding(
+                            (**settings).clone(),
+                            selected_db.clone(),
+                            window,
+                            cx,
+                        );
                     }
                     OnboardingEvent::ThemeChanged(mode) => {
                         this.settings.theme = *mode;
