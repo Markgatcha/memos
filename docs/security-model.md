@@ -41,6 +41,11 @@ lie about it.
 
 ## HTTP deployment
 
+For a browser frontend served from another origin, set `MEMOS_CORS_ORIGINS`
+to a comma-separated list of allowed origins, for example
+`http://localhost:3000,https://app.example.org`. The default list is empty.
+Same-origin clients, including the built-in Swagger UI, work with the default.
+
 If you bind beyond loopback:
 
 1. Set `MEMOS_API_KEY` to a long random value.

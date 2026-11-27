@@ -283,6 +283,12 @@ app = FastAPI(
 PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
 
 
+def _resolve_cors_origins() -> list[str]:
+    """Read the browser origin allowlist once at server startup."""
+    raw = os.environ.get("MEMOS_CORS_ORIGINS", "")
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 def _is_authorized(path: str, authorization: str) -> bool:
     """Bearer check used by the HTTP middleware (unit-testable)."""
     expected = os.environ.get("MEMOS_API_KEY", "").strip()
@@ -306,10 +312,10 @@ async def require_api_key(request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_resolve_cors_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(router, prefix="/api/mem")

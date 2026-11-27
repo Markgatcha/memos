@@ -14,6 +14,7 @@ services:
       - MEMOS_LOG_LEVEL=info
       # Set MEMOS_API_KEY to require a bearer token on /api/mem/*.
       - MEMOS_API_KEY=${MEMOS_API_KEY:-}
+      - MEMOS_CORS_ORIGINS=${MEMOS_CORS_ORIGINS:-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7400/health"]
