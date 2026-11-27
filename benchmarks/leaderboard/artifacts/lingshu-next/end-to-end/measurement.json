@@ -1,0 +1,53 @@
+{
+  "rounds": 1,
+  "provisional": true,
+  "accuracy": 0.656,
+  "correct": 328,
+  "questions": 500,
+  "unresolved": 0,
+  "sample_stddev": null,
+  "reader_tokens": 1451881,
+  "judge_tokens": 223549,
+  "per_question_sha256": "0774e4566ea965888204aa99b70ea3981e80fe8d97bfa8127bab95e2161df024",
+  "reader_system_sha256": "5fa0f76b41fd78d65dcb1d541d0dff7c5aaa382c7da9e0494b43b6bd7ea5f539",
+  "reader_prompt_file_sha256": "646418a66dd8e9282ebd5c0f228336db7511fd57f130a98047770c62ef4901cf",
+  "judge_prompt_file_sha256": "50d4f70a1a66ef13e0ee932b825adfb232a3b366cdc1684b6532db100eb10be1",
+  "dataset_sha256": "08d8dad4be43ee2049a22ff5674eb86725d0ce5ff434cde2627e5e8e7e117894",
+  "product_tree_sha256": "d4bf1671bfc2a0eba4b897e2821669af93e1c2fb1a884a7a3bdd42ba1fab6417",
+  "frozen_product_recipe_file_sha256": "314004be06d4e5bc82de4a5763006601f25b37cd0a19036a778b1571486f6277",
+  "public_ranker_sha256": "c0e719114e5cdb2e30e5c9724566e8f9e54894be0d2f7d7e9ad8cd8b068400cd",
+  "category_counts": {
+    "single-session-user": {
+      "correct": 58,
+      "questions": 64
+    },
+    "abstention": {
+      "correct": 28,
+      "questions": 30
+    },
+    "multi-session": {
+      "correct": 65,
+      "questions": 121
+    },
+    "single-session-preference": {
+      "correct": 15,
+      "questions": 30
+    },
+    "temporal-reasoning": {
+      "correct": 85,
+      "questions": 127
+    },
+    "knowledge-update": {
+      "correct": 65,
+      "questions": 72
+    },
+    "single-session-assistant": {
+      "correct": 12,
+      "questions": 56
+    }
+  },
+  "min_corpus_sessions": 39,
+  "max_returned_sessions": 18,
+  "reader_judge_latency_sum_p50_ms": 7006.5,
+  "reader_judge_tokens_per_question": 3350.86
+}
