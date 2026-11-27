@@ -60,27 +60,24 @@ async function treeHash(root) {
   return sha(JSON.stringify(manifest));
 }
 
-function save(file, data) {
+// All run/resume receipt and export writes are serialized by the output SQLite lock.
+function publishBytes(file, payload) {
   const temporary = file + '.' + randomUUID() + '.tmp';
-  fs.writeFileSync(temporary, JSON.stringify(data, null, 2) + '\n', {flag:'wx', flush:true});
-  fs.renameSync(temporary, file);
+  try {
+    fs.writeFileSync(temporary, payload, {flag:'wx', flush:true});
+    fs.renameSync(temporary, file);
+  } finally {
+    fs.rmSync(temporary, {force:true});
+  }
+}
+
+function save(file, data) {
+  publishBytes(file, JSON.stringify(data, null, 2) + '\n');
 }
 
 function writeJudgeFile(file, data) {
-  const payload = JSON.stringify(data, null, 2) + '\n';
-  const temporary = file + '.' + randomUUID() + '.tmp';
-  const handle = fs.openSync(temporary, 'wx');
-  try {
-    fs.writeFileSync(handle, payload);
-    fs.fsyncSync(handle);
-  } finally {
-    fs.closeSync(handle);
-  }
-  try {
-    fs.linkSync(temporary, file);
-  } finally {
-    fs.unlinkSync(temporary);
-  }
+  assert.ok(!fs.existsSync(file), 'JUDGE_FILE_ALREADY_EXISTS');
+  save(file, data);
 }
 
 const recoverable = error => error?.cause?.message === 'bad port' ||
@@ -390,7 +387,12 @@ async function main() {
   };
   assert.ok(separate(values.account, output) && separate(output, values.account),
     '--output must be outside the benchmark account profile');
-  const recipe = {limit, toolSha256:await fileHash(fileURLToPath(import.meta.url)), account:values.account, pins};
+  const helperSha256 = {};
+  for (const name of ['host-project.py', '../../project.py', '../../prepare.mjs', '../../judge-prompt.json',
+    '../../reader-prompt.json', '../../measurement.json', '../../memory-store.mjs', '../../retrieval-ranking.mjs']) {
+    helperSha256[name] = await fileHash(path.join(here, name));
+  }
+  const recipe = {limit, toolSha256:await fileHash(fileURLToPath(import.meta.url)), helperSha256, account:values.account, pins};
   if (mode === 'run') {
     fs.mkdirSync(output);
     for (const folder of ['host', 'input', 'intent', 'memory', 'reader', 'reader-receipt', 'judge', 'judge-attempt']) {
@@ -471,7 +473,7 @@ async function main() {
     const exportFile = path.join(output, 'per-question.jsonl');
     const payload = rows.map(row => JSON.stringify(row)).join('\n') + '\n';
     if (fs.existsSync(exportFile)) assert.equal(fs.readFileSync(exportFile, 'utf8'), payload, 'Published rows changed');
-    else fs.writeFileSync(exportFile, payload, {flag:'wx', flush:true});
+    else publishBytes(exportFile, payload);
     console.log(JSON.stringify({mode, questions:rows.length, partial:limit < 500,
       correct:rows.filter(row => row.verdict === 'yes').length, unresolved:rows.filter(row => row.verdict === null).length}));
   } finally {

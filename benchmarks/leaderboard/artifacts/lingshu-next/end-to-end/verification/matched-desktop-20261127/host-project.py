@@ -2,17 +2,20 @@
 
 import json
 import sys
+from importlib import import_module
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from project import PRODUCT, iter_projections, session_time
+project = import_module("project")
 
 dataset, limit = Path(sys.argv[1]), int(sys.argv[2])
-for ordinal, row in enumerate(iter_projections(dataset, PRODUCT | {"question_id"}), 1):
+for ordinal, row in enumerate(
+    project.iter_projections(dataset, project.PRODUCT | {"question_id"}), 1
+):
     histories = [
         {
             "ordinal": index,
-            "at": session_time(date),
+            "at": project.session_time(date),
             "messages": [[message["role"], message["content"]] for message in messages],
         }
         for index, (date, messages) in enumerate(

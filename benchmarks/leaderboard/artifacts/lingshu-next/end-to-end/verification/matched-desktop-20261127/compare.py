@@ -7,13 +7,17 @@ from collections import Counter
 from fractions import Fraction
 from hashlib import sha256
 from pathlib import Path
+from typing import Any
+
+Row = dict[str, Any]
+Report = dict[str, Any]
 
 
-def integer(value, minimum=0):
+def integer(value: object, minimum: int = 0) -> bool:
     return type(value) is int and value >= minimum
 
 
-def load_rows(path, expected):
+def load_rows(path: Path, expected: int) -> tuple[dict[str, Row], str]:
     raw = path.read_bytes()
     rows = {}
     ordinals = set()
@@ -51,12 +55,12 @@ def load_rows(path, expected):
     return rows, sha256(raw).hexdigest()
 
 
-def timing(row):
+def timing(row: Row) -> int | None:
     reader, judge = row["reader_latency_ms"], row["judge_latency_ms"]
     return reader + judge if reader is not None and judge is not None else None
 
 
-def summarize(rows):
+def summarize(rows: list[Row]) -> Report:
     verdicts = Counter(row["verdict"] for row in rows)
     reader = [row["reader_latency_ms"] for row in rows if row["reader_latency_ms"] is not None]
     judge = [row["judge_latency_ms"] for row in rows if row["judge_latency_ms"] is not None]
@@ -76,7 +80,7 @@ def summarize(rows):
     }
 
 
-def difference(original, rerun):
+def difference(original: Report, rerun: Report) -> Report:
     old_accuracy, new_accuracy = (
         Fraction(result["correct"], result["questions"]) if result["questions"] else None
         for result in (original, rerun)
@@ -113,7 +117,7 @@ def difference(original, rerun):
     }
 
 
-def comparison(original_rows, rerun_rows, *, paired=False):
+def comparison(original_rows: list[Row], rerun_rows: list[Row], *, paired: bool = False) -> Report:
     result = {
         "original": summarize(original_rows),
         "rerun": summarize(rerun_rows),
@@ -131,7 +135,7 @@ def comparison(original_rows, rerun_rows, *, paired=False):
     return result
 
 
-def compare(original, rerun, expected):
+def compare(original: Path, rerun: Path, expected: int) -> Report:
     old, old_hash = load_rows(original, expected)
     new, new_hash = load_rows(rerun, expected)
     shared = sorted(old.keys() & new.keys(), key=lambda key: old[key]["ordinal"])
@@ -151,7 +155,7 @@ def compare(original, rerun, expected):
         and old[key]["reader_prompt_sha256"] == new[key].get("reader_prompt_sha256")
     ]
 
-    def pairs(keys):
+    def pairs(keys: list[str]) -> Report:
         return comparison([old[key] for key in keys], [new[key] for key in keys], paired=True)
 
     all_questions = comparison(list(old.values()), list(new.values()))
@@ -168,7 +172,7 @@ def compare(original, rerun, expected):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("original", type=Path)
     parser.add_argument("rerun", type=Path)
