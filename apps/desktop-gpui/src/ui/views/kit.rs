@@ -145,6 +145,77 @@ pub fn button_disabled(
         .child(label)
 }
 
+/// Settings row with a title, one line of explanation and an on/off switch.
+/// The whole row toggles; the caller adds `on_click`. The track uses the
+/// accent when on (not a status colour) and shows a focus ring.
+pub fn switch_row(
+    id: impl Into<ElementId>,
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    on: bool,
+    theme: &ThemePalette,
+) -> Stateful<Div> {
+    let theme = *theme;
+    let title: SharedString = title.into();
+    div()
+        .id(id)
+        .focusable()
+        .role(Role::Switch)
+        .aria_label(title.clone())
+        .aria_selected(on)
+        .cursor_pointer()
+        .rounded(px(CONTROL_RADIUS))
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .focus_visible(move |s| s.border_color(theme.accent))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(space::S3))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .gap(px(3.))
+                .child(
+                    div()
+                        .text_size(px(text::BASE))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.text_primary)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_size(px(text::SM))
+                        .line_height(px(17.))
+                        .text_color(theme.text_muted)
+                        .child(description.into()),
+                ),
+        )
+        .child(
+            div()
+                .w(px(36.))
+                .h(px(20.))
+                .p(px(2.))
+                .rounded_full()
+                .flex_shrink_0()
+                .bg(if on { theme.accent } else { theme.bg_elevated })
+                .border_1()
+                .border_color(if on { theme.accent } else { theme.border })
+                .flex()
+                .items_center()
+                .when(on, |t| t.justify_end())
+                .when(!on, |t| t.justify_start())
+                .child(div().w(px(14.)).h(px(14.)).rounded_full().bg(if on {
+                    theme.primary_btn_fg
+                } else {
+                    theme.text_secondary
+                })),
+        )
+}
+
 /// Icon button that cannot act right now (e.g. "Move up" on the first row).
 /// Same footprint as [`icon_button`] so rows do not shift; dimmed, no hover,
 /// and the accessible label says why.
@@ -416,6 +487,10 @@ pub struct ModalShell {
     pub footer_note: Option<AnyElement>,
     pub actions: Vec<AnyElement>,
     pub header_extra: Option<AnyElement>,
+    /// Fixed height for dialogs whose body manages its own panes.
+    pub height: Option<f32>,
+    /// Edge-to-edge, non-scrolling body (split panes scroll themselves).
+    pub flush_body: bool,
 }
 
 impl ModalShell {
@@ -429,7 +504,21 @@ impl ModalShell {
             footer_note: None,
             actions: Vec::new(),
             header_extra: None,
+            height: None,
+            flush_body: false,
         }
+    }
+
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
+    }
+
+    /// Body without padding or its own scroll, separated from the title by a
+    /// hairline. For split-pane dialogs such as Tools.
+    pub fn flush_body(mut self) -> Self {
+        self.flush_body = true;
+        self
     }
 
     pub fn subtitle(mut self, subtitle: impl Into<SharedString>) -> Self {
@@ -487,6 +576,7 @@ impl ModalShell {
                     .role(Role::Dialog)
                     .aria_label(self.title.clone())
                     .w(px(self.width))
+                    .when_some(self.height, |d, h| d.h(px(h)))
                     .max_w(gpui::relative(0.94))
                     .max_h(gpui::relative(0.92))
                     .rounded(px(12.))
@@ -555,7 +645,16 @@ impl ModalShell {
                                 .on_click(move |_, window, cx| dismiss_close(window, cx)),
                             ),
                     )
-                    .child(
+                    .child(if self.flush_body {
+                        div()
+                            .id(SharedString::from(format!("{}-body", self.id)))
+                            .flex_1()
+                            .min_h(px(0.))
+                            .border_t_1()
+                            .border_color(theme.border_subtle)
+                            .flex()
+                            .children(self.body)
+                    } else {
                         div()
                             .id(SharedString::from(format!("{}-body", self.id)))
                             .flex_1()
@@ -566,8 +665,8 @@ impl ModalShell {
                             .flex()
                             .flex_col()
                             .gap(px(space::S3))
-                            .children(self.body),
-                    )
+                            .children(self.body)
+                    })
                     .when(has_footer, |dialog| {
                         dialog.child(
                             div()

@@ -248,68 +248,16 @@ impl MemOSApp {
                                     .flex_col()
                                     .gap(px(12.))
                                     .child(
-                                        div()
-                                            .id("settings-write-mode-toggle")
-                                            .focusable()
-                                            .role(Role::Switch)
-                                            .aria_label("Write mode (MCP)")
-                                            .aria_selected(write_mode)
-                                            .cursor_pointer()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .gap(px(12.))
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.set_write_mode(!write_mode, cx);
-                                            }))
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w(px(0.))
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap(px(3.))
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(13.))
-                                                            .font_weight(FontWeight::MEDIUM)
-                                                            .text_color(theme.text_primary)
-                                                            .child("Let your AI save changes"),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(12.))
-                                                            .line_height(px(17.))
-                                                            .text_color(theme.text_muted)
-                                                            .child("Approve, edit, forget, and add memories. Every change is logged and can be traced back."),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .w(px(36.))
-                                                    .h(px(20.))
-                                                    .p(px(2.))
-                                                    .rounded_full()
-                                                    .flex_shrink_0()
-                                                    .bg(if write_mode {
-                                                        theme.success
-                                                    } else {
-                                                        theme.bg_elevated
-                                                    })
-                                                    .border_1()
-                                                    .border_color(theme.border)
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_end()
-                                                    .when(!write_mode, |t| t.justify_start())
-                                                    .child(
-                                                        div()
-                                                            .w(px(14.))
-                                                            .h(px(14.))
-                                                            .rounded_full()
-                                                            .bg(theme.text_primary),
-                                                    ),
-                                            ),
+                                        kit::switch_row(
+                                            "settings-write-mode-toggle",
+                                            "Let your AI save changes",
+                                            "Approve, edit, forget, and add memories. Every change is logged and can be traced back.",
+                                            write_mode,
+                                            &theme,
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.set_write_mode(!write_mode, cx);
+                                        })),
                                     )
                                     .when_some(preflight.human_message(), |col, msg| {
                                         col.child(
@@ -515,68 +463,20 @@ impl MemOSApp {
                             )
                             .child(
                                 div()
-                                    .id("settings-privacy-toggle")
-                                    .focusable()
-                                    .role(Role::Switch)
-                                    .aria_label("Crash reporting")
-                                    .aria_selected(crash_on)
-                                    .cursor_pointer()
                                     .border_t_1()
                                     .border_color(theme.border_subtle)
                                     .pt(px(16.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap(px(12.))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.set_crash_consent(!crash_on, cx);
-                                    }))
                                     .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(3.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Crash reporting"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_muted)
-                                                    .child("Sends scrubbed panic reports only; memory text stays local."),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .w(px(36.))
-                                            .h(px(20.))
-                                            .p(px(2.))
-                                            .rounded_full()
-                                            .flex_shrink_0()
-                                            .bg(if crash_on {
-                                                theme.success
-                                            } else {
-                                                theme.bg_elevated
-                                            })
-                                            .border_1()
-                                            .border_color(theme.border)
-                                            .flex()
-                                            .items_center()
-                                            .justify_end()
-                                            .when(!crash_on, |t| t.justify_start())
-                                            .child(
-                                                div()
-                                                    .w(px(14.))
-                                                    .h(px(14.))
-                                                    .rounded_full()
-                                                    .bg(theme.text_primary),
-                                            ),
+                                        kit::switch_row(
+                                            "settings-privacy-toggle",
+                                            "Crash reporting",
+                                            "Sends scrubbed panic reports only; memory text stays local.",
+                                            crash_on,
+                                            &theme,
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.set_crash_consent(!crash_on, cx);
+                                        })),
                                     ),
                             )
                             .child(
@@ -654,39 +554,31 @@ impl MemOSApp {
                                                     this.copy_database_path(cx);
                                                 })),
                                             )
-                                            .child(
-                                                div()
-                                                    .id("settings-optimize-store")
-                                                    .focusable()
-                                                    .role(Role::Button)
-                                                    .aria_label("Optimize store indexes")
-                                                    .tooltip(tooltip_view(
-                                                        SharedString::from(
-                                                            "Adds missing read-path indexes. Safe and repeatable.",
-                                                        ),
-                                                        theme,
-                                                    ))
-                                                    .h(px(28.))
-                                                    .px(px(10.))
-                                                    .rounded(px(6.))
-                                                    .cursor_pointer()
-                                                    .bg(gpui::transparent_black())
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                                    .flex()
-                                                    .items_center()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_secondary)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.optimize_store(cx);
-                                                    }))
-                                                    .child(if self.store_optimize_in_flight {
-                                                        "Optimising…"
-                                                    } else {
-                                                        "Optimize store"
-                                                    }),
-                                            ),
+                                            .child(if self.store_optimize_in_flight {
+                                                kit::button_disabled(
+                                                    "settings-optimize-store",
+                                                    "Optimizing…",
+                                                    "already running",
+                                                    &theme,
+                                                )
+                                            } else {
+                                                kit::button(
+                                                    "settings-optimize-store",
+                                                    "Optimize store",
+                                                    kit::ButtonKind::Secondary,
+                                                    &theme,
+                                                )
+                                                .aria_label("Optimize store indexes")
+                                                .tooltip(tooltip_view(
+                                                    SharedString::from(
+                                                        "Adds missing read-path indexes. Safe and repeatable.",
+                                                    ),
+                                                    theme,
+                                                ))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.optimize_store(cx);
+                                                }))
+                                            }),
                                     ),
                             )
                             .child(

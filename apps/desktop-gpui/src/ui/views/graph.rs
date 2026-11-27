@@ -343,10 +343,26 @@ pub struct GraphView {
     theme: ThemePalette,
 }
 
-/// Ambient (non-selected) node labels stay out of the overview. The fit
-/// zoom now fills the canvas (~1.2), so showing every top-importance label
-/// there just produces collisions; zoom in to read names.
-pub const GRAPH_AMBIENT_LABEL_MIN_ZOOM: f32 = 1.5;
+/// Below this zoom ambient labels are too small to read, so only the selected
+/// and hovered nodes are labelled.
+pub const GRAPH_AMBIENT_LABEL_MIN_ZOOM: f32 = 0.4;
+
+/// Graphs with at most this many memory nodes label every node: a handful of
+/// unnamed dots tells the reader nothing.
+pub const GRAPH_LABEL_ALL_MAX_NODES: usize = 24;
+
+/// How many ambient (not selected or hovered) labels to offer, most important
+/// first. `None` means every node. Larger graphs offer more labels as the
+/// user zooms in; collision culling then drops the least important overlaps.
+pub(crate) fn ambient_label_budget(memory_nodes: usize, zoom: f32) -> Option<usize> {
+    if zoom < GRAPH_AMBIENT_LABEL_MIN_ZOOM {
+        return Some(0);
+    }
+    if memory_nodes <= GRAPH_LABEL_ALL_MAX_NODES {
+        return None;
+    }
+    Some(((8.0 * zoom).round() as usize).clamp(6, 48))
+}
 
 pub(crate) fn is_node_hovered(
     hovered_node: Option<usize>,
@@ -362,11 +378,9 @@ pub(crate) fn should_show_node_label(
     node_in_canvas: bool,
     is_selected: bool,
     is_hovered: bool,
-    zoom: f32,
-    is_top_important: bool,
+    within_ambient_budget: bool,
 ) -> bool {
-    node_in_canvas
-        && (is_selected || is_hovered || (zoom >= GRAPH_AMBIENT_LABEL_MIN_ZOOM && is_top_important))
+    node_in_canvas && (is_selected || is_hovered || within_ambient_budget)
 }
 
 pub(crate) type LabelRect = (f32, f32, f32, f32);
@@ -1297,7 +1311,7 @@ impl Render for GraphView {
             entries.sort_by(|a, b| a.0.cmp(&b.0));
             entries.truncate(4);
             if layout.nodes.iter().any(|n| n.data.has_contradiction) {
-                entries.push(("contradiction".to_string(), theme.danger));
+                entries.push(("conflict".to_string(), theme.danger));
             }
             entries
         } else {
@@ -1597,7 +1611,7 @@ impl Render for GraphView {
                     .when(self.error.is_none(), |el| {
                         let empty_msg = match self.mode {
                             GraphMode::Contradictions => {
-                                "No conflicts in this view. Memories that contradict each other appear here as linked pairs."
+                                "No conflicts in this view. Memories that conflict appear here as linked pairs."
                             }
                             GraphMode::Entity => {
                                 "No memories in this view mention a known entity yet."
@@ -1640,9 +1654,11 @@ impl Render for GraphView {
                                                             > 2.0
                                                 });
                                             view.last_bounds = Some(bounds);
+                                            // Stay fitted through canvas resizes (window,
+                                            // inspector opening) until the user pans or
+                                            // zooms; their input clears the flag.
                                             if view.needs_fit_on_bounds && size_changed {
                                                 view.fit_to_bounds(None);
-                                                view.needs_fit_on_bounds = false;
                                                 if let Some(ref mut d) = data {
                                                     d.viewport = view.viewport;
                                                 }
@@ -2011,8 +2027,11 @@ fn compute_fit_viewport(layout: &ComputedLayout, vp_w: f32, vp_h: f32) -> GraphV
     let span_y = (layout.max_y - layout.min_y).max(140.0);
     let mid_x = (layout.min_x + layout.max_x) * 0.5;
     let mid_y = (layout.min_y + layout.max_y) * 0.5;
-    let pad_left = 36.0_f32;
-    let pad_right = (vp_w * 0.18).clamp(88.0, 150.0);
+    // Symmetric horizontal padding keeps the graph centred; it is wide enough
+    // for a label beside an edge node, since every node of a small graph is
+    // labelled.
+    let pad_left = (vp_w * 0.1).clamp(56.0, 120.0);
+    let pad_right = pad_left;
     let pad_top = if layout.mode == GraphMode::Temporal {
         64.0
     } else {
@@ -2021,9 +2040,11 @@ fn compute_fit_viewport(layout: &ComputedLayout, vp_w: f32, vp_h: f32) -> GraphV
     let pad_bottom = 68.0_f32;
     let avail_w = (vp_w - pad_left - pad_right).max(140.0);
     let avail_h = (vp_h - pad_top - pad_bottom).max(120.0);
+    // A small graph may zoom past 1.8 so nine memories fill the canvas instead
+    // of huddling in the middle of it.
     let zoom = (avail_w / span_x)
         .min(avail_h / span_y)
-        .clamp(MIN_ZOOM, 1.8);
+        .clamp(MIN_ZOOM, 2.4);
     GraphViewport {
         zoom,
         pan_x: -mid_x + (pad_left - pad_right) * 0.5 / zoom,
@@ -2777,15 +2798,26 @@ fn paint_graph_canvas(
         .map(|(ix, n)| (ix, n.data.importance))
         .collect();
     ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    let ambient_label_cap = 6;
-    let top_label_indices: std::collections::HashSet<usize> = ranked
-        .into_iter()
-        .take(ambient_label_cap)
-        .map(|(ix, _)| ix)
-        .collect();
+    let memory_nodes = data
+        .layout
+        .nodes
+        .iter()
+        .filter(|n| n.data.memory_id.is_some())
+        .count();
+    let budget = ambient_label_budget(memory_nodes, vp.zoom).unwrap_or(usize::MAX);
+    // Small graphs get longer ambient labels: there is room, and the names
+    // are the point of looking at nine memories.
+    let ambient_max_len = if memory_nodes <= GRAPH_LABEL_ALL_MAX_NODES {
+        28
+    } else {
+        20
+    };
+    let top_label_indices: std::collections::HashSet<usize> =
+        ranked.into_iter().take(budget).map(|(ix, _)| ix).collect();
 
     struct PendingNodeLabel {
         priority: bool,
+        importance: f32,
         anchor_x: f32,
         anchor_y: f32,
         radius: f32,
@@ -2900,7 +2932,6 @@ fn paint_graph_canvas(
                 node_in_canvas,
                 is_selected,
                 is_hovered,
-                vp.zoom,
                 top_label_indices.contains(&ix),
             );
         if show_node_label {
@@ -2908,6 +2939,7 @@ fn paint_graph_canvas(
                 let count_txt: SharedString = format!("+{}", node.data.cluster_count).into();
                 pending_labels.push(PendingNodeLabel {
                     priority: is_selected || is_hovered,
+                    importance: node.data.importance,
                     anchor_x: sp.x.as_f32(),
                     anchor_y: sp.y.as_f32(),
                     radius: r,
@@ -2916,7 +2948,11 @@ fn paint_graph_canvas(
                 });
             } else {
                 let clean = strip_short_id_prefix(&node.data.label, node.data.memory_id.as_deref());
-                let max_len = if is_selected || is_hovered { 36 } else { 20 };
+                let max_len = if is_selected || is_hovered {
+                    36
+                } else {
+                    ambient_max_len
+                };
                 let lbl: SharedString = sanitize_single_line(clean, max_len).into();
                 if !lbl.is_empty() {
                     let text_color = if is_selected || is_hovered {
@@ -2926,6 +2962,7 @@ fn paint_graph_canvas(
                     };
                     pending_labels.push(PendingNodeLabel {
                         priority: is_selected || is_hovered,
+                        importance: node.data.importance,
                         anchor_x: sp.x.as_f32(),
                         anchor_y: sp.y.as_f32(),
                         radius: r,
@@ -2939,8 +2976,13 @@ fn paint_graph_canvas(
 
     let label_size_px = if data.constellation { 10.0 } else { 12.0 };
     let label_size = px(label_size_px);
-    // Filter collisions high-priority first so selected/hovered labels stay visible while dense siblings avoid overlap.
-    pending_labels.sort_by_key(|item| std::cmp::Reverse(item.priority));
+    // Place selected/hovered labels first, then by importance, so collision
+    // culling drops the least important overlapping labels.
+    pending_labels.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then_with(|| b.importance.total_cmp(&a.importance))
+    });
     let mut visible_labels: Vec<(Point<Pixels>, SharedString, Hsla)> = Vec::new();
     let mut cache = data.label_cache.borrow_mut();
     let (pad_x, pad_y) = if vp.zoom < 0.65 {
@@ -3523,25 +3565,21 @@ mod tests {
 
     #[test]
     fn graph_label_zoom_gate_collision_and_bounds_clamp() {
-        // Below the ambient threshold, only selected or hovered labels appear.
+        // Small graphs label every node at any readable zoom; large graphs
+        // offer a zoom-scaled, importance-ranked budget; below the floor only
+        // selected/hovered nodes are labelled.
         let gate = GRAPH_AMBIENT_LABEL_MIN_ZOOM;
-        assert!(!should_show_node_label(
-            true,
-            false,
-            false,
-            gate - 0.01,
-            true
-        ));
-        assert!(should_show_node_label(true, false, false, gate, true));
-        assert!(!should_show_node_label(
-            true,
-            false,
-            false,
-            gate - 0.01,
-            false
-        ));
-        assert!(should_show_node_label(true, true, false, 0.25, false));
-        assert!(should_show_node_label(true, false, true, 0.25, false));
+        assert_eq!(ambient_label_budget(9, 1.2), None);
+        assert_eq!(ambient_label_budget(GRAPH_LABEL_ALL_MAX_NODES, gate), None);
+        assert_eq!(ambient_label_budget(9, gate - 0.01), Some(0));
+        assert_eq!(ambient_label_budget(2_000, 0.5), Some(6));
+        assert_eq!(ambient_label_budget(2_000, 2.0), Some(16));
+        assert_eq!(ambient_label_budget(2_000, 20.0), Some(48));
+        assert!(should_show_node_label(true, false, false, true));
+        assert!(!should_show_node_label(true, false, false, false));
+        assert!(!should_show_node_label(false, false, false, true));
+        assert!(should_show_node_label(true, true, false, false));
+        assert!(should_show_node_label(true, false, true, false));
 
         // Ambient label skips when both sides overlap existing labels.
         let canvas = (0.0, 0.0, 500.0, 400.0);

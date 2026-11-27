@@ -8,7 +8,7 @@ use gpui::{
     MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Render, Role, ScrollHandle,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowOptions, actions, div, point,
-    prelude::FluentBuilder, px, rgba, size,
+    prelude::FluentBuilder, px, size,
 };
 
 use crate::core::context_pack::PackSource;

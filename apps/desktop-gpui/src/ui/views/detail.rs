@@ -514,11 +514,8 @@ impl Render for DetailView {
             .map(|(ix, c)| {
                 let peer_id = c.peer_id.clone();
                 let compare_id = c.peer_id.clone();
-                let open_aria: SharedString = format!(
-                    "Open contradicting memory {}: {}",
-                    c.peer_short_id, c.status
-                )
-                .into();
+                let open_aria: SharedString =
+                    format!("Open conflicting memory {}: {}", c.peer_short_id, c.status).into();
                 let header: SharedString = format!(
                     "{} · {}",
                     crate::ui::views::brief::format_contradiction_status_label(&c.status),

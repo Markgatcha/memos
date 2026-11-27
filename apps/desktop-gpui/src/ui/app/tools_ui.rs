@@ -753,125 +753,46 @@ impl MemOSApp {
                 .into_any_element()
         };
 
-        div()
-            .id("harness-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(theme.glass_scrim)
-            .px(px(24.))
-            .py(px(24.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.show_harnesses_modal = false;
-                    this.pending_connect_id = None;
-                    cx.notify();
-                }),
-            )
+        let dismiss = cx.entity();
+        kit::ModalShell::new("harness-dialog", "Tools")
+            .subtitle(SharedString::from(format!(
+                "{installed_count} installed · {total_harnesses} supported"
+            )))
+            .width(780.)
+            .height(580.)
+            .flush_body()
             .child(
                 div()
-                    .id("harness-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Tools")
-                    .w_full()
-                    .max_w(px(780.))
-                    .h(px(580.))
-                    .max_h(gpui::relative(0.88))
-                    .rounded(px(16.))
-                    .bg(theme.glass_panel)
-                    .border_1()
-                    .border_color(theme.glass_border)
-                    .shadow_lg()
-                    .overflow_hidden()
+                    .flex_1()
+                    .min_h_0()
                     .flex()
-                    .flex_col()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    })
                     .child(
                         div()
-                            .h(px(48.))
-                            .px(px(16.))
-                            .border_b_1()
+                            .id("harness-list-scroll")
+                            .w(px(224.))
+                            .h_full()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .p(px(8.))
+                            .border_r_1()
                             .border_color(theme.border_subtle)
                             .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .text_size(px(15.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(theme.text_primary)
-                                            .child("Tools"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.text_muted)
-                                            .font_features(tabular_nums())
-                                            .child(SharedString::from(format!(
-                                                "{installed_count} installed · {total_harnesses} supported"
-                                            ))),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("close-harness-modal")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close tools modal")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_harnesses_modal = false;
-                                        this.pending_connect_id = None;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(
-                                        UiIcon::Close,
-                                        14.0,
-                                        theme.text_secondary,
-                                    )),
-                            ),
+                            .flex_col()
+                            .gap(px(2.))
+                            .children(harness_rows),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .flex()
-                            .child(
-                                div()
-                                    .id("harness-list-scroll")
-                                    .w(px(224.))
-                                    .h_full()
-                                    .min_h_0()
-                                    .overflow_y_scroll()
-                                    .p(px(8.))
-                                    .border_r_1()
-                                    .border_color(theme.border_subtle)
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.))
-                                    .children(harness_rows),
-                            )
-                            .child(inspector_pane),
-                    ),
+                    .child(inspector_pane),
             )
-            .into_any_element()
+            .render(
+                &theme,
+                std::rc::Rc::new(move |window, cx| {
+                    dismiss.update(cx, |app, cx| {
+                        app.show_harnesses_modal = false;
+                        app.pending_connect_id = None;
+                        window.focus(&app.focus_handle, cx);
+                        cx.notify();
+                    });
+                }),
+            )
     }
 }

@@ -24,7 +24,7 @@ impl BriefSectionKind {
             BriefSectionKind::New => "New",
             BriefSectionKind::Changed => "Changed",
             BriefSectionKind::Expiring => "Expiring soon",
-            BriefSectionKind::Contradictions => "Contradictions",
+            BriefSectionKind::Contradictions => "Conflicts",
             BriefSectionKind::NeedsReview => "Worth a look",
         }
     }
@@ -47,7 +47,7 @@ impl BriefSectionKind {
             BriefSectionKind::New => "Today · New",
             BriefSectionKind::Changed => "Today · Changed",
             BriefSectionKind::Expiring => "Today · Expiring",
-            BriefSectionKind::Contradictions => "Contradictions",
+            BriefSectionKind::Contradictions => "Conflicts",
             BriefSectionKind::NeedsReview => "Today · Worth a look",
         }
     }

@@ -134,7 +134,7 @@ impl GraphMode {
             GraphMode::Tag => "Tag",
             GraphMode::Entity => "Entity",
             GraphMode::Temporal => "Temporal",
-            GraphMode::Contradictions => "Contradictions",
+            GraphMode::Contradictions => "Conflicts",
         }
     }
 }
@@ -548,7 +548,7 @@ impl DreamDiffKind {
             Self::Promoted => "Promoted",
             Self::Merged => "Merged",
             Self::Decayed => "Decayed",
-            Self::Contradiction => "Contradiction",
+            Self::Contradiction => "Conflict",
             Self::Updated => "Updated",
         }
     }
@@ -816,7 +816,11 @@ fn parse_scope_token(
             out.provenance = Some(v);
             Some(SearchScopeKind::Provenance)
         }
-        "has" if val.trim().eq_ignore_ascii_case("contradiction") => {
+        // `has:conflict` is the UI word; `has:contradiction` matches the CLI.
+        "has"
+            if val.trim().eq_ignore_ascii_case("contradiction")
+                || val.trim().eq_ignore_ascii_case("conflict") =>
+        {
             out.has_contradiction = true;
             Some(SearchScopeKind::HasContradiction)
         }
@@ -1046,7 +1050,7 @@ pub fn describe_filter_target(filter: &QueryFilter) -> String {
         parts.push(prov.to_string());
     }
     if filter.has_contradiction {
-        parts.push("contradictions".to_string());
+        parts.push("conflicts".to_string());
     }
     if filter.min_importance.is_some() {
         parts.push("important".to_string());

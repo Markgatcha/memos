@@ -190,132 +190,56 @@ impl MemOSApp {
     }
 
     pub(super) fn render_consent_modal(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::ui::views::kit::{ButtonKind, ModalShell, NoticeKind, button, notice};
         let theme = self.theme;
         let has_dsn = telemetry::resolve_dsn().is_some();
-        div()
-            .id("consent-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000099))
-            .flex()
-            .items_center()
-            .justify_center()
+        let entity = cx.entity();
+        ModalShell::new("consent-dialog", "Crash reporting")
+            .subtitle("Off by default")
+            .width(480.)
             .child(
                 div()
-                    .id("consent-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Crash reporting consent")
-                    .w(px(480.))
-                    .p(px(24.))
-                    .rounded(px(10.))
-                    .bg(theme.bg_panel)
-                    .border_1()
-                    .border_color(theme.border_subtle)
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_size(px(19.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.text_primary)
-                                    .child("Crash reporting"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .child(status_dot(theme.success))
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.text_muted)
-                                            .child("Off by default"),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .line_height(px(18.))
-                            .text_color(theme.text_secondary)
-                            .child("Local rotating logs and offline crash reports always work without a network connection."),
-                    )
-                    .child(
-                        div()
-                            .p(px(12.))
-                            .rounded(px(6.))
-                            .bg(theme.bg_app)
-                            .border_1()
-                            .border_color(theme.border_subtle)
-                            .text_size(px(12.))
-                            .line_height(px(17.))
-                            .text_color(theme.text_muted)
-                            .child(if has_dsn {
-                                "If you opt in, Sentry sends panic diagnostics containing only app version, OS, error kind, and a random install ID. Memory content, search queries, and paths are stripped."
-                            } else {
-                                "No Sentry DSN is configured in this build, so crash reports remain strictly local on your machine."
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .gap(px(8.))
-                            .pt(px(4.))
-                            .child(
-                                div()
-                                    .id("consent-decline")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Keep crash reports off")
-                                    .h(px(34.))
-                                    .px(px(14.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .bg(theme.bg_elevated)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .hover(move |s| s.bg(theme.bg_selected))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .text_color(theme.text_primary)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.set_crash_consent(false, cx);
-                                    }))
-                                    .child("Keep off"),
-                            )
-                            .child(
-                                div()
-                                    .id("consent-accept")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Enable scrubbed crash reports")
-                                    .h(px(34.))
-                                    .px(px(14.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .bg(theme.accent)
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.primary_btn_fg)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.set_crash_consent(true, cx);
-                                    }))
-                                    .child("Enable scrubbed reports"),
-                            ),
-                    ),
+                    .text_size(px(kit::text::BASE))
+                    .line_height(px(18.))
+                    .text_color(theme.text_secondary)
+                    .child("Local rotating logs and offline crash reports always work without a network connection."),
             )
-            .into_any_element()
+            .child(notice(
+                NoticeKind::Info,
+                if has_dsn {
+                    "If you opt in, Sentry sends panic diagnostics containing only app version, OS, error kind, and a random install ID. Memory content, search queries, and paths are stripped."
+                } else {
+                    "No Sentry DSN is configured in this build, so crash reports remain strictly local on your machine."
+                },
+                &theme,
+            ))
+            .footer_note("You can change this later in Settings.")
+            .action(
+                button("consent-decline", "Keep off", ButtonKind::Secondary, &theme)
+                    .aria_label("Keep crash reports off")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.set_crash_consent(false, cx);
+                    })),
+            )
+            .action(
+                button(
+                    "consent-accept",
+                    "Enable scrubbed reports",
+                    ButtonKind::Primary,
+                    &theme,
+                )
+                .aria_label("Enable scrubbed crash reports")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.set_crash_consent(true, cx);
+                })),
+            )
+            // Dismissing (scrim, Esc, close) keeps reports off: the safe default.
+            .render(
+                &theme,
+                std::rc::Rc::new(move |_, cx| {
+                    entity.update(cx, |app, cx| app.set_crash_consent(false, cx));
+                }),
+            )
     }
 
     pub(super) fn render_overflow_menu(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -541,53 +465,24 @@ impl MemOSApp {
             Some(DreamDiffKind::Updated),
         ];
 
-        let pills = filter_options.into_iter().enumerate().map(|(ix, kind)| {
-            let active = filter == kind;
-            let count = filter_dream_diff_entries(&self.dream_diff_entries, kind).len();
-            let label = match kind {
-                None => format!("All ({count})"),
-                Some(k) => format!("{} ({count})", k.label()),
-            };
-            div()
-                .id(("dream-diff-filter", ix))
-                .focusable()
-                .role(Role::Button)
-                .cursor_pointer()
-                .h(px(28.))
-                .px(px(10.))
-                .rounded(px(6.))
-                .bg(if active {
-                    theme.bg_selected
-                } else {
-                    theme.bg_elevated
+        let entity = cx.entity();
+        let segments: Vec<kit::Segment> = filter_options
+            .into_iter()
+            .map(|kind| {
+                let count = filter_dream_diff_entries(&self.dream_diff_entries, kind).len();
+                let label = match kind {
+                    None => format!("All · {count}"),
+                    Some(k) => format!("{} · {count}", k.label()),
+                };
+                let e = entity.clone();
+                kit::Segment::new(label, filter == kind, move |_, _, cx| {
+                    e.update(cx, |app, cx| {
+                        app.dream_diff_filter = kind;
+                        cx.notify();
+                    });
                 })
-                .border_1()
-                .border_color(if active {
-                    theme.border_strong
-                } else {
-                    theme.border_subtle
-                })
-                .hover(move |s| s.bg(theme.bg_hover))
-                .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                .flex()
-                .items_center()
-                .text_size(px(12.))
-                .font_weight(if active {
-                    FontWeight::MEDIUM
-                } else {
-                    FontWeight::NORMAL
-                })
-                .text_color(if active {
-                    theme.text_primary
-                } else {
-                    theme.text_secondary
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.dream_diff_filter = kind;
-                    cx.notify();
-                }))
-                .child(label)
-        });
+            })
+            .collect();
 
         let feed_content: AnyElement =
             if self.dream_diff_loading && self.dream_diff_entries.is_empty() {
@@ -711,101 +606,26 @@ impl MemOSApp {
                     .into_any_element()
             };
 
-        div()
-            .id("dream-diff-modal-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(theme.glass_scrim)
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.show_dream_diff_modal = false;
-                    cx.notify();
+        let dismiss = entity.clone();
+        kit::ModalShell::new("dream-diff-dialog", "Dream diff")
+            .subtitle("Read-only timeline of promotions, merges, decay and conflicts")
+            .width(640.)
+            .child(kit::segmented(
+                "dream-diff-filter",
+                "Filter events",
+                segments,
+                &theme,
+            ))
+            .child(feed_content)
+            .render(
+                &theme,
+                std::rc::Rc::new(move |window, cx| {
+                    dismiss.update(cx, |app, cx| {
+                        app.show_dream_diff_modal = false;
+                        window.focus(&app.focus_handle, cx);
+                        cx.notify();
+                    });
                 }),
             )
-            .child(
-                div()
-                    .id("dream-diff-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Dream Diff timeline")
-                    .w(px(640.))
-                    .max_w(gpui::relative(0.92))
-                    .max_h(gpui::relative(0.86))
-                    .p(px(24.))
-                    .rounded(px(16.))
-                    .bg(theme.glass_panel)
-                    .border_1()
-                    .border_color(theme.glass_border)
-                    .shadow_lg()
-                    .flex()
-                    .flex_col()
-                    .gap(px(14.))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .flex()
-                            .items_start()
-                            .justify_between()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(4.))
-                                    .child(
-                                        div()
-                                            .text_size(px(19.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(theme.text_primary)
-                                            .child("Dream Diff"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .text_color(theme.text_muted)
-                                            .child("Read-only timeline of promotions, merges, decay, and contradictions."),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("close-dream-diff-modal")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close Dream Diff")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_hover))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_dream_diff_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(
-                                        UiIcon::Close,
-                                        14.0,
-                                        theme.text_secondary,
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap(px(6.))
-                            .children(pills),
-                    )
-                    .child(feed_content),
-            )
-            .into_any_element()
     }
 }

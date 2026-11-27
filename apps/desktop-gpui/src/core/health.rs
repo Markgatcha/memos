@@ -39,7 +39,7 @@ impl HealthPanelFilter {
     pub fn label(self) -> &'static str {
         match self {
             HealthPanelFilter::All => "All",
-            HealthPanelFilter::Contradictions => "Contradictions",
+            HealthPanelFilter::Contradictions => "Conflicts",
             HealthPanelFilter::Stale => "Stale",
         }
     }
@@ -70,7 +70,7 @@ impl StoreHealthStatus {
         match self {
             StoreHealthStatus::Empty => "Empty store",
             StoreHealthStatus::Healthy => "Healthy",
-            StoreHealthStatus::Contradictions => "Contradictions present",
+            StoreHealthStatus::Contradictions => "Conflicts present",
             StoreHealthStatus::Stale => "Stale or drifted entries",
             StoreHealthStatus::Many => "Large store (1,000+ memories)",
         }
@@ -195,7 +195,7 @@ pub fn assess_store_health(
     }
     if raw.contradiction_count > 0 {
         notes.push(format!(
-            "{} contradiction record(s) require review.",
+            "{} conflict(s) need review.",
             raw.contradiction_count
         ));
     }
