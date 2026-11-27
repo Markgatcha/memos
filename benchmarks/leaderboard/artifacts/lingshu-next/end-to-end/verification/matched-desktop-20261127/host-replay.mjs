@@ -8,8 +8,6 @@ import {DatabaseSync} from 'node:sqlite';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
 
-import {judge, judgePrompt, project} from '../../prepare.mjs';
-
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -108,8 +106,8 @@ const identity = (...parts) => sha(JSON.stringify(parts)).slice(0, 32);
 const load = (root, name) => import(pathToFileURL(path.join(root, 'desktop', name)).href);
 const publicPath = (output, stage, ordinal) => path.join(output, stage, padded(ordinal) + '.json');
 
-async function* projectReader(dataset, limit) {
-  const child = spawn(process.env.PYTHON || 'python', ['-B', path.join(here, 'host-project.py'), dataset, String(limit)],
+async function* projectReader(dataset, limit, script = path.join(here, 'host-project.py')) {
+  const child = spawn(process.env.PYTHON || 'python', ['-B', script, dataset, String(limit)],
     {windowsHide:true, stdio:['ignore', 'pipe', 'ignore']});
   const closed = new Promise((resolve, reject) => {
     child.once('error', reject);
@@ -244,7 +242,7 @@ async function generate(item, output, settings, desktop) {
   }
 }
 
-async function judgeQuestion(item, rubric, output, settings, runtimeClass, activityClass) {
+async function judgeQuestion(item, rubric, output, settings, runtimeClass, activityClass, judge) {
   const attemptPath = publicPath(output, 'judge-attempt', item.ordinal);
   const receiptPath = publicPath(output, 'judge', item.ordinal);
   if (fs.existsSync(receiptPath)) return;
@@ -387,11 +385,15 @@ async function main() {
   };
   assert.ok(separate(values.account, output) && separate(output, values.account),
     '--output must be outside the benchmark account profile');
+  const helperSources = new Map();
   const helperSha256 = {};
   for (const name of ['host-project.py', '../../project.py', '../../prepare.mjs', '../../judge-prompt.json',
     '../../reader-prompt.json', '../../measurement.json', '../../memory-store.mjs', '../../retrieval-ranking.mjs']) {
-    helperSha256[name] = await fileHash(path.join(here, name));
+    const bytes = fs.readFileSync(path.join(here, name));
+    helperSources.set(name, bytes);
+    helperSha256[name] = sha(bytes);
   }
+  assert.equal(helperSha256['../../judge-prompt.json'], pins.judgePromptSha256, 'Judge template changed');
   const recipe = {limit, toolSha256:await fileHash(fileURLToPath(import.meta.url)), helperSha256, account:values.account, pins};
   if (mode === 'run') {
     assert.ok(!fs.existsSync(output), 'OUTPUT_ALREADY_EXISTS');
@@ -410,8 +412,16 @@ async function main() {
     assert.deepEqual(read(path.join(output, 'recipe.json')), recipe, 'Resume settings changed');
   }
   const lock = new DatabaseSync(path.join(output, 'owner.sqlite'), {timeout:0});
+  let helpers;
   try {
     lock.exec('BEGIN EXCLUSIVE');
+    helpers = fs.mkdtempSync(path.join(output, '.replay-helpers-'));
+    const helperEntry = path.join(helpers, 'verification', 'matched-desktop');
+    fs.mkdirSync(helperEntry, {recursive:true});
+    for (const [name, bytes] of helperSources) {
+      fs.writeFileSync(path.resolve(helperEntry, name), bytes, {flag:'wx'});
+    }
+    const {judge, judgePrompt, project} = await import(pathToFileURL(path.join(helpers, 'prepare.mjs')).href);
     const snapshot = path.join(output, 'dataset.snapshot');
     if (!fs.existsSync(snapshot)) {
       const candidate = snapshot + '.' + randomUUID() + '.tmp';
@@ -429,7 +439,7 @@ async function main() {
     const preparation = path.join(output, 'prepared.json');
     if (!fs.existsSync(preparation)) {
       const items = [];
-      for await (const item of projectReader(snapshot, limit)) {
+      for await (const item of projectReader(snapshot, limit, path.join(helperEntry, 'host-project.py'))) {
         const database = path.join(output, 'memory', padded(item.ordinal) + '.sqlite');
         prepareDatabase(MemoryStore, item, database);
         const {ordinal, question_id, question, questionDate, histories} = item;
@@ -469,7 +479,7 @@ async function main() {
       const answer = generated.answer;
       item.answerSha256 = answer === null ? null : sha(answer);
       const rubric = answer === null ? null : judgePrompt(item, answer);
-      const status = await judgeQuestion(item, rubric, output, values, DshAccountRuntime, DshActivityEvidence);
+      const status = await judgeQuestion(item, rubric, output, values, DshAccountRuntime, DshActivityEvidence, judge);
       if (status !== undefined) failures = status === 'judge-runtime-failure' ? failures + 1 : 0;
       assert.ok(failures < 3, 'TRACK_B_CONSECUTIVE_JUDGE_FAILURES_REVIEW_REQUIRED');
       const judged = read(publicPath(output, 'judge', item.ordinal));
@@ -484,7 +494,11 @@ async function main() {
     console.log(JSON.stringify({mode, questions:rows.length, partial:limit < 500,
       correct:rows.filter(row => row.verdict === 'yes').length, unresolved:rows.filter(row => row.verdict === null).length}));
   } finally {
-    lock.close();
+    try {
+      if (helpers) fs.rmSync(helpers, {recursive:true, force:true});
+    } finally {
+      lock.close();
+    }
   }
 }
 
