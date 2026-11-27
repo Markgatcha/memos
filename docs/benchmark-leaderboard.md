@@ -138,6 +138,7 @@ auditable too.
 | System | Track | Dataset | Score | Runs | Artifacts |
 | --- | --- | --- | ---: | ---: | --- |
 | MemOS 1.6.27 | retrieval | LongMemEval-S, full 500 | 99.4% Hit@20 / 96.4% all-evidence@20 | 3 | `docs/artifacts/` |
+| Lingshu Next (灵枢 Next) | end to end | LongMemEval-S, full 500 | 65.6% judged accuracy | 1 (provisional) | [Results and reproduction](https://github.com/Chenyueqiao1029/memos/tree/5e3099c8bd393dd5bbbdfb49a92531e3cf524b97/benchmarks/leaderboard/artifacts/lingshu-next/end-to-end) |
 | MemOS 1.6.27 | retrieval | ConvoMem, 387 scored | 91.0% Hit@10 / 89.4% evidence recall@10 | 1 | `docs/artifacts/` |
 | MemOS 1.6.27 | retrieval | LoCoMo, full 1,986 | 65.0% Hit@10 / 59.8% evidence recall@10 | 1 | `docs/artifacts/` |
 | MemOS 1.6.27 | retrieval | LoCoMo, convs 0–1 subset | 79.8% Hit@10 / 75.9% evidence recall@10 | 3 | `docs/artifacts/` |
