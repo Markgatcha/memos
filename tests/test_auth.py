@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_api_key_guard(monkeypatch) -> None:
     from memos.server.main import _is_authorized
 
@@ -15,14 +18,14 @@ def test_api_key_guard_disabled(monkeypatch) -> None:
     assert _is_authorized("/api/mem/count", "") is True
 
 
-def test_cors_defaults_to_no_cross_origin(monkeypatch) -> None:
+def test_cors_defaults_to_no_cross_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     from memos.server.main import _resolve_cors_origins
 
     monkeypatch.delenv("MEMOS_CORS_ORIGINS", raising=False)
     assert _resolve_cors_origins() == []
 
 
-def test_cors_reads_explicit_allowlist(monkeypatch) -> None:
+def test_cors_reads_explicit_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     from memos.server.main import _resolve_cors_origins
 
     monkeypatch.setenv(
