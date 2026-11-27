@@ -834,9 +834,9 @@ impl MemoryListView {
                                         .cursor_pointer()
                                         .role(Role::Button)
                                         .aria_label(if self.filter.has_contradiction {
-                                            "Has contradiction: On"
+                                            "Has conflict: On"
                                         } else {
-                                            "Has contradiction: Off"
+                                            "Has conflict: Off"
                                         })
                                         .h(px(30.))
                                         .px(px(8.))
@@ -857,7 +857,7 @@ impl MemoryListView {
                                             div()
                                                 .text_size(px(13.))
                                                 .text_color(theme.text_primary)
-                                                .child("Has contradiction"),
+                                                .child("Has conflict"),
                                         )
                                         .child(
                                             div()
@@ -1843,7 +1843,7 @@ fn page_header_titles(filter: &QueryFilter, active_view_name: Option<&str>) -> (
     if filter.has_contradiction {
         return (
             "STORE / CONTRADICTIONS".to_string(),
-            "Contradictions".to_string(),
+            "Conflicts".to_string(),
         );
     }
     if filter.needs_review_only {

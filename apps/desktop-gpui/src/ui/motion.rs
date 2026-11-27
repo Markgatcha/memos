@@ -72,27 +72,7 @@ pub fn prefers_reduced_motion(no_fun: bool) -> bool {
 
 #[cfg(target_os = "windows")]
 fn windows_client_area_animations_enabled() -> bool {
-    const SPI_GETCLIENTAREAANIMATION: u32 = 0x1042;
-    #[link(name = "user32")]
-    unsafe extern "system" {
-        fn SystemParametersInfoW(
-            uiAction: u32,
-            uiParam: u32,
-            pvParam: *mut std::ffi::c_void,
-            fWinIni: u32,
-        ) -> i32;
-    }
-    let mut enabled: i32 = 1;
-    // SAFETY: `enabled` is a valid stack i32 aligned pointer expecting BOOL output.
-    let ok = unsafe {
-        SystemParametersInfoW(
-            SPI_GETCLIENTAREAANIMATION,
-            0,
-            (&mut enabled as *mut i32).cast(),
-            0,
-        )
-    };
-    if ok == 0 { true } else { enabled != 0 }
+    crate::win32::client_area_animations_enabled()
 }
 
 #[cfg(test)]

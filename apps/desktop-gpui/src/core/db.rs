@@ -439,11 +439,13 @@ impl ReadOnlyStore {
                 matches.push(id);
             }
         }
-        match matches.len() {
-            0 => Ok(NodeLookup::NotFound),
-            1 => Ok(NodeLookup::Exact(matches.into_iter().next().unwrap())),
-            _ => Ok(NodeLookup::Ambiguous(matches)),
+        if matches.len() > 1 {
+            return Ok(NodeLookup::Ambiguous(matches));
         }
+        Ok(matches
+            .into_iter()
+            .next()
+            .map_or(NodeLookup::NotFound, NodeLookup::Exact))
     }
 
     /// Collect aggregate counts and timestamp bounds without reading any memory text.
@@ -2331,6 +2333,7 @@ impl ReadOnlyStore {
                             relation,
                             weight,
                             is_contradiction: is_contra,
+                            structural: false,
                         });
                     }
                 }
@@ -2373,6 +2376,7 @@ impl ReadOnlyStore {
                             relation: format!("contradicts ({status})"),
                             weight: 1.0,
                             is_contradiction: true,
+                            structural: false,
                         });
                     }
                 }
@@ -2402,6 +2406,7 @@ impl ReadOnlyStore {
                                 relation: format!("tag:{tag}"),
                                 weight: 0.45,
                                 is_contradiction: false,
+                                structural: true,
                             });
                         }
                     }
@@ -2427,6 +2432,7 @@ impl ReadOnlyStore {
                                 relation: format!("entity:{entity}"),
                                 weight: 0.65,
                                 is_contradiction: false,
+                                structural: true,
                             });
                         }
                     }
@@ -2453,6 +2459,7 @@ impl ReadOnlyStore {
                                 relation: "timeline".to_string(),
                                 weight: 0.35,
                                 is_contradiction: false,
+                                structural: true,
                             });
                         }
                     }
@@ -2478,6 +2485,7 @@ impl ReadOnlyStore {
                         relation: "cluster".to_string(),
                         weight: 0.4,
                         is_contradiction: false,
+                        structural: true,
                     });
                 }
             }
@@ -3362,6 +3370,7 @@ fn link_group_chains(
                     relation: relation.to_string(),
                     weight: 0.25,
                     is_contradiction: false,
+                    structural: true,
                 });
             }
         }

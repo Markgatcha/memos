@@ -1,0 +1,3 @@
+# Unwraps are fine in tests; production code warns (CI denies warnings).
+allow-unwrap-in-tests = true
+

@@ -989,10 +989,13 @@ impl Render for SidebarView {
                             "memories"
                         };
                         let review_count = self.health_review_count;
-                        let status_text = if review_count > 0 {
-                            format!("{review_count} to check")
+                        // Health findings, not the Review queue: say so, so
+                        // "8" here is never confused with Review's own count.
+                        let status_text = health_issue_label(review_count);
+                        let card_aria: SharedString = if review_count > 0 {
+                            format!("Open store health, {status_text}").into()
                         } else {
-                            "All caught up".to_string()
+                            "Open store health, no issues".into()
                         };
                         let status_color = if review_count > 0 {
                             theme.accent
@@ -1005,7 +1008,11 @@ impl Render for SidebarView {
                                 .focusable()
                                 .cursor_pointer()
                                 .role(Role::Button)
-                                .aria_label("Open health")
+                                .aria_label(card_aria)
+                                .tooltip(crate::ui::views::tooltip_view(
+                                    "Store health: expired, stale, duplicate, low-trust and conflicting memories",
+                                    theme,
+                                ))
                                 .mx(px(8.))
                                 .mb(px(8.))
                                 .px(px(10.))
@@ -1021,20 +1028,6 @@ impl Render for SidebarView {
                                 .flex()
                                 .flex_col()
                                 .gap(px(4.))
-                                .child(
-                                    // Which store this window reads, now that it can switch.
-                                    div()
-                                        .text_size(px(12.))
-                                        .line_height(px(16.))
-                                        .text_color(theme.text_muted)
-                                        .truncate()
-                                        .child(SharedString::from(
-                                            ov.db_path
-                                                .file_name()
-                                                .map(|f| f.to_string_lossy().into_owned())
-                                                .unwrap_or_default(),
-                                        )),
-                                )
                                 .child(
                                     div()
                                         .flex()
@@ -1435,9 +1428,26 @@ fn now_unix_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Sidebar store-card status: health findings, worded so they are never read
+/// as the Review queue's count.
+pub(crate) fn health_issue_label(n: usize) -> String {
+    match n {
+        0 => "All caught up".to_string(),
+        1 => "1 health issue".to_string(),
+        n => format!("{n} health issues"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn health_label_names_health_not_review() {
+        assert_eq!(health_issue_label(0), "All caught up");
+        assert_eq!(health_issue_label(1), "1 health issue");
+        assert_eq!(health_issue_label(8), "8 health issues");
+    }
     use crate::core::model::FacetCount;
     use std::collections::HashSet;
     use std::path::PathBuf;

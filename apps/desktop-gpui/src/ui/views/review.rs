@@ -28,6 +28,8 @@ pub enum ReviewEvent {
     },
     /// Stop a running batch after the current item.
     StopBatch,
+    /// Open the candidate side by side with the memory it conflicts with.
+    Compare(String),
 }
 
 /// Ordered multi-selection of review candidates.
@@ -84,14 +86,78 @@ impl ReviewSelection {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BatchProgress {
     pub approve: bool,
+    /// The memories in this run, in the order they are sent.
+    pub ids: Vec<String>,
     pub total: usize,
     pub done: usize,
     pub failed: Vec<(String, String)>,
     pub stopped: bool,
     pub finished: bool,
+    /// Position of each id in `ids`, so a row finds its state in O(1); the
+    /// Review view asks for every row after every decision.
+    pub index: std::collections::HashMap<String, usize>,
+    pub failed_ids: std::collections::HashSet<String>,
+}
+
+/// Where one row stands in a batch run, shown in place of its buttons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BatchRowState {
+    Waiting,
+    InProgress,
+    Done,
+    Failed,
+    NotAttempted,
 }
 
 impl BatchProgress {
+    pub fn new(approve: bool, ids: Vec<String>) -> Self {
+        let index = ids
+            .iter()
+            .enumerate()
+            .map(|(pos, id)| (id.clone(), pos))
+            .collect();
+        Self {
+            approve,
+            total: ids.len(),
+            ids,
+            index,
+            ..Default::default()
+        }
+    }
+
+    pub fn record_failure(&mut self, id: String, message: String) {
+        self.failed_ids.insert(id.clone());
+        self.failed.push((id, message));
+    }
+
+    /// `None` when the memory is not part of this run.
+    pub fn row_state(&self, id: &str) -> Option<BatchRowState> {
+        let pos = *self.index.get(id)?;
+        Some(if self.failed_ids.contains(id) {
+            BatchRowState::Failed
+        } else if pos < self.done {
+            BatchRowState::Done
+        } else if self.finished {
+            BatchRowState::NotAttempted
+        } else if pos == self.done {
+            BatchRowState::InProgress
+        } else {
+            BatchRowState::Waiting
+        })
+    }
+
+    pub fn row_state_label(&self, state: BatchRowState) -> &'static str {
+        match (state, self.approve) {
+            (BatchRowState::Waiting, _) => "Waiting",
+            (BatchRowState::InProgress, true) => "Approving…",
+            (BatchRowState::InProgress, false) => "Rejecting…",
+            (BatchRowState::Done, true) => "Approved",
+            (BatchRowState::Done, false) => "Rejected",
+            (BatchRowState::Failed, _) => "Failed",
+            (BatchRowState::NotAttempted, _) => "Not attempted",
+        }
+    }
+
     pub fn succeeded(&self) -> usize {
         self.done.saturating_sub(self.failed.len())
     }
@@ -223,6 +289,8 @@ pub struct ReviewView {
     armed_batch: Option<bool>,
     batch: Option<BatchProgress>,
     hovered_ix: Option<usize>,
+    /// Memories with a recorded conflict; their rows offer Compare.
+    conflict_ids: std::sync::Arc<std::collections::HashSet<String>>,
     theme: ThemePalette,
 }
 
@@ -244,6 +312,7 @@ impl ReviewView {
             armed_batch: None,
             batch: None,
             hovered_ix: None,
+            conflict_ids: Default::default(),
             theme,
         }
     }
@@ -251,6 +320,17 @@ impl ReviewView {
     pub fn set_theme(&mut self, theme: ThemePalette, cx: &mut Context<Self>) {
         self.theme = theme;
         cx.notify();
+    }
+
+    pub fn set_conflict_ids(
+        &mut self,
+        ids: std::sync::Arc<std::collections::HashSet<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.conflict_ids != ids {
+            self.conflict_ids = ids;
+            cx.notify();
+        }
     }
 
     pub fn set_write_mode(&mut self, write_mode: bool, cx: &mut Context<Self>) {
@@ -281,8 +361,19 @@ impl ReviewView {
     }
 
     pub fn set_busy_id(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        if id.is_some() {
+            self.clear_finished_batch();
+        }
         self.busy_id = id;
         cx.notify();
+    }
+
+    /// A finished run's summary describes the last batch only; once the user
+    /// starts something new it would sit above the wrong state, so drop it.
+    fn clear_finished_batch(&mut self) {
+        if self.batch.as_ref().is_some_and(|b| b.finished) {
+            self.batch = None;
+        }
     }
 
     pub fn set_batch_progress(&mut self, progress: Option<BatchProgress>, cx: &mut Context<Self>) {
@@ -342,6 +433,7 @@ impl ReviewView {
             .clone()
             .or_else(|| self.items.first().map(|i| i.id.clone()));
         if let Some(id) = target {
+            self.clear_finished_batch();
             self.selected_id = Some(id.clone());
             self.checked.toggle(&id);
             self.armed_batch = None;
@@ -412,11 +504,20 @@ impl ReviewView {
         let mutation_enabled =
             is_review_mutation_enabled(self.write_mode, self.busy_id.as_deref()) && !batch_running;
         let row_busy = self.busy_id.as_deref() == Some(item.id.as_str());
+        // While a batch runs, each row in it says where it stands instead of
+        // showing buttons that cannot be used.
+        let batch_state = self
+            .batch
+            .as_ref()
+            .filter(|b| !b.finished)
+            .and_then(|b| b.row_state(&item.id).map(|s| (s, b.row_state_label(s))));
         let reject_armed = self.pending_reject.as_deref() == Some(item.id.as_str());
         let id_open = item.id.clone();
         let id_check = item.id.clone();
         let id_approve = item.id.clone();
         let id_reject = item.id.clone();
+        let id_compare = item.id.clone();
+        let in_conflict = self.conflict_ids.contains(&item.id);
 
         let age = format_relative_age(item.created_at, now_ms);
         let mut meta_parts = vec![item.node_type.clone()];
@@ -526,6 +627,7 @@ impl ReviewView {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             if !this.is_batch_running() {
+                                this.clear_finished_batch();
                                 this.checked.toggle(&id_check);
                                 this.armed_batch = None;
                                 cx.notify();
@@ -580,6 +682,9 @@ impl ReviewView {
                                     .truncate()
                                     .child(meta_line),
                             )
+                            .when(in_conflict, |row| {
+                                row.child(kit::state_marker("Conflict", theme.danger))
+                            })
                             .when(low_confidence, |row| {
                                 row.child(kit::state_marker("Low confidence", theme.text_secondary))
                             }),
@@ -593,89 +698,135 @@ impl ReviewView {
                             .child(reason),
                     ),
             )
-            .when(self.write_mode && show_actions, |row| {
+            .when_some(batch_state, |row, (state, label)| {
+                let color = match state {
+                    BatchRowState::Failed => theme.danger,
+                    BatchRowState::Done => theme.success,
+                    BatchRowState::InProgress => theme.text_primary,
+                    _ => theme.text_muted,
+                };
                 row.child(
                     div()
                         .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
+                        .text_size(px(12.))
+                        .child(kit::state_marker(label, color)),
+                )
+            })
+            // Comparing only reads, so it is offered in view-only mode too.
+            .when(
+                in_conflict && show_actions && batch_state.is_none(),
+                |row| {
+                    row.child(
+                        kit::button(
+                            ("review-compare", ix),
+                            "Compare",
+                            ButtonKind::Subtle,
+                            &theme,
+                        )
+                        .tooltip(tooltip_view(
+                            "Side by side with the memory it conflicts with",
+                            theme,
+                        ))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
-                        .when(reject_armed, |r| {
-                            r.child(
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(ReviewEvent::Compare(id_compare.clone()));
+                        })),
+                    )
+                },
+            )
+            .when(
+                self.write_mode && show_actions && batch_state.is_none(),
+                |row| {
+                    row.child(
+                        div()
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.))
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .when(reject_armed, |r| {
+                                r.child(
+                                    kit::button(
+                                        ("review-reject-cancel", ix),
+                                        "Keep",
+                                        ButtonKind::Subtle,
+                                        &theme,
+                                    )
+                                    .on_click(cx.listener(
+                                        |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.pending_reject = None;
+                                            cx.notify();
+                                        },
+                                    )),
+                                )
+                            })
+                            .child(if mutation_enabled {
                                 kit::button(
-                                    ("review-reject-cancel", ix),
-                                    "Keep",
-                                    ButtonKind::Subtle,
+                                    ("review-reject", ix),
+                                    if reject_armed {
+                                        "Confirm reject"
+                                    } else {
+                                        "Reject"
+                                    },
+                                    ButtonKind::Danger,
                                     &theme,
                                 )
                                 .on_click(cx.listener(
-                                    |this, _, _, cx| {
+                                    move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        if this.pending_reject.as_deref()
+                                            == Some(id_reject.as_str())
+                                        {
+                                            this.pending_reject = None;
+                                            cx.emit(ReviewEvent::Reject(id_reject.clone()));
+                                        } else {
+                                            this.pending_reject = Some(id_reject.clone());
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                            } else {
+                                kit::button_disabled(
+                                    ("review-reject", ix),
+                                    if row_busy { "Working…" } else { "Reject" },
+                                    "another review action is running",
+                                    &theme,
+                                )
+                            })
+                            .child(if mutation_enabled {
+                                kit::button(
+                                    ("review-approve", ix),
+                                    "Approve",
+                                    ButtonKind::Secondary,
+                                    &theme,
+                                )
+                                .tooltip(tooltip_view("Approve so agents can recall it", theme))
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.pending_reject = None;
-                                        cx.notify();
+                                        cx.emit(ReviewEvent::Approve(id_approve.clone()));
                                     },
-                                )),
-                            )
-                        })
-                        .child(if mutation_enabled {
-                            kit::button(
-                                ("review-reject", ix),
-                                if reject_armed {
-                                    "Confirm reject"
-                                } else {
-                                    "Reject"
-                                },
-                                ButtonKind::Danger,
-                                &theme,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    if this.pending_reject.as_deref() == Some(id_reject.as_str()) {
-                                        this.pending_reject = None;
-                                        cx.emit(ReviewEvent::Reject(id_reject.clone()));
-                                    } else {
-                                        this.pending_reject = Some(id_reject.clone());
-                                        cx.notify();
-                                    }
-                                },
-                            ))
-                        } else {
-                            kit::button_disabled(
-                                ("review-reject", ix),
-                                if row_busy { "Working…" } else { "Reject" },
-                                "another review action is running",
-                                &theme,
-                            )
-                        })
-                        .child(if mutation_enabled {
-                            kit::button(
-                                ("review-approve", ix),
-                                "Approve",
-                                ButtonKind::Secondary,
-                                &theme,
-                            )
-                            .tooltip(tooltip_view("Approve so agents can recall it", theme))
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.pending_reject = None;
-                                    cx.emit(ReviewEvent::Approve(id_approve.clone()));
-                                },
-                            ))
-                        } else {
-                            kit::button_disabled(
-                                ("review-approve", ix),
-                                if row_busy { "Working…" } else { "Approve" },
-                                "another review action is running",
-                                &theme,
-                            )
-                        }),
-                )
-            })
+                                ))
+                            } else {
+                                // The busy row already says "Working…" once.
+                                kit::button_disabled(
+                                    ("review-approve", ix),
+                                    "Approve",
+                                    "another review action is running",
+                                    &theme,
+                                )
+                                .when(row_busy, |b| b.invisible())
+                            }),
+                    )
+                },
+            )
             .into_any_element()
     }
 
@@ -807,6 +958,7 @@ impl ReviewView {
                         &theme,
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
+                        this.clear_finished_batch();
                         this.checked.select_all(&this.items);
                         cx.notify();
                     })),
@@ -1242,6 +1394,23 @@ mod tests {
         assert_eq!(sel.ordered_ids(&items), vec!["b"]);
         sel.clear();
         assert!(sel.is_empty());
+    }
+
+    #[test]
+    fn batch_rows_report_their_own_state() {
+        let mut p = BatchProgress::new(true, vec!["a".into(), "b".into(), "c".into()]);
+        assert_eq!(p.row_state("a"), Some(BatchRowState::InProgress));
+        assert_eq!(p.row_state("b"), Some(BatchRowState::Waiting));
+        assert_eq!(p.row_state("zzz"), None);
+        p.done = 2;
+        p.record_failure("b".into(), "timeout".into());
+        assert_eq!(p.row_state("a"), Some(BatchRowState::Done));
+        assert_eq!(p.row_state("b"), Some(BatchRowState::Failed));
+        assert_eq!(p.row_state("c"), Some(BatchRowState::InProgress));
+        assert_eq!(p.row_state_label(BatchRowState::InProgress), "Approving…");
+        p.finished = true;
+        p.stopped = true;
+        assert_eq!(p.row_state("c"), Some(BatchRowState::NotAttempted));
     }
 
     #[test]

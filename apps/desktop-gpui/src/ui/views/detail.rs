@@ -514,11 +514,8 @@ impl Render for DetailView {
             .map(|(ix, c)| {
                 let peer_id = c.peer_id.clone();
                 let compare_id = c.peer_id.clone();
-                let open_aria: SharedString = format!(
-                    "Open contradicting memory {}: {}",
-                    c.peer_short_id, c.status
-                )
-                .into();
+                let open_aria: SharedString =
+                    format!("Open conflicting memory {}: {}", c.peer_short_id, c.status).into();
                 let header: SharedString = format!(
                     "{} · {}",
                     crate::ui::views::brief::format_contradiction_status_label(&c.status),
@@ -586,26 +583,43 @@ impl Render for DetailView {
             })
             .collect();
 
-        let edge_rows: Vec<AnyElement> = detail
-            .edges
-            .iter()
+        let link_rows = crate::core::model::linked_memory_rows(&detail.edges);
+        let link_count = link_rows.len();
+        let edge_rows: Vec<AnyElement> = link_rows
+            .into_iter()
             .enumerate()
-            .map(|(ix, edge)| {
-                let peer_id = edge.peer_id.clone();
-                let arrow = match edge.direction {
-                    EdgeDirection::Outgoing => "→",
-                    EdgeDirection::Incoming => "←",
-                };
-                let rel_label: SharedString = if edge.peer_type.is_empty() {
-                    format!("{arrow} {}", edge.relation).into()
+            .map(|(ix, row)| {
+                let peer_id = row.peer_id.clone();
+                let relations = row
+                    .relations
+                    .iter()
+                    .map(|(dir, rel)| {
+                        let arrow = match dir {
+                            EdgeDirection::Outgoing => "→",
+                            EdgeDirection::Incoming => "←",
+                        };
+                        format!("{arrow} {rel}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let rel_label: SharedString = if row.peer_type.is_empty() {
+                    relations.clone().into()
                 } else {
-                    format!("{arrow} {} · {}", edge.relation, edge.peer_type).into()
+                    format!("{relations} · {}", row.peer_type).into()
                 };
-                let preview: SharedString = edge.peer_preview.clone().into();
+                let aria: SharedString = format!(
+                    "Open linked memory {} ({relations}): {}",
+                    row.peer_short_id, row.peer_preview
+                )
+                .into();
+                let preview: SharedString = row.peer_preview.into();
+                let group: SharedString = format!("detail-edge-{ix}").into();
                 div()
                     .id(("detail-edge", ix))
+                    .group(group.clone())
                     .focusable()
                     .role(Role::Link)
+                    .aria_label(aria)
                     .cursor_pointer()
                     .w_full()
                     .min_w(px(0.))
@@ -613,27 +627,49 @@ impl Render for DetailView {
                     .py(px(6.))
                     .mx(px(-8.))
                     .rounded(px(6.))
+                    // A transparent border keeps the focus ring from shifting layout.
+                    .border_1()
+                    .border_color(gpui::transparent_black())
                     .hover(move |s| s.bg(theme.bg_hover))
-                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
+                    .active(move |s| s.bg(theme.bg_selected))
+                    .focus_visible(move |s| s.bg(theme.bg_hover).border_color(theme.accent))
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(DetailEvent::SelectMemory(peer_id.clone()));
                     }))
                     .flex()
-                    .flex_col()
-                    .gap(px(3.))
+                    .items_center()
+                    .gap(px(8.))
                     .child(
                         div()
-                            .text_size(px(12.))
-                            .text_color(theme.text_muted)
-                            .child(rel_label),
+                            .flex_1()
+                            .min_w(px(0.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(theme.text_muted)
+                                    .truncate()
+                                    .child(rel_label),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .line_height(px(18.))
+                                    .text_color(theme.text_primary)
+                                    .group_hover(group.clone(), move |s| s.text_color(theme.accent))
+                                    .truncate()
+                                    .child(preview),
+                            ),
                     )
+                    // Trailing chevron: the at-rest cue that the row navigates.
                     .child(
                         div()
-                            .text_size(px(13.))
-                            .line_height(px(18.))
-                            .text_color(theme.text_primary)
-                            .truncate()
-                            .child(preview),
+                            .flex_shrink_0()
+                            .opacity(0.7)
+                            .group_hover(group, |s| s.opacity(1.0))
+                            .child(render_ui_icon(UiIcon::ChevronRight, 12.0, theme.text_muted)),
                     )
                     .into_any_element()
             })
@@ -1094,8 +1130,7 @@ impl Render for DetailView {
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(theme.text_muted)
                                                 .child(format!(
-                                                    "Linked memories · {}",
-                                                    edge_rows.len()
+                                                    "Linked memories · {link_count}"
                                                 )),
                                         )
                                         .children(edge_rows),

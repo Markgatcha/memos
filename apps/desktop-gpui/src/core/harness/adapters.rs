@@ -1490,7 +1490,9 @@ pub fn detect_all_for_home_and_path(
 
     // Check which entries are still valid (matching home, PATH, DSH_HOME, dir mtimes, config mtimes, and binary mtime).
     let (cached_hits, path_reset) = {
-        let guard = cache_mutex.lock().unwrap();
+        // A poisoned cache only means an earlier probe panicked; its data is
+        // still a valid (possibly stale) cache, which the checks below refresh.
+        let guard = cache_mutex.lock().unwrap_or_else(|e| e.into_inner());
         if guard.home_dir != home_dir
             || guard.path_env != path_env
             || guard.dsh_home != dsh_home_env
@@ -1609,6 +1611,22 @@ mod tests {
     use uuid::Uuid;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Env mutation is `unsafe` in edition 2024 because other threads may read
+    /// the environment concurrently. Every caller holds `ENV_LOCK`, which
+    /// serialises the tests that touch `HOME`, `USERPROFILE`, `PATH` and
+    /// `DSH_HOME`, so these are the only test-side `unsafe` blocks.
+    #[allow(unsafe_code)]
+    fn set_test_env(key: &str, value: impl AsRef<std::ffi::OsStr>) {
+        // SAFETY: callers hold `ENV_LOCK`; no other test mutates these keys.
+        unsafe { env::set_var(key, value) };
+    }
+
+    #[allow(unsafe_code)]
+    fn remove_test_env(key: &str) {
+        // SAFETY: callers hold `ENV_LOCK`; no other test mutates these keys.
+        unsafe { env::remove_var(key) };
+    }
 
     #[test]
     fn scaffolds_all_harnesses_read_only() {
@@ -1785,12 +1803,10 @@ mod tests {
         let prev_up = env::var_os("USERPROFILE");
         let prev_path = env::var_os("PATH");
         let prev_dsh = env::var_os("DSH_HOME");
-        unsafe {
-            env::set_var("HOME", &fake_home);
-            env::set_var("USERPROFILE", &fake_home);
-            env::set_var("PATH", &fake_bin);
-            env::remove_var("DSH_HOME");
-        }
+        set_test_env("HOME", &fake_home);
+        set_test_env("USERPROFILE", &fake_home);
+        set_test_env("PATH", &fake_bin);
+        remove_test_env("DSH_HOME");
 
         let t0 = Instant::now();
         let detected = detect_all_cached();
@@ -1800,8 +1816,16 @@ mod tests {
             assert!(d.installed, "{} should be installed", d.id);
             assert!(d.version.is_some(), "{} should have version", d.id);
         }
+        // Windows runs the `opencode.cmd` probe through `cmd.exe`, and the first
+        // spawn of a freshly written script is scanned by Defender, so a cold
+        // run in a parallel suite can take several hundred ms more there.
+        let cold_budget_ms = if cfg!(target_os = "windows") {
+            1500.0
+        } else {
+            500.0
+        };
         assert!(
-            detect_ms < 500.0,
+            detect_ms < cold_budget_ms,
             "cold fake-home detection must stay bounded even with opencode subprocess probe (was {detect_ms:.2}ms)"
         );
 
@@ -1877,23 +1901,21 @@ mod tests {
             );
         }
 
-        unsafe {
-            match prev_home {
-                Some(v) => env::set_var("HOME", v),
-                None => env::remove_var("HOME"),
-            }
-            match prev_up {
-                Some(v) => env::set_var("USERPROFILE", v),
-                None => env::remove_var("USERPROFILE"),
-            }
-            match prev_path {
-                Some(v) => env::set_var("PATH", v),
-                None => env::remove_var("PATH"),
-            }
-            match prev_dsh {
-                Some(v) => env::set_var("DSH_HOME", v),
-                None => env::remove_var("DSH_HOME"),
-            }
+        match prev_home {
+            Some(v) => set_test_env("HOME", v),
+            None => remove_test_env("HOME"),
+        }
+        match prev_up {
+            Some(v) => set_test_env("USERPROFILE", v),
+            None => remove_test_env("USERPROFILE"),
+        }
+        match prev_path {
+            Some(v) => set_test_env("PATH", v),
+            None => remove_test_env("PATH"),
+        }
+        match prev_dsh {
+            Some(v) => set_test_env("DSH_HOME", v),
+            None => remove_test_env("DSH_HOME"),
         }
         let _ = fs::remove_dir_all(&fake_home);
     }
@@ -1928,7 +1950,7 @@ mod tests {
         }
 
         let prev_dsh = env::var_os("DSH_HOME");
-        unsafe { env::remove_var("DSH_HOME") };
+        remove_test_env("DSH_HOME");
 
         let empty_home = tmp.join("empty-home");
         fs::create_dir_all(&empty_home).unwrap();
@@ -1955,7 +1977,7 @@ mod tests {
         );
 
         // 2. Setting DSH_HOME to an existing dir marks dsh installed.
-        unsafe { env::set_var("DSH_HOME", tmp.join(".dsh")) };
+        set_test_env("DSH_HOME", tmp.join(".dsh"));
         let det_dsh =
             detect_all_for_home_and_path(tmp.clone(), Some(bin_dir.clone().into_os_string()));
         assert!(det_dsh.iter().find(|d| d.id == "dsh").unwrap().installed);
@@ -1978,11 +2000,9 @@ mod tests {
         assert!(oc1_b.installed);
         assert!(oc1_b.version.as_deref().unwrap_or("").contains("1.4.2"));
 
-        unsafe {
-            match prev_dsh {
-                Some(v) => env::set_var("DSH_HOME", v),
-                None => env::remove_var("DSH_HOME"),
-            }
+        match prev_dsh {
+            Some(v) => set_test_env("DSH_HOME", v),
+            None => remove_test_env("DSH_HOME"),
         }
         let _ = fs::remove_dir_all(&tmp);
     }

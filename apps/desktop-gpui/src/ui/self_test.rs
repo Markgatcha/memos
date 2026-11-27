@@ -511,6 +511,7 @@ pub fn run_self_test(
             last_saved_view_id: Some("all".to_string()),
             row_density: RowDensity::Compact,
             recent_searches: vec!["tag:auth".to_string()],
+            recent_commands: vec!["Open Today".to_string()],
             pins: Default::default(),
             recent_stores: Vec::new(),
             large_reading_text: true,

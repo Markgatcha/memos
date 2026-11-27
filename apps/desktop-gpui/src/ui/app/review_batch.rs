@@ -40,11 +40,7 @@ impl MemOSApp {
         let cmd = self.settings.effective_writer_command().to_string();
         self.write_bridge.configure(&cmd, &self.resolved_db.path);
         self.review_batch.stop_requested = false;
-        self.review_batch.progress = Some(BatchProgress {
-            approve,
-            total: ids.len(),
-            ..Default::default()
-        });
+        self.review_batch.progress = Some(BatchProgress::new(approve, ids.clone()));
         self.sync_batch_progress(cx);
 
         let bridge = self.write_bridge.clone();
@@ -73,7 +69,7 @@ impl MemOSApp {
                     if let Some(p) = app.review_batch.progress.as_mut() {
                         p.done += 1;
                         if let Err(err) = &res {
-                            p.failed.push((id.clone(), err.ui_summary()));
+                            p.record_failure(id.clone(), err.ui_summary());
                         }
                     }
                     // A missing capability will fail every remaining item the same way.

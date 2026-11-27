@@ -85,7 +85,7 @@ impl SavedView {
             },
             SavedView {
                 id: "contradictions".to_string(),
-                name: "Contradictions".to_string(),
+                name: "Conflicts".to_string(),
                 filter: QueryFilter {
                     has_contradiction: true,
                     ..Default::default()
@@ -219,6 +219,9 @@ pub struct AppSettings {
     /// Recently submitted search expressions, newest first. Local to this
     /// settings file only (like saved views); never sent anywhere.
     pub recent_searches: Vec<String>,
+    /// Titles of the last palette commands run, newest first. Only built-in
+    /// command titles are kept (never memory titles, view names or paths).
+    pub recent_commands: Vec<String>,
     /// Pinned memory ids per store path, in the user's order. Local UI state:
     /// never written into the store and never treated as memory metadata.
     pub pins: BTreeMap<String, Vec<String>>,
@@ -247,6 +250,7 @@ impl Default for AppSettings {
             writer_command: default_writer_command_string(),
             row_density: crate::core::model::RowDensity::Comfortable,
             recent_searches: Vec::new(),
+            recent_commands: Vec::new(),
             pins: BTreeMap::new(),
             recent_stores: Vec::new(),
             large_reading_text: false,
@@ -306,7 +310,7 @@ impl AppSettings {
             parts.push(prov.to_string());
         }
         if filter.has_contradiction {
-            parts.push("contradictions".to_string());
+            parts.push("conflicts".to_string());
         }
         if filter.min_importance.is_some() {
             parts.push("important".to_string());
@@ -518,6 +522,13 @@ impl AppSettings {
         if parsed.saved_views.is_empty() || parsed.saved_views.iter().all(|v| v.built_in) {
             parsed.saved_views = SavedView::defaults();
         }
+        // The UI says "Conflicts" everywhere now; rename the built-in view
+        // that older settings files saved as "Contradictions".
+        for view in parsed.saved_views.iter_mut() {
+            if view.built_in && view.id == "contradictions" && view.name == "Contradictions" {
+                view.name = "Conflicts".to_string();
+            }
+        }
         parsed
     }
 
@@ -658,6 +669,35 @@ fn expand_tilde(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_contradictions_view_is_renamed_to_conflicts() {
+        let dir = std::env::temp_dir().join(format!("memos-settings-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let mut legacy = AppSettings::default();
+        for v in legacy.saved_views.iter_mut() {
+            if v.id == "contradictions" {
+                v.name = "Contradictions".to_string();
+            }
+        }
+        // A custom view keeps the built-ins from being regenerated.
+        let mut custom = legacy.saved_views[0].clone();
+        custom.id = "mine".to_string();
+        custom.name = "Mine".to_string();
+        custom.built_in = false;
+        legacy.saved_views.push(custom);
+        legacy.save_to(&path).unwrap();
+        let loaded = AppSettings::load_from(&path);
+        let view = loaded
+            .saved_views
+            .iter()
+            .find(|v| v.id == "contradictions")
+            .unwrap();
+        assert_eq!(view.name, "Conflicts");
+        assert!(loaded.saved_views.iter().any(|v| v.name == "Mine"));
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn pins_are_kept_per_store_and_empty_lists_are_dropped() {

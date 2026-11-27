@@ -290,8 +290,13 @@ impl MemOSApp {
                             memory_id: d.id.clone(),
                             title: crate::core::model::make_single_line_preview(source, 200),
                             relations: crate::ui::views::graph::relation_breakdown(
-                                d.edges.iter().map(|e| e.relation.as_str()),
+                                d.edges
+                                    .iter()
+                                    .filter(|e| !e.is_contradiction())
+                                    .map(|e| e.relation.as_str()),
                             ),
+                            links: crate::core::model::linked_memory_count(&d.edges),
+                            conflicts: d.contradictions.len(),
                         })
                     }
                     // The card falls back to the short graph label.

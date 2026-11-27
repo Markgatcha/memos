@@ -231,39 +231,7 @@ fn temp_db_path(label: &str) -> PathBuf {
 
 #[cfg(target_os = "windows")]
 fn current_rss_bytes() -> Option<u64> {
-    #[repr(C)]
-    #[allow(non_snake_case)]
-    struct ProcessMemoryCounters {
-        cb: u32,
-        PageFaultCount: u32,
-        PeakWorkingSetSize: usize,
-        WorkingSetSize: usize,
-        QuotaPeakPagedPoolUsage: usize,
-        QuotaPagedPoolUsage: usize,
-        QuotaPeakNonPagedPoolUsage: usize,
-        QuotaNonPagedPoolUsage: usize,
-        PagefileUsage: usize,
-        PeakPagefileUsage: usize,
-    }
-    unsafe extern "system" {
-        fn GetCurrentProcess() -> isize;
-        fn K32GetProcessMemoryInfo(
-            process: isize,
-            ppsmem_counters: *mut ProcessMemoryCounters,
-            cb: u32,
-        ) -> i32;
-    }
-    let mut counters = std::mem::MaybeUninit::<ProcessMemoryCounters>::zeroed();
-    let cb = std::mem::size_of::<ProcessMemoryCounters>() as u32;
-    unsafe {
-        (*counters.as_mut_ptr()).cb = cb;
-        let ok = K32GetProcessMemoryInfo(GetCurrentProcess(), counters.as_mut_ptr(), cb);
-        if ok != 0 {
-            Some(counters.assume_init().WorkingSetSize as u64)
-        } else {
-            None
-        }
-    }
+    memos_desktop::win32::process_working_set_bytes()
 }
 
 #[cfg(target_os = "linux")]
@@ -561,6 +529,131 @@ fn smoke_50k_nodes_resident_memory_under_200mb() {
     }
 
     drop(items);
+    drop(store);
+    let _ = fs::remove_file(&db_path);
+}
+
+/// Writes a synthetic store to `MEMOS_BENCH_OUT` (default: 50,000 nodes with
+/// FTS, override with `MEMOS_BENCH_NODES`) so GUI timings such as first frame
+/// can be measured against the same data as the headless gates.
+///
+/// `cargo test --release --test smoke_bench -- --ignored generate_store`
+#[test]
+#[ignore = "writes a store to MEMOS_BENCH_OUT for manual GUI measurement"]
+fn generate_store() {
+    let Some(out) = env::var_os("MEMOS_BENCH_OUT") else {
+        eprintln!("set MEMOS_BENCH_OUT to the .db path to write");
+        return;
+    };
+    let nodes = env::var("MEMOS_BENCH_NODES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50_000);
+    let path = PathBuf::from(out);
+    let _ = fs::remove_file(&path);
+    build_synthetic_store(&path, nodes, true);
+    println!("BENCH_STORE: wrote {nodes} nodes to {}", path.display());
+}
+
+/// Export and batch review must not block the UI thread. The store read and
+/// the file write already run on the background executor; what runs on the
+/// UI thread is building the pack text (every time the format or budget
+/// changes) and, during a batch, recomputing each row's state per update.
+/// Both are measured here at their caps: a 1,000-memory export and a
+/// 1,000-memory batch.
+#[test]
+fn smoke_export_and_batch_review_ui_thread_work() {
+    use memos_desktop::core::context_pack::{PackBudget, PackFormat, build_context_pack};
+    use memos_desktop::ui::views::review::BatchProgress;
+    use std::collections::HashSet;
+
+    let _guard = BENCH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let db_path = temp_db_path("smoke-export");
+    let _ = fs::remove_file(&db_path);
+    build_synthetic_store(&db_path, 10_000, false);
+    let store = ReadOnlyStore::open(&db_path).expect("open export db");
+
+    // Background-executor work, reported for context.
+    let t_load = Instant::now();
+    let (items, total) = store
+        .load_context_items_for_filter(&QueryFilter::default(), &HashSet::new(), 1_000)
+        .expect("load 1,000 export items");
+    let load_ms = t_load.elapsed().as_secs_f64() * 1000.0;
+    assert_eq!(items.len(), 1_000);
+
+    // UI-thread work: one rebuild per format at "No limit".
+    let mut worst_build_ms = 0.0_f64;
+    let mut bytes = 0;
+    for format in [
+        PackFormat::Plain,
+        PackFormat::Markdown,
+        PackFormat::Citations,
+        PackFormat::Json,
+    ] {
+        let t = Instant::now();
+        let pack = build_context_pack(&items, total, "Bench", format, PackBudget::Unlimited);
+        worst_build_ms = worst_build_ms.max(t.elapsed().as_secs_f64() * 1000.0);
+        bytes = bytes.max(pack.payload.len());
+        assert_eq!(pack.included_count(), 1_000);
+    }
+
+    // Background write of the largest payload, atomically, as the app does.
+    let out = temp_db_path("smoke-export-out").with_extension("md");
+    let payload = build_context_pack(
+        &items,
+        total,
+        "Bench",
+        PackFormat::Markdown,
+        PackBudget::Unlimited,
+    )
+    .payload;
+    let t_write = Instant::now();
+    let tmp = out.with_extension("md.tmp");
+    fs::write(&tmp, payload.as_bytes()).expect("write export");
+    fs::rename(&tmp, &out).expect("rename export");
+    let write_ms = t_write.elapsed().as_secs_f64() * 1000.0;
+    let _ = fs::remove_file(&out);
+
+    // Batch review: after each of 1,000 decisions the Review view re-renders
+    // and asks every row where it stands.
+    let ids: Vec<String> = items.iter().map(|i| i.id.clone()).collect();
+    let mut progress = BatchProgress::new(true, ids.clone());
+    let mut worst_update_ms = 0.0_f64;
+    for step in 0..ids.len() {
+        let t = Instant::now();
+        progress.done = step + 1;
+        if step % 97 == 0 {
+            progress.record_failure(ids[step].clone(), "timeout".into());
+        }
+        let mirrored = progress.clone();
+        let mut states = 0;
+        for id in &ids {
+            if mirrored.row_state(id).is_some() {
+                states += 1;
+            }
+        }
+        assert_eq!(states, ids.len());
+        worst_update_ms = worst_update_ms.max(t.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    println!(
+        "BENCH_EXPORT: load_1000_ms={load_ms:.2}, worst_pack_build_ms={worst_build_ms:.2}, \
+         largest_payload_kb={:.1}, atomic_write_ms={write_ms:.2}",
+        bytes as f64 / 1024.0
+    );
+    println!("BENCH_BATCH_REVIEW: items=1000, worst_ui_update_ms={worst_update_ms:.3}");
+    if !cfg!(debug_assertions) {
+        // One 60 Hz frame for the pack rebuild; a quarter frame per batch update.
+        assert!(
+            worst_build_ms < 16.0,
+            "1,000-memory pack build took {worst_build_ms:.2} ms on the UI thread"
+        );
+        assert!(
+            worst_update_ms < 4.0,
+            "batch row-state update took {worst_update_ms:.3} ms on the UI thread"
+        );
+    }
+
     drop(store);
     let _ = fs::remove_file(&db_path);
 }

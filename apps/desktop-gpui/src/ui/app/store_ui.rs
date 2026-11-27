@@ -60,6 +60,69 @@ pub(crate) fn store_labels(path: &Path) -> (String, String) {
 }
 
 impl MemOSApp {
+    /// Header slot above the sidebar: which store this window reads, and the
+    /// way to switch it. Same width as the sidebar so search stays aligned
+    /// with the content column; icon-only in the compact layout.
+    pub(super) fn render_header_store_switch(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme;
+        let compact = self.compact_layout;
+        let (name, folder) = store_labels(&self.resolved_db.path);
+        let aria: SharedString = format!("Store {name}. Switch store").into();
+        let tip: SharedString = if folder.is_empty() {
+            format!("{name} · Switch store…").into()
+        } else {
+            format!("{name} in {folder} · Switch store…").into()
+        };
+        div()
+            .id("header-store-switch")
+            .focusable()
+            .role(Role::Button)
+            .aria_label(aria)
+            .aria_expanded(self.store_switch.open)
+            .tooltip(crate::ui::views::tooltip_view(tip, theme))
+            .flex_shrink_0()
+            .w(px(if compact { 40. } else { 204. }))
+            .h(px(kit::CONTROL_H + 4.))
+            .px(px(if compact { 0. } else { 8. }))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .cursor_pointer()
+            .hover(move |s| s.bg(theme.bg_hover))
+            .active(move |s| s.bg(theme.bg_selected))
+            .focus_visible(move |s| s.border_color(theme.accent))
+            .flex()
+            .items_center()
+            .when(compact, |el| el.justify_center())
+            .gap(px(8.))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.open_store_switcher(window, cx);
+            }))
+            .child(crate::ui::views::render_ui_icon(
+                crate::ui::views::UiIcon::Database,
+                14.0,
+                theme.text_secondary,
+            ))
+            .when(!compact, |el| {
+                el.child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_size(px(kit::text::BASE))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(theme.text_primary)
+                        .truncate()
+                        .child(SharedString::from(name)),
+                )
+                .child(crate::ui::views::render_ui_icon(
+                    crate::ui::views::UiIcon::ChevronDown,
+                    11.0,
+                    theme.text_muted,
+                ))
+            })
+            .into_any_element()
+    }
+
     pub(super) fn open_store_switcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.dismiss_popovers(super::PopoverOwner::None, cx);
         self.close_all_modals();
@@ -287,7 +350,13 @@ impl MemOSApp {
             .footer_note(
                 div()
                     .font_features(tabular_nums())
-                    .child("Stores always open read-only."),
+                    // Accurate in both modes: the app reads directly, and
+                    // edits (when on) still go through the writer.
+                    .child(if self.settings.write_mode {
+                        "Read directly; edits go through the writer."
+                    } else {
+                        "Opened for reading only."
+                    }),
             )
             .action(
                 button(

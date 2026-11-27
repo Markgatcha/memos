@@ -134,7 +134,7 @@ impl GraphMode {
             GraphMode::Tag => "Tag",
             GraphMode::Entity => "Entity",
             GraphMode::Temporal => "Temporal",
-            GraphMode::Contradictions => "Contradictions",
+            GraphMode::Contradictions => "Conflicts",
         }
     }
 }
@@ -226,6 +226,62 @@ pub struct LinkedEdge {
 pub enum EdgeDirection {
     Outgoing,
     Incoming,
+}
+
+impl LinkedEdge {
+    /// A stored `contradicts` edge is a conflict, not a link.
+    pub fn is_contradiction(&self) -> bool {
+        self.relation == "contradicts"
+    }
+}
+
+/// One row of the inspector's "Linked memories": a linked memory and every
+/// stored relation joining it to the selected one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkedMemoryRow {
+    pub peer_id: String,
+    pub peer_short_id: String,
+    pub peer_preview: String,
+    pub peer_type: String,
+    /// `(direction, relation)` in edge order.
+    pub relations: Vec<(EdgeDirection, String)>,
+}
+
+/// Group link edges (not conflicts) by linked memory, keeping first-seen
+/// order, so the list has exactly [`linked_memory_count`] rows.
+pub fn linked_memory_rows(edges: &[LinkedEdge]) -> Vec<LinkedMemoryRow> {
+    let mut rows: Vec<LinkedMemoryRow> = Vec::new();
+    for e in edges.iter().filter(|e| !e.is_contradiction()) {
+        let rel = (e.direction, e.relation.replace('_', " "));
+        if let Some(row) = rows.iter_mut().find(|r| r.peer_id == e.peer_id) {
+            if !row.relations.contains(&rel) {
+                row.relations.push(rel);
+            }
+            continue;
+        }
+        rows.push(LinkedMemoryRow {
+            peer_id: e.peer_id.clone(),
+            peer_short_id: e.peer_short_id.clone(),
+            peer_preview: e.peer_preview.clone(),
+            peer_type: e.peer_type.clone(),
+            relations: vec![rel],
+        });
+    }
+    rows
+}
+
+/// The one definition of "links" used by the inspector, the graph card and the
+/// graph header: distinct memories joined to this one by a stored edge, in
+/// either direction, excluding `contradicts` edges (those are conflicts).
+pub fn linked_memory_count(edges: &[LinkedEdge]) -> usize {
+    let mut peers: Vec<&str> = edges
+        .iter()
+        .filter(|e| !e.is_contradiction())
+        .map(|e| e.peer_id.as_str())
+        .collect();
+    peers.sort_unstable();
+    peers.dedup();
+    peers.len()
 }
 
 /// Linked contradiction record shown in the detail pane.
@@ -453,6 +509,9 @@ pub struct GraphEdgeData {
     pub relation: String,
     pub weight: f32,
     pub is_contradiction: bool,
+    /// Drawn only to give a view its shape (same namespace, tag, entity,
+    /// timeline or cluster). Not a stored link, so never counted as one.
+    pub structural: bool,
 }
 
 /// Graph snapshot returned from the background DB worker for layout and rendering.
@@ -489,7 +548,7 @@ impl DreamDiffKind {
             Self::Promoted => "Promoted",
             Self::Merged => "Merged",
             Self::Decayed => "Decayed",
-            Self::Contradiction => "Contradiction",
+            Self::Contradiction => "Conflict",
             Self::Updated => "Updated",
         }
     }
@@ -757,7 +816,11 @@ fn parse_scope_token(
             out.provenance = Some(v);
             Some(SearchScopeKind::Provenance)
         }
-        "has" if val.trim().eq_ignore_ascii_case("contradiction") => {
+        // `has:conflict` is the UI word; `has:contradiction` matches the CLI.
+        "has"
+            if val.trim().eq_ignore_ascii_case("contradiction")
+                || val.trim().eq_ignore_ascii_case("conflict") =>
+        {
             out.has_contradiction = true;
             Some(SearchScopeKind::HasContradiction)
         }
@@ -987,7 +1050,7 @@ pub fn describe_filter_target(filter: &QueryFilter) -> String {
         parts.push(prov.to_string());
     }
     if filter.has_contradiction {
-        parts.push("contradictions".to_string());
+        parts.push("conflicts".to_string());
     }
     if filter.min_importance.is_some() {
         parts.push("important".to_string());
@@ -1009,6 +1072,47 @@ pub fn describe_filter_target(filter: &QueryFilter) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn edge(peer: &str, dir: EdgeDirection, relation: &str) -> LinkedEdge {
+        LinkedEdge {
+            id: format!("{peer}-{relation}"),
+            direction: dir,
+            relation: relation.to_string(),
+            weight: 0.5,
+            peer_id: peer.to_string(),
+            peer_short_id: peer.chars().take(4).collect(),
+            peer_preview: format!("memory {peer}"),
+            peer_type: "fact".to_string(),
+            created_at: 0,
+            valid_from: None,
+            valid_to: None,
+        }
+    }
+
+    #[test]
+    fn links_count_distinct_peers_both_directions_without_conflicts() {
+        use EdgeDirection::{Incoming, Outgoing};
+        let edges = vec![
+            edge("aaaa", Outgoing, "relates_to"),
+            // Same peer again, other direction: still one linked memory.
+            edge("aaaa", Incoming, "derived_from"),
+            edge("bbbb", Incoming, "relates_to"),
+            // A stored contradiction is a conflict, not a link.
+            edge("cccc", Outgoing, "contradicts"),
+        ];
+        assert_eq!(linked_memory_count(&edges), 2);
+        let rows = linked_memory_rows(&edges);
+        assert_eq!(rows.len(), linked_memory_count(&edges));
+        assert_eq!(rows[0].peer_id, "aaaa");
+        assert_eq!(
+            rows[0].relations,
+            vec![
+                (Outgoing, "relates to".to_string()),
+                (Incoming, "derived from".to_string())
+            ]
+        );
+        assert_eq!(rows[1].peer_id, "bbbb");
+    }
 
     #[test]
     fn formats_ai_context_payload_with_summary_when_different_and_token_estimate() {

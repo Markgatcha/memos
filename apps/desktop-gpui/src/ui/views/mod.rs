@@ -302,6 +302,8 @@ pub enum UiIcon {
     Sort,
     ArrowRight,
     ArrowUp,
+    ArrowDown,
+    Database,
     Import,
     Check,
     Refresh,
@@ -331,6 +333,8 @@ pub fn ui_icon_glyph(icon: UiIcon, segoe_available: bool) -> &'static str {
             UiIcon::Sort => "\u{E8CB}",
             UiIcon::ArrowRight => "\u{E72A}",
             UiIcon::ArrowUp => "\u{E74A}",
+            UiIcon::ArrowDown => "\u{E74B}",
+            UiIcon::Database => "\u{EDA2}",
             UiIcon::Import => "\u{E8B5}",
             UiIcon::Check => "\u{E73E}",
             UiIcon::Refresh => "\u{E72C}",
@@ -347,15 +351,17 @@ pub fn ui_icon_glyph(icon: UiIcon, segoe_available: bool) -> &'static str {
             UiIcon::Minus => "−",
             UiIcon::Overflow => "•••",
             UiIcon::Search => "⌕",
-            UiIcon::ChevronDown => "⌄",
+            UiIcon::ChevronDown => "▾",
             UiIcon::ChevronRight => "›",
-            UiIcon::ChevronUp => "⌃",
+            UiIcon::ChevronUp => "▴",
             UiIcon::Edit => "✎",
             UiIcon::Forget => "⌫",
             UiIcon::Filter => "≡",
             UiIcon::Sort => "⇅",
             UiIcon::ArrowRight => "→",
             UiIcon::ArrowUp => "↑",
+            UiIcon::ArrowDown => "↓",
+            UiIcon::Database => "⛁",
             UiIcon::Import => "⇣",
             UiIcon::Check => "✓",
             UiIcon::Refresh => "↻",
@@ -1888,9 +1894,18 @@ mod tests {
             UiIcon::Sort,
             UiIcon::ArrowRight,
             UiIcon::ArrowUp,
+            UiIcon::ArrowDown,
+            UiIcon::Database,
         ] {
             assert!(!ui_icon_glyph(icon, true).is_empty());
             assert!(!ui_icon_glyph(icon, false).is_empty());
         }
+        // Fallbacks must be ordinary symbols, not keyboard-modifier code points
+        // (U+2303 / U+2304) that most non-Segoe fonts render tiny or not at all.
+        for icon in [UiIcon::ChevronUp, UiIcon::ChevronDown] {
+            let g = ui_icon_glyph(icon, false);
+            assert!(!g.contains('\u{2303}') && !g.contains('\u{2304}'), "{g}");
+        }
+        assert_eq!(ui_icon_glyph(UiIcon::ArrowDown, false), "↓");
     }
 }

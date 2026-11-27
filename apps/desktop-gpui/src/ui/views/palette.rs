@@ -96,6 +96,8 @@ pub struct PaletteEntry {
 pub enum PaletteEvent {
     Execute(PaletteAction),
     Closed,
+    /// The recent-command list changed; persistable titles only.
+    RecentCommandsChanged(Vec<String>),
 }
 
 /// Modal Ctrl/Cmd+K command palette for jumping to memories and running app commands.
@@ -144,7 +146,7 @@ impl CommandPalette {
             }
             InputEvent::Submit(_) => {
                 if let Some(entry) = this.entries.get(this.selected_ix).cloned() {
-                    this.record_recent(&entry);
+                    this.record_recent(&entry, cx);
                     this.is_open = false;
                     cx.emit(PaletteEvent::Execute(entry.action));
                     cx.notify();
@@ -232,7 +234,7 @@ impl CommandPalette {
         cx.notify();
     }
 
-    fn record_recent(&mut self, entry: &PaletteEntry) {
+    fn record_recent(&mut self, entry: &PaletteEntry, cx: &mut Context<Self>) {
         if matches!(
             entry.action,
             PaletteAction::JumpToMemory(_) | PaletteAction::DeleteSavedView(_)
@@ -241,7 +243,15 @@ impl CommandPalette {
         }
         self.recent_titles.retain(|t| t != &entry.title);
         self.recent_titles.insert(0, entry.title.clone());
-        self.recent_titles.truncate(4);
+        self.recent_titles.truncate(RECENT_COMMAND_LIMIT);
+        cx.emit(PaletteEvent::RecentCommandsChanged(
+            persistable_recent_commands(&self.recent_titles),
+        ));
+    }
+
+    /// Seed recents saved by an earlier session.
+    pub fn set_recent_commands(&mut self, titles: &[String]) {
+        self.recent_titles = persistable_recent_commands(titles);
     }
 
     fn rebuild_entries(&mut self, query: &str) {
@@ -398,6 +408,26 @@ type StaticCommand = (
     &'static str,
 );
 
+/// Recent commands shown when the palette opens with an empty query.
+pub const RECENT_COMMAND_LIMIT: usize = 4;
+
+/// The recents that may be written to `settings.json`: built-in command
+/// titles only, so no memory text, saved-view name or store path is ever
+/// persisted, and renamed or removed commands drop out on load.
+pub fn persistable_recent_commands(titles: &[String]) -> Vec<String> {
+    let known = static_palette_commands();
+    let mut out: Vec<String> = Vec::new();
+    for t in titles {
+        if known.iter().any(|e| &e.title == t) && !out.contains(t) {
+            out.push(t.clone());
+        }
+        if out.len() == RECENT_COMMAND_LIMIT {
+            break;
+        }
+    }
+    out
+}
+
 fn static_palette_commands() -> Vec<PaletteEntry> {
     use PaletteGroup::{Actions, Views};
     #[rustfmt::skip]
@@ -412,14 +442,14 @@ fn static_palette_commands() -> Vec<PaletteEntry> {
         ("Graph by tag", "Cluster memories by their first tag", "Graph", None, Views, PaletteAction::SwitchGraphMode(GraphMode::Tag), "mode"),
         ("Graph by entity", "Group memories that mention the same entity", "Graph", None, Views, PaletteAction::SwitchGraphMode(GraphMode::Entity), "mode people"),
         ("Graph over time", "Lay memories out by creation date", "Graph", None, Views, PaletteAction::SwitchGraphMode(GraphMode::Temporal), "mode temporal timeline"),
-        ("Graph contradictions", "Show only memories that conflict, and their links", "Graph", None, Views, PaletteAction::SwitchGraphMode(GraphMode::Contradictions), "mode conflicts"),
+        ("Graph conflicts", "Show only memories that conflict, and their links", "Graph", None, Views, PaletteAction::SwitchGraphMode(GraphMode::Contradictions), "mode contradictions"),
         ("Clear filters", "Reset search, scopes and facets", "Filter", None, Views, PaletteAction::ClearFilters, "reset all"),
         ("Save current view…", "Keep this search, filter and sort in the sidebar", "View", None, Views, PaletteAction::SaveCurrentView, "bookmark"),
         ("Search syntax", "Scopes like type:, tag:, ns:, is:stale and after:", "Search", Some("Ctrl /"), Views, PaletteAction::OpenSearchSyntax, "help tokens query builder filter"),
         ("Build context pack", "Collect memories for an agent within a token budget", "Context", Some("C"), Actions, PaletteAction::OpenContextPack, "ai prompt copy export what the ai sees"),
         ("Preview context for current view", "Context pack from the memories in this view", "Context", None, Actions, PaletteAction::PreviewContext, "ai sees prompt"),
         ("Pin selected memory", "Add or remove the selection from the context pack", "Context", Some("P"), Actions, PaletteAction::TogglePinSelected, "unpin collect basket"),
-        ("Compare with conflicting memory", "Side by side with the memory it contradicts", "Conflict", Some("X"), Actions, PaletteAction::CompareSelected, "contradiction diff versus"),
+        ("Compare with conflicting memory", "Side by side with the memory it conflicts with", "Conflict", Some("X"), Actions, PaletteAction::CompareSelected, "contradiction diff versus"),
         ("Show or hide inspector", "Toggle the detail pane for the selection", "View", Some("I"), Actions, PaletteAction::ToggleInspector, "detail panel"),
         ("Store health", "Cleanup suggestions: conflicts, stale and duplicate memories", "Health", None, Actions, PaletteAction::OpenHealth, "fix issues score what to fix"),
         ("Dream diff timeline", "Promotions, merges, decay and conflicts over time", "Timeline", None, Actions, PaletteAction::OpenDreamDiff, "history activity"),
@@ -875,7 +905,7 @@ impl Render for CommandPalette {
                     .when(selected, |el| el.bg(theme.bg_selected))
                     .when(!selected, |el| el.hover(move |s| s.bg(theme.bg_elevated)))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.record_recent(&title_for_recent);
+                        this.record_recent(&title_for_recent, cx);
                         this.is_open = false;
                         cx.emit(PaletteEvent::Execute(action.clone()));
                         cx.notify();
@@ -1197,6 +1227,28 @@ impl Render for CommandPalette {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_builtin_command_titles_are_persisted_as_recents() {
+        let titles: Vec<String> = [
+            "Open Today",
+            // A memory title or saved-view name must never reach settings.json.
+            "Staging database lives in eu-west-1",
+            "Open Today",
+            "Switch store…",
+            "Optimize store",
+            "Sort by recency",
+            "Open Review",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let kept = persistable_recent_commands(&titles);
+        assert_eq!(kept.len(), RECENT_COMMAND_LIMIT);
+        assert_eq!(kept[0], "Open Today");
+        assert!(!kept.iter().any(|t| t.contains("eu-west-1")));
+        assert_eq!(kept.iter().filter(|t| *t == "Open Today").count(), 1);
+    }
 
     fn sample_items(count: usize) -> Vec<MemoryListItem> {
         (0..count)

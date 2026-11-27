@@ -492,7 +492,9 @@ fn scrub_filesystem_paths(input: &str) -> String {
             out.push_str("<redacted-path>");
             i = end;
         } else {
-            let ch = input[i..].chars().next().unwrap();
+            let Some(ch) = input[i..].chars().next() else {
+                break;
+            };
             out.push(ch);
             i += ch.len_utf8();
         }
@@ -1234,4 +1236,33 @@ impl StartupTimeline {
             "startup phase"
         );
     }
+}
+
+static ROOT_RENDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Count one root-view render. GPUI redraws the window from the root, so this
+/// is the number of frames the app actually built (idle vblanks that find
+/// nothing dirty are not counted).
+pub fn note_root_render() {
+    ROOT_RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// With `MEMOS_DESKTOP_RENDER_STATS=1`, log the number of rendered frames per
+/// 10 s to stderr and the log file. Counts only; nothing about the store.
+pub fn start_render_stats_if_requested() {
+    if env::var_os("MEMOS_DESKTOP_RENDER_STATS").is_none_or(|v| v.is_empty() || v == "0") {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("render-stats".into())
+        .spawn(|| {
+            let mut last = 0;
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                let now = ROOT_RENDERS.load(std::sync::atomic::Ordering::Relaxed);
+                eprintln!("render-stats: {} frames in 10 s", now - last);
+                tracing::info!(frames = now - last, window_s = 10, "render stats");
+                last = now;
+            }
+        });
 }
