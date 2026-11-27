@@ -21,6 +21,7 @@ import type {
   EmbeddingRuntimeInfo,
 } from "../../src/types.js";
 import { MemOS } from "../../src/memory.js";
+import { withOptionalEmbeddingCache } from "./embedding-cache.js";
 import {
   LocalHashEmbeddingProvider,
   Model2VecEmbeddingProvider,
@@ -52,6 +53,8 @@ export interface BenchProviderArgs {
   documentPrefix?: string;
   /** Terminate with error when the requested backend did not load. */
   failOnEmbeddingFallback: boolean;
+  /** Persist embeddings in this SQLite file (CLI --embedding-cache=). */
+  cachePath?: string;
 }
 
 /**
@@ -102,6 +105,45 @@ export function parseProviderArgs(argv: string[]): BenchProviderArgs {
     documentPrefix:
       flag("document-prefix") ?? process.env.EMBEDDING_DOCUMENT_PREFIX,
     failOnEmbeddingFallback: argv.includes("--fail-on-embedding-fallback"),
+    cachePath: flag("embedding-cache") ?? process.env.EMBEDDING_CACHE,
+  };
+}
+
+/** Embedding-queue knobs shared by the long benchmarks. Defaults match the
+ *  committed baseline config exactly; only large-batch GPU servers should
+ *  need to raise them. */
+export interface EmbedQueueArgs {
+  concurrency: number;
+  batchSize: number;
+  /** Omitted unless --embed-queue-max= was passed (callers keep their default). */
+  maxQueueSize?: number;
+}
+
+function positiveInt(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * Parse `--embed-concurrency=`, `--embed-batch=`, `--embed-queue-max=`.
+ * These do not change vectors or scores, only how many requests are in
+ * flight. Big GPU backends (TEI/vLLM) want batch >= 64; the laptop default
+ * of 4/16 stays byte-identical to published runs.
+ */
+export function parseEmbedQueueArgs(argv: string[]): EmbedQueueArgs {
+  const flag = (name: string): string | undefined => {
+    const prefix = `--${name}=`;
+    const hit = argv.find((a) => a.startsWith(prefix));
+    return hit ? hit.slice(prefix.length) : undefined;
+  };
+  const maxQueue = flag("embed-queue-max");
+  return {
+    concurrency: positiveInt(flag("embed-concurrency"), 4),
+    batchSize: positiveInt(flag("embed-batch"), 16),
+    ...(maxQueue !== undefined
+      ? { maxQueueSize: positiveInt(maxQueue, 10000) }
+      : {}),
   };
 }
 
@@ -327,6 +369,75 @@ export const CATEGORY_NAMES: Record<number, string> = {
   5: "adversarial",
 };
 
+const LOCOMO_MONTHS: Record<string, number> = {
+  january: 0,
+  february: 1,
+  march: 2,
+  april: 3,
+  may: 4,
+  june: 5,
+  july: 6,
+  august: 7,
+  september: 8,
+  october: 9,
+  november: 10,
+  december: 11,
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  sept: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11,
+};
+
+/**
+ * Parse LoCoMo's `session_N_date_time` strings, e.g.
+ * `"1:56 pm on 8 May, 2023"`.
+ *
+ * `Date.parse` returns NaN for this format, and the harness previously fell
+ * back to `Date.now()` — which made every run's chronology different and
+ * retrieval scores drift between identical invocations. Parse the documented
+ * shape explicitly and anchor it to UTC so runs on different machines agree.
+ *
+ * Returns null when the value matches neither the LoCoMo shape nor a
+ * `Date.parse`-able string.
+ */
+export function parseLocomoTimestamp(value: string): number | null {
+  const text = value.trim();
+  const match =
+    /^(\d{1,2}):(\d{2})\s*([ap])\.?m\.?\s+on\s+(\d{1,2})\s+([A-Za-z]+),?\s+(\d{4})$/i.exec(
+      text,
+    );
+  if (match) {
+    const rawHour = parseInt(match[1]!, 10);
+    const minute = parseInt(match[2]!, 10);
+    const meridiem = match[3]!.toLowerCase();
+    const day = parseInt(match[4]!, 10);
+    const month = LOCOMO_MONTHS[match[5]!.toLowerCase()];
+    const year = parseInt(match[6]!, 10);
+    if (
+      month !== undefined &&
+      rawHour >= 1 &&
+      rawHour <= 12 &&
+      minute >= 0 &&
+      minute < 60 &&
+      day >= 1 &&
+      day <= 31
+    ) {
+      const hour = (rawHour % 12) + (meridiem === "p" ? 12 : 0);
+      return Date.UTC(year, month, day, hour, minute);
+    }
+  }
+  const fallback = Date.parse(text);
+  return Number.isFinite(fallback) ? fallback : null;
+}
+
 export function categoryName(cat: number): string {
   return CATEGORY_NAMES[cat] ?? `cat_${cat}`;
 }
@@ -351,12 +462,17 @@ export function createBenchMemos(opts: {
   rerankCandidates?: number;
   rerankTimeoutMs?: number;
   rerankMaxDocChars?: number;
+  /** Embedding queue overrides; omitted = 4/16 baseline. */
+  embedQueue?: EmbedQueueArgs;
+  /** WAL mode for the temp DB. Off in published runs, useful locally. */
+  wal?: boolean;
   internal?: boolean;
 }): MemOS {
-  const { providerArgs, retrievalArgs } = opts;
+  const { providerArgs, retrievalArgs, embedQueue } = opts;
+  const retrCfg = retrievalConfig(retrievalArgs);
   return new MemOS({
     dbPath: opts.dbPath,
-    wal: false,
+    wal: opts.wal ?? false,
     autoLinkThreshold: 0,
     experimental: {
       namespaces: true,
@@ -380,6 +496,7 @@ export function createBenchMemos(opts: {
             },
           }
         : {}),
+      ...(retrCfg.experimental ?? {}),
     },
     embeddings: {
       enabled: true,
@@ -391,12 +508,19 @@ export function createBenchMemos(opts: {
       ...(retrievalArgs.embedText
         ? { embedText: retrievalArgs.embedText }
         : {}),
-      ...(retrievalArgs.contextual ? { contextual: true } : {}),
+      // The harness's default is explicitly false (the published baseline);
+      // MemOS's own default is true, so this must always be forwarded.
+      contextual: retrievalArgs.contextual,
     },
-    ...(Object.keys(retrievalConfig(retrievalArgs)).length > 0
-      ? retrievalConfig(retrievalArgs)
-      : {}),
-    embeddingQueue: { concurrency: 4, batchSize: 16 },
+    ...(retrCfg.fusion ? { fusion: retrCfg.fusion } : {}),
+    ...(retrCfg.retrieval ? { retrieval: retrCfg.retrieval } : {}),
+    embeddingQueue: {
+      concurrency: embedQueue?.concurrency ?? 4,
+      batchSize: embedQueue?.batchSize ?? 16,
+      ...(embedQueue?.maxQueueSize !== undefined
+        ? { maxQueueSize: embedQueue.maxQueueSize }
+        : {}),
+    },
   });
 }
 
@@ -411,6 +535,22 @@ export function createBenchMemos(opts: {
  * `assertNoFallback()` catches.
  */
 export function buildProvider(args: BenchProviderArgs): EmbeddingProvider {
+  const provider = buildUncachedProvider(args);
+  if (!args.cachePath) return provider;
+  // Different endpoints can serve different weights under the same model id,
+  // so the namespace records everything that changes the vector space.
+  const namespace = [
+    args.provider,
+    args.model ?? provider.model,
+    String(args.dimensions ?? provider.dimensions),
+    args.baseUrl ?? "",
+    args.queryPrefix ?? "",
+    args.documentPrefix ?? "",
+  ].join("|");
+  return withOptionalEmbeddingCache(provider, args.cachePath, namespace);
+}
+
+function buildUncachedProvider(args: BenchProviderArgs): EmbeddingProvider {
   switch (args.provider) {
     case "local-hash":
       return new LocalHashEmbeddingProvider({
@@ -496,11 +636,16 @@ export async function assertNoFallback(
   args: BenchProviderArgs,
   hooks: { exit?: (code: number) => never } = {},
 ): Promise<EmbeddingRuntimeInfo> {
-  // Probe-embed to trigger lazy resolution. Failures here (e.g. HTTP
-  // provider with no network) are caught by the caller, not this check —
-  // this function only adjudicates FALLBACK state.
-  if (provider.getRuntimeInfo) {
-    await provider.embed("probe").catch(() => undefined);
+  // Probe-embed to trigger lazy resolution AND to prove the endpoint is
+  // actually reachable. The old code only probed providers that expose
+  // `getRuntimeInfo`, and swallowed the error — so a dead HTTP endpoint ran
+  // the whole benchmark with every embedding silently dropped, producing
+  // keyword-only scores labelled as the requested semantic model.
+  let probeError: unknown;
+  try {
+    await provider.embed("probe");
+  } catch (err) {
+    probeError = err;
   }
   const info =
     provider.getRuntimeInfo?.() ??
@@ -531,6 +676,18 @@ export async function assertNoFallback(
     console.warn(`[bench] WARNING: ${msg}`);
     console.warn(
       "[bench] Scores below were produced by the FALLBACK backend, not the requested model.",
+    );
+  }
+
+  if (probeError !== undefined) {
+    const reason =
+      probeError instanceof Error ? probeError.message : String(probeError);
+    throw new Error(
+      `[bench] FATAL: embedding provider probe failed for ` +
+        `${args.provider}/${args.model ?? provider.model} at ` +
+        `${args.baseUrl ?? "(default endpoint)"}: ${reason}. ` +
+        `Refusing to run: the benchmark would silently score keyword-only ` +
+        `retrieval while labelling the run as ${provider.id}.`,
     );
   }
 

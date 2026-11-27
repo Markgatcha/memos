@@ -158,9 +158,22 @@ describe("MCP Protocol — 2026-07-28 (modern)", () => {
     expect(
       (result.capabilities as Record<string, unknown>).tools,
     ).toBeDefined();
+
+    // Ensure the desktop client's requested protocol revision matches server/discover.
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const writeBridgeRs = readFileSync(
+      resolve(process.cwd(), "apps/desktop-gpui/src/core/write_bridge.rs"),
+      "utf8",
+    );
+    const revMatch = writeBridgeRs.match(
+      /pub const MCP_PROTOCOL_VERSION:\s*&str\s*=\s*"([^"]+)"/,
+    );
+    expect(revMatch?.[1]).toBe(MODERN_VERSION);
+    expect(result.supportedVersions).toContain(revMatch![1]);
   });
 
-  test("tools/list returns all 40 tools with outputSchema", async () => {
+  test("tools/list returns all 42 tools with outputSchema", async () => {
     const response = await sendRequest(
       clientTransport,
       "tools/list",

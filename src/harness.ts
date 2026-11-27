@@ -44,6 +44,10 @@ export const HARNESS_MARKERS: ReadonlyArray<{
   /** Normalized harness slug stamped on memories. */
   harness: string;
 }> = [
+  // DeepSeek Harness injects DSH_HOME (harness home) and DSH_SHELL=1
+  // (managed subprocess marker) into sessions and subprocesses.
+  { match: "DSH_SHELL", harness: "dsh" },
+  { match: "DSH_HOME", harness: "dsh" },
   { match: "CLAUDECODE", harness: "claude-code" },
   { match: "CLAUDE_CODE_", harness: "claude-code" },
   { match: "CLINE_", harness: "cline" },

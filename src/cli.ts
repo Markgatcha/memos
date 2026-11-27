@@ -61,6 +61,7 @@ import {
 } from "./eval.js";
 import { CLI_COMMANDS, suggestCommand, getCommandHelp } from "./cli-help.js";
 import { getCompletionScript, COMPLETION_SHELLS } from "./cli-completion.js";
+import { connectTarget } from "./connect.js";
 import { formatExplainRecall, formatReplayRecall } from "./flight-recorder.js";
 import { formatRecallReceipt } from "./recall-budget.js";
 import { formatQueryPlan } from "./query-planner.js";
@@ -563,345 +564,6 @@ async function runInitWizard(cliArgs: string[]): Promise<void> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// `memos connect` — register the MemOS MCP server with agentic harnesses.
-// ---------------------------------------------------------------------------
-
-interface ConnectTarget {
-  /** Human-readable setup instructions (always printed). */
-  instructions: string;
-  /** Config file to write with --write, when applicable. */
-  configPath?: string;
-  /** File contents for --write. */
-  fileContents?: string;
-}
-
-const MCP_COMMAND = ["npx", "-y", "@mem-os/sdk", "mcp"];
-
-function mcpServerEntry(dbPath?: string): Record<string, unknown> {
-  const env: Record<string, string> = {};
-  if (dbPath) env.MEMOS_DB_PATH = dbPath;
-  if (process.env.MEMOS_EMBEDDING_PROVIDER)
-    env.MEMOS_EMBEDDING_PROVIDER = process.env.MEMOS_EMBEDDING_PROVIDER;
-  if (process.env.MEMOS_EMBEDDING_MODEL)
-    env.MEMOS_EMBEDDING_MODEL = process.env.MEMOS_EMBEDDING_MODEL;
-  if (process.env.MEMOS_EMBEDDING_BASE_URL)
-    env.MEMOS_EMBEDDING_BASE_URL = process.env.MEMOS_EMBEDDING_BASE_URL;
-  if (process.env.MEMOS_EMBEDDING_DIMENSIONS)
-    env.MEMOS_EMBEDDING_DIMENSIONS = process.env.MEMOS_EMBEDDING_DIMENSIONS;
-  if (process.env.MEMOS_EMBEDDING_QUERY_PREFIX)
-    env.MEMOS_EMBEDDING_QUERY_PREFIX = process.env.MEMOS_EMBEDDING_QUERY_PREFIX;
-  if (process.env.MEMOS_EMBEDDING_DOCUMENT_PREFIX)
-    env.MEMOS_EMBEDDING_DOCUMENT_PREFIX =
-      process.env.MEMOS_EMBEDDING_DOCUMENT_PREFIX;
-  return {
-    command: MCP_COMMAND[0],
-    args: MCP_COMMAND.slice(1),
-    ...(Object.keys(env).length > 0 ? { env } : {}),
-  };
-}
-
-function connectTarget(
-  target: string,
-  opts: { dbPath?: string; toolNames?: string[] },
-): ConnectTarget | null {
-  const entry = mcpServerEntry(opts.dbPath);
-  const entryEnv = (entry as { env?: Record<string, string> }).env;
-  const jsonEntry = JSON.stringify({ mcpServers: { memos: entry } }, null, 2);
-  switch (target) {
-    case "claude-code":
-    case "claude":
-    case "claudecode": {
-      const args = MCP_COMMAND.map((a) => `"${a}"`).join(" ");
-      return {
-        instructions: [
-          "Claude Code — pick ONE:",
-          "",
-          "  # User scope (available in every project):",
-          `  claude mcp add memos -s user -- ${MCP_COMMAND.join(" ")}`,
-          "",
-          "  # Project scope (checked into the repo for the whole team):",
-          "  memos connect claude-code --write",
-          "  # → writes ./.mcp.json:",
-          jsonEntry,
-          "",
-          `  Or run inside Claude Code: /plugin marketplace add Markgatcha/memos`,
-          `  then /plugin install memos@memos-marketplace (bundles this MCP`,
-          `  server + /memos, /recall commands + a memory skill).`,
-          "",
-          `  Manual one-liner equivalent: claude mcp add memos -s user -- ${args}`,
-          "",
-          "  # Session hook (auto-extract facts at session end):",
-          "  # Add to .claude/settings.json:",
-          "  {",
-          '    "hooks": {',
-          '      "SessionEnd": [{ "hooks": [{ "type": "command", "command": "memos session-hook" }] }]',
-          "    }",
-          "  }",
-        ].join("\n"),
-        configPath: ".mcp.json",
-        fileContents: jsonEntry + "\n",
-      };
-    }
-    case "cursor": {
-      return {
-        instructions: [
-          "Cursor — MCP config at ~/.cursor/mcp.json:",
-          jsonEntry,
-          "",
-          "Or: memos connect cursor --write  (writes the file; --force overwrites).",
-          "Restart Cursor, then enable the memos server in MCP settings.",
-        ].join("\n"),
-        configPath: join(homeDir(), ".cursor", "mcp.json"),
-        fileContents: jsonEntry + "\n",
-      };
-    }
-    case "windsurf": {
-      return {
-        instructions: [
-          "Windsurf — MCP config at ~/.codeium/windsurf/mcp_config.json:",
-          jsonEntry,
-          "",
-          "Or: memos connect windsurf --write",
-        ].join("\n"),
-        configPath: join(homeDir(), ".codeium", "windsurf", "mcp_config.json"),
-        fileContents: jsonEntry + "\n",
-      };
-    }
-    case "cline": {
-      return {
-        instructions: [
-          "Cline (VS Code) — MCP settings file:",
-          "  Windows: %APPDATA%\\Code\\User\\globalStorage\\saoudrizwan.claude-dev\\settings\\cline_mcp_settings.json",
-          "  macOS:   ~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
-          "",
-          "Merge this into the mcpServers object:",
-          jsonEntry,
-        ].join("\n"),
-      };
-    }
-    case "opencode": {
-      return {
-        instructions: [
-          "OpenCode — add to opencode.json (project) or ~/.config/opencode/opencode.json:",
-          JSON.stringify(
-            {
-              mcp: {
-                memos: { type: "local", command: MCP_COMMAND },
-              },
-            },
-            null,
-            2,
-          ),
-          "",
-          "Or: memos connect opencode --write  (writes ./opencode.json).",
-        ].join("\n"),
-        configPath: "opencode.json",
-        fileContents:
-          JSON.stringify(
-            { mcp: { memos: { type: "local", command: MCP_COMMAND } } },
-            null,
-            2,
-          ) + "\n",
-      };
-    }
-    case "codex": {
-      const toml = `[mcp_servers.memos]\ncommand = "${MCP_COMMAND[0]}"\nargs = [${MCP_COMMAND.slice(
-        1,
-      )
-        .map((a) => `"${a}"`)
-        .join(", ")}]\n`;
-      return {
-        instructions: [
-          "Codex CLI — add to ~/.codex/config.toml:",
-          toml,
-          "Or: memos connect codex --write  (appends to the file).",
-        ].join("\n"),
-        configPath: join(homeDir(), ".codex", "config.toml"),
-        fileContents: toml,
-      };
-    }
-    case "gemini": {
-      return {
-        instructions: [
-          "Gemini CLI — MCP config at ~/.gemini/settings.json:",
-          jsonEntry,
-          "",
-          "Or: memos connect gemini --write",
-        ].join("\n"),
-        configPath: join(homeDir(), ".gemini", "settings.json"),
-        fileContents: jsonEntry + "\n",
-      };
-    }
-    case "hermes": {
-      const env = entryEnv
-        ? `    env:\n${Object.entries(entryEnv)
-            .map(([k, v]) => `      ${k}: "${v}"`)
-            .join("\n")}\n`
-        : "";
-      return {
-        instructions: [
-          "Hermes Agent (Nous Research) - add to ~/.hermes/config.yaml:",
-          "mcp_servers:",
-          "  memos:",
-          '    command: "npx"',
-          '    args: ["-y", "@mem-os/sdk", "mcp"]',
-          env.trimEnd(),
-          "    protocol: auto",
-          "    trust: full",
-          "",
-          "MCP ships with the standard Hermes install. Restart the agent,",
-          "then verify with /mcp or `hermes mcp list`.",
-          "",
-          "Portable package route: Hermes also installs Agent Plugins 1.0.0",
-          "packages. This repo's root plugin.json + mcp.json already match that",
-          "format: `hermes plugins install Markgatcha/memos --no-enable`,",
-          "then enable `memos` in ~/.hermes/config.yaml.",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      };
-    }
-    case "kilo":
-    case "kilo-code":
-    case "kilocode": {
-      const kiloEntry = {
-        type: "local",
-        command: MCP_COMMAND,
-        ...(entryEnv ? { environment: entryEnv } : {}),
-        enabled: true,
-      };
-      const contents = JSON.stringify({ mcp: { memos: kiloEntry } }, null, 2);
-      return {
-        instructions: [
-          "Kilo Code - add to kilo.json (project) or ~/.config/kilo/kilo.json:",
-          contents,
-          "",
-          "Or: memos connect kilo --write  (writes ./kilo.json)",
-          "Kilo uses `mcp` (not mcpServers), a command array, and",
-          "`environment` for env vars. Open Settings -> MCP Servers to verify.",
-        ].join("\n"),
-        configPath: "kilo.json",
-        fileContents: contents + "\n",
-      };
-    }
-    case "pi": {
-      return {
-        instructions: [
-          "Pi - add to ~/.pi/agent/mcp.json (global) or .pi/mcp.json (project):",
-          jsonEntry,
-          "",
-          "Or: memos connect pi --write",
-          "Pi reads mcpServers entries with command/args/env. Type `mcp` under",
-          "`pi config` to confirm the built-in MCP extension is enabled.",
-        ].join("\n"),
-        configPath: join(homeDir(), ".pi", "agent", "mcp.json"),
-        fileContents: jsonEntry + "\n",
-      };
-    }
-    case "openclaw": {
-      const openclawEntry = {
-        mcp: {
-          servers: {
-            memos: {
-              command: MCP_COMMAND[0],
-              args: MCP_COMMAND.slice(1),
-              ...(entryEnv ? { env: entryEnv } : {}),
-              enabled: true,
-            },
-          },
-        },
-      };
-      return {
-        instructions: [
-          "OpenClaw - merge into ~/.openclaw/openclaw.json:",
-          JSON.stringify(openclawEntry, null, 2),
-          "",
-          "MCP servers live under mcp.servers. Keep credentials in the",
-          "environment, not in the JSON. Verify with:",
-          "  openclaw mcp doctor memos --probe",
-          "",
-          "OpenClaw also loads Agent Plugins 1.0.0 bundles (plugin.json +",
-          "mcp.json), which this repo root already provides.",
-        ].join("\n"),
-      };
-    }
-    case "zed": {
-      const zedEntry = {
-        context_servers: {
-          memos: {
-            source: "custom",
-            command: MCP_COMMAND[0],
-            args: MCP_COMMAND.slice(1),
-            ...(entryEnv ? { env: entryEnv } : {}),
-          },
-        },
-      };
-      return {
-        instructions: [
-          "Zed - merge into ~/.config/zed/settings.json:",
-          JSON.stringify(zedEntry, null, 2),
-          "",
-          "Zed calls MCP servers `context_servers` and keeps them in the same",
-          "settings file as the editor. Open Settings -> AI -> MCP Servers and",
-          "watch for a green status dot.",
-        ].join("\n"),
-      };
-    }
-    case "goose": {
-      return {
-        instructions: [
-          "goose - add to ~/.config/goose/config.yaml:",
-          "extensions:",
-          "  memos:",
-          "    type: stdio",
-          '    cmd: "npx"',
-          '    args: ["-y", "@mem-os/sdk", "mcp"]',
-          "    enabled: true",
-          "    timeout: 300",
-          "",
-          "Restart goose and check `goose configure` -> Extensions.",
-        ].join("\n"),
-      };
-    }
-    case "generic":
-    case "any":
-    case "mcp": {
-      // Tool list is injected by the caller from getMcpTools() so the
-      // count and names can never go stale.
-      const short = (opts.toolNames ?? []).map((n) => n.replace(/^memos_/, ""));
-      return {
-        instructions: [
-          "Any MCP-capable harness — the MemOS server is a plain stdio MCP",
-          `server. Launch command: ${MCP_COMMAND.join(" ")}`,
-          "",
-          "MCP config shape (mcpServers object):",
-          jsonEntry,
-          "",
-          "The server speaks MCP 2026-07-28 with a legacy-2025 fallback and",
-          `exposes ${short.length} tools: ${short.join("/")}.`,
-          "All data stays in local SQLite.",
-          "",
-          "Streamable HTTP (for hosted clients, or several harnesses at once):",
-          "  memos mcp --http --port=8788",
-          "  endpoint: http://127.0.0.1:8788/mcp",
-          "It binds loopback by default and has no authentication — put it",
-          "behind an authenticating proxy before exposing it beyond localhost.",
-        ].join("\n"),
-      };
-    }
-    default:
-      console.error(
-        "Unknown target. Supported: claude-code, cursor, windsurf, cline, " +
-          "opencode, codex, gemini, hermes, kilo, pi, openclaw, zed, goose, generic.",
-      );
-      return null;
-  }
-}
-
-function homeDir(): string {
-  return os.homedir();
-}
 
 function existsSyncSafe(path: string): boolean {
   try {
@@ -1034,7 +696,10 @@ Commands:
   doctor                  Health-check the store, embedding config and endpoints
   connect <target>        Register the MemOS MCP server with a coding harness
                           (claude-code, cursor, windsurf, cline, opencode,
-                          codex, gemini, generic) — --write saves the config
+                          opencode-v1, opencode-v2, codex, gemini, hermes,
+                          dsh, kilo, pi, openclaw, zed, goose, generic) —
+                          --write saves the config; --with-session-hook also
+                          writes the OpenCode session-hook plugin
   reindex-embeddings      Re-embed all memories with the configured provider
                           (--purge-stale deletes vectors from other models first)
   mcp                     Start the MemOS MCP stdio server
@@ -1379,6 +1044,71 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "connect") {
+        const target = (args[1] ?? "").toLowerCase();
+        const write = args.includes("--write");
+        const force = args.includes("--force");
+        const withSessionHook = args.includes("--with-session-hook");
+        const { getMcpTools } = await import("./mcp.js");
+        const result = connectTarget(target, {
+          dbPath,
+          toolNames: getMcpTools().map((t) => t.name),
+          withSessionHook,
+        });
+        if (!result) return;
+        if (!write) {
+          console.log(result.instructions);
+          if (result.configPath) {
+            console.log(
+              "\nRe-run with --write to write the config file directly " +
+                "(add --force to overwrite an existing file).",
+            );
+          } else {
+            console.log(
+              "\nThis harness merges MCP servers into an existing config; " +
+                "paste the block above rather than replacing the file.",
+            );
+          }
+          return;
+        }
+        if (!result.configPath) {
+          console.log(result.instructions);
+          console.log(
+            "\nNo safe whole-file write for this harness. Paste the block above.",
+          );
+          return;
+        }
+        const filesToWrite = [
+          { path: result.configPath, contents: result.fileContents ?? "" },
+          ...(result.extraFiles ?? []),
+        ];
+        for (const file of filesToWrite) {
+          if (existsSyncSafe(file.path) && !force) {
+            console.error(
+              `Error: ${file.path} already exists. Re-run with --force to overwrite.`,
+            );
+            process.exit(1);
+          }
+        }
+        try {
+          for (const file of filesToWrite) {
+            writeFileSafe(file.path, file.contents);
+            console.log(`Wrote ${file.path}.`);
+          }
+          console.log(
+            "Restart the harness so it picks up the new MCP server. " +
+              "All data stays in the local SQLite store.",
+          );
+        } catch (err) {
+          console.error(
+            `Error writing files: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(1);
+        }
+        return;
+  }
+
+
   // Embedding config via environment (same variables the Python server
   // and benchmark scripts accept). Without MEMOS_EMBEDDING_PROVIDER the
   // CLI runs the default local-hash provider.
@@ -1608,6 +1338,14 @@ async function main(): Promise<void> {
           console.log(`  Importance: ${node.importance}`);
           console.log(`  Access count: ${node.accessCount}`);
           console.log(`  Created: ${new Date(node.createdAt).toISOString()}`);
+          console.log(`  Updated: ${new Date(node.updatedAt).toISOString()}`);
+          console.log(
+            `  Last accessed: ${
+              typeof node.lastAccessed === "number" && node.lastAccessed > 0
+                ? new Date(node.lastAccessed).toISOString()
+                : "Never recalled"
+            }`,
+          );
           if (node.tags.length > 0) {
             console.log(`  Tags: ${node.tags.join(", ")}`);
           }
@@ -4261,60 +3999,6 @@ async function main(): Promise<void> {
             // already closed
           }
           rmSync(dir, { recursive: true, force: true });
-        }
-        break;
-      }
-
-      case "connect": {
-        const target = (args[1] ?? "").toLowerCase();
-        const write = args.includes("--write");
-        const force = args.includes("--force");
-        const { getMcpTools } = await import("./mcp.js");
-        const result = connectTarget(target, {
-          dbPath,
-          toolNames: getMcpTools().map((t) => t.name),
-        });
-        if (!result) break;
-        if (!write) {
-          console.log(result.instructions);
-          if (result.configPath) {
-            console.log(
-              "\nRe-run with --write to write the config file directly " +
-                "(add --force to overwrite an existing file).",
-            );
-          } else {
-            console.log(
-              "\nThis harness merges MCP servers into an existing config; " +
-                "paste the block above rather than replacing the file.",
-            );
-          }
-          break;
-        }
-        if (!result.configPath) {
-          console.log(result.instructions);
-          console.log(
-            "\nNo safe whole-file write for this harness. Paste the block above.",
-          );
-          break;
-        }
-        if (existsSyncSafe(result.configPath) && !force) {
-          console.error(
-            `Error: ${result.configPath} already exists. Re-run with --force to overwrite.`,
-          );
-          process.exit(1);
-        }
-        try {
-          writeFileSafe(result.configPath, result.fileContents ?? "");
-          console.log(`Wrote ${result.configPath}.`);
-          console.log(
-            "Restart the harness so it picks up the new MCP server. " +
-              "All data stays in the local SQLite store.",
-          );
-        } catch (err) {
-          console.error(
-            `Error writing ${result.configPath}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          process.exit(1);
         }
         break;
       }

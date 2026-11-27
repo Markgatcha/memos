@@ -866,6 +866,10 @@ describe("resolveExplorerMode", () => {
     expect(resolveExplorerMode({})).toBe("text");
     expect(resolveExplorerMode({ meta: null })).toBe("text");
     expect(resolveExplorerMode({ meta: { "memos.uiApps": true } })).toBe("app");
+    expect(
+      resolveExplorerMode({ meta: { "io.modelcontextprotocol/ui": true } }),
+    ).toBe("app");
+    expect(resolveExplorerMode({ meta: { ui: true } })).toBe("app");
     expect(resolveExplorerMode({ meta: { "memos.uiApps": false } })).toBe(
       "text",
     );

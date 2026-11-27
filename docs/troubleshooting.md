@@ -226,7 +226,8 @@ than the CLI does.
    this failing points at a startup problem (native binding, DB path),
    not a harness-config problem.
 2. `memos connect <target>` prints the exact JSON config for your harness
-   (claude-code, cursor, windsurf, cline, opencode, codex, gemini, generic).
+   (claude-code, cursor, windsurf, cline, opencode, opencode-v1, opencode-v2,
+    codex, gemini, hermes, dsh, kilo, pi, openclaw, zed, goose, generic).
    Check that the `env` block carries `MEMOS_DB_PATH` (if you use `--db`)
    and your `MEMOS_EMBEDDING_*` vars — the server inherits its config from
    those, not from your shell.

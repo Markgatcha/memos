@@ -414,12 +414,15 @@ Fidelity backfill: generate missing L1/L2 levels for stored memories.
 
 Health-check the store, embedding config, and endpoints. Prints findings
 with pointers to the Troubleshooting Playbook.`,
-  connect: `memos connect <target> [--write] [--json]
+  connect: `memos connect <target> [--write] [--with-session-hook]
 
 Register the MemOS MCP server with a coding harness: claude-code, cursor,
-windsurf, cline, opencode, codex, gemini, hermes, kilo, pi, openclaw, zed,
-goose, or generic. --write saves the config where the harness uses a
-dedicated file; YAML/merged configs are printed for you to paste.`,
+windsurf, cline, opencode (2.x), opencode-v1, opencode-v2, codex, gemini,
+hermes, dsh (DeepSeek Harness), kilo, pi, openclaw, zed, goose, or generic.
+--write saves the config where the harness uses a dedicated file (for dsh it
+writes a standalone ~/.dsh/memos.patch.yml, never your cordis.patch.yml);
+merged/YAML configs are printed for you to paste. --with-session-hook also
+writes the OpenCode session-hook plugin (v1 or v2, matching the target).`,
   "reindex-embeddings": `memos reindex-embeddings [--purge-stale]
 
 Re-embed all memories with the configured provider. --purge-stale deletes

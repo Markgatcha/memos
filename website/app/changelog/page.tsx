@@ -11,7 +11,12 @@ export const metadata: Metadata = {
 };
 
 type Section = { title: string; items: string[] };
-type Release = { version: string; date: string | null; sections: Section[] };
+type Release = {
+  version: string;
+  date: string | null;
+  product?: "sdk" | "desktop";
+  sections: Section[];
+};
 
 const releases = changelog.releases as Release[];
 
@@ -22,7 +27,7 @@ export default function Changelog() {
         <PageHeader
           kicker="changelog"
           title="Changelog"
-          subtitle="What shipped, newest first. Generated from the repository's CHANGELOG.md so the site cannot drift from the code."
+          subtitle="What shipped, newest first. Generated from the repository changelogs (SDK and native desktop app) so the site cannot drift from the code."
         />
 
         {releases.length === 0 ? (
@@ -40,9 +45,14 @@ export default function Changelog() {
                       <span className="font-mono text-sm text-zinc-100">
                         v{release.version}
                       </span>
+                      {release.product === "desktop" && (
+                        <span className="rounded-sm border border-accent/40 px-1.5 py-0.5 font-mono text-[9px] tracking-[0.02em] text-accent">
+                          desktop
+                        </span>
+                      )}
                       {index === 0 && (
                         <span className="rounded-sm border border-white/[0.12] px-1.5 py-0.5 font-mono text-[9px] tracking-[0.02em] text-zinc-400">
-                          latest
+                          newest
                         </span>
                       )}
                     </span>

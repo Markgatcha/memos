@@ -14,11 +14,12 @@ There is no account, no hosted control plane, and no API key in the core path.
 | Point MemOS at a folder of notes | [Ingest your notes in 60 seconds](quickstart-ingest.md) |
 | Wire it into Claude Code, Cursor, Codex, Hermes, Kilo, or another harness | [Harness matrix](harness-matrix.md) |
 | Understand nodes, trust, time, packs, and deletion | [Memory model](concepts.md) |
+| Inspect the store in a native app | [MemOS Desktop](desktop-app.md) |
 | Look up an exact command, tool, or route | [CLI reference](reference/cli.md) · [MCP tools](reference/mcp-tools.md) · [HTTP API](reference/http-api.md) |
 | Run it on a server | [Remote MCP and OAuth](remote-mcp.md) |
 | Operate a store over time | [Operations](operations.md) |
 
-## The four surfaces
+## The five surfaces
 
 | Surface | Use it for | Start |
 | --- | --- | --- |
@@ -26,9 +27,11 @@ There is no account, no hosted control plane, and no API key in the core path.
 | CLI | Local work, scripts, maintenance | `npx @mem-os/sdk --help` |
 | MCP server | Any MCP-capable coding agent | `npx -y @mem-os/sdk mcp` |
 | HTTP API | Python, Dify, n8n, or a shared service | `python -m memos.server.main` |
+| MemOS Desktop | Read-only native exploration of the same file | [Desktop guide](desktop-app.md) |
 
-All four read and write the same SQLite database. `MEMOS_DB_PATH` selects the
-file; `MEMOS_NAMESPACE` selects the default namespace.
+The first four read and write the same SQLite database. `MEMOS_DB_PATH` selects
+the file; `MEMOS_NAMESPACE` selects the default namespace. MemOS Desktop opens
+that file read-only and never writes.
 
 ## What the docs cover
 

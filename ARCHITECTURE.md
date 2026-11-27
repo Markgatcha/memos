@@ -19,7 +19,7 @@
 │   │ Python HTTP Server    │ │  MCP Server     │ │ TypeScript SDK │ │
 │   │ (FastAPI — server/)   │ │  (src/mcp.ts)   │ │ (direct)       │ │
 │   │                       │ │                 │ │                │ │
-│   │ POST /api/mem/store   │ │ stdio (MCP 2026)│ │ memos.store()  │ │
+│   │ POST /api/mem/store   │ │ stdio (MCP 2026-07-28)│ │ memos.store()│ │
 │   │ POST /api/mem/retrieve│ │ tools: store,   │ │ memos.search() │ │
 │   │ POST /api/mem/search  │ │ search, forget, │ │ memos.context- │ │
 │   │ POST /api/mem/forget  │ │ contextPack ... │ │ Pack() ...     │ │

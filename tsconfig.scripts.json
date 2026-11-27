@@ -20,6 +20,7 @@
     "scripts/lib/**/*.ts",
     "scripts/bench-quality.ts",
     "scripts/bench-locomo-noapi.ts",
+    "scripts/merge-locomo-shards.ts",
     "scripts/bench-locomo.ts",
     "scripts/bench-longmemeval.ts",
     "scripts/bench-vendors.ts"

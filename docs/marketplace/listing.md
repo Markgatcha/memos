@@ -32,7 +32,7 @@ opposite: a local engine with a small surface area.
   overwriting it.
 - **Token-budgeted packs.** `contextPack()` returns a citable slice that fits a
   budget, in JSON or compact TOON.
-- **Agent-native.** 40 MCP tools, a `session-start` profile, procedural
+- **Agent-native.** 42 MCP tools, a `session-start` profile, procedural
   lessons, a review queue for inferred writes, and source-scoped deletion with
   proof-of-forgetting certificates.
 - **No lock-in.** MIT license, no hosted control plane, no account.

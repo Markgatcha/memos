@@ -60,6 +60,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   parseProviderArgs,
+  parseEmbedQueueArgs,
   parseRetrievalArgs,
   retrievalConfig,
   buildProvider,
@@ -633,6 +634,8 @@ async function main() {
     : 0;
 
   const providerArgs: BenchProviderArgs = parseProviderArgs(args);
+  const embedQueue = parseEmbedQueueArgs(args);
+  const wal = args.includes("--wal");
   const datasetPath =
     args.find((a) => a.startsWith("--dataset="))?.split("=")[1] ??
     "scripts/dataset/longmemeval/longmemeval_s.json";
@@ -685,7 +688,7 @@ async function main() {
   console.log(`[bench-longmemeval] db=${dbPath} keep=${keepDb}`);
   const memos = new MemOS({
     dbPath,
-    wal: false,
+    wal,
     autoLinkThreshold: 0,
     experimental: {
       namespaces: true,
@@ -715,7 +718,11 @@ async function main() {
         },
     ...(retrievalCfg.fusion ? { fusion: retrievalCfg.fusion } : {}),
     ...(retrievalCfg.retrieval ? { retrieval: retrievalCfg.retrieval } : {}),
-    embeddingQueue: { concurrency: 4, batchSize: 16, maxQueueSize: 60000 },
+    embeddingQueue: {
+      concurrency: embedQueue.concurrency,
+      batchSize: embedQueue.batchSize,
+      maxQueueSize: embedQueue.maxQueueSize ?? 60000,
+    },
   });
 
   await memos.init();
@@ -1061,6 +1068,10 @@ async function main() {
           neighbourGuard,
           queryPrewarm: queryPrewarm && !embeddingsOff,
           ingestConcurrency,
+          embedConcurrency: embedQueue.concurrency,
+          embedBatchSize: embedQueue.batchSize,
+          wal,
+          embeddingCache: providerArgs.cachePath ?? null,
           nodeGranularity,
           sessionChunkMessages: chunkMessages,
           keyExpansion,

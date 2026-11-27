@@ -51,35 +51,66 @@ memos connect claude-code
 
 ## OpenCode setup
 
-1. Save the plugin as `.opencode/plugins/memos-session-hook.ts` (generate it
-   with `memos connect opencode`, or copy the source from
-   `openCodePluginSource()`):
+OpenCode 2.x (current) and OpenCode 1.x need different plugins. Generate
+the right one instead of copying by hand:
+
+```sh
+memos connect opencode --with-session-hook   # writes .opencode/plugins/memos-session-hook/index.ts
+memos connect opencode-v1 --with-session-hook # writes .opencode/plugins/memos-session-hook.ts (1.x)
+```
+
+### OpenCode 2.x
+
+V2 uses `Plugin.define` + `ctx.event.subscribe()`. The plugin subscribes to
+the completion events V2 actually emits — `session.execution.succeeded` /
+`.failed` / `.interrupted` (the declared `session.idle` name is never
+published) — and extracts the session id from `event.data.sessionID`:
 
 ```typescript
-export const MemosSessionHook = async ({ $ }) => {
-  return {
-    "session.deleted": async (event) => {
-      try {
-        await $`memos session-hook --opencode-session ${event.sessionID}`;
-      } catch {
-        // Never break session teardown.
-      }
-    },
-  };
-};
+import { spawn } from "node:child_process";
+import { Plugin } from "@opencode/plugin";
+
+export default Plugin.define({
+  id: "memos-session-hook",
+  async setup(ctx) {
+    const controller = new AbortController();
+    // ... subscribe to session.execution.*, throttled per session
+    return () => controller.abort();
+  },
+});
 ```
 
-2. Add to `opencode.json`:
+Install: add `./plugins/memos-session-hook` to the `"plugins"` array in
+opencode.json (V2 uses `plugins`, not `plugin`).
 
-```json
-{
-  "plugin": ["./plugins/memos-session-hook.ts"]
-}
+### OpenCode 1.x
+
+V1 uses the `event` hook; the plugin filters for `session.deleted` and
+reads the id from `event.properties.info?.id`:
+
+```typescript
+export const MemosSessionHook = async ({ $ }) => ({
+  event: async ({ event }) => {
+    if (event.type !== "session.deleted") return;
+    const sessionID =
+      event.properties?.info?.id ?? event.properties?.sessionID;
+    if (!sessionID) return;
+    try {
+      await $`memos session-hook --opencode-session ${sessionID}`;
+    } catch {
+      // Never break session teardown.
+    }
+  },
+});
 ```
 
-How the OpenCode path works: on `session.deleted`, the plugin passes the
-ended session's ID to `memos session-hook --opencode-session <id>`. Memos
-then loads that session's messages from OpenCode's data directory —
+Install: add `./plugins/memos-session-hook.ts` to the `"plugin"` array in
+opencode.json.
+
+How the OpenCode path works: when a completion event fires (V2) or a
+session is deleted (V1), the plugin passes the ended session's ID to
+`memos session-hook --opencode-session <id>`. Memos then loads that
+session's messages from OpenCode's data directory —
 `$XDG_DATA_HOME/opencode` when set, otherwise the platform default
 (`~/.local/share/opencode` on Linux,
 `~/Library/Application Support/opencode` on macOS,

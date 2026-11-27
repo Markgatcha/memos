@@ -11,6 +11,8 @@ import {
   findOpenCodeSessionMessages,
   claudeCodeHookConfig,
   openCodePluginSource,
+  openCodeV1PluginSource,
+  openCodeV2PluginSource,
   sessionHookInstructions,
 } from "../src/session-hooks.js";
 import {
@@ -117,10 +119,24 @@ describe("claudeCodeHookConfig", () => {
 });
 
 describe("openCodePluginSource", () => {
-  it("generates plugin source with session.deleted handler", () => {
+  it("defaults to the V2 API", () => {
     const source = openCodePluginSource("memos");
+    expect(source).toBe(openCodeV2PluginSource("memos"));
+    expect(source).toContain("Plugin.define");
+    expect(source).toContain("ctx.event.subscribe");
+    expect(source).toContain('"session-hook"');
+    expect(source).toContain('"--opencode-session"');
+    // V2 must not emit the removed `$` bun-shell API.
+    expect(source).not.toContain("async ({ $ })");
+    expect(source).toContain("session.execution.succeeded");
+  });
+
+  it("generates a V1 plugin for OpenCode 1.x", () => {
+    const source = openCodePluginSource("memos", "v1");
+    expect(source).toBe(openCodeV1PluginSource("memos"));
+    expect(source).toContain("event: async ({ event })");
     expect(source).toContain("session.deleted");
-    expect(source).toContain("memos session-hook");
+    expect(source).not.toContain("Plugin.define");
   });
 });
 
@@ -133,8 +149,22 @@ describe("sessionHookInstructions", () => {
 
   it("provides OpenCode instructions", () => {
     const instructions = sessionHookInstructions("opencode");
+    expect(instructions).toContain("Plugin.define");
+    expect(instructions).toContain(".opencode/plugins");
+    expect(instructions).toContain('"plugins"');
+  });
+
+  it("provides OpenCode V1 instructions", () => {
+    const instructions = sessionHookInstructions("opencode-v1");
     expect(instructions).toContain("session.deleted");
     expect(instructions).toContain(".opencode/plugins");
+    expect(instructions).toContain('"plugin"');
+  });
+
+  it("provides OpenCode V2 instructions via the alias", () => {
+    const instructions = sessionHookInstructions("opencode-v2");
+    expect(instructions).toContain("Plugin.define");
+    expect(instructions).toContain("session.execution");
   });
 });
 
@@ -333,7 +363,9 @@ describe("findOpenCodeSessionMessages (real OpenCode layouts)", () => {
 
 describe("openCodePluginSource (--opencode-session is implemented)", () => {
   it("passes the session id via the implemented flag", () => {
-    const source = openCodePluginSource("memos");
-    expect(source).toContain("--opencode-session");
+    for (const version of ["v1", "v2"] as const) {
+      const source = openCodePluginSource("memos", version);
+      expect(source).toContain("--opencode-session");
+    }
   });
 });

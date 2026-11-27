@@ -29,7 +29,11 @@ Whether a read returns the HTML app or the markdown fallback is decided by
 
 1. An explicit `?mode=app` / `?mode=text` always wins.
 2. Otherwise the host may signal MCP Apps support in the request `_meta`
-   with `{ "memos.uiApps": true }`.
+   with `{ "memos.uiApps": true }` (or tolerated aliases
+   `io.modelcontextprotocol/ui` / `ui`), alongside the modern `2026-07-28`
+   envelope keys (`io.modelcontextprotocol/protocolVersion`,
+   `io.modelcontextprotocol/clientInfo`,
+   `io.modelcontextprotocol/clientCapabilities`).
 3. Otherwise the resource **fails closed to the text fallback** — a host that
    cannot render `ui://` apps gets a mermaid diagram plus a summary, never a
    broken iframe.

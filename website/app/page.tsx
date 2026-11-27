@@ -6,6 +6,7 @@ import {
   Code2,
   Database,
   Gauge,
+  Monitor,
   ShieldCheck,
 } from "lucide-react";
 import Reveal from "./_components/Reveal";
@@ -150,6 +151,37 @@ const products = [
           <div className="h-[3px] w-full bg-zinc-800">
             <div className="h-full w-[22%] bg-zinc-200" />
           </div>
+        </div>
+      </div>
+    ),
+  },
+  {
+    index: "04",
+    name: "MemOS Desktop",
+    role: "native explorer",
+    icon: Monitor,
+    copy: "A read-only Rust/GPUI app over the same SQLite file. Receipts, five graph modes, health, dream diff, and a context preview — with no Electron.",
+    meta: "Rust + GPUI · read-only",
+    href: "/desktop",
+    visual: (
+      <div className="border border-white/[0.08] bg-white/[0.015] px-2.5 py-2 font-mono text-[10px]">
+        <div className="flex justify-between text-zinc-500">
+          <span>[mem:auth]</span>
+          <span>trust 0.95</span>
+        </div>
+        <div className="mt-1 flex justify-between text-zinc-400">
+          <span>auth gateway</span>
+          <span>12 reads</span>
+        </div>
+        <div className="mt-2 h-[3px] w-full bg-zinc-800">
+          <div className="h-full w-[78%] bg-accent" />
+        </div>
+        <div className="mt-2 flex gap-1.5 text-[9px] text-zinc-600">
+          <span>receipts</span>
+          <span>·</span>
+          <span>graph</span>
+          <span>·</span>
+          <span>context</span>
         </div>
       </div>
     ),

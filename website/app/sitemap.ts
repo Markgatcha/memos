@@ -9,6 +9,7 @@ const BASE = "https://context-core.dev";
 const pages = [
   "",
   "memos",
+  "desktop",
   "umt",
   "guardian",
   "playground",

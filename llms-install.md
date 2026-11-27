@@ -59,7 +59,8 @@ Let the CLI print or write the right file for your harness:
 | Cursor | `npx -y @mem-os/sdk connect cursor` | `npx -y @mem-os/sdk connect cursor --write` |
 | Windsurf | `npx -y @mem-os/sdk connect windsurf` | `npx -y @mem-os/sdk connect windsurf --write` |
 | Cline | `npx -y @mem-os/sdk connect cline` | `npx -y @mem-os/sdk connect cline --write` |
-| OpenCode | `npx -y @mem-os/sdk connect opencode` | `npx -y @mem-os/sdk connect opencode --write` |
+| OpenCode (2.x) | `npx -y @mem-os/sdk connect opencode` | `npx -y @mem-os/sdk connect opencode --write` (or `... opencode-v1` for 1.x) |
+| DeepSeek Harness | `npx -y @mem-os/sdk connect dsh` | `npx -y @mem-os/sdk connect dsh --write` (writes `~/.dsh/memos.patch.yml`, then merge into cordis.patch.yml) |
 | Codex CLI | `npx -y @mem-os/sdk connect codex` | `npx -y @mem-os/sdk connect codex --write` |
 | Gemini CLI | `npx -y @mem-os/sdk connect gemini` | `npx -y @mem-os/sdk connect gemini --write` |
 | Hermes Agent | `npx -y @mem-os/sdk connect hermes` | paste into `~/.hermes/config.yaml` |
@@ -89,17 +90,47 @@ or project scope in `./.mcp.json` using the canonical JSON above.
 **Cline** — `cline_mcp_settings.json` under VS Code's global storage: same
 `mcpServers` shape.
 
-**OpenCode** — `opencode.json`:
+**OpenCode 2.x** — `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "memos": {
+        "type": "local",
+        "command": ["npx", "-y", "@mem-os/sdk", "mcp"],
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+**OpenCode 1.x** — same file, the `mcp.<name>` shape:
 
 ```json
 {
   "mcp": {
     "memos": {
       "type": "local",
-      "command": ["npx", "-y", "@mem-os/sdk", "mcp"]
+      "command": ["npx", "-y", "@mem-os/sdk", "mcp"],
+      "enabled": true
     }
   }
 }
+```
+
+**DeepSeek Harness** — `$DSH_HOME/cordis.patch.yml` (defaults `~/.dsh`):
+
+```yaml
+- insert:
+    - id: memos
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: memos
+        transport: stdio
+        command: "npx"
+        args: ["-y", "@mem-os/sdk", "mcp"]
 ```
 
 **Codex CLI** — `~/.codex/config.toml`:

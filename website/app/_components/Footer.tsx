@@ -7,6 +7,7 @@ const columns = [
     title: "Products",
     links: [
       { label: "MemOS", href: "/memos" },
+      { label: "MemOS Desktop", href: "/desktop" },
       { label: "Universal MCP Toolkit", href: "/umt" },
       { label: "LLM Guardian", href: "/guardian" },
       { label: "Playground", href: "/playground" },

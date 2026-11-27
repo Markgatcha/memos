@@ -69,11 +69,52 @@ Retrieve a single memory by its ID.
 memos search "<query>" [--limit <n>] [--pool event|note|procedure]
 ```
 
-[--scope user:alice[,...]] [--harness <name|all>] [--json]
+[--scope user:alice[,...]] [--harness <name|all>] [--budget-ms <n>]
+  [--budget-tokens <n>] [--json]
 
 Search memories by text (full-text + semantic when embeddings are on).
+--budget-ms caps wall-clock time: later stages (graph expansion, rerank,
+multi-hop) are skipped as the deadline approaches, and a receipt is printed.
+--budget-tokens caps the returned results by estimated token count.
 Example:
   memos search "dark mode" --limit 5
+  memos search "deploy runbook" --budget-ms 50 --budget-tokens 800
+
+### `memos plan`
+
+```text
+memos plan "<query>" [--json]
+```
+
+Classify a query and show the retrieval strategy it implies
+(temporal, knowledge-update, aggregation, multi-session, abstention),
+plus which switches the search will enable. Example:
+  memos plan "how many deployments did we do across sessions?"
+
+### `memos audit-answer`
+
+```text
+memos audit-answer "<answer>" [--query <q>] [--ids <id,id>]
+```
+
+[--limit <n>] [--threshold <0-1>] [--json]
+
+Split an answer into claims and check each against stored memories.
+--query searches for candidate evidence; --ids pins specific memories;
+with neither, the whole store (up to 2000 memories) is used. Resolves
+[mem:...] citations and reports per-claim status plus coverage. Example:
+  memos audit-answer "Deploys need two approvals." --query "deploy policy"
+
+### `memos drift`
+
+```text
+memos drift [--root <dir>] [--namespace <ns>] [--stamp] [--all] [--json]
+```
+
+Check memories ingested from local files against the SHA-256 recorded at
+ingest. Reports unchanged, drifted, missing, unreadable, and unsupported
+sources. --stamp writes metadata.drift on every affected memory; --all
+includes unchanged sources in the text output.
 
 ### `memos profile`
 
@@ -216,6 +257,26 @@ memos export [--format json|markdown|obsidian] [--output <path>]
 
 Export memories to a file. Example:
   memos export --format markdown --output ./my-export
+
+### `memos mount`
+
+```text
+memos mount <dir> [--sync] [--status] [--prune]
+```
+
+[--namespace <ns>] [--conflict memory|file|skip] [--json]
+
+Materialize memories as a browsable Markdown tree
+(<namespace>/<YYYY>/<MM>/<slug>-<id>.md) with a content-hash manifest.
+Without flags this writes the tree. --sync applies file edits back to the
+store, creates memories from new files, and reports conflicts. --status
+shows what a sync would change without writing. --prune deletes memories
+whose files were removed.
+
+Examples:
+  memos mount ./memfs
+  memos mount ./memfs --sync
+  memos mount ./memfs --status
 
 ### `memos backup`
 
@@ -459,6 +520,31 @@ Explain a ranking: per-leg score signals, lifecycle status, supersede
 chain, outcome utility, and the relevance-gate verdict. Pass --id to
 diagnose one memory that should have matched but did not.
 
+### `memos explain-recall`
+
+```text
+memos explain-recall <trace-id> [--json]
+```
+
+memos explain-recall --list [--limit <n>] [--session <id>] [--json]
+
+Print a Flight Recorder breakdown for a recorded retrieval trace: query,
+effective config, latency, per-leg candidates and timings, stage deltas,
+and for each final item the leg that introduced it and its score
+contributions. Enable tracing with MEMOS_TRACE=1 or 'memos search --trace'.
+
+### `memos replay`
+
+```text
+memos replay <trace-id> --config <file.json> [--json]
+```
+
+Counterfactual offline replay: recompute retrieval ranking from the stored
+candidate scores of <trace-id> under a modified JSON config — no
+re-embedding and no database re-query — and print added, removed, and
+reordered items with score deltas. Supports overriding fusionMode, leg
+weights, mmrLambda, relevanceGateThreshold, and rerank on/off.
+
 ### `memos explain-error`
 
 ```text
@@ -504,13 +590,16 @@ with pointers to the Troubleshooting Playbook.
 ### `memos connect`
 
 ```text
-memos connect <target> [--write] [--json]
+memos connect <target> [--write] [--with-session-hook]
 ```
 
 Register the MemOS MCP server with a coding harness: claude-code, cursor,
-windsurf, cline, opencode, codex, gemini, hermes, kilo, pi, openclaw, zed,
-goose, or generic. --write saves the config where the harness uses a
-dedicated file; YAML/merged configs are printed for you to paste.
+windsurf, cline, opencode (2.x), opencode-v1, opencode-v2, codex, gemini,
+hermes, dsh (DeepSeek Harness), kilo, pi, openclaw, zed, goose, or generic.
+--write saves the config where the harness uses a dedicated file (for dsh it
+writes a standalone ~/.dsh/memos.patch.yml, never your cordis.patch.yml);
+merged/YAML configs are printed for you to paste. --with-session-hook also
+writes the OpenCode session-hook plugin (v1 or v2, matching the target).
 
 ### `memos reindex-embeddings`
 

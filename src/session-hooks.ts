@@ -456,31 +456,131 @@ export function claudeCodeHookConfig(memosBin = "memos"): object {
 }
 
 /**
- * Generate an OpenCode plugin that runs fact extraction on session end.
- * Save as `.opencode/plugins/memos-session-hook.ts` (or .js).
+ * Generate an OpenCode V1 plugin (OpenCode 1.x) that runs fact extraction
+ * when a session is deleted.
+ *
+ * V1 plugins export an async function returning a hook map; `event` is the
+ * hook that sees every event, and the handler filters by `event.type`.
+ *
+ * Install: save as `.opencode/plugins/memos-session-hook.ts` and add it to
+ * the `"plugin"` array in opencode.json.
  */
-export function openCodePluginSource(memosBin = "memos"): string {
+export function openCodeV1PluginSource(memosBin = "memos"): string {
   return `/**
- * MemOS session hook for OpenCode.
+ * MemOS session hook for OpenCode 1.x.
  * Extracts durable facts when a session ends.
  *
  * Install: save as .opencode/plugins/memos-session-hook.ts
- * and add "./plugins" (or the file) to the "plugin" array in opencode.json.
+ * and add "./plugins/memos-session-hook.ts" to the "plugin" array
+ * in opencode.json.
  */
-export const MemosSessionHook = async ({ $ }) => {
-  return {
-    "session.deleted": async (event) => {
-      try {
-        // event.sessionID identifies the ended session; the transcript
-        // is available via the OpenCode session API or export.
-        await $\`${memosBin} session-hook --opencode-session \${event.sessionID}\`;
-      } catch {
-        // Never break session teardown — hooks must be fail-open.
-      }
-    },
-  };
-};
+export const MemosSessionHook = async ({ $ }) => ({
+  event: async ({ event }) => {
+    if (event.type !== "session.deleted") return;
+    const sessionID =
+      event.properties?.info?.id ?? event.properties?.sessionID;
+    if (!sessionID) return;
+    try {
+      await $\`${memosBin} session-hook --opencode-session \${sessionID}\`;
+    } catch {
+      // Never break session teardown — hooks must be fail-open.
+    }
+  },
+});
 `;
+}
+
+/**
+ * Generate an OpenCode V2 plugin (OpenCode 2.x) that runs fact extraction
+ * when an agent execution completes.
+ *
+ * V2 has a different plugin API (\`@opencode/plugin\`, \`Plugin.define\`,
+ * \`setup(ctx)\`) and a different event stream. Completion events are
+ * \`session.execution.succeeded\` / \`.failed\` / \`.interrupted\` with the
+ * session id under \`event.data.sessionID\`; the legacy \`session.idle\` name
+ * is declared in the schema but never emitted, and \`session.deleted\` is a
+ * durable event that only fires on explicit deletion — both are subscribed
+ * here so the hook fires either way. There is no bun-shell \`$\` helper in
+ * V2, so the hook shells out via child_process.
+ *
+ * Install: save as .opencode/plugins/memos-session-hook/index.ts (V2 expects
+ * a plugin directory with an index.ts at its root) and add
+ * "./plugins/memos-session-hook" to the "plugins" array in opencode.json.
+ */
+export function openCodeV2PluginSource(memosBin = "memos"): string {
+  return `/**
+ * MemOS session hook for OpenCode 2.x.
+ * Extracts durable facts when an agent turn completes.
+ *
+ * Install: save as .opencode/plugins/memos-session-hook/index.ts
+ * and add "./plugins/memos-session-hook" to the "plugins" array
+ * in opencode.json.
+ */
+import { spawn } from "node:child_process";
+import { Plugin } from "@opencode/plugin";
+
+export default Plugin.define({
+  id: "memos-session-hook",
+  async setup(ctx) {
+    const controller = new AbortController();
+    const lastRun = new Map();
+
+    void (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({
+          signal: controller.signal,
+        })) {
+          const type = event?.type;
+          if (typeof type !== "string") continue;
+          // Completion events are what V2 actually emits; session.idle is
+          // declared in the schema but never published (see opencode
+          // anomalyco/opencode#55358). session.deleted only fires on
+          // explicit removal, so it is the last-resort trigger.
+          const isCompletion =
+            type === "session.execution.succeeded" ||
+            type === "session.execution.failed" ||
+            type === "session.execution.interrupted" ||
+            type === "session.deleted";
+          if (!isCompletion) continue;
+          const data = event?.data ?? event?.properties ?? {};
+          const sessionID =
+            data?.sessionID ?? data?.id ?? data?.info?.id ?? null;
+          if (!sessionID) continue;
+          const now = Date.now();
+          const prev = lastRun.get(sessionID) ?? 0;
+          // Throttle: at most one extraction per session per 30s.
+          if (now - prev < 30000) continue;
+          lastRun.set(sessionID, now);
+          const child = spawn(
+            "${memosBin}",
+            ["session-hook", "--opencode-session", String(sessionID)],
+            { stdio: "ignore", detached: false },
+          );
+          child.on("error", () => {});
+        }
+      } catch {
+        // Stream closed on unload — nothing to do.
+      }
+    })();
+
+    return () => controller.abort();
+  },
+});
+`;
+}
+
+/**
+ * Generate an OpenCode plugin that runs fact extraction when an agent
+ * session finishes. Defaults to the V2 API for current OpenCode releases;
+ * pass version "v1" for OpenCode 1.x.
+ */
+export function openCodePluginSource(
+  memosBin = "memos",
+  version: "v1" | "v2" = "v2",
+): string {
+  return version === "v1"
+    ? openCodeV1PluginSource(memosBin)
+    : openCodeV2PluginSource(memosBin);
 }
 
 /**
@@ -507,18 +607,41 @@ export function sessionHookInstructions(
         "Set MEMOS_SKIP_SESSION_HOOK=1 to opt out for a single session.",
       ].join("\n");
     case "opencode":
+    case "opencode-v2":
+    case "opencode2":
       return [
-        "MemOS session hook — OpenCode:",
+        "MemOS session hook — OpenCode 2.x:",
+        "",
+        "1. Save this plugin as .opencode/plugins/memos-session-hook/index.ts:",
+        "",
+        openCodeV2PluginSource(memosBin),
+        "2. Add the plugin to opencode.json:",
+        '   { "plugins": ["./plugins/memos-session-hook"] }',
+        "",
+        "V2 plugins declare a directory with an index.ts at its root, use the",
+        "`Plugin.define` / `ctx.event.subscribe()` API, and the `plugins`",
+        "(not `plugin`) config key. The plugin subscribes to",
+        "`session.execution.*` — the completion events V2 actually emits — and",
+        "runs fact extraction via the memos CLI after each completed turn.",
+        "Create ~/.config/opencode/opencode.json (global) or ./opencode.json",
+        "(project) if you don't have one yet.",
+      ].join("\n");
+    case "opencode-v1":
+    case "opencode1":
+      return [
+        "MemOS session hook — OpenCode 1.x:",
         "",
         "1. Save this plugin as .opencode/plugins/memos-session-hook.ts:",
         "",
-        openCodePluginSource(memosBin),
+        openCodeV1PluginSource(memosBin),
         "2. Add the plugin to opencode.json:",
         '   { "plugin": ["./plugins/memos-session-hook.ts"] }',
         "",
-        "On session end, the plugin runs fact extraction via the memos CLI.",
+        "V1 plugins export an async function returning a hook map; the `event`",
+        "hook sees every event, and the plugin filters for `session.deleted`.",
+        "Fact extraction runs via the memos CLI.",
       ].join("\n");
     default:
-      return `Unknown target: ${target}. Supported: claude-code, opencode.`;
+      return `Unknown target: ${target}. Supported: claude-code, opencode, opencode-v1, opencode-v2.`;
   }
 }

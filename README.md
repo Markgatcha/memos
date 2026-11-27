@@ -63,6 +63,31 @@ const hits = await memos.search("package manager");
 
 Evidence-ID scored, no LLM judge. Commands, artifacts, and caveats: [`benchmarks/README.md`](benchmarks/README.md).
 
+### Native desktop app (Rust + GPUI)
+
+A native Rust/GPUI explorer for the same SQLite file — no Electron, WebView, or
+Node sidecar for browsing. Direct SQLite access in Rust opens strictly read-only
+via bundled `rusqlite`, with an optional opt-in **Write mode (MCP)** toggle in
+Settings that discovers local CLIs (`PATH` `memos` -> repo `dist/cli.js mcp` ->
+`npx -y @mem-os/sdk mcp`), negotiates `MCP 2026-07-28` via `server/discover` +
+per-request `_meta` (falling back to legacy `2025-11-25` only when needed),
+gates `42`-tool features (`memos_review`, `memos_ingest`) cleanly, and routes
+creates, versioned edits (`memos_supersede`), and forgets through the MemOS MCP
+stdio server.
+
+| Surface | What it shows |
+| --- | --- |
+| Store & List | Pinned sidebar Store card, Today 24h Brief & Review queue views, `showing N of total` keyset pagination (`500 + 250`), 120 ms debounced FTS5 search with removable scope chips (`type:`, `tag:`, `ns:`, `after:`, `trust:`, `is:stale`, `has:contradiction`), Comfortable (`64 px`) / Compact (`48 px`) density |
+| Detail | Content, tags, entities, causal connections, contradictions, **Time** block (`Created`, `Updated`, `Last read` / `"Never recalled"`, `Reads`, `Expires`, `Valid from/to`), receipts & tamper chain, copy citation, `40 px` sticky header |
+| Write mode (MCP) | Opt-in **Ingest** (`memos_ingest` files/folders), multiline composer (**New memory**), **Edit** (`memos_store` + `memos_supersede`), **Review** approve/reject + capability card, **Forget**, schema preflight, **Use local CLI**, non-blocking retry banner |
+| Graphs | Namespace, tag, entity, temporal, and contradiction modes with padded Fit view, top-10 label LOD (`0.40` min zoom, bounds clamping, `1 px` halos), soft halo + `2 px` selected ring, and linked list ↔ graph hover |
+| Ops & Tools | 0–100 health score with fix cards, dream-diff timeline, live memory strip, saved views, “What the AI sees” context preview, and read-only detection for 16 harness targets |
+
+Desktop binary (`memos-desktop.exe`): `18.84 MB`; headless CLI binary (`memos.exe`): `2.69 MB`, `19.3–19.8 ms` warm `list` wall time.
+Source, build, and measured numbers: [`apps/desktop-gpui`](apps/desktop-gpui) ·
+Guide: [`docs/desktop-app.md`](docs/desktop-app.md) ·
+Changelog: [`apps/desktop-gpui/CHANGELOG.md`](apps/desktop-gpui/CHANGELOG.md)
+
 > **New here?** [Ingest your notes in 60 seconds](docs/quickstart-ingest.md) — install, point at a folder, search it.
 
 > **Installing?** [Agent-readable install contract](llms-install.md) · [Harness matrix](docs/harness-matrix.md) · [MCP compatibility policy](docs/mcp-compatibility.md) · [per-harness snippets](https://context-core.dev/docs/install)
@@ -611,7 +636,7 @@ It binds loopback by default and performs no authentication, because this
 server can read and write your entire memory store. If you pass `--host` to
 bind beyond `127.0.0.1`, put it behind a reverse proxy that authenticates.
 
-The MCP adapter has **40 tools** available, but only the **12-tool core set** is exposed by default: `memos_store`, `memos_ingest`, `memos_search`, `memos_profile`, `memos_retrieve`, `memos_forget`, `memos_context_pack`, `memos_explain`, `memos_feedback`, `memos_health`, `memos_overview`, and `memos_handoff`. This keeps tool schemas from consuming the context window before the user speaks. Set `MEMOS_MCP_TOOLS=all` to expose the full surface (link, graph, temporal search, validity/supersede/revert, trust, quarantine, fact extraction, diagnostics, reindex, consolidate, history, reminders, audit, eval, promotion, image tools, trigger, brief, review, source deletion, knowledge pages), or pass a comma-separated list to select exactly what you need. `MEMOS_MCP_TOOLS=none` keeps resources/prompts but hides every tool. The server reads and writes the SQLite database you point it at and does not require cloud credentials.
+The MCP adapter has **42 tools** available, but only the **12-tool core set** is exposed by default: `memos_store`, `memos_ingest`, `memos_search`, `memos_profile`, `memos_retrieve`, `memos_forget`, `memos_context_pack`, `memos_explain`, `memos_feedback`, `memos_health`, `memos_overview`, and `memos_handoff`. This keeps tool schemas from consuming the context window before the user speaks. Set `MEMOS_MCP_TOOLS=all` to expose the full surface (link, graph, temporal search, validity/supersede/revert, trust, quarantine, fact extraction, diagnostics, reindex, consolidate, history, reminders, audit, eval, promotion, image tools, trigger, brief, review, source deletion, knowledge pages), or pass a comma-separated list to select exactly what you need. `MEMOS_MCP_TOOLS=none` keeps resources/prompts but hides every tool. The server reads and writes the SQLite database you point it at and does not require cloud credentials.
 
 #### Plugin for Claude Code (and every other harness)
 

@@ -8,13 +8,13 @@ remove old ones.
 
 | Revision | Status | Transport | Notes |
 | --- | --- | --- | --- |
-| `2026-07-28` | **Current** | stdio, Streamable HTTP | Stateless core, `server/discover`, cache hints |
-| 2025-era `initialize` | **Legacy fallback** | stdio, Streamable HTTP | Negotiated by the SDK for clients that still send `initialize` |
+| `2026-07-28` | **Current** | stdio, Streamable HTTP | Stateless core, `server/discover`, per-request `_meta`, cache hints (no handshake) |
+| `2025-11-25` (`initialize`) | **Legacy fallback** | stdio, Streamable HTTP | Negotiated by the SDK only for legacy clients that still send `initialize` |
 
-The server advertises `2026-07-28` in `server/discover` and accepts the legacy
-`initialize` handshake so older clients keep working. There is no third
-revision in the compatibility set today; adding one means adding it to the
-modern core, not maintaining a fork.
+The server advertises `2026-07-28` in `server/discover` (stateless, no `initialize`
+handshake) and accepts the legacy `2025-11-25` `initialize` path so older
+clients keep working. There is no third revision in the compatibility set
+today; adding one means adding it to the modern core, not maintaining a fork.
 
 ## Deprecation window
 
@@ -39,22 +39,24 @@ without a release. Upgrade steps:
    ```bash
    npm test -- mcp-modern-protocol mcp-protocol mcp-http mcp-annotations
    ```
-3. Manually verify `server/discover` returns the expected revision and cache
+3. Manually verify `server/discover` returns `supportedVersions: ["2026-07-28"]` and cache
    hints:
    ```bash
    npx -y @mem-os/sdk mcp --http --port=8788
    curl -s http://127.0.0.1:8788/mcp \
      -H 'content-type: application/json' \
      -H 'accept: application/json, text/event-stream' \
-     -d '{"jsonrpc":"2.0","id":1,"method":"server/discover"}'
+     -H 'mcp-protocol-version: 2026-07-28' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"probe","version":"0.1.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}'
    ```
+   (Over stdio: pipe the same JSON-RPC line into `memos mcp`.)
 4. Update the pin, this table, and the changelog in the same commit.
 
 ## What the server exposes
 
 | Surface | Supported | Notes |
 | --- | --- | --- |
-| Tools | Yes | 40 registered; 12 in the default core profile; annotations declare read-only, destructive, idempotent, open-world |
+| Tools | Yes | 42 registered; 12 in the default core profile; annotations declare read-only, destructive, idempotent, open-world |
 | Resources | Yes | `memos://context` (brief), `memos://graph` (Mermaid), explorer app |
 | Prompts | Yes | `recall` (search, summarize, flag trust and age) |
 | Sampling | No | Memory retrieval never calls back into the client's model |
@@ -91,6 +93,8 @@ Tested against Claude Code, Cursor, Windsurf, Cline, OpenCode, Codex CLI, and
 Gemini CLI through `memos connect`. Per-harness snippets are in
 [`llms-install.md`](https://github.com/Markgatcha/memos/blob/main/llms-install.md) and on the site's `/docs/install` page.
 
-If a client only implements the legacy handshake, it should connect without
-configuration. If it implements `2026-07-28`, it should call `server/discover`
-first and honor the advertised cache TTLs.
+If a client only implements legacy `2025-11-25` (`initialize`), it should
+connect without configuration. If it implements `2026-07-28`, it should call
+`server/discover` with the `_meta` envelope (`io.modelcontextprotocol/protocolVersion`,
+`io.modelcontextprotocol/clientInfo`, `io.modelcontextprotocol/clientCapabilities`)
+and honor the advertised cache TTLs.

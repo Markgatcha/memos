@@ -319,7 +319,7 @@ export const TOOL_ANNOTATIONS: Record<string, McpToolAnnotations> = {
 /**
  * The tools every MCP client gets by default.
  *
- * The full surface is 40 tools, which is a large context tax before the model
+ * The full surface is 42 tools, which is a large context tax before the model
  * has read the user's message (a 2026 MCP community measurement puts verbose
  * schemas at roughly 466 tokens per tool). The core set covers the daily loop:
  * store, recall, inspect, give feedback, and check health. Advanced tools stay
@@ -346,7 +346,7 @@ export type McpToolProfile = "standard" | "all" | "none";
  * Resolve which MCP tools should be visible.
  *
  * - unset / `standard` / `core` -> the core set (default)
- * - `all` / `*` -> the full 40-tool surface
+ * - `all` / `*` -> the full 42-tool surface
  * - `none` -> no tools (resources/prompts still work)
  * - a comma-separated list -> exactly those tools
  *

@@ -34,7 +34,8 @@ environment:
 
 1. `MEMOS_HARNESS` — explicit override, wins over everything (also the
    test seam).
-2. Known env markers, in priority order: `CLAUDECODE` /
+2. Known env markers, in priority order: `DSH_SHELL` /
+   `DSH_HOME` → `dsh`, `CLAUDECODE` /
    `CLAUDE_CODE_*` → `claude-code`, `CLINE_*` → `cline`,
    `CODEX_*` → `codex`, `GEMINI_*` → `gemini-cli`,
    `OPENCLAW_*` → `openclaw`.

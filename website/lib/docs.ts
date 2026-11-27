@@ -66,6 +66,14 @@ export const docs: DocEntry[] = [
     keywords: ["quickstart", "install", "npx", "claude code", "cursor"],
   },
   {
+    slug: "memos/desktop",
+    title: "MemOS Desktop",
+    description:
+      "The native Rust/GPUI explorer: read-only guarantees, list and graph views, receipts, health, dream diff, context preview, and saved views.",
+    product: "MemOS",
+    keywords: ["desktop", "rust", "gpui", "app", "graph", "read-only"],
+  },
+  {
     slug: "memos/concepts",
     title: "Memory model",
     description:

@@ -8,15 +8,22 @@
 import { jest } from "@jest/globals";
 import {
   parseProviderArgs,
+  parseEmbedQueueArgs,
+  parseLocomoTimestamp,
+  parseRetrievalArgs,
+  createBenchMemos,
   buildProvider,
   assertNoFallback,
   hashFile,
   gitSha,
   benchMetadata,
 } from "../scripts/lib/bench-common";
-import { FastEmbedEmbeddingProvider } from "../src/embeddings";
+import {
+  FastEmbedEmbeddingProvider,
+  LocalHashEmbeddingProvider,
+} from "../src/embeddings";
 import type { EmbeddingProvider, EmbeddingRuntimeInfo } from "../src/types";
-import { writeFileSync, rmSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -75,6 +82,70 @@ describe("parseProviderArgs", () => {
         .failOnEmbeddingFallback,
     ).toBe(true);
   });
+
+  test("parses --embedding-cache", () => {
+    expect(
+      parseProviderArgs(["--embedding-cache=.bench-cache/qwen3.sqlite"])
+        .cachePath,
+    ).toBe(".bench-cache/qwen3.sqlite");
+  });
+});
+
+describe("parseEmbedQueueArgs", () => {
+  test("defaults match the published 4/16 baseline", () => {
+    expect(parseEmbedQueueArgs([])).toEqual({
+      concurrency: 4,
+      batchSize: 16,
+    });
+  });
+
+  test("reads GPU-sweep overrides", () => {
+    expect(
+      parseEmbedQueueArgs([
+        "--embed-concurrency=8",
+        "--embed-batch=128",
+        "--embed-queue-max=60000",
+      ]),
+    ).toEqual({
+      concurrency: 8,
+      batchSize: 128,
+      maxQueueSize: 60000,
+    });
+  });
+
+  test("ignores non-positive or non-numeric values", () => {
+    expect(
+      parseEmbedQueueArgs([
+        "--embed-concurrency=0",
+        "--embed-batch=nope",
+      ]),
+    ).toEqual({ concurrency: 4, batchSize: 16 });
+  });
+});
+
+describe("parseLocomoTimestamp", () => {
+  test("parses the official LoCoMo date shape as UTC", () => {
+    expect(parseLocomoTimestamp("1:56 pm on 8 May, 2023")).toBe(
+      Date.UTC(2023, 4, 8, 13, 56),
+    );
+    expect(parseLocomoTimestamp("12:05 am on 9 June, 2023")).toBe(
+      Date.UTC(2023, 5, 9, 0, 5),
+    );
+    expect(parseLocomoTimestamp("12:30 pm on 25 May, 2023")).toBe(
+      Date.UTC(2023, 4, 25, 12, 30),
+    );
+  });
+
+  test("falls back to Date.parse for ISO-like values", () => {
+    expect(parseLocomoTimestamp("2023-05-08T13:56:00Z")).toBe(
+      Date.UTC(2023, 4, 8, 13, 56),
+    );
+  });
+
+  test("returns null for unparseable values", () => {
+    expect(parseLocomoTimestamp("sometime last Tuesday")).toBeNull();
+    expect(parseLocomoTimestamp("")).toBeNull();
+  });
 });
 
 describe("buildProvider", () => {
@@ -93,6 +164,38 @@ describe("buildProvider", () => {
     expect(() =>
       buildProvider(parseProviderArgs(["--provider=voyage"])),
     ).toThrow(/voyage provider requires/);
+  });
+});
+
+describe("createBenchMemos", () => {
+  test("keeps the supplied provider instance", async () => {
+    // Regression: retrievalConfig() returns an `embeddings` fragment, and
+    // spreading it after the embeddings block silently replaced the provider
+    // with the model2vec default. Every --provider run measured model2vec.
+    const dir = mkdtempSync(join(tmpdir(), "memos-bench-provider-"));
+    const memos = createBenchMemos({
+      dbPath: join(dir, "bench.db"),
+      provider: new LocalHashEmbeddingProvider({ dimensions: 8 }),
+      providerArgs: parseProviderArgs(["--provider=local-hash"]),
+      retrievalArgs: parseRetrievalArgs([]),
+    });
+    try {
+      await memos.init();
+      const queue = (
+        memos as unknown as {
+          embeddingQueue?: { provider?: { id?: string } };
+        }
+      ).embeddingQueue;
+      expect(queue?.provider?.id).toBe("local-hash");
+    } finally {
+      await memos.close();
+      rmSync(dir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+    }
   });
 });
 
@@ -149,6 +252,19 @@ describe("assertNoFallback — strict benchmark mode", () => {
     });
     expect(info.resolvedProvider).toBe("custom");
     expect(info.fallbackActive).toBe(false);
+  });
+
+  test("dead HTTP endpoint fails fast instead of scoring keyword-only", async () => {
+    const args = parseProviderArgs([
+      "--provider=openai-compatible",
+      "--base-url=http://127.0.0.1:1/v1",
+      "--model=dead-endpoint",
+      "--dimensions=8",
+    ]);
+    const provider = buildProvider(args);
+    await expect(assertNoFallback(provider, args)).rejects.toThrow(
+      /probe failed/,
+    );
   });
 
   test("strict mode terminates the process on fallback (exit 1)", async () => {

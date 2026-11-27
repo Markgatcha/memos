@@ -7,6 +7,7 @@ import GithubIcon from "./GithubIcon";
 
 const links = [
   { href: "/memos", label: "MemOS", group: "product" },
+  { href: "/desktop", label: "Desktop", group: "product" },
   { href: "/umt", label: "UMT", group: "product" },
   { href: "/guardian", label: "Guardian", group: "product" },
   { href: "/benchmarks", label: "Benchmarks", group: "resource" },

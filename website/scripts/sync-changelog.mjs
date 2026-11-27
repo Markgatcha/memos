@@ -11,6 +11,10 @@ import { fileURLToPath } from "node:url";
 const websiteDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(websiteDir, "..");
 const source = await readFile(path.join(repoRoot, "CHANGELOG.md"), "utf8");
+const desktopSource = await readFile(
+  path.join(repoRoot, "apps/desktop-gpui/CHANGELOG.md"),
+  "utf8",
+).catch(() => "");
 
 function stripInline(text) {
   return text
@@ -21,7 +25,7 @@ function stripInline(text) {
     .trim();
 }
 
-function parseRelease(block) {
+function parseRelease(block, product = "sdk") {
   const lines = block.split(/\r?\n/);
   const heading = lines.shift() ?? "";
   const match = heading.match(/^\[([^\]]+)\](?:\s*-\s*(\d{4}-\d{2}-\d{2}))?/);
@@ -77,15 +81,23 @@ function parseRelease(block) {
   return {
     version,
     date: date ?? null,
+    product,
     sections: sections.filter((section) => section.items.length > 0),
   };
 }
 
-const releases = source
-  .split(/^## /m)
-  .slice(1)
-  .map(parseRelease)
-  .filter(Boolean);
+const releases = [
+  ...source
+    .split(/^## /m)
+    .slice(1)
+    .map((block) => parseRelease(block, "sdk")),
+  ...desktopSource
+    .split(/^## /m)
+    .slice(1)
+    .map((block) => parseRelease(block, "desktop")),
+]
+  .filter(Boolean)
+  .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
 
 const out = {
   generatedAt: new Date().toISOString(),

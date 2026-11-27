@@ -2,14 +2,15 @@
 
 MemOS ships as a **plain stdio MCP server** — the one integration surface
 that Claude Code, Cursor, Windsurf, Cline, OpenCode, Codex CLI, Gemini CLI,
-and every other MCP-capable harness already speak. One command, all 40
+and every other MCP-capable harness already speak. One command, all 42
 tools (12 in the default core set), all data in local SQLite.
 
 ```
 npx -y @mem-os/sdk mcp
 ```
 
-The server speaks MCP `2026-07-28` (with a legacy-2025 handshake fallback)
+The server speaks MCP `2026-07-28` (`server/discover` + per-request `_meta`,
+with a legacy `2025-11-25` `initialize` fallback)
 and starts with `semanticSearch`, `namespaces` and context injection
 enabled. Registration is one line everywhere:
 
@@ -19,10 +20,20 @@ enabled. Registration is one line everywhere:
 | **Cursor** | `memos connect cursor --write` → writes `~/.cursor/mcp.json` |
 | **Windsurf** | `memos connect windsurf --write` → writes `~/.codeium/windsurf/mcp_config.json` |
 | **Cline** | merge the `mcpServers` entry into Cline's MCP settings JSON |
-| **OpenCode** | `memos connect opencode --write` → writes `./opencode.json` |
+| **OpenCode** | `memos connect opencode` → writes `./opencode.json` (2.x, `mcp.servers`); `memos connect opencode-v1` for 1.x |
+| **DeepSeek Harness (dsh)** | `memos connect dsh` → prints a Cordis `- insert:` row for `@deepseek-ai/dsh-mcp-client`; `--write` saves `~/.dsh/memos.patch.yml` |
 | **Codex CLI** | `memos connect codex --write` → appends to `~/.codex/config.toml` |
 | **Gemini CLI** | `memos connect gemini --write` → writes `~/.gemini/settings.json` |
 | **Anything else** | `memos connect generic` — prints the `mcpServers` JSON shape |
+
+### OpenCode 1 vs 2
+
+OpenCode 2 renamed the MCP key to `mcp.servers` (it rejects the 1.x
+`mcp.<name>` shape) and replaced the plugin API with `Plugin.define` +
+`ctx.event.subscribe()`. `memos connect opencode` writes the 2.x shape;
+`memos connect opencode-v1` writes the 1.x shape. Add
+`--with-session-hook` to either to also write the matching session-hook
+plugin and plugin entry.
 
 Workflow platforms use the HTTP API instead of MCP:
 

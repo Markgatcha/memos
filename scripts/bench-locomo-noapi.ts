@@ -52,6 +52,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   parseProviderArgs,
+  parseEmbedQueueArgs,
+  parseLocomoTimestamp,
   parseRetrievalArgs,
   buildProvider,
   assertNoFallback,
@@ -175,6 +177,13 @@ async function main() {
     ) || 10;
   const convsArg = args.find((a) => a.startsWith("--convs="));
   const maxConvos = convsArg ? parseInt(convsArg.split("=")[1] ?? "2", 10) : 2;
+  // Shard mode: run one (or a comma-separated list of) conversation index(es)
+  // in this process. Conversations are independent namespaces, so N shards
+  // can run in parallel and be merged without changing scores — the single
+  // biggest wall-clock win on the full 10-conversation corpus.
+  const convIndexArg = args
+    .find((a) => a.startsWith("--conv-index="))
+    ?.split("=")[1];
   // Two-stage / ingestion ablation flags.
   const groupTurnsFlag = args.includes("--group-turns");
   // Second-hop entity-bridge expansion (src/multi-hop.ts). Opt-in: it is
@@ -217,6 +226,34 @@ async function main() {
   const rerankMaxDocCharsArg = args.find((a) =>
     a.startsWith("--rerank-max-doc-chars="),
   );
+  // Latency-only speed knobs. None of these change retrieved IDs, so the
+  // default path stays byte-identical to published runs; they exist for
+  // GPU sweeps where re-embedding the corpus dominates wall time.
+  const queryPrewarm = args.includes("--query-prewarm");
+  const queryConcurrency = Math.max(
+    1,
+    parseInt(
+      args.find((a) => a.startsWith("--query-concurrency="))?.split("=")[1] ??
+        "1",
+      10,
+    ) || 1,
+  );
+  const embedQueue = parseEmbedQueueArgs(args);
+  const wal = args.includes("--wal");
+  // Freeze the "now" used by relative-time parsing. Without this, two runs
+  // seconds apart can rank temporal questions differently.
+  const validAtArg = args.find((a) => a.startsWith("--valid-at="))?.slice(11);
+  const parsedValidAt =
+    validAtArg === undefined
+      ? undefined
+      : Number.isFinite(Number(validAtArg))
+        ? Number(validAtArg)
+        : Date.parse(validAtArg);
+  if (parsedValidAt !== undefined && !Number.isFinite(parsedValidAt)) {
+    console.error(`Invalid --valid-at value: ${validAtArg}`);
+    process.exit(1);
+  }
+  const validAt = parsedValidAt;
 
   const providerArgs = parseProviderArgs(args);
   const retrievalArgs = parseRetrievalArgs(args);
@@ -230,9 +267,35 @@ async function main() {
     process.exit(1);
   }
 
-  const conversations: LocoConversation[] = JSON.parse(
+  const allConversations: LocoConversation[] = JSON.parse(
     readFileSync(datasetPath, "utf8"),
-  ).slice(0, maxConvos);
+  );
+  let selectedConvIndexes: number[];
+  if (convIndexArg !== undefined) {
+    selectedConvIndexes = convIndexArg
+      .split(",")
+      .map((raw) => parseInt(raw.trim(), 10));
+    const invalid = selectedConvIndexes.find(
+      (index) =>
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= allConversations.length,
+    );
+    if (invalid !== undefined) {
+      console.error(
+        `Invalid --conv-index="${convIndexArg}": dataset has ${allConversations.length} conversations (0-${allConversations.length - 1}).`,
+      );
+      process.exit(1);
+    }
+    selectedConvIndexes = [...new Set(selectedConvIndexes)].sort(
+      (a, b) => a - b,
+    );
+  } else {
+    selectedConvIndexes = Array.from(
+      { length: Math.min(maxConvos, allConversations.length) },
+      (_, index) => index,
+    );
+  }
 
   const provider = buildProvider(providerArgs);
   // Resolve lazy providers and detect fallback BEFORE ingesting anything.
@@ -271,6 +334,8 @@ async function main() {
           ),
         }
       : {}),
+    embedQueue,
+    wal,
   });
 
   await memos.init();
@@ -280,10 +345,11 @@ async function main() {
   const diagnosticFuzzyHits: number[] = []; // per-question 0/1, diagnostic only
   const benchStart = Date.now();
   let ingestionMs = 0;
+  let warnedBadSessionTimestamp = false;
 
   try {
-    for (let convIdx = 0; convIdx < conversations.length; convIdx++) {
-      const conv = conversations[convIdx]!;
+    for (const convIdx of selectedConvIndexes) {
+      const conv = allConversations[convIdx]!;
       const { conversation } = conv;
       const sessionKeys = Object.keys(conversation).filter(
         (k) =>
@@ -302,12 +368,24 @@ async function main() {
           (conversation as Record<string, unknown>)[sessionDateKey] ?? "",
         );
         // Explicit timestamps (not wall-clock arrival) keep neighbours in
-        // chronological order even when writes are pipelined.
-        const parsedSession = Date.parse(sessionTimestamp);
-        const sessionBase = Number.isFinite(parsedSession)
-          ? parsedSession
-          : Date.now();
+        // chronological order even when writes are pipelined. LoCoMo's
+        // "1:56 pm on 8 May, 2023" shape is not Date.parse-able, so a missing
+        // parser used to fall back to Date.now() and make each run's
+        // chronology different. parseLocomoTimestamp anchors it to UTC.
+        const parsedSession = parseLocomoTimestamp(sessionTimestamp);
+        if (parsedSession === null && !warnedBadSessionTimestamp) {
+          warnedBadSessionTimestamp = true;
+          console.warn(
+            `[bench] unrecognised session timestamp "${sessionTimestamp}" — using a deterministic epoch fallback`,
+          );
+        }
+        const sessionBase = parsedSession ?? 0;
         const writes: Array<() => Promise<unknown>> = [];
+      // Deterministic node ids: MemOS breaks exact retrieval-score ties by
+      // node id, so random UUIDs made every run rank tied memories
+      // differently. The dia_id is the dataset's own stable identifier.
+      const memoryIdFor = (diaId: string): string =>
+        `locomo_c${convIdx}_${diaId.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 
         if (groupTurnsFlag) {
           // Conversational exchanges (utterance pairs) become one memory
@@ -322,6 +400,7 @@ async function main() {
             const content = `${turn.speaker}: ${turn.texts.join("\n")}`;
             writes.push(() =>
               memos.store(content, {
+                id: memoryIdFor(turn.dia_ids[0]!),
                 namespace: `locomo_conv_${convIdx}`,
                 now,
                 contradictionScan,
@@ -356,6 +435,7 @@ async function main() {
                 : "";
             writes.push(() =>
               memos.store(content, {
+                id: memoryIdFor(chat.dia_id),
                 namespace: `locomo_conv_${convIdx}`,
                 now,
                 contradictionScan,
@@ -390,13 +470,31 @@ async function main() {
         `[conv ${convIdx}] ingested ${evidenceTextMap.size} utterances, ${conv.qa.length} questions`,
       );
 
+      // Latency-only: collapse every question embedding into a handful of
+      // provider calls. Opt-in because the published LoCoMo latency
+      // percentiles include cold query embedding; without the flag the
+      // per-question path is unchanged.
+      if (queryPrewarm) {
+        const prewarmStart = Date.now();
+        const { embedded } = await memos.prewarmQueryEmbeddings(
+          conv.qa.map((qa) => qa.question),
+        );
+        console.log(
+          `[conv ${convIdx}] pre-embedded ${embedded} queries in ${Date.now() - prewarmStart}ms`,
+        );
+      }
+
       // ── Retrieval + direct-ID scoring ──────────────────────────────────
-      for (const [qaIdx, qa] of conv.qa.entries()) {
+      const evaluateQa = async (
+        qa: (typeof conv.qa)[number],
+        qaIdx: number,
+      ): Promise<{ record: EvalQueryResult; fuzzyHit: number }> => {
         const startTime = Date.now();
         const results = await memos.search({
           query: qa.question,
           limit: topK,
           namespace: `locomo_conv_${convIdx}`,
+          ...(validAt !== undefined ? { validAt } : {}),
           ...(candidateDepth ? { candidateDepth } : {}),
           ...(retrievalArgs.ftsOperator
             ? { ftsOperator: retrievalArgs.ftsOperator }
@@ -436,25 +534,59 @@ async function main() {
           (e) => typeof e === "string" && e.length > 0,
         );
 
-        evalQueries.push({
-          questionId: `conv${convIdx}_q${qaIdx}`,
-          relevantIds,
-          retrievedIds,
-          category: categoryName(qa.category),
-          latencyMs: elapsed,
-        });
-
         // Fuzzy diagnostic (labeled as such in output; never a score).
-        diagnosticFuzzyHits.push(
-          fuzzyOverlapDiagnostic(
-            relevantIds
-              .map((e) => evidenceTextMap.get(e) ?? "")
-              .filter(Boolean),
-            results.map((r) => r.node.content ?? ""),
-          )
-            ? 1
-            : 0,
+        const fuzzyHit = fuzzyOverlapDiagnostic(
+          relevantIds
+            .map((e) => evidenceTextMap.get(e) ?? "")
+            .filter(Boolean),
+          results.map((r) => r.node.content ?? ""),
+        )
+          ? 1
+          : 0;
+
+        return {
+          record: {
+            questionId: `conv${convIdx}_q${qaIdx}`,
+            relevantIds,
+            retrievedIds,
+            category: categoryName(qa.category),
+            latencyMs: elapsed,
+          },
+          fuzzyHit,
+        };
+      };
+
+      if (queryConcurrency <= 1) {
+        for (const [qaIdx, qa] of conv.qa.entries()) {
+          const { record, fuzzyHit } = await evaluateQa(qa, qaIdx);
+          evalQueries.push(record);
+          diagnosticFuzzyHits.push(fuzzyHit);
+        }
+      } else {
+        // Read-only searches are independent; the pool overlaps HTTP rerank
+        // calls while better-sqlite3 work stays serialized in-process.
+        // Per-question latency under concurrency includes queueing, so this
+        // is a sweep-speed flag, not a latency-measurement flag.
+        const slots = new Array<{
+          record: EvalQueryResult;
+          fuzzyHit: number;
+        }>(conv.qa.length);
+        let nextIndex = 0;
+        const workers = Math.min(queryConcurrency, conv.qa.length);
+        await Promise.all(
+          Array.from({ length: workers }, async () => {
+            for (;;) {
+              const qaIdx = nextIndex;
+              nextIndex += 1;
+              if (qaIdx >= conv.qa.length) return;
+              slots[qaIdx] = await evaluateQa(conv.qa[qaIdx]!, qaIdx);
+            }
+          }),
         );
+        for (const slot of slots) {
+          evalQueries.push(slot.record);
+          diagnosticFuzzyHits.push(slot.fuzzyHit);
+        }
       }
     }
   } finally {
@@ -476,8 +608,19 @@ async function main() {
       : 0;
   const durationMs = Date.now() - benchStart;
 
+  const cacheStats = (
+    provider as {
+      cacheStats?: () => { hits: number; misses: number; writes: number };
+    }
+  ).cacheStats?.();
+  if (cacheStats) {
+    console.log(
+      `[bench] embedding cache: hits=${cacheStats.hits} misses=${cacheStats.misses} writes=${cacheStats.writes}`,
+    );
+  }
+
   printReport(report, fuzzyRate, {
-    conversations: conversations.length,
+    conversations: selectedConvIndexes.length,
     questions: evalQueries.length,
     topK,
     durationMs,
@@ -504,7 +647,9 @@ async function main() {
           retrievalArgs,
         ),
         benchmark: "locomo-retrieval-only",
-        conversations: conversations.length,
+        conversations: selectedConvIndexes.length,
+        shardConvIndexes:
+          convIndexArg !== undefined ? selectedConvIndexes : null,
         questions: evalQueries.length,
         topK,
         // Fusion config actually applied — CLI overrides or documented defaults.
@@ -523,6 +668,14 @@ async function main() {
           contextual: contextualFlag,
           prevContext: prevContextFlag,
           ingestConcurrency,
+          // Latency-only speed knobs (never affect retrieved IDs).
+          queryPrewarm,
+          queryConcurrency,
+          embedConcurrency: embedQueue.concurrency,
+          embedBatchSize: embedQueue.batchSize,
+          wal,
+          embeddingCache: providerArgs.cachePath ?? null,
+          validAt: validAt ?? null,
           contradictionScan,
           semanticDedup: args.includes("--semantic-dedup"),
           queryExpansion: args.includes("--query-expansion"),
@@ -544,6 +697,7 @@ async function main() {
         },
         durationMs,
         ingestionMs,
+        ...(cacheStats ? { embeddingCacheStats: cacheStats } : {}),
         metrics: {
           at5: report.at5,
           at10: report.at10,

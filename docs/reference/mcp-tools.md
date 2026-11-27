@@ -46,6 +46,8 @@ listed here.
 | `memos_trigger` | — | Before acting, recall relevant procedural lessons for a task and its entities. | readOnly, idempotent |
 | `memos_brief` | — | Open/closed brief for a person, project, or topic; recomputed on read. | readOnly, idempotent |
 | `memos_page` | — | Save or read a living knowledge page (query + pinned memories, re-rendered). | destructive |
+| `memos_explain_recall` | — | Inspect a Retrieval Flight Recorder trace: query, config, latency, per-leg candidates and timings, stage deltas, and score contributions. | readOnly, idempotent |
+| `memos_audit_answer` | — | Audit an answer's claims against stored memories: resolves [mem:...] citations and reports support counts plus coverage. Pass pack_id to audit a context pack's evidence without re-searching. | readOnly, idempotent |
 
 ### `memos_store`
 
@@ -396,3 +398,20 @@ Save or read a living knowledge page (query + pinned memories, re-rendered).
 - `pinnedIds`: array
 - `maxItems`: number
 - `namespace`: string
+
+### `memos_explain_recall`
+
+Inspect a Retrieval Flight Recorder trace: query, config, latency, per-leg candidates and timings, stage deltas, and score contributions.
+
+- `traceId` (required): string
+
+### `memos_audit_answer`
+
+Audit an answer's claims against stored memories: resolves [mem:...] citations and reports support counts plus coverage. Pass pack_id to audit a context pack's evidence without re-searching.
+
+- `answer` (required): string
+- `pack_id`: string
+- `query`: string
+- `memory_ids`: array
+- `limit`: number
+- `threshold`: number
