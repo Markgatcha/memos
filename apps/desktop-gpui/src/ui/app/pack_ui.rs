@@ -387,7 +387,7 @@ impl MemOSApp {
             ));
 
         // Pinned list with per-item removal.
-        if self.pack.source == PackSource::Pinned && !self.pack.items.is_empty() {
+        if self.pack.source == PackSource::Pinned && !self.pack.pins.is_empty() {
             let included: HashSet<&str> = self
                 .pack
                 .built
