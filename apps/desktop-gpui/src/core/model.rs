@@ -693,6 +693,7 @@ pub enum SearchScopeKind {
     Provenance,
     HasContradiction,
     IsStale,
+    IsUntouched,
     AfterDate,
     MaxTrust,
     IsQuarantined,
@@ -768,6 +769,11 @@ fn parse_scope_token(
         "is" if val.trim().eq_ignore_ascii_case("quarantined") => {
             out.quarantined_only = true;
             Some(SearchScopeKind::IsQuarantined)
+        }
+        "is" if val.trim().eq_ignore_ascii_case("untouched") => {
+            let age_ms = crate::core::health::STALE_STORE_AGE_DAYS.saturating_mul(86_400_000);
+            out.updated_before_ms = Some(now_ms.saturating_sub(age_ms));
+            Some(SearchScopeKind::IsUntouched)
         }
         "after" => {
             let date_str = val.trim();
@@ -899,6 +905,12 @@ pub fn scopes_from_filter(filter: &QueryFilter) -> Vec<SearchScopeChip> {
             label: "is:stale".to_string(),
         });
     }
+    if filter.updated_before_ms.is_some() {
+        chips.push(SearchScopeChip {
+            kind: SearchScopeKind::IsUntouched,
+            label: "is:untouched".to_string(),
+        });
+    }
     if let Some(after_ms) = filter.created_after_ms
         && after_ms > 0
         && after_ms.rem_euclid(86_400_000) == 0
@@ -940,6 +952,7 @@ pub fn remove_search_scope(filter: &mut QueryFilter, kind: SearchScopeKind) -> b
             std::mem::replace(&mut filter.has_contradiction, false)
         }
         SearchScopeKind::IsStale => filter.stale_before_ms.take().is_some(),
+        SearchScopeKind::IsUntouched => filter.updated_before_ms.take().is_some(),
         SearchScopeKind::AfterDate => filter.created_after_ms.take().is_some(),
         SearchScopeKind::MaxTrust => filter.max_trust.take().is_some(),
         SearchScopeKind::IsQuarantined => std::mem::replace(&mut filter.quarantined_only, false),
@@ -1119,5 +1132,18 @@ mod tests {
             Some(SearchScopeKind::MaxTrust)
         );
         assert_eq!(edited.max_trust, None);
+        let res = extract_search_scopes("is:untouched oauth", &mut edited, now_ms, true);
+        assert_eq!(res.remaining_input, "oauth");
+        assert_eq!(edited.updated_before_ms, Some(now_ms - 90 * 86_400_000));
+        assert!(
+            scopes_from_filter(&edited)
+                .iter()
+                .any(|c| c.label == "is:untouched")
+        );
+        assert!(remove_search_scope(
+            &mut edited,
+            SearchScopeKind::IsUntouched
+        ));
+        assert_eq!(edited.updated_before_ms, None);
     }
 }

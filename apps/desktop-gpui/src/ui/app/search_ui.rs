@@ -64,6 +64,12 @@ pub(crate) const SCOPE_HELP: &[ScopeHelp] = &[
     ScopeHelp {
         insert: "is:stale ",
         example: "is:stale",
+        meaning: "Old, expired, quarantined, or drifted",
+        facet: None,
+    },
+    ScopeHelp {
+        insert: "is:untouched ",
+        example: "is:untouched",
         meaning: "Not updated in 90 days",
         facet: None,
     },
@@ -211,18 +217,8 @@ impl MemOSApp {
     }
 
     fn apply_recent_search(&mut self, expr: String, window: &mut Window, cx: &mut Context<Self>) {
-        for kind in [
-            SearchScopeKind::NodeType,
-            SearchScopeKind::Tag,
-            SearchScopeKind::Namespace,
-            SearchScopeKind::Provenance,
-            SearchScopeKind::HasContradiction,
-            SearchScopeKind::IsStale,
-            SearchScopeKind::AfterDate,
-            SearchScopeKind::MaxTrust,
-            SearchScopeKind::IsQuarantined,
-        ] {
-            remove_search_scope(&mut self.filter, kind);
+        for chip in scopes_from_filter(&self.filter) {
+            remove_search_scope(&mut self.filter, chip.kind);
         }
         let text = format!("{expr} ");
         self.search_input
