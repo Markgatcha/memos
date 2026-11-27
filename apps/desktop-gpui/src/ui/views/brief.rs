@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use gpui::{
     AnyElement, Context, EventEmitter, FontWeight, InteractiveElement, IntoElement, ParentElement,
     Render, Role, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
@@ -119,6 +121,8 @@ pub fn brief_selectable_ids(snapshot: &BriefSnapshot) -> Vec<String> {
     for item in &snapshot.expiring_items {
         ids.push(item.id.clone());
     }
+    let mut seen = HashSet::new();
+    ids.retain(|id| seen.insert(id.clone()));
     ids
 }
 
@@ -880,8 +884,8 @@ mod tests {
 
         let populated = BriefSnapshot {
             now_ms,
-            new_items: vec![mk_item("n1")],
-            new_count: 1,
+            new_items: vec![mk_item("x1"), mk_item("n1")],
+            new_count: 2,
             changed_items: vec![mk_item("c1")],
             changed_count: 1,
             expiring_items: vec![mk_item("e1")],
