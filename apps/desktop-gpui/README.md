@@ -40,6 +40,60 @@ Per-platform notes:
 - **macOS**: Xcode Command Line Tools (`cargo build --release`).
 - **Linux**: install the X11/Wayland/Vulkan/Fontconfig dev packages listed under Prerequisites (`cargo build --release`).
 
+# Install / Packages
+
+The `MemOS Desktop (GPUI)` CI workflow builds a package per release for every
+supported OS (see the `memos-desktop-*` workflow artifacts):
+
+| Platform | Format | Produced by |
+| --- | --- | --- |
+| Linux (any distro) | `memos-desktop.flatpak` | `packaging/flatpak/io.github.Markgatcha.memos.yml` via `flatpak-builder` |
+| Debian / Ubuntu | `.deb` | `cargo deb` (`[package.metadata.deb]` in `Cargo.toml`) |
+| Fedora / RHEL / openSUSE | `.rpm` | `cargo generate-rpm` (`[package.metadata.generate-rpm]`) |
+| macOS | `MemOS-Desktop.dmg` (`.app` bundle) | `packaging/macos/build-dmg.sh` |
+| Windows | `.msi` | `cargo wix` (`[package.metadata.wix]`) |
+
+Local packaging commands from `apps/desktop-gpui`:
+
+```bash
+# Flatpak (needs flatpak + flatpak-builder + org.freedesktop.Sdk//25.08)
+flatpak-builder --user --install-deps-from=flathub --install build-dir \
+    packaging/flatpak/io.github.Markgatcha.memos.yml
+flatpak-builder --repo=repo build-dir packaging/flatpak/io.github.Markgatcha.memos.yml
+flatpak build-bundle repo memos-desktop.flatpak io.github.Markgatcha.memos
+
+# Debian / RPM (on any host, after cargo build --release)
+cargo install cargo-deb cargo-generate-rpm
+cargo deb              # -> target/debian/*.deb
+cargo generate-rpm     # -> target/generate-rpm/*.rpm
+
+# macOS (on a Mac, after cargo build --release)
+./packaging/macos/build-dmg.sh   # -> target/release/MemOS-Desktop.dmg
+
+# Windows MSI (on Windows with WiX 3.x installed)
+cargo install cargo-wix
+cargo wix                        # -> target/wix/*.msi
+```
+
+Notes and caveats:
+
+- **Flatpak** runs on every distro with Flatpak installed (Ubuntu, Fedora,
+  Debian, Arch, SteamOS, …). The manifest builds the release binary offline
+  from `packaging/flatpak/cargo-sources.json` (regenerate with
+  `flatpak-cargo-generator` whenever `Cargo.lock` changes). Sandbox grants:
+  Wayland/X11, GPU (`--device=dri`), network for opt-in crash reporting, and
+  `$HOME` access so **Browse…** can pick a store anywhere. Inside the
+  sandbox, Write mode (MCP) is only available when `memos`/`npx` is on the
+  sandboxed `PATH`; read-only browsing always works. To publish on Flathub,
+  submit this manifest to `flathub/flathub` (swap the `type: dir` source for
+  a `type: git` source pointing at a tagged release).
+- **macOS** packages are ad-hoc signed; on other Macs run
+  `xattr -dr com.apple.quarantine MemOS.app` or right-click → Open once.
+  Friction-free installs need a Developer ID certificate + `notarytool`.
+- **.deb/.rpm** install `memos-desktop` to `/usr/bin`, a
+  `memos-desktop.desktop` entry, hicolor icons, and AppStream metainfo.
+- **.msi** installs to `Program Files` and creates a Start Menu entry.
+
 ### CLI Flags & Environment Overrides
 
 | Flag / Env | Description |

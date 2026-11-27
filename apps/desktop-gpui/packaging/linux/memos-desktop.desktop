@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=MemOS
+GenericName=Memory Explorer
+Comment=Native memory explorer and graph viewer for the MemOS memory store
+Exec=memos-desktop
+Icon=memos-desktop
+Type=Application
+Categories=Utility;Development;
+Keywords=memory;memos;mcp;ai;graph;
+StartupWMClass=memos-desktop
+Terminal=false

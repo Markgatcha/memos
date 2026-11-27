@@ -15,7 +15,22 @@ use sentry::protocol::{
     Value as SentryValue,
 };
 
-struct GuardCleanup;
+// Tests share the global sensitive-text registry; serialize registry use so a
+// parallel test's cleanup cannot clear another test's registered secrets.
+static REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct GuardCleanup {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl GuardCleanup {
+    fn new() -> Self {
+        Self {
+            _guard: REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner()),
+        }
+    }
+}
+
 impl Drop for GuardCleanup {
     fn drop(&mut self) {
         clear_sensitive_text();
@@ -31,7 +46,7 @@ fn temp_dir(name: &str) -> PathBuf {
 
 #[test]
 fn whole_event_scrub_covers_nested_fields() {
-    let _cleanup = GuardCleanup;
+    let _cleanup = GuardCleanup::new();
     let secret = "NESTED_SECRET_MEMORY_abc123";
     register_sensitive_text(secret);
     let ctx = ScrubContext::from_environment("test-install-nested").with_extra_sensitive(secret);
@@ -63,7 +78,7 @@ fn whole_event_scrub_covers_nested_fields() {
 
 #[test]
 fn crash_scrubber_strips_secret_query_paths_username_and_hostname() {
-    let _cleanup = GuardCleanup;
+    let _cleanup = GuardCleanup::new();
     let secret = "MEMOS_SECRET_MEMORY_TOKEN_xyz789";
     let search_query = "project_apollo_confidential_roadmap";
     let install_id = "test-install-0000-1111-2222-333333333333";
@@ -186,7 +201,7 @@ fn crash_scrubber_strips_secret_query_paths_username_and_hostname() {
 
 #[test]
 fn local_crash_report_works_offline_and_strips_sensitive_data() {
-    let _cleanup = GuardCleanup;
+    let _cleanup = GuardCleanup::new();
     let dir = temp_dir("local-crash");
     let canary = "OFFLINE_PANIC_MEMORY_CANARY_424242";
     register_sensitive_text(canary);

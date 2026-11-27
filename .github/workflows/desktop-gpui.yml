@@ -124,3 +124,140 @@ jobs:
             ${{ runner.temp }}/memos-desktop-home/logs
           retention-days: 7
           if-no-files-found: ignore
+
+  package:
+    name: Package (${{ matrix.os }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/desktop-gpui
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux system libraries for GPUI
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libx11-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
+            libvulkan1 \
+            mesa-vulkan-drivers \
+            libasound2-dev \
+            libfontconfig1-dev \
+            libssl-dev
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "apps/desktop-gpui -> target"
+          cache-on-failure: true
+
+      - name: Prepare CI directories
+        shell: bash
+        run: mkdir -p "${RUNNER_TEMP}/memos-ci-logs"
+
+      - name: Build release desktop binary
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --release --bin memos-desktop 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/release-build.log"
+
+      - name: Package .deb and .rpm (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo install cargo-deb cargo-generate-rpm --locked
+          cargo deb
+          cargo generate-rpm
+
+      - name: Package .app and .dmg (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ./packaging/macos/build-dmg.sh
+
+      - name: Package .msi (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          choco install wixtoolset --yes --no-progress
+          cargo install cargo-wix --locked
+          # Install only the GUI binary: the Rust `memos` CLI would otherwise land on
+          # PATH and shadow the SDK `memos` command that writer discovery expects.
+          cargo wix init --binary target/release/memos-desktop.exe
+          cargo wix --nocapture
+
+      - name: Upload release binary and package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: memos-desktop-${{ matrix.os }}
+          path: |
+            apps/desktop-gpui/target/release/memos-desktop
+            apps/desktop-gpui/target/release/memos-desktop.exe
+            apps/desktop-gpui/target/release/MemOS-Desktop.dmg
+            apps/desktop-gpui/target/debian/*.deb
+            apps/desktop-gpui/target/generate-rpm/*.rpm
+            apps/desktop-gpui/target/wix/*.msi
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-gpui-package-logs-${{ matrix.os }}
+          path: ${{ runner.temp }}/memos-ci-logs
+          retention-days: 7
+          if-no-files-found: ignore
+
+  flatpak:
+    name: Flatpak bundle
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Flatpak build tools and Flathub remote
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y --noninteractive flathub \
+            org.freedesktop.Platform/x86_64/25.08 \
+            org.freedesktop.Sdk/x86_64/25.08 \
+            org.freedesktop.Sdk.Extension.rust-stable/x86_64/25.08
+
+      - name: Build Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: memos-desktop.flatpak
+          manifest-path: apps/desktop-gpui/packaging/flatpak/io.github.Markgatcha.memos.yml
+          run-tests: false
+          restore-cache: true
+          cache-key: flatpak-builder-${{ hashFiles('apps/desktop-gpui/packaging/flatpak/cargo-sources.json') }}
+
+      - name: Upload Flatpak bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memos-desktop-flatpak
+          path: memos-desktop.flatpak
+          retention-days: 7
+          if-no-files-found: error
