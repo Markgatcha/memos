@@ -224,6 +224,7 @@ impl SidebarView {
         let next_score = report.map(|r| r.score);
         let next_review = report.map_or(0, |r| {
             r.contradiction_count
+                + r.quarantined_count
                 + r.expired_count
                 + r.drifted_source_count
                 + r.stale_count
