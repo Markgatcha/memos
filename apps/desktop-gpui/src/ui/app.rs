@@ -5235,9 +5235,11 @@ impl MemOSApp {
     }
 
     fn copy_active_memory_markdown(&mut self, cx: &mut Context<Self>) {
-        let selected_detail = self.detail_view.read(cx).detail().filter(|detail| {
-            Some(detail.id.as_str()) == self.selected_id.as_deref()
-        });
+        let selected_detail = self
+            .detail_view
+            .read(cx)
+            .detail()
+            .filter(|detail| Some(detail.id.as_str()) == self.selected_id.as_deref());
         let md = if let Some(detail) = selected_detail {
             let mut lines = Vec::new();
             let trimmed_summary = detail.summary.trim();
@@ -7157,7 +7159,8 @@ impl MemOSApp {
     fn apply_health_fix_filter(&mut self, filter: QueryFilter, cx: &mut Context<Self>) {
         self.show_health_modal = false;
         self.switch_view(ViewMode::List, cx);
-        self.search_input.update(cx, |i, cx| i.set_text(filter.query.clone(), cx));
+        self.search_input
+            .update(cx, |i, cx| i.set_text(filter.query.clone(), cx));
         self.filter = filter;
         self.mark_custom_filter_changed(cx);
     }

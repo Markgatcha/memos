@@ -344,7 +344,11 @@ pub fn health_issues(
             id: "pending-review",
             severity: IssueSeverity::Review,
             count: pending_review,
-            title: plural(pending_review, "memory awaiting approval", "memories awaiting approval"),
+            title: plural(
+                pending_review,
+                "memory awaiting approval",
+                "memories awaiting approval",
+            ),
             impact: "Open the review queue to approve or reject pending memories.",
             action_label: "Open Review",
             action: HealthIssueAction::OpenReview,
@@ -487,11 +491,19 @@ mod tests {
         assert_eq!(issues[0].title, "2 unresolved conflicts");
         assert_eq!(issues[0].action, HealthIssueAction::OpenToday);
         assert_eq!(issues[1].action, HealthIssueAction::OpenReview);
-        let mixed = StoreHealthReport { quarantined_count: 2, ..report.clone() };
+        let mixed = StoreHealthReport {
+            quarantined_count: 2,
+            ..report.clone()
+        };
         let actions = health_issues(&mixed, 1, now);
-        let quarantine = actions.iter().find(|issue| issue.id == "quarantined").unwrap();
+        let quarantine = actions
+            .iter()
+            .find(|issue| issue.id == "quarantined")
+            .unwrap();
         assert_eq!(quarantine.count, 2);
-        assert!(matches!(&quarantine.action, HealthIssueAction::Filter(filter) if filter.quarantined_only));
+        assert!(
+            matches!(&quarantine.action, HealthIssueAction::Filter(filter) if filter.quarantined_only)
+        );
         assert_eq!(issues[3].title, "1 low-trust memory");
         match &issues[4].action {
             HealthIssueAction::Filter(f) => assert!(f.updated_before_ms.is_some()),

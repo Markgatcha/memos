@@ -4062,7 +4062,8 @@ mod tests {
                 rusqlite::params!["n-3", old],
             )
             .unwrap();
-            conn.execute("UPDATE nodes SET quarantined = 1 WHERE id = 'n-1'", []).unwrap();
+            conn.execute("UPDATE nodes SET quarantined = 1 WHERE id = 'n-1'", [])
+                .unwrap();
         }
 
         let store = ReadOnlyStore::open(&tmp).unwrap();
@@ -4112,10 +4113,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stale.len(), 2);
-        let untouched = store.query_nodes(&QueryFilter {
-            updated_before_ms: Some(cutoff),
-            ..Default::default()
-        }, &no_contras, 10).unwrap();
+        let untouched = store
+            .query_nodes(
+                &QueryFilter {
+                    updated_before_ms: Some(cutoff),
+                    ..Default::default()
+                },
+                &no_contras,
+                10,
+            )
+            .unwrap();
         assert_eq!(untouched.len(), raw.stale_count);
         assert_eq!(untouched[0].id, "n-3");
 

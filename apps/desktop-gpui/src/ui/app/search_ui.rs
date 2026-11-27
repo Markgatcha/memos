@@ -616,8 +616,14 @@ mod tests {
     #[test]
     fn tokens_append_with_single_space() {
         assert_eq!(append_search_token("", "tag:"), "tag:");
-        assert_eq!(append_search_token("oauth tag:", "tag:auth "), "oauth tag:auth ");
-        assert_eq!(append_search_token("hashtag:", "tag:auth "), "hashtag: tag:auth ");
+        assert_eq!(
+            append_search_token("oauth tag:", "tag:auth "),
+            "oauth tag:auth "
+        );
+        assert_eq!(
+            append_search_token("hashtag:", "tag:auth "),
+            "hashtag: tag:auth "
+        );
         assert_eq!(append_search_token("oauth  ", "tag:"), "oauth tag:");
         assert_eq!(append_search_token("oauth", "is:stale "), "oauth is:stale ");
     }
