@@ -2444,15 +2444,78 @@ impl MemOSApp {
     fn start_db_watcher(&mut self, cx: &mut Context<Self>) {
         let shared = self.shared_store.clone();
         self._db_watch_task = Some(cx.spawn(async move |this, cx| {
+            let mut watcher: Option<crate::ui::db_watch::DbWatcher> = None;
             loop {
-                // Back off while the window is in the background: a store that
-                // is not being watched does not need a 1.5 s poll.
-                let active = this
-                    .read_with(cx, |app, _| app.window_active)
-                    .unwrap_or(true);
-                cx.background_executor()
-                    .timer(Duration::from_millis(if active { 1500 } else { 8000 }))
-                    .await;
+                let state = this.read_with(cx, |app, _| {
+                    (
+                        app.window_active,
+                        app.onboarding.is_some(),
+                        app.resolved_db.path.clone(),
+                    )
+                });
+                let Ok((active, onboarding_open, db_path)) = state else {
+                    break;
+                };
+
+                // Event-driven watching replaces the fixed 1.5 s poll: kernel
+                // notifications wake the task only when the store actually
+                // changes. A slow fallback poll covers missed events; when no
+                // watcher can be installed (onboarding, missing directory,
+                // unsupported backend) the legacy cadence keeps the old
+                // behavior.
+                let legacy = onboarding_open || {
+                    if watcher.as_ref().is_some_and(|w| w.db_path() != db_path) {
+                        watcher = None;
+                    }
+                    if watcher.is_none() {
+                        watcher = crate::ui::db_watch::DbWatcher::watch(&db_path);
+                    }
+                    watcher.is_none()
+                };
+                let fallback = if legacy {
+                    Duration::from_millis(if active { 1500 } else { 8000 })
+                } else {
+                    Duration::from_secs(if active { 15 } else { 60 })
+                };
+
+                match watcher.as_mut() {
+                    Some(w) if !legacy => {
+                        let fired = {
+                            let event = futures::StreamExt::next(w.receiver());
+                            let tick = cx.background_executor().timer(fallback);
+                            futures::pin_mut!(event, tick);
+                            matches!(
+                                futures::future::select(event, tick).await,
+                                futures::future::Either::Left(_)
+                            )
+                        };
+                        if fired {
+                            // Coalesce the burst of events a single SQLite
+                            // write produces, then drain any extras.
+                            cx.background_executor()
+                                .timer(Duration::from_millis(250))
+                                .await;
+                            while w.receiver().try_recv().is_ok() {}
+                        } else {
+                            // Fallback-poll wake: refresh the watch so a
+                            // deleted-then-recreated store directory regains
+                            // live watching (kernel watches die with the
+                            // directory). Recreated on the next iteration.
+                            // Teardown joins the backend thread (FSEvents on
+                            // macOS), so drop it off the foreground task.
+                            if let Some(w) = watcher.take() {
+                                cx.background_executor()
+                                    .spawn(async move {
+                                        drop(w);
+                                    })
+                                    .detach();
+                            }
+                        }
+                    }
+                    _ => {
+                        cx.background_executor().timer(fallback).await;
+                    }
+                }
                 let info = this.read_with(cx, |app, _| {
                     if app.onboarding.is_some() {
                         return None;
@@ -6536,8 +6599,8 @@ impl Drop for MemOSApp {
 
 impl Render for MemOSApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Read once per frame; the DB watcher backs off when this is false,
-        // and the graph stops its drift loop while backgrounded.
+        // Read once per frame; the DB watcher's fallback poll backs off when
+        // this is false, and the graph stops its drift loop while backgrounded.
         let active = window.is_window_active();
         if active != self.window_active {
             self.window_active = active;
