@@ -129,14 +129,16 @@ export function rankProceduralLessons(
   k: number,
   nowMs: number = Date.now(),
 ): RankedProceduralLesson[] {
-  const tokens = queryTokens(query);
+  // queryTokens yields only ASCII letters and digits. Allow short inflections
+  // such as "APIs" while rejecting embedded matches such as "rapid".
+  const words = queryTokens(query).map((t) => new RegExp(`\\b${t}[a-z0-9]{0,2}\\b`));
   const ranked: RankedProceduralLesson[] = [];
   for (const lesson of lessons) {
     const effectiveScore = effectiveLessonScore(lesson, nowMs);
     const haystack = `${lesson.lesson} ${lesson.context}`.toLowerCase();
-    const hits = tokens.filter((t) => haystack.includes(t)).length;
-    const relevance = tokens.length > 0 ? hits / tokens.length : 0;
-    if (tokens.length > 0 && relevance === 0) continue;
+    const hits = words.filter((word) => word.test(haystack)).length;
+    const relevance = words.length > 0 ? hits / words.length : 0;
+    if (words.length > 0 && relevance === 0) continue;
     ranked.push({
       ...lesson,
       effectiveScore: round3(effectiveScore),

@@ -8,6 +8,8 @@
 import { jest } from "@jest/globals";
 import {
   parseProviderArgs,
+  parseRetrievalArgs,
+  createBenchMemos,
   buildProvider,
   assertNoFallback,
   hashFile,
@@ -16,9 +18,30 @@ import {
 } from "../scripts/lib/bench-common";
 import { FastEmbedEmbeddingProvider } from "../src/embeddings";
 import type { EmbeddingProvider, EmbeddingRuntimeInfo } from "../src/types";
-import { writeFileSync, rmSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+
+test("retrieval flags preserve the selected benchmark embedding provider", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bench-provider-"));
+  const providerArgs = parseProviderArgs(["--provider=local-hash", "--dimensions=64"]);
+  const memos = createBenchMemos({
+    dbPath: join(dir, "bench.db"),
+    provider: buildProvider(providerArgs),
+    providerArgs,
+    retrievalArgs: parseRetrievalArgs(["--contextual", "--graph-expansion"]),
+  });
+  try {
+    await memos.init();
+    expect(memos.getEmbeddingRuntimeInfo()).toMatchObject({
+      resolvedProvider: "local-hash",
+      requestedDimensions: 64,
+    });
+  } finally {
+    await memos.close();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
 
 describe("parseProviderArgs", () => {
   const ENV_KEYS = [

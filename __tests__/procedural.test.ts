@@ -148,6 +148,15 @@ describe("retrieval ranking (pure)", () => {
     expect(ranked).toHaveLength(1);
   });
 
+  test("short inflections match without rewarding substrings inside other words", () => {
+    const candidates = [
+      lesson({ id: "noise", lesson: "Rapid, accurate updates", context: "" }),
+      lesson({ id: "match", lesson: "Check rates", context: "Calling APIs" }),
+    ];
+    const ranked = rankProceduralLessons(candidates, "api rate", 2, NOW);
+    expect(ranked.map((item) => [item.id, item.relevance])).toEqual([["match", 1]]);
+  });
+
   test("empty query ranks by effective score alone", () => {
     const ranked = rankProceduralLessons(lessons, "", 3, NOW);
     expect(ranked.map((r) => r.id)).toEqual(["l2", "l1", "l3"]);

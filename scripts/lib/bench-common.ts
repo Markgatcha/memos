@@ -354,11 +354,14 @@ export function createBenchMemos(opts: {
   internal?: boolean;
 }): MemOS {
   const { providerArgs, retrievalArgs } = opts;
+  const config = retrievalConfig(retrievalArgs);
   return new MemOS({
+    ...config,
     dbPath: opts.dbPath,
     wal: false,
     autoLinkThreshold: 0,
     experimental: {
+      ...config.experimental,
       namespaces: true,
       semanticSearch: true,
       ...(opts.rerankUrl
@@ -382,20 +385,14 @@ export function createBenchMemos(opts: {
         : {}),
     },
     embeddings: {
+      ...config.embeddings,
       enabled: true,
       provider: opts.provider,
       ...(providerArgs.model ? { model: providerArgs.model } : {}),
       ...(providerArgs.dimensions
         ? { dimensions: providerArgs.dimensions }
         : {}),
-      ...(retrievalArgs.embedText
-        ? { embedText: retrievalArgs.embedText }
-        : {}),
-      ...(retrievalArgs.contextual ? { contextual: true } : {}),
     },
-    ...(Object.keys(retrievalConfig(retrievalArgs)).length > 0
-      ? retrievalConfig(retrievalArgs)
-      : {}),
     embeddingQueue: { concurrency: 4, batchSize: 16 },
   });
 }
