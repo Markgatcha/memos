@@ -231,39 +231,7 @@ fn temp_db_path(label: &str) -> PathBuf {
 
 #[cfg(target_os = "windows")]
 fn current_rss_bytes() -> Option<u64> {
-    #[repr(C)]
-    #[allow(non_snake_case)]
-    struct ProcessMemoryCounters {
-        cb: u32,
-        PageFaultCount: u32,
-        PeakWorkingSetSize: usize,
-        WorkingSetSize: usize,
-        QuotaPeakPagedPoolUsage: usize,
-        QuotaPagedPoolUsage: usize,
-        QuotaPeakNonPagedPoolUsage: usize,
-        QuotaNonPagedPoolUsage: usize,
-        PagefileUsage: usize,
-        PeakPagefileUsage: usize,
-    }
-    unsafe extern "system" {
-        fn GetCurrentProcess() -> isize;
-        fn K32GetProcessMemoryInfo(
-            process: isize,
-            ppsmem_counters: *mut ProcessMemoryCounters,
-            cb: u32,
-        ) -> i32;
-    }
-    let mut counters = std::mem::MaybeUninit::<ProcessMemoryCounters>::zeroed();
-    let cb = std::mem::size_of::<ProcessMemoryCounters>() as u32;
-    unsafe {
-        (*counters.as_mut_ptr()).cb = cb;
-        let ok = K32GetProcessMemoryInfo(GetCurrentProcess(), counters.as_mut_ptr(), cb);
-        if ok != 0 {
-            Some(counters.assume_init().WorkingSetSize as u64)
-        } else {
-            None
-        }
-    }
+    memos_desktop::win32::process_working_set_bytes()
 }
 
 #[cfg(target_os = "linux")]
@@ -563,4 +531,26 @@ fn smoke_50k_nodes_resident_memory_under_200mb() {
     drop(items);
     drop(store);
     let _ = fs::remove_file(&db_path);
+}
+
+/// Writes a synthetic store to `MEMOS_BENCH_OUT` (default: 50,000 nodes with
+/// FTS, override with `MEMOS_BENCH_NODES`) so GUI timings such as first frame
+/// can be measured against the same data as the headless gates.
+///
+/// `cargo test --release --test smoke_bench -- --ignored generate_store`
+#[test]
+#[ignore = "writes a store to MEMOS_BENCH_OUT for manual GUI measurement"]
+fn generate_store() {
+    let Some(out) = env::var_os("MEMOS_BENCH_OUT") else {
+        eprintln!("set MEMOS_BENCH_OUT to the .db path to write");
+        return;
+    };
+    let nodes = env::var("MEMOS_BENCH_NODES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50_000);
+    let path = PathBuf::from(out);
+    let _ = fs::remove_file(&path);
+    build_synthetic_store(&path, nodes, true);
+    println!("BENCH_STORE: wrote {nodes} nodes to {}", path.display());
 }

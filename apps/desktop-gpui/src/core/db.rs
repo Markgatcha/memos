@@ -439,11 +439,13 @@ impl ReadOnlyStore {
                 matches.push(id);
             }
         }
-        match matches.len() {
-            0 => Ok(NodeLookup::NotFound),
-            1 => Ok(NodeLookup::Exact(matches.into_iter().next().unwrap())),
-            _ => Ok(NodeLookup::Ambiguous(matches)),
+        if matches.len() > 1 {
+            return Ok(NodeLookup::Ambiguous(matches));
         }
+        Ok(matches
+            .into_iter()
+            .next()
+            .map_or(NodeLookup::NotFound, NodeLookup::Exact))
     }
 
     /// Collect aggregate counts and timestamp bounds without reading any memory text.

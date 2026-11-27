@@ -48,3 +48,22 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+
+  - package-ecosystem: "cargo"
+    directory: "/apps/desktop-gpui"
+    schedule:
+      interval: "weekly"
+    rebase-strategy: "auto"
+    groups:
+      cargo-dependencies:
+        patterns:
+          - "*"
+    # gpui is pinned with `=1.29.2` because the desktop app tracks one fork
+    # release at a time; bump it deliberately, not via a grouped update.
+    ignore:
+      - dependency-name: "gpui-unofficial"
+      - dependency-name: "gpui-platform-gpui-unofficial"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "desktop"

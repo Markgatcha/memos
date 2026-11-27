@@ -492,7 +492,9 @@ fn scrub_filesystem_paths(input: &str) -> String {
             out.push_str("<redacted-path>");
             i = end;
         } else {
-            let ch = input[i..].chars().next().unwrap();
+            let Some(ch) = input[i..].chars().next() else {
+                break;
+            };
             out.push(ch);
             i += ch.len_utf8();
         }

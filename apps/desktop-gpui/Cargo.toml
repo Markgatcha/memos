@@ -73,3 +73,10 @@ incremental = false
 lto = "thin"
 strip = true
 codegen-units = 1
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "warn"
+

@@ -2,7 +2,7 @@ name: MemOS Desktop (GPUI)
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - "apps/desktop-gpui/**"
       - ".github/workflows/desktop-gpui.yml"
@@ -24,14 +24,15 @@ jobs:
   verify:
     name: Verify (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    # Windows release builds (thin LTO, codegen-units = 1) take the longest.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/desktop-gpui
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout repository
@@ -70,11 +71,21 @@ jobs:
         shell: bash
         run: mkdir -p "${RUNNER_TEMP}/memos-ci-logs" "${RUNNER_TEMP}/memos-desktop-home"
 
+      - name: Check formatting
+        shell: bash
+        run: cargo fmt --check
+
       - name: Run release Clippy
         shell: bash
         run: |
           set -o pipefail
           cargo clippy --release --all-targets -- -D warnings 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/clippy.log"
+
+      - name: Run Clippy for the CLI-only build
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --release --no-default-features --features cli --all-targets -- -D warnings 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/clippy-cli.log"
 
       - name: Run release library tests
         shell: bash
@@ -83,6 +94,12 @@ jobs:
         run: |
           set -o pipefail
           cargo test --release --lib 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/lib-tests.log"
+
+      - name: Run CLI-only tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --release --no-default-features --features cli 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/cli-tests.log"
 
       - name: Run crash scrubber tests
         shell: bash
@@ -112,7 +129,11 @@ jobs:
           MEMOS_DESKTOP_HOME: ${{ runner.temp }}/memos-desktop-home
         run: |
           set -o pipefail
-          ./target/release/memos-desktop --self-test 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/self-test.log"
+          BIN="./target/release/memos-desktop"
+          if [ -f "${BIN}.exe" ]; then
+            BIN="${BIN}.exe"
+          fi
+          "$BIN" --self-test 2>&1 | tee "${RUNNER_TEMP}/memos-ci-logs/self-test.log"
 
       - name: Upload logs on failure
         if: failure()
