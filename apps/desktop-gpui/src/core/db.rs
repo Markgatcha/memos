@@ -946,6 +946,17 @@ impl ReadOnlyStore {
             }
         }
 
+        if let Some(cutoff_ms) = filter.updated_before_ms {
+            if self.schema.has_col("nodes", "updated_at") {
+                conds.push(format!(
+                    "({alias}.updated_at > 0 AND (CASE WHEN {alias}.updated_at < 10000000000 THEN {alias}.updated_at * 1000 ELSE {alias}.updated_at END) < ?)"
+                ));
+                params.push(SqlValue::Integer(cutoff_ms));
+            } else {
+                conds.push("0 = 1".to_string());
+            }
+        }
+
         if let Some(cutoff_ms) = filter.stale_before_ms {
             let mut stale_parts = Vec::new();
             if self.schema.has_col("nodes", "updated_at") {
@@ -4059,6 +4070,7 @@ mod tests {
                 rusqlite::params!["n-3", old],
             )
             .unwrap();
+            conn.execute("UPDATE nodes SET quarantined = 1 WHERE id = 'n-1'", []).unwrap();
         }
 
         let store = ReadOnlyStore::open(&tmp).unwrap();
@@ -4105,8 +4117,13 @@ mod tests {
                 10,
             )
             .unwrap();
-        assert_eq!(stale.len(), 1);
-        assert_eq!(stale[0].id, "n-3");
+        assert_eq!(stale.len(), 2);
+        let untouched = store.query_nodes(&QueryFilter {
+            updated_before_ms: Some(cutoff),
+            ..Default::default()
+        }, &no_contras, 10).unwrap();
+        assert_eq!(untouched.len(), raw.stale_count);
+        assert_eq!(untouched[0].id, "n-3");
 
         drop(store);
         let _ = std::fs::remove_file(&tmp);

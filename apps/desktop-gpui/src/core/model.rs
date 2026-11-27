@@ -154,6 +154,8 @@ pub struct QueryFilter {
     #[serde(default)]
     pub stale_before_ms: Option<i64>,
     #[serde(default)]
+    pub updated_before_ms: Option<i64>,
+    #[serde(default)]
     pub max_trust: Option<f32>,
     #[serde(default)]
     pub duplicates_only: bool,
@@ -178,6 +180,7 @@ impl QueryFilter {
             && self.created_after_ms.is_none()
             && !self.quarantined_only
             && self.stale_before_ms.is_none()
+            && self.updated_before_ms.is_none()
             && self.max_trust.is_none()
             && !self.duplicates_only
             && self.updated_not_new_after_ms.is_none()
@@ -990,6 +993,9 @@ pub fn describe_filter_target(filter: &QueryFilter) -> String {
     }
     if filter.created_after_ms.is_some() {
         parts.push("recent".to_string());
+    }
+    if filter.updated_before_ms.is_some() {
+        parts.push("untouched for 90 days".to_string());
     }
     if parts.is_empty() {
         format!("Current view · All memories · {}", filter.sort.label())
