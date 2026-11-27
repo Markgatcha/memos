@@ -203,7 +203,8 @@ pub(crate) fn neighborhood(layout: &ComputedLayout, memory_id: &str) -> Option<H
         .position(|n| n.data.memory_id.as_deref() == Some(memory_id))?;
     let mut set = HashSet::new();
     set.insert(center);
-    for e in &layout.edges {
+    // Links and conflicts only; layout chains are not neighbours.
+    for e in layout.edges.iter().filter(|e| !e.structural) {
         if e.source_idx == center {
             set.insert(e.target_idx);
         } else if e.target_idx == center {
@@ -2662,7 +2663,10 @@ fn paint_graph_canvas(
         {
             continue;
         }
-        if s_selected || t_selected || is_hovered {
+        // Highlight only real links and conflicts of the selected/hovered node:
+        // lighting up layout chains would show "links" the card says are not
+        // there.
+        if (s_selected || t_selected || is_hovered) && !edge.structural {
             let mut ec = theme.edge_color(&edge.relation);
             ec.a = if data.constellation { 0.45 } else { 0.70 };
             active_edges.push((ix, (p0, ctrl, p1), ec));
