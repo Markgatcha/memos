@@ -35,6 +35,7 @@ pub struct HealthRawStats {
     pub expired_count: usize,
     pub stale_count: usize,
     pub drifted_source_count: usize,
+    pub quarantined_and_drifted_count: usize,
     pub low_trust_count: usize,
     pub duplicate_count: usize,
     pub newest_updated_at: Option<i64>,
@@ -475,8 +476,8 @@ impl ReadOnlyStore {
         } else {
             "NULL"
         };
-        let quar_expr = if self.schema.has_col("nodes", "quarantined") {
-            "SUM(CASE WHEN COALESCE(quarantined, 0) != 0 THEN 1 ELSE 0 END)"
+        let quarantined = if self.schema.has_col("nodes", "quarantined") {
+            "COALESCE(quarantined, 0) != 0"
         } else {
             "0"
         };
@@ -490,8 +491,8 @@ impl ReadOnlyStore {
         } else {
             "0"
         };
-        let drift_expr = if self.schema.has_col("nodes", "provenance") {
-            "SUM(CASE WHEN lower(COALESCE(provenance, '')) LIKE '%drift%' OR lower(COALESCE(provenance, '')) LIKE '%stale%' THEN 1 ELSE 0 END)"
+        let drifted = if self.schema.has_col("nodes", "provenance") {
+            "(lower(COALESCE(provenance, '')) LIKE '%drift%' OR lower(COALESCE(provenance, '')) LIKE '%stale%')"
         } else {
             "0"
         };
@@ -503,7 +504,9 @@ impl ReadOnlyStore {
         };
 
         let sql = format!(
-            "SELECT {max_updated_expr}, {min_created_expr}, {quar_expr}, {exp_expr}, {stale_expr}, {drift_expr}, {low_trust_expr} FROM nodes"
+            "SELECT {max_updated_expr}, {min_created_expr}, SUM({quarantined}), {exp_expr},
+                    {stale_expr}, SUM({drifted}), {low_trust_expr}, SUM(({quarantined}) AND {drifted})
+             FROM nodes"
         );
         let (
             newest_updated_at,
@@ -513,6 +516,7 @@ impl ReadOnlyStore {
             stale_count,
             drifted_source_count,
             low_trust_count,
+            quarantined_and_drifted_count,
         ) = self
             .conn
             .query_row(&sql, rusqlite::params![now_ms, stale_cutoff_ms], |row| {
@@ -524,6 +528,7 @@ impl ReadOnlyStore {
                     row.get::<_, i64>(4).unwrap_or(0).max(0) as usize,
                     row.get::<_, i64>(5).unwrap_or(0).max(0) as usize,
                     row.get::<_, i64>(6).unwrap_or(0).max(0) as usize,
+                    row.get::<_, i64>(7).unwrap_or(0).max(0) as usize,
                 ))
             })
             .map_err(|e| DbError::from_sqlite(&e, false))?;
@@ -552,6 +557,7 @@ impl ReadOnlyStore {
             expired_count,
             stale_count,
             drifted_source_count,
+            quarantined_and_drifted_count,
             low_trust_count,
             duplicate_count,
             newest_updated_at: newest_updated_at.filter(|&v| v > 0),
@@ -4077,6 +4083,7 @@ mod tests {
         assert_eq!(raw.stale_count, 1);
         assert_eq!(raw.drifted_source_count, 1);
         assert_eq!(raw.quarantined_count, 1);
+        assert_eq!(raw.quarantined_and_drifted_count, 0);
 
         let no_contras = std::collections::HashSet::new();
         let dups = store

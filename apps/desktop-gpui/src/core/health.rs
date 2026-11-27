@@ -116,7 +116,8 @@ pub fn compute_health_score(raw: &HealthRawStats, has_fts5: bool) -> u8 {
         score -= pct_penalty;
     }
     // A drifted source can also be quarantined. Apply one capped penalty.
-    let flagged_count = raw.drifted_source_count.max(raw.quarantined_count);
+    let flagged_count =
+        raw.quarantined_count + raw.drifted_source_count - raw.quarantined_and_drifted_count;
     if flagged_count > 0 {
         let pct_penalty = ((flagged_count as i32) * 100 / n).clamp(5, 20);
         score -= pct_penalty;
@@ -590,6 +591,18 @@ mod tests {
             ..healthy
         };
         assert!(compute_health_score(&quarantined, true) < 100);
+        let separate = HealthRawStats {
+            node_count: 100,
+            quarantined_count: 7,
+            drifted_source_count: 6,
+            ..Default::default()
+        };
+        assert_eq!(compute_health_score(&separate, true), 87);
+        let overlap = HealthRawStats {
+            quarantined_and_drifted_count: 3,
+            ..separate
+        };
+        assert_eq!(compute_health_score(&overlap, true), 90);
         let degraded = HealthRawStats {
             node_count: 100,
             contradiction_count: 3,
