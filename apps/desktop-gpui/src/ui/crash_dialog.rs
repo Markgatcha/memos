@@ -46,7 +46,6 @@ pub fn launch_crash_dialog(
     });
 }
 
-
 struct CrashDialogView {
     report_path: PathBuf,
     report_preview: String,
@@ -245,4 +244,3 @@ impl Render for CrashDialogView {
             )
     }
 }
-

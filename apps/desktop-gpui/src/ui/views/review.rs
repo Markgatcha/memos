@@ -8,8 +8,9 @@ use gpui::{
 
 use crate::core::model::format_relative_age;
 use crate::core::write_bridge::ReviewQueueItem;
+use crate::ui::views::kit::{self, ButtonKind};
 use crate::ui::views::{
-    ThemePalette, UiIcon, render_ui_icon, render_vertical_scroll_overlay, status_dot, tabular_nums,
+    ThemePalette, UiIcon, render_ui_icon, render_vertical_scroll_overlay, tabular_nums,
     tooltip_view,
 };
 
@@ -20,7 +21,127 @@ pub enum ReviewEvent {
     Approve(String),
     Reject(String),
     OpenSettings,
+    /// Approve or reject every id, one writer call at a time.
+    Batch {
+        ids: Vec<String>,
+        approve: bool,
+    },
+    /// Stop a running batch after the current item.
+    StopBatch,
 }
+
+/// Ordered multi-selection of review candidates.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReviewSelection {
+    ids: Vec<String>,
+}
+
+impl ReviewSelection {
+    pub fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+
+    pub fn contains(&self, id: &str) -> bool {
+        self.ids.iter().any(|i| i == id)
+    }
+
+    pub fn toggle(&mut self, id: &str) {
+        if let Some(pos) = self.ids.iter().position(|i| i == id) {
+            self.ids.remove(pos);
+        } else {
+            self.ids.push(id.to_string());
+        }
+    }
+
+    pub fn select_all(&mut self, items: &[ReviewQueueItem]) {
+        self.ids = items.iter().map(|i| i.id.clone()).collect();
+    }
+
+    pub fn clear(&mut self) {
+        self.ids.clear();
+    }
+
+    /// Drop ids that are no longer in the queue (after a reload).
+    pub fn retain_present(&mut self, items: &[ReviewQueueItem]) {
+        self.ids.retain(|id| items.iter().any(|it| &it.id == id));
+    }
+
+    /// Selected ids in queue order, so a batch runs top to bottom.
+    pub fn ordered_ids(&self, items: &[ReviewQueueItem]) -> Vec<String> {
+        items
+            .iter()
+            .filter(|it| self.contains(&it.id))
+            .map(|it| it.id.clone())
+            .collect()
+    }
+}
+
+/// Live state of a batch run, owned by the app and mirrored here for display.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BatchProgress {
+    pub approve: bool,
+    pub total: usize,
+    pub done: usize,
+    pub failed: Vec<(String, String)>,
+    pub stopped: bool,
+    pub finished: bool,
+}
+
+impl BatchProgress {
+    pub fn succeeded(&self) -> usize {
+        self.done.saturating_sub(self.failed.len())
+    }
+
+    /// One honest sentence: what happened, what did not, nothing implied atomic.
+    pub fn summary(&self) -> String {
+        let verb = if self.approve { "Approved" } else { "Rejected" };
+        let gerund = if self.approve {
+            "Approving"
+        } else {
+            "Rejecting"
+        };
+        if !self.finished {
+            return format!(
+                "{gerund} {} of {}…",
+                (self.done + 1).min(self.total),
+                self.total
+            );
+        }
+        let mut s = format!("{verb} {} of {}", self.succeeded(), self.total);
+        if !self.failed.is_empty() {
+            s.push_str(&format!(". {} failed", self.failed.len()));
+        }
+        let skipped = self.total.saturating_sub(self.done);
+        if self.stopped && skipped > 0 {
+            s.push_str(&format!(". Stopped; {skipped} not attempted"));
+        }
+        s.push('.');
+        s
+    }
+}
+
+/// Why a candidate is waiting, in plain words.
+pub fn pending_reason_text(item: &ReviewQueueItem) -> String {
+    match item
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+    {
+        None => "Queued by an agent for approval".to_string(),
+        Some(r) if r.eq_ignore_ascii_case("review:pending") => {
+            "Queued by an agent for approval".to_string()
+        }
+        Some(r) => r.strip_prefix("review:").unwrap_or(r).trim().to_string(),
+    }
+}
+
+/// Confidence below this is called out next to the candidate.
+pub const LOW_CONFIDENCE: f32 = 0.5;
 
 pub fn is_review_mutation_enabled(write_mode: bool, busy_id: Option<&str>) -> bool {
     write_mode && busy_id.is_none()
@@ -97,6 +218,11 @@ pub struct ReviewView {
     write_mode: bool,
     overlay_right_inset: gpui::Pixels,
     scroll_handle: ScrollHandle,
+    checked: ReviewSelection,
+    /// Batch action waiting for its confirming click.
+    armed_batch: Option<bool>,
+    batch: Option<BatchProgress>,
+    hovered_ix: Option<usize>,
     theme: ThemePalette,
 }
 
@@ -114,6 +240,10 @@ impl ReviewView {
             write_mode,
             overlay_right_inset: px(0.),
             scroll_handle: ScrollHandle::new(),
+            checked: ReviewSelection::default(),
+            armed_batch: None,
+            batch: None,
+            hovered_ix: None,
             theme,
         }
     }
@@ -128,6 +258,8 @@ impl ReviewView {
             self.write_mode = write_mode;
             if !write_mode {
                 self.pending_reject = None;
+                self.checked.clear();
+                self.armed_batch = None;
             }
             cx.notify();
         }
@@ -153,12 +285,25 @@ impl ReviewView {
         cx.notify();
     }
 
+    pub fn set_batch_progress(&mut self, progress: Option<BatchProgress>, cx: &mut Context<Self>) {
+        self.batch = progress;
+        cx.notify();
+    }
+
+    pub fn is_batch_running(&self) -> bool {
+        self.batch.as_ref().is_some_and(|b| !b.finished)
+    }
+
     pub fn set_items(&mut self, items: Vec<ReviewQueueItem>, cx: &mut Context<Self>) {
         self.items = items;
         self.pending_reject = None;
         self.loading = false;
         self.busy_id = None;
         self.error = None;
+        self.checked.retain_present(&self.items);
+        if self.checked.is_empty() {
+            self.armed_batch = None;
+        }
         if self
             .selected_id
             .as_ref()
@@ -185,6 +330,34 @@ impl ReviewView {
             self.selected_id = id;
             cx.notify();
         }
+    }
+
+    /// Space on the focused candidate toggles it into the batch selection.
+    pub fn toggle_checked_selected(&mut self, cx: &mut Context<Self>) {
+        if !self.write_mode || self.is_batch_running() {
+            return;
+        }
+        let target = self
+            .selected_id
+            .clone()
+            .or_else(|| self.items.first().map(|i| i.id.clone()));
+        if let Some(id) = target {
+            self.selected_id = Some(id.clone());
+            self.checked.toggle(&id);
+            self.armed_batch = None;
+            cx.notify();
+        }
+    }
+
+    /// Esc clears a batch selection before anything else closes.
+    pub fn clear_checked(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.checked.is_empty() && self.armed_batch.is_none() {
+            return false;
+        }
+        self.checked.clear();
+        self.armed_batch = None;
+        cx.notify();
+        true
     }
 
     pub fn select_relative(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -234,41 +407,57 @@ impl ReviewView {
     ) -> AnyElement {
         let theme = self.theme;
         let is_selected = self.selected_id.as_deref() == Some(item.id.as_str());
-        let mutation_enabled = is_review_mutation_enabled(self.write_mode, self.busy_id.as_deref());
+        let is_checked = self.checked.contains(&item.id);
+        let batch_running = self.is_batch_running();
+        let mutation_enabled =
+            is_review_mutation_enabled(self.write_mode, self.busy_id.as_deref()) && !batch_running;
         let row_busy = self.busy_id.as_deref() == Some(item.id.as_str());
         let reject_armed = self.pending_reject.as_deref() == Some(item.id.as_str());
         let id_open = item.id.clone();
+        let id_check = item.id.clone();
         let id_approve = item.id.clone();
         let id_reject = item.id.clone();
 
         let age = format_relative_age(item.created_at, now_ms);
-        let type_color = theme.type_color(&item.node_type);
-        let mut meta_parts = vec![item.node_type.clone(), item.namespace.clone(), age];
-        if let Some(conf) = item.confidence {
-            meta_parts.push(format!("confidence {conf:.2}"));
+        let mut meta_parts = vec![item.node_type.clone()];
+        let ns = item.namespace.trim();
+        if !ns.is_empty() && ns != "default" {
+            meta_parts.push(ns.to_string());
         }
-        let meta_line = meta_parts.join(" · ");
-
-        let gate_tip: SharedString = review_gate_notice(self.write_mode)
-            .unwrap_or("Approve this memory for recall")
-            .into();
-        let reject_tip: SharedString = review_gate_notice(self.write_mode)
-            .unwrap_or("Reject and delete this pending memory")
-            .into();
+        meta_parts.push(format!("{age} ago"));
+        if let Some(conf) = item.confidence {
+            meta_parts.push(format!(
+                "confidence {:.0}%",
+                (conf.clamp(0.0, 1.0) * 100.0).round()
+            ));
+        }
+        let meta_line: SharedString = meta_parts.join(" · ").into();
+        let low_confidence = item.confidence.is_some_and(|c| c < LOW_CONFIDENCE);
+        let reason: SharedString = pending_reason_text(item).into();
+        let title: SharedString = item.preview.clone().into();
+        // Row actions appear on the row being worked on, not on every row.
+        let show_actions =
+            is_selected || is_checked || reject_armed || row_busy || self.hovered_ix == Some(ix);
+        let aria: SharedString = format!("{title}. {reason}. {meta_line}").into();
 
         div()
             .id(("review-row", ix))
             .focusable()
             .role(Role::ListItem)
+            .aria_label(aria)
             .aria_selected(is_selected)
             .cursor_pointer()
             .w_full()
-            .p(px(14.))
-            .rounded(px(8.))
+            .min_w(px(0.))
+            .pl(px(12.))
+            .pr(px(4.))
+            .py(px(12.))
+            .border_b_1()
+            .border_color(theme.border_subtle)
             .bg(if is_selected {
                 theme.bg_selected
             } else {
-                theme.bg_panel
+                gpui::transparent_black()
             })
             .hover(move |s| {
                 s.bg(if is_selected {
@@ -277,216 +466,463 @@ impl ReviewView {
                     theme.bg_hover
                 })
             })
+            .focus_visible(move |s| s.border_1().border_color(theme.accent))
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                let next = if *hovered {
+                    Some(ix)
+                } else if this.hovered_ix == Some(ix) {
+                    None
+                } else {
+                    this.hovered_ix
+                };
+                if next != this.hovered_ix {
+                    this.hovered_ix = next;
+                    cx.notify();
+                }
+            }))
             .flex()
-            .flex_col()
-            .gap(px(8.))
+            .items_start()
+            .gap(px(10.))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.selected_id = Some(id_open.clone());
                 cx.emit(ReviewEvent::OpenMemory(id_open.clone()));
                 cx.notify();
             }))
+            .when(self.write_mode, |row| {
+                row.child(
+                    div()
+                        .id(("review-check", ix))
+                        .focusable()
+                        .role(Role::CheckBox)
+                        .aria_label(if is_checked {
+                            "Remove from batch"
+                        } else {
+                            "Add to batch"
+                        })
+                        .aria_toggled(is_checked.into())
+                        .mt(px(2.))
+                        .w(px(16.))
+                        .h(px(16.))
+                        .flex_shrink_0()
+                        .rounded(px(4.))
+                        .border_1()
+                        .border_color(if is_checked {
+                            theme.accent
+                        } else {
+                            theme.border_strong
+                        })
+                        .bg(if is_checked {
+                            theme.accent
+                        } else {
+                            gpui::transparent_black()
+                        })
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .focus_visible(move |s| s.border_color(theme.text_primary))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if !this.is_batch_running() {
+                                this.checked.toggle(&id_check);
+                                this.armed_batch = None;
+                                cx.notify();
+                            }
+                        }))
+                        .when(is_checked, |el| {
+                            el.child(render_ui_icon(UiIcon::Check, 11.0, theme.primary_btn_fg))
+                        }),
+                )
+            })
             .child(
                 div()
-                    .w_full()
+                    .flex_1()
+                    .min_w(px(0.))
                     .flex()
-                    .items_start()
-                    .justify_between()
-                    .gap(px(12.))
+                    .flex_col()
+                    .gap(px(3.))
                     .child(
                         div()
-                            .flex_1()
+                            .w_full()
                             .min_w(px(0.))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(14.))
+                            .line_height(px(20.))
+                            .text_color(theme.text_primary)
+                            .child(title),
+                    )
+                    .child(
+                        div()
                             .flex()
-                            .flex_col()
-                            .gap(px(4.))
+                            .items_center()
+                            .gap(px(8.))
+                            .min_w(px(0.))
                             .child(
                                 div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(7.))
-                                    .min_w(px(0.))
-                                    .child(status_dot(type_color))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .text_size(px(14.))
-                                            .line_height(px(20.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child(SharedString::from(item.preview.clone())),
-                                    ),
+                                    .w(px(6.))
+                                    .h(px(6.))
+                                    .rounded_full()
+                                    .flex_shrink_0()
+                                    .bg(theme.type_color(&item.node_type)),
                             )
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_w(px(0.))
                                     .text_size(px(12.))
-                                    .line_height(px(17.))
+                                    .line_height(px(16.))
                                     .font_features(tabular_nums())
                                     .text_color(theme.text_muted)
-                                    .child(SharedString::from(meta_line)),
+                                    .truncate()
+                                    .child(meta_line),
                             )
-                            .when_some(item.reason.clone(), |col, reason| {
-                                col.child(
-                                    div()
-                                        .text_size(px(12.))
-                                        .line_height(px(17.))
-                                        .text_color(theme.text_secondary)
-                                        .child(SharedString::from(reason)),
-                                )
+                            .when(low_confidence, |row| {
+                                row.child(kit::state_marker("Low confidence", theme.text_secondary))
                             }),
                     )
                     .child(
                         div()
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(
-                                div()
-                                    .id(("review-approve", ix))
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Approve")
-                                    .tooltip(tooltip_view(gate_tip, theme))
-                                    .h(px(28.))
-                                    .px(px(10.))
-                                    .rounded(px(6.))
-                                    .cursor(if mutation_enabled {
-                                        gpui::CursorStyle::PointingHand
-                                    } else {
-                                        gpui::CursorStyle::Arrow
-                                    })
-                                    .bg(if mutation_enabled {
-                                        theme.accent
-                                    } else {
-                                        theme.bg_elevated
-                                    })
-                                    .border_1()
-                                    .border_color(if mutation_enabled {
-                                        theme.accent
-                                    } else {
-                                        theme.border_subtle
-                                    })
-                                    .opacity(if mutation_enabled { 1.0 } else { 0.55 })
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(if mutation_enabled {
-                                        theme.primary_btn_fg
-                                    } else {
-                                        theme.text_muted
-                                    })
-                                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation();
-                                    })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        if is_review_mutation_enabled(
-                                            this.write_mode,
-                                            this.busy_id.as_deref(),
-                                        ) {
-                                            this.pending_reject = None;
-                                            cx.emit(ReviewEvent::Approve(id_approve.clone()));
-                                        }
-                                    }))
-                                    .child(if row_busy { "Working…" } else { "Approve" }),
-                            )
-                            .when(reject_armed, |row| {
-                                row.child(
-                                    div()
-                                        .id(("review-reject-cancel", ix))
-                                        .focusable()
-                                        .role(Role::Button)
-                                        .aria_label("Cancel reject")
-                                        .h(px(28.))
-                                        .px(px(8.))
-                                        .rounded(px(6.))
-                                        .cursor_pointer()
-                                        .hover(move |s| s.bg(theme.bg_hover))
-                                        .flex()
-                                        .items_center()
-                                        .text_size(px(12.))
-                                        .text_color(theme.text_muted)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.pending_reject = None;
-                                            cx.notify();
-                                        }))
-                                        .child("Cancel"),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .id(("review-reject", ix))
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Reject")
-                                    .tooltip(tooltip_view(reject_tip, theme))
-                                    .h(px(28.))
-                                    .px(px(10.))
-                                    .rounded(px(6.))
-                                    .cursor(if mutation_enabled {
-                                        gpui::CursorStyle::PointingHand
-                                    } else {
-                                        gpui::CursorStyle::Arrow
-                                    })
-                                    .bg(if reject_armed {
-                                        theme.danger
-                                    } else {
-                                        theme.bg_elevated
-                                    })
-                                    .border_1()
-                                    .border_color(if mutation_enabled || reject_armed {
-                                        theme.danger
-                                    } else {
-                                        theme.border_subtle
-                                    })
-                                    .opacity(if mutation_enabled { 1.0 } else { 0.55 })
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(12.))
-                                    .text_color(if reject_armed {
-                                        theme.primary_btn_fg
-                                    } else if mutation_enabled {
-                                        theme.danger
-                                    } else {
-                                        theme.text_muted
-                                    })
-                                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation();
-                                    })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        if is_review_mutation_enabled(
-                                            this.write_mode,
-                                            this.busy_id.as_deref(),
-                                        ) {
-                                            if this.pending_reject.as_deref()
-                                                == Some(id_reject.as_str())
-                                            {
-                                                this.pending_reject = None;
-                                                cx.emit(ReviewEvent::Reject(
-                                                    id_reject.clone(),
-                                                ));
-                                            } else {
-                                                this.pending_reject =
-                                                    Some(id_reject.clone());
-                                                cx.notify();
-                                            }
-                                        }
-                                    }))
-                                    .child(if row_busy {
-                                        "Working…"
-                                    } else if reject_armed {
-                                        "Confirm reject"
-                                    } else {
-                                        "Reject"
-                                    }),
-                            ),
+                            .text_size(px(12.))
+                            .line_height(px(16.))
+                            .text_color(theme.text_secondary)
+                            .truncate()
+                            .child(reason),
                     ),
             )
+            .when(self.write_mode && show_actions, |row| {
+                row.child(
+                    div()
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .when(reject_armed, |r| {
+                            r.child(
+                                kit::button(
+                                    ("review-reject-cancel", ix),
+                                    "Keep",
+                                    ButtonKind::Subtle,
+                                    &theme,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.pending_reject = None;
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                        })
+                        .child(if mutation_enabled {
+                            kit::button(
+                                ("review-reject", ix),
+                                if reject_armed {
+                                    "Confirm reject"
+                                } else {
+                                    "Reject"
+                                },
+                                ButtonKind::Danger,
+                                &theme,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if this.pending_reject.as_deref() == Some(id_reject.as_str()) {
+                                        this.pending_reject = None;
+                                        cx.emit(ReviewEvent::Reject(id_reject.clone()));
+                                    } else {
+                                        this.pending_reject = Some(id_reject.clone());
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                        } else {
+                            kit::button_disabled(
+                                ("review-reject", ix),
+                                if row_busy { "Working…" } else { "Reject" },
+                                "another review action is running",
+                                &theme,
+                            )
+                        })
+                        .child(if mutation_enabled {
+                            kit::button(
+                                ("review-approve", ix),
+                                "Approve",
+                                ButtonKind::Secondary,
+                                &theme,
+                            )
+                            .tooltip(tooltip_view("Approve so agents can recall it", theme))
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.pending_reject = None;
+                                    cx.emit(ReviewEvent::Approve(id_approve.clone()));
+                                },
+                            ))
+                        } else {
+                            kit::button_disabled(
+                                ("review-approve", ix),
+                                if row_busy { "Working…" } else { "Approve" },
+                                "another review action is running",
+                                &theme,
+                            )
+                        }),
+                )
+            })
             .into_any_element()
+    }
+
+    fn render_batch_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let theme = self.theme;
+        if let Some(batch) = &self.batch {
+            let running = !batch.finished;
+            let pct = if batch.total == 0 {
+                0.0
+            } else {
+                batch.done as f32 / batch.total as f32
+            };
+            let failures: Vec<AnyElement> = batch
+                .failed
+                .iter()
+                .take(3)
+                .map(|(id, msg)| {
+                    let short: String = self
+                        .items
+                        .iter()
+                        .find(|it| &it.id == id)
+                        .map(|it| crate::core::model::make_single_line_preview(&it.preview, 48))
+                        .unwrap_or_else(|| id.chars().take(8).collect());
+                    div()
+                        .text_size(px(12.))
+                        .text_color(theme.text_muted)
+                        .truncate()
+                        .child(SharedString::from(format!("{short}: {msg}")))
+                        .into_any_element()
+                })
+                .collect();
+            return Some(
+                div()
+                    .id("review-batch-progress")
+                    .role(Role::Status)
+                    .w_full()
+                    .px(px(20.))
+                    .pr(px(20.) + self.overlay_right_inset)
+                    .py(px(10.))
+                    .border_b_1()
+                    .border_color(theme.border_subtle)
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(12.))
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_features(tabular_nums())
+                                    .text_color(theme.text_primary)
+                                    .child(SharedString::from(batch.summary())),
+                            )
+                            .child(if running {
+                                kit::button("review-batch-stop", "Stop after this one", ButtonKind::Subtle, &theme)
+                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ReviewEvent::StopBatch)))
+                                    .into_any_element()
+                            } else {
+                                kit::button("review-batch-dismiss", "Done", ButtonKind::Subtle, &theme)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.batch = None;
+                                        cx.notify();
+                                    }))
+                                    .into_any_element()
+                            }),
+                    )
+                    .when(running, |col| {
+                        col.child(
+                            div()
+                                .w_full()
+                                .h(px(3.))
+                                .rounded(px(2.))
+                                .bg(theme.bg_elevated)
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .rounded(px(2.))
+                                        .w(gpui::relative(pct.clamp(0.0, 1.0)))
+                                        .bg(theme.text_secondary),
+                                ),
+                        )
+                    })
+                    .children(failures)
+                    .when(!running && !batch.failed.is_empty(), |col| {
+                        col.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(theme.text_muted)
+                                .child("Each memory is reviewed separately, so the ones that succeeded stay done. Failed ones are still in the queue."),
+                        )
+                    })
+                    .into_any_element(),
+            );
+        }
+        if !self.write_mode || self.items.is_empty() {
+            return None;
+        }
+        let n = self.checked.len();
+        let noun = if n == 1 { "memory" } else { "memories" };
+        let bar = div()
+            .id("review-batch-bar")
+            .w_full()
+            .px(px(20.))
+            .pr(px(20.) + self.overlay_right_inset)
+            .h(px(44.))
+            .border_b_1()
+            .border_color(theme.border_subtle)
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.));
+        let bar = match (n, self.armed_batch) {
+            (0, _) => bar
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(theme.text_muted)
+                        .child("Tick candidates or press Space to review several at once"),
+                )
+                .child(
+                    kit::button(
+                        "review-select-all",
+                        "Select all",
+                        ButtonKind::Subtle,
+                        &theme,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.checked.select_all(&this.items);
+                        cx.notify();
+                    })),
+                ),
+            (_, Some(approve)) => {
+                let question: SharedString = if approve {
+                    format!("Approve {n} {noun}? Agents will be able to recall them.").into()
+                } else {
+                    format!("Reject {n} {noun}? They are removed from the store.").into()
+                };
+                let ids = self.checked.ordered_ids(&self.items);
+                bar.child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_size(px(13.))
+                        .text_color(theme.text_primary)
+                        .truncate()
+                        .child(question),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(
+                            kit::button(
+                                "review-batch-cancel",
+                                "Cancel",
+                                ButtonKind::Secondary,
+                                &theme,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.armed_batch = None;
+                                cx.notify();
+                            })),
+                        )
+                        .child(
+                            kit::button(
+                                "review-batch-confirm",
+                                if approve {
+                                    format!("Approve {n}")
+                                } else {
+                                    format!("Reject {n}")
+                                },
+                                if approve {
+                                    ButtonKind::Primary
+                                } else {
+                                    ButtonKind::Danger
+                                },
+                                &theme,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.armed_batch = None;
+                                    this.checked.clear();
+                                    cx.emit(ReviewEvent::Batch {
+                                        ids: ids.clone(),
+                                        approve,
+                                    });
+                                    cx.notify();
+                                },
+                            )),
+                        ),
+                )
+            }
+            (_, None) => bar
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .text_size(px(13.))
+                        .font_features(tabular_nums())
+                        .text_color(theme.text_primary)
+                        .child(SharedString::from(format!("{n} selected")))
+                        .child(
+                            kit::button("review-batch-clear", "Clear", ButtonKind::Subtle, &theme)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.checked.clear();
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(
+                            kit::button(
+                                "review-batch-reject",
+                                format!("Reject {n}…"),
+                                ButtonKind::Danger,
+                                &theme,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.armed_batch = Some(false);
+                                cx.notify();
+                            })),
+                        )
+                        .child(
+                            kit::button(
+                                "review-batch-approve",
+                                format!("Approve {n}…"),
+                                ButtonKind::Secondary,
+                                &theme,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.armed_batch = Some(true);
+                                cx.notify();
+                            })),
+                        ),
+                ),
+        };
+        Some(bar.into_any_element())
     }
 }
 
@@ -498,31 +934,32 @@ impl Render for ReviewView {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         let scroll_handle = self.scroll_handle.clone();
-        let pending_label = review_header_subtitle(self.loading, self.items.len(), self.error.as_ref());
+        let pending_label =
+            review_header_subtitle(self.loading, self.items.len(), self.error.as_ref());
 
         let header = div()
             .id("review-page-header")
             .w_full()
             .min_w(px(0.))
-            .pt(px(22.))
-            .pb(px(14.))
+            .pt(px(18.))
+            .pb(px(12.))
             .pl(px(20.))
             .pr(px(20.) + self.overlay_right_inset)
             .border_b_1()
             .border_color(theme.border_subtle)
             .flex()
-            .flex_col()
-            .gap(px(3.))
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
             .child(
                 div()
-                    .w_full()
+                    .min_w(px(0.))
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(8.))
+                    .flex_col()
+                    .gap(px(3.))
                     .child(
                         div()
-                            .text_size(px(21.))
+                            .text_size(px(20.))
                             .line_height(px(26.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.text_primary)
@@ -530,45 +967,26 @@ impl Render for ReviewView {
                     )
                     .child(
                         div()
-                            .id("review-refresh-btn")
-                            .focusable()
-                            .role(Role::Button)
-                            .cursor_pointer()
-                            .h(px(28.))
-                            .px(px(10.))
-                            .rounded(px(6.))
-                            .bg(theme.bg_elevated)
-                            .border_1()
-                            .border_color(theme.border_subtle)
-                            .hover(move |s| s.bg(theme.bg_hover))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
                             .text_size(px(12.))
-                            .text_color(theme.text_primary)
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                cx.emit(ReviewEvent::Refresh);
-                            }))
-                            .child(render_ui_icon(UiIcon::Refresh, 13.0, theme.text_secondary))
-                            .child("Refresh"),
+                            .line_height(px(16.))
+                            .font_features(tabular_nums())
+                            .text_color(theme.text_muted)
+                            .child(SharedString::from(pending_label)),
                     ),
             )
             .child(
-                div()
-                    .text_size(px(13.))
-                    .line_height(px(18.))
-                    .font_features(tabular_nums())
-                    .text_color(theme.text_muted)
-                    .child(SharedString::from(pending_label)),
+                kit::button(
+                    "review-refresh-btn",
+                    "Refresh",
+                    ButtonKind::Secondary,
+                    &theme,
+                )
+                .on_click(cx.listener(|_, _, _, cx| {
+                    cx.emit(ReviewEvent::Refresh);
+                })),
             );
 
         let body: AnyElement = if let Some(err) = &self.error {
-            let cap_missing = err.is_capability_missing();
-            let accent_border = if cap_missing {
-                theme.warning
-            } else {
-                theme.danger
-            };
             div()
                 .flex_1()
                 .px(px(24.))
@@ -579,85 +997,56 @@ impl Render for ReviewView {
                     div()
                         .id("review-error-card")
                         .w_full()
-                        .max_w(px(480.))
-                        .p(px(20.))
-                        .rounded(px(8.))
-                        .bg(theme.bg_panel)
-                        .border_1()
-                        .border_color(accent_border)
+                        .max_w(px(460.))
                         .flex()
                         .flex_col()
                         .gap(px(12.))
                         .child(
                             div()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.))
-                                .child(render_ui_icon(UiIcon::Warning, 16.0, accent_border))
-                                .child(
-                                    div()
-                                        .text_size(px(15.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(theme.text_primary)
-                                        .child(err.title()),
-                                ),
+                                .text_size(px(15.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.text_primary)
+                                .child(err.title()),
                         )
-                        .child(
-                            div()
-                                .text_size(px(13.))
-                                .line_height(px(19.))
-                                .text_color(theme.text_secondary)
-                                .child(SharedString::from(err.message().to_string())),
-                        )
+                        .child(kit::notice(
+                            if err.is_capability_missing() {
+                                kit::NoticeKind::Warning
+                            } else {
+                                kit::NoticeKind::Danger
+                            },
+                            err.message().to_string(),
+                            &theme,
+                        ))
                         .child(
                             div()
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
                                 .child(
-                                    div()
-                                        .id("review-error-settings-btn")
-                                        .focusable()
-                                        .role(Role::Button)
-                                        .aria_label("Open Settings")
-                                        .cursor_pointer()
-                                        .h(px(32.))
-                                        .px(px(14.))
-                                        .rounded(px(6.))
-                                        .bg(theme.accent)
-                                        .hover(move |s| s.opacity(0.92))
-                                        .flex()
-                                        .items_center()
-                                        .text_size(px(13.))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(theme.primary_btn_fg)
-                                        .on_click(cx.listener(|_, _, _, cx| {
+                                    kit::button(
+                                        "review-error-settings-btn",
+                                        "Open Settings",
+                                        ButtonKind::Secondary,
+                                        &theme,
+                                    )
+                                    .on_click(cx.listener(
+                                        |_, _, _, cx| {
                                             cx.emit(ReviewEvent::OpenSettings);
-                                        }))
-                                        .child("Settings"),
+                                        },
+                                    )),
                                 )
                                 .child(
-                                    div()
-                                        .id("review-retry-btn")
-                                        .focusable()
-                                        .role(Role::Button)
-                                        .aria_label("Retry loading review queue")
-                                        .cursor_pointer()
-                                        .h(px(32.))
-                                        .px(px(14.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_elevated)
-                                        .border_1()
-                                        .border_color(theme.border_subtle)
-                                        .hover(move |s| s.bg(theme.bg_hover))
-                                        .flex()
-                                        .items_center()
-                                        .text_size(px(13.))
-                                        .text_color(theme.text_primary)
-                                        .on_click(cx.listener(|_, _, _, cx| {
+                                    kit::button(
+                                        "review-retry-btn",
+                                        "Retry",
+                                        ButtonKind::Subtle,
+                                        &theme,
+                                    )
+                                    .on_click(cx.listener(
+                                        |_, _, _, cx| {
                                             cx.emit(ReviewEvent::Refresh);
-                                        }))
-                                        .child("Retry"),
+                                        },
+                                    )),
                                 ),
                         ),
                 )
@@ -668,12 +1057,9 @@ impl Render for ReviewView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .text_color(theme.text_muted)
-                        .child("Loading review queue…"),
-                )
+                .text_size(px(13.))
+                .text_color(theme.text_muted)
+                .child("Loading the review queue…")
                 .into_any_element()
         } else if self.items.is_empty() {
             div()
@@ -683,36 +1069,15 @@ impl Render for ReviewView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(
-                    div()
-                        .max_w(px(420.))
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(10.))
-                        .child(
-                            div()
-                                .text_size(px(18.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.text_primary)
-                                .child(if self.write_mode {
-                                    "No memories waiting for review"
-                                } else {
-                                    "Nothing waiting for review"
-                                }),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(13.))
-                                .text_color(theme.text_muted)
-                                .text_center()
-                                .child(if self.write_mode {
-                                    "Agent-queued memories stored with review pending appear here for approval."
-                                } else {
-                                    "When an agent queues a memory for approval it appears here. Turn on editing to approve or reject."
-                                }),
-                        ),
-                )
+                .child(kit::empty_state(
+                    "Nothing waiting for review",
+                    if self.write_mode {
+                        "When an agent stores a memory that needs approval, it waits here until you approve or reject it."
+                    } else {
+                        "When an agent stores a memory that needs approval, it waits here. Turn on editing in Settings to approve or reject."
+                    },
+                    &theme,
+                ))
                 .into_any_element()
         } else {
             let rows: Vec<AnyElement> = self
@@ -733,12 +1098,10 @@ impl Render for ReviewView {
                         .size_full()
                         .overflow_y_scroll()
                         .track_scroll(&self.scroll_handle)
-                        .pl(px(20.))
-                        .pr(px(20.) + self.overlay_right_inset)
-                        .py(px(16.))
+                        .pl(px(8.))
+                        .pr(px(16.) + self.overlay_right_inset)
                         .flex()
                         .flex_col()
-                        .gap(px(10.))
                         .children(rows),
                 )
                 .child(render_vertical_scroll_overlay(
@@ -748,6 +1111,9 @@ impl Render for ReviewView {
                 ))
                 .into_any_element()
         };
+
+        let batch_bar = self.render_batch_bar(cx);
+        let gate = review_gate_notice(self.write_mode).filter(|_| !self.items.is_empty());
 
         div()
             .id("review-view-root")
@@ -759,49 +1125,37 @@ impl Render for ReviewView {
             .flex()
             .flex_col()
             .child(header)
-            .when_some(review_gate_notice(self.write_mode), |col, notice| {
+            .when_some(gate, |col, _| {
                 col.child(
                     div()
-                        .id("review-read-only-banner")
                         .w_full()
-                        .pl(px(20.))
+                        .px(px(20.))
                         .pr(px(20.) + self.overlay_right_inset)
-                        .py(px(8.))
-                        .bg(theme.bg_sunken)
+                        .h(px(44.))
                         .border_b_1()
                         .border_color(theme.border_subtle)
                         .flex()
                         .items_center()
                         .justify_between()
-                        .gap(px(10.))
+                        .gap(px(12.))
                         .child(
                             div()
+                                .flex_1()
+                                .min_w(px(0.))
                                 .text_size(px(12.))
-                                .text_color(theme.text_secondary)
-                                .child(notice),
+                                .text_color(theme.text_muted)
+                                .truncate()
+                                .child("View only. Turn on editing to approve or reject, one at a time or in batches."),
                         )
                         .child(
-                            div()
-                                .id("review-open-settings-btn")
-                                .focusable()
-                                .role(Role::Button)
-                                .cursor_pointer()
-                                .px(px(8.))
-                                .py(px(3.))
-                                .rounded(px(5.))
-                                .bg(theme.bg_elevated)
-                                .border_1()
-                                .border_color(theme.border_subtle)
-                                .hover(move |s| s.bg(theme.bg_hover))
-                                .text_size(px(11.))
-                                .text_color(theme.text_primary)
+                            kit::button("review-gate-settings", "Settings", ButtonKind::Subtle, &theme)
                                 .on_click(cx.listener(|_, _, _, cx| {
                                     cx.emit(ReviewEvent::OpenSettings);
-                                }))
-                                .child("Settings"),
+                                })),
                         ),
                 )
             })
+            .when_some(batch_bar, |col, bar| col.child(bar))
             .child(body)
     }
 }
@@ -859,6 +1213,86 @@ mod tests {
         assert_eq!(
             review_header_subtitle(false, 0, None),
             "0 memories waiting for approval"
+        );
+    }
+
+    #[test]
+    fn batch_selection_keeps_queue_order_and_prunes_after_reload() {
+        let mk = |id: &str| ReviewQueueItem {
+            id: id.to_string(),
+            short_id: id.to_string(),
+            preview: id.to_string(),
+            content: id.to_string(),
+            node_type: "fact".to_string(),
+            namespace: "default".to_string(),
+            created_at: 0,
+            confidence: None,
+            reason: None,
+        };
+        let items = vec![mk("a"), mk("b"), mk("c")];
+        let mut sel = ReviewSelection::default();
+        sel.toggle("c");
+        sel.toggle("a");
+        assert_eq!(sel.ordered_ids(&items), vec!["a", "c"]);
+        sel.toggle("c");
+        assert_eq!(sel.len(), 1);
+        sel.select_all(&items);
+        assert_eq!(sel.len(), 3);
+        sel.retain_present(&[mk("b")]);
+        assert_eq!(sel.ordered_ids(&items), vec!["b"]);
+        sel.clear();
+        assert!(sel.is_empty());
+    }
+
+    #[test]
+    fn batch_summary_reports_partial_results_honestly() {
+        let mut p = BatchProgress {
+            approve: true,
+            total: 5,
+            ..Default::default()
+        };
+        assert_eq!(p.summary(), "Approving 1 of 5…");
+        p.done = 3;
+        p.failed.push(("x".into(), "timeout".into()));
+        p.stopped = true;
+        p.finished = true;
+        assert_eq!(
+            p.summary(),
+            "Approved 2 of 5. 1 failed. Stopped; 2 not attempted."
+        );
+        let r = BatchProgress {
+            approve: false,
+            total: 2,
+            done: 2,
+            finished: true,
+            ..Default::default()
+        };
+        assert_eq!(r.summary(), "Rejected 2 of 2.");
+    }
+
+    #[test]
+    fn pending_reasons_read_as_sentences() {
+        let mut item = ReviewQueueItem {
+            id: "a".into(),
+            short_id: "a".into(),
+            preview: "p".into(),
+            content: "c".into(),
+            node_type: "fact".into(),
+            namespace: "default".into(),
+            created_at: 0,
+            confidence: None,
+            reason: Some("review:pending".into()),
+        };
+        assert_eq!(
+            pending_reason_text(&item),
+            "Queued by an agent for approval"
+        );
+        item.reason = Some("review: low evidence".into());
+        assert_eq!(pending_reason_text(&item), "low evidence");
+        item.reason = None;
+        assert_eq!(
+            pending_reason_text(&item),
+            "Queued by an agent for approval"
         );
     }
 }

@@ -18,8 +18,8 @@ use crate::core::settings::{AppSettings, ResolvedDbPath, ThemeMode, WindowBounds
 use crate::core::write_bridge::{BridgeError, WriteBridge};
 use crate::telemetry::{self, StartupTimeline, TelemetryHandle};
 use crate::ui::app::{LaunchOptions, MemOSApp, register_app_key_bindings};
-use crate::ui::views::ThemePalette;
 use crate::ui::views::TextInput;
+use crate::ui::views::ThemePalette;
 use crate::ui::views::detail::DetailView;
 use crate::ui::views::graph::GraphView;
 use crate::ui::views::list::MemoryListView;
@@ -510,6 +510,10 @@ pub fn run_self_test(
             last_view_mode: Some(ViewMode::Graph),
             last_saved_view_id: Some("all".to_string()),
             row_density: RowDensity::Compact,
+            recent_searches: vec!["tag:auth".to_string()],
+            pins: Default::default(),
+            recent_stores: Vec::new(),
+            large_reading_text: true,
             write_mode: true,
             writer_command: "memos mcp".to_string(),
         };
@@ -758,4 +762,3 @@ fn ensure_eq_msg<T: PartialEq + std::fmt::Debug>(
     }
     Ok(())
 }
-

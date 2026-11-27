@@ -2779,7 +2779,9 @@ impl ReadOnlyStore {
         let Some(predicate) = self.review_pending_predicate("n") else {
             return Ok(Vec::new());
         };
-        let id_expr = self.schema.node_col_expr("n", "id", "CAST(n.rowid AS TEXT)");
+        let id_expr = self
+            .schema
+            .node_col_expr("n", "id", "CAST(n.rowid AS TEXT)");
         let content_expr = self.schema.node_col_expr("n", "content", "''");
         let summary_expr = self.schema.node_col_expr("n", "summary", "''");
         let type_expr = self.schema.node_col_expr("n", "type", "'fact'");
@@ -3207,7 +3209,9 @@ impl ReadOnlyStore {
         Ok(count.max(0) as usize)
     }
 
-    fn load_context_items_by_ids(
+    /// Full-text context items for explicit ids (pinned context packs), in the
+    /// order given. Missing ids are skipped.
+    pub fn load_context_items_by_ids(
         &self,
         ids: &[String],
     ) -> Result<Vec<ContextPreviewItem>, DbError> {
@@ -3219,9 +3223,14 @@ impl ReadOnlyStore {
         let summary_expr = self.schema.node_col_expr("n", "summary", "''");
         let type_expr = self.schema.node_col_expr("n", "type", "'fact'");
         let ns_expr = self.schema.node_col_expr("n", "namespace", "'default'");
+        let tags_expr = self.schema.node_col_expr("n", "tags", "'[]'");
+        let updated_expr = self.schema.node_col_expr("n", "updated_at", "0");
+        let created_expr = self.schema.node_col_expr("n", "created_at", "0");
+        let prov_expr = self.schema.node_col_expr("n", "provenance", "''");
         let placeholders = vec!["?"; ids.len()].join(", ");
         let sql = format!(
-            "SELECT {id_expr}, {content_expr}, {summary_expr}, {type_expr}, {ns_expr} \
+            "SELECT {id_expr}, {content_expr}, {summary_expr}, {type_expr}, {ns_expr}, \
+             {tags_expr}, {updated_expr}, {created_expr}, {prov_expr} \
              FROM nodes n WHERE {id_expr} IN ({placeholders})"
         );
 
@@ -3241,15 +3250,31 @@ impl ReadOnlyStore {
             let summary = get_string(row, 2);
             let node_type = get_string_or(row, 3, "fact");
             let namespace = get_string_or(row, 4, "default");
+            let mut tags = parse_tags_json(&get_string_or(row, 5, "[]"));
+            if tags.is_empty() && self.schema.has_table("node_tags") {
+                tags = self.load_tags_for_node(&id).unwrap_or_default();
+            }
+            let updated_at = row.get::<_, Option<i64>>(6).ok().flatten().unwrap_or(0);
+            let created_at = row.get::<_, Option<i64>>(7).ok().flatten().unwrap_or(0);
+            let provenance = get_string(row, 8);
             let short_id = short_citation_id(&id);
             by_id.insert(
-                id,
+                id.clone(),
                 ContextPreviewItem {
+                    id,
                     short_id,
                     node_type,
                     namespace,
                     content,
                     summary,
+                    tags,
+                    updated_at: if updated_at > 0 {
+                        updated_at
+                    } else {
+                        created_at
+                    },
+                    created_at,
+                    provenance,
                 },
             );
         }
@@ -3737,12 +3762,7 @@ mod tests {
         assert_eq!(page1.items.len(), 2);
         assert!(page1.has_more);
         let page2 = store
-            .query_nodes_page(
-                &filter,
-                &HashSet::new(),
-                page1.next_cursor.as_ref(),
-                2,
-            )
+            .query_nodes_page(&filter, &HashSet::new(), page1.next_cursor.as_ref(), 2)
             .expect("page 2");
         assert_eq!(page2.items.len(), 1);
         assert!(!page2.has_more);

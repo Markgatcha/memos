@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -21,9 +22,24 @@ pub enum DetailEvent {
     SelectMemory(String),
     RevealInGraph(String),
     PreviewContext,
+    TogglePin,
+    CopyMarkdown,
+    /// Export the selection (opens the context pack on Selected, no budget).
+    Export,
+    /// Open the side-by-side comparison with the contradicting memory.
+    Compare(String),
     EditSelected,
     ForgetSelected,
     Close,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DetailMenuAction {
+    CopyText,
+    CopyCitation,
+    CopyMarkdown,
+    Export,
+    RevealInGraph,
 }
 
 pub fn is_sticky_header_visible(scroll_y: f32) -> bool {
@@ -41,6 +57,9 @@ pub struct DetailView {
     details_expanded: bool,
     write_mode: bool,
     scroll_handle: ScrollHandle,
+    pinned_ids: Arc<HashSet<String>>,
+    large_text: bool,
+    menu_open: bool,
     _copy_clear_task: Option<Task<()>>,
     theme: ThemePalette,
 }
@@ -60,6 +79,9 @@ impl DetailView {
             details_expanded: false,
             write_mode: false,
             scroll_handle: ScrollHandle::new(),
+            pinned_ids: Arc::new(HashSet::new()),
+            large_text: false,
+            menu_open: false,
             _copy_clear_task: None,
             theme,
         }
@@ -70,6 +92,18 @@ impl DetailView {
             self.write_mode = write_mode;
             cx.notify();
         }
+    }
+
+    pub fn set_large_text(&mut self, large: bool, cx: &mut Context<Self>) {
+        if self.large_text != large {
+            self.large_text = large;
+            cx.notify();
+        }
+    }
+
+    pub fn set_pinned_ids(&mut self, ids: Arc<HashSet<String>>, cx: &mut Context<Self>) {
+        self.pinned_ids = ids;
+        cx.notify();
     }
 
     pub fn set_theme(&mut self, theme: ThemePalette, cx: &mut Context<Self>) {
@@ -162,7 +196,9 @@ impl DetailView {
             .text_size(px(12.))
             .line_height(px(17.))
             .text_color(theme.text_primary)
-            .when(monospace, |el| el.font_family("Consolas"))
+            .when(monospace, |el| {
+                el.font_family(crate::ui::views::kit::MONO_FONT)
+            })
             .child(SharedString::from(wrapped.to_string()));
 
         div()
@@ -323,20 +359,50 @@ fn format_metadata_entries(raw: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// One-line summary under the inspector header: where the memory lives, how
+/// fresh it is, and how much it is trusted. Built once per render from
+/// already-loaded fields; no parsing.
+pub fn detail_meta_strip(detail: &MemoryDetail, now_ms: i64) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(5);
+    let ns = detail.namespace.trim();
+    if !ns.is_empty() {
+        parts.push(ns.to_string());
+    }
+    let updated = if detail.updated_at > 0 {
+        detail.updated_at
+    } else {
+        detail.created_at
+    };
+    if updated > 0 {
+        parts.push(format!(
+            "updated {} ago",
+            crate::core::model::format_relative_age(updated, now_ms)
+        ));
+    }
+    parts.push(format!(
+        "trust {:.0}%",
+        (detail.trust_score.clamp(0.0, 1.0) * 100.0).round()
+    ));
+    if !detail.contradictions.is_empty() {
+        let n = detail.contradictions.len();
+        parts.push(if n == 1 {
+            "1 conflict".to_string()
+        } else {
+            format!("{n} conflicts")
+        });
+    }
+    if detail.access_count > 0 {
+        parts.push(format!("read {}×", detail.access_count));
+    }
+    parts.join(" · ")
+}
+
 fn copy_icon(theme: ThemePalette) -> AnyElement {
     render_ui_icon(UiIcon::Copy, 16.0, theme.text_primary)
 }
 
 fn cite_icon(theme: ThemePalette) -> AnyElement {
     render_ui_icon(UiIcon::Citation, 16.0, theme.text_primary)
-}
-
-fn eye_icon(theme: ThemePalette) -> AnyElement {
-    render_ui_icon(UiIcon::EyeContext, 16.0, theme.text_primary)
-}
-
-fn graph_icon(theme: ThemePalette) -> AnyElement {
-    render_ui_icon(UiIcon::RevealInGraph, 16.0, theme.text_primary)
 }
 
 impl Render for DetailView {
@@ -427,8 +493,14 @@ impl Render for DetailView {
         let header_status: SharedString = if let Some(copied) = self.copied_label {
             copied.into()
         } else {
-            detail.node_type.clone().into()
+            format!("{} · {}", detail.node_type, detail.short_id).into()
         };
+        let is_pinned = self.pinned_ids.contains(&detail.id);
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let meta_strip: SharedString = detail_meta_strip(&detail, now_ms).into();
         let header_status_color = if self.copied_label.is_some() {
             theme.success
         } else {
@@ -441,43 +513,73 @@ impl Render for DetailView {
             .enumerate()
             .map(|(ix, c)| {
                 let peer_id = c.peer_id.clone();
-                let causal_aria: SharedString = format!(
+                let compare_id = c.peer_id.clone();
+                let open_aria: SharedString = format!(
                     "Open contradicting memory {}: {}",
                     c.peer_short_id, c.status
                 )
                 .into();
-                let header: SharedString = format!("{} · {}", c.status, c.peer_short_id).into();
+                let header: SharedString = format!(
+                    "{} · {}",
+                    crate::ui::views::brief::format_contradiction_status_label(&c.status),
+                    c.peer_short_id
+                )
+                .into();
                 let preview: SharedString = c.peer_preview.clone().into();
                 div()
-                    .id(("detail-contradiction", ix))
-                    .focusable()
-                    .cursor_pointer()
-                    .role(Role::Button)
-                    .aria_label(causal_aria)
                     .w_full()
-                    .p(px(10.))
-                    .rounded(px(6.))
-                    .bg(theme.danger_soft)
-                    .hover(move |s| s.bg(theme.bg_elevated))
-                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        cx.emit(DetailEvent::SelectMemory(peer_id.clone()));
-                    }))
+                    .min_w(px(0.))
+                    .pl(px(10.))
+                    .border_l_2()
+                    .border_color(theme.danger)
                     .flex()
                     .flex_col()
                     .gap(px(4.))
                     .child(
                         div()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.danger)
-                            .child(header),
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(theme.danger)
+                                    .child(header),
+                            )
+                            .child(
+                                crate::ui::views::kit::button(
+                                    ("detail-compare", ix),
+                                    "Compare",
+                                    crate::ui::views::kit::ButtonKind::Secondary,
+                                    &theme,
+                                )
+                                .h(px(24.))
+                                .text_size(px(12.))
+                                .on_click(cx.listener(
+                                    move |_, _, _, cx| {
+                                        cx.emit(DetailEvent::Compare(compare_id.clone()));
+                                    },
+                                )),
+                            ),
                     )
                     .child(
                         div()
+                            .id(("detail-contradiction", ix))
+                            .focusable()
+                            .cursor_pointer()
+                            .role(Role::Link)
+                            .aria_label(open_aria)
+                            .rounded(px(4.))
                             .text_size(px(13.))
                             .line_height(px(18.))
                             .text_color(theme.text_primary)
+                            .hover(move |s| s.text_color(theme.accent))
+                            .focus_visible(move |s| s.bg(theme.bg_hover))
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(DetailEvent::SelectMemory(peer_id.clone()));
+                            }))
                             .child(preview),
                     )
                     .into_any_element()
@@ -503,12 +605,15 @@ impl Render for DetailView {
                 div()
                     .id(("detail-edge", ix))
                     .focusable()
+                    .role(Role::Link)
                     .cursor_pointer()
                     .w_full()
-                    .p(px(10.))
+                    .min_w(px(0.))
+                    .px(px(8.))
+                    .py(px(6.))
+                    .mx(px(-8.))
                     .rounded(px(6.))
-                    .bg(theme.bg_elevated)
-                    .hover(move |s| s.bg(theme.bg_selected))
+                    .hover(move |s| s.bg(theme.bg_hover))
                     .focus_visible(move |s| s.border_1().border_color(theme.accent))
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(DetailEvent::SelectMemory(peer_id.clone()));
@@ -572,173 +677,174 @@ impl Render for DetailView {
                             .items_center()
                             .gap(px(4.))
                             .flex_shrink_0()
-                            .when(self.write_mode, |row| {
-                                row.child(
-                                    div()
-                                        .id("btn-edit-memory")
-                                        .focusable()
-                                        .role(Role::Button)
-                                        .aria_label("Edit memory")
-                                        .tooltip(tooltip_view(
-                                            "Edit (creates a new superseding version)",
-                                            theme,
-                                        ))
-                                        .cursor_pointer()
-                                        .h(px(26.))
-                                        .px(px(8.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_elevated)
-                                        .border_1()
-                                        .border_color(theme.border_subtle)
-                                        .hover(move |s| s.bg(theme.bg_selected))
-                                        .focus_visible(move |s| {
-                                            s.border_1().border_color(theme.accent)
-                                        })
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(5.))
-                                        .text_size(px(12.))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(theme.text_primary)
-                                        .child(render_ui_icon(
-                                            UiIcon::Edit,
-                                            13.0,
-                                            theme.text_secondary,
-                                        ))
-                                        .child("Edit")
-                                        .on_click(cx.listener(|_, _, _, cx| {
-                                            cx.emit(DetailEvent::EditSelected);
-                                        })),
-                                )
-                                .child(
-                                    div()
-                                        .id("btn-forget-memory")
-                                        .focusable()
-                                        .role(Role::Button)
-                                        .aria_label("Forget memory")
-                                        .tooltip(tooltip_view("Forget memory", theme))
-                                        .cursor_pointer()
-                                        .h(px(26.))
-                                        .px(px(8.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_elevated)
-                                        .border_1()
-                                        .border_color(theme.border_subtle)
-                                        .hover(move |s| s.bg(theme.danger_soft))
-                                        .focus_visible(move |s| {
-                                            s.border_1().border_color(theme.accent)
-                                        })
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(5.))
-                                        .text_size(px(12.))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(theme.danger)
-                                        .child(render_ui_icon(UiIcon::Forget, 13.0, theme.danger))
-                                        .child("Forget")
-                                        .on_click(cx.listener(|_, _, _, cx| {
-                                            cx.emit(DetailEvent::ForgetSelected);
-                                        })),
-                                )
-                            })
+                            .child(
+                                div()
+                                    .id("btn-pin-memory")
+                                    .focusable()
+                                    .role(Role::Button)
+                                    .aria_label(if is_pinned {
+                                        "Unpin from context pack"
+                                    } else {
+                                        "Pin to context pack"
+                                    })
+                                    .tooltip(tooltip_view(
+                                        if is_pinned {
+                                            "Pinned to the context pack (P)"
+                                        } else {
+                                            "Pin to the context pack (P)"
+                                        },
+                                        theme,
+                                    ))
+                                    .cursor_pointer()
+                                    .h(px(26.))
+                                    .px(px(8.))
+                                    .rounded(px(6.))
+                                    .border_1()
+                                    .border_color(if is_pinned {
+                                        theme.accent
+                                    } else {
+                                        gpui::transparent_black()
+                                    })
+                                    .hover(move |s| s.bg(theme.bg_elevated))
+                                    .focus_visible(move |s| s.border_color(theme.accent))
+                                    .flex()
+                                    .items_center()
+                                    .text_size(px(12.))
+                                    .text_color(if is_pinned {
+                                        theme.accent
+                                    } else {
+                                        theme.text_secondary
+                                    })
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(DetailEvent::TogglePin);
+                                    }))
+                                    .child(if is_pinned { "Pinned" } else { "Pin" }),
+                            )
                             .child(
                                 div()
                                     .id("btn-context-preview")
                                     .focusable()
                                     .role(Role::Button)
-                                    .aria_label("What the AI sees")
+                                    .aria_label("Context pack for this memory")
                                     .tooltip(tooltip_view(
-                                        "Exactly what your AI receives for this memory",
+                                        "What your AI receives for this memory (C)",
                                         theme,
                                     ))
                                     .cursor_pointer()
-                                    .h(px(28.))
+                                    .h(px(26.))
                                     .px(px(8.))
                                     .rounded(px(6.))
-                                    .bg(theme.accent_soft)
+                                    .border_1()
+                                    .border_color(gpui::transparent_black())
                                     .hover(move |s| s.bg(theme.bg_elevated))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
+                                    .focus_visible(move |s| s.border_color(theme.accent))
                                     .flex()
                                     .items_center()
-                                    .gap(px(5.))
                                     .text_size(px(12.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.accent_text)
+                                    .text_color(theme.text_secondary)
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(DetailEvent::PreviewContext);
                                     }))
-                                    .child(eye_icon(theme))
-                                    .child("AI view"),
+                                    .child("Context"),
                             )
-                            .child(
+                            .child({
+                                let menu_open = self.menu_open;
                                 div()
-                                    .id("btn-copy-content")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Copy content")
-                                    .tooltip(tooltip_view("Copy content", theme))
-                                    .cursor_pointer()
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            content_to_copy.clone(),
-                                        ));
-                                        this.flash_copied("Copied content", cx);
-                                    }))
-                                    .child(copy_icon(theme)),
-                            )
-                            .child(
-                                div()
-                                    .id("btn-copy-citation")
-                                    .focusable()
-                                    .cursor_pointer()
-                                    .role(Role::Button)
-                                    .aria_label("Copy citation")
-                                    .tooltip(tooltip_view("Copy citation", theme))
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            citation_to_copy.clone(),
-                                        ));
-                                        this.flash_copied("Copied citation", cx);
-                                    }))
-                                    .child(cite_icon(theme)),
-                            )
-                            .child(
-                                div()
-                                    .id("btn-reveal-graph")
-                                    .focusable()
-                                    .cursor_pointer()
-                                    .role(Role::Button)
-                                    .aria_label("Reveal in graph")
-                                    .tooltip(tooltip_view("Reveal in graph", theme))
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        cx.emit(DetailEvent::RevealInGraph(reveal_id.clone()));
-                                    }))
-                                    .child(graph_icon(theme)),
-                            )
+                                    .relative()
+                                    .child(
+                                        crate::ui::views::kit::icon_button(
+                                            "btn-detail-more",
+                                            UiIcon::Overflow,
+                                            "More actions",
+                                            &theme,
+                                        )
+                                        .aria_expanded(menu_open)
+                                        .when(!menu_open, |el| {
+                                            el.tooltip(tooltip_view("Copy, export, show in graph", theme))
+                                        })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.menu_open = !this.menu_open;
+                                            cx.notify();
+                                        })),
+                                    )
+                                    .when(menu_open, |wrap| {
+                                        let items: Vec<(&'static str, &'static str, DetailMenuAction)> = vec![
+                                            ("detail-menu-copy", "Copy text", DetailMenuAction::CopyText),
+                                            ("detail-menu-cite", "Copy citation", DetailMenuAction::CopyCitation),
+                                            ("detail-menu-md", "Copy as Markdown", DetailMenuAction::CopyMarkdown),
+                                            ("detail-menu-export", "Export…", DetailMenuAction::Export),
+                                            ("detail-menu-graph", "Show in graph", DetailMenuAction::RevealInGraph),
+                                        ];
+                                        let content = content_to_copy.clone();
+                                        let citation = citation_to_copy.clone();
+                                        let reveal = reveal_id.clone();
+                                        wrap.child(
+                                            gpui::deferred(
+                                                div()
+                                                    .id("detail-more-menu")
+                                                    .role(Role::Menu)
+                                                    .absolute()
+                                                    .top(px(32.))
+                                                    .right(px(0.))
+                                                    .w(px(184.))
+                                                    .p(px(4.))
+                                                    .rounded(px(8.))
+                                                    .bg(theme.glass_floating)
+                                                    .border_1()
+                                                    .border_color(theme.glass_border)
+                                                    .shadow_lg()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                                        this.menu_open = false;
+                                                        cx.notify();
+                                                    }))
+                                                    .children(items.into_iter().map(|(id, label, action)| {
+                                                        let content = content.clone();
+                                                        let citation = citation.clone();
+                                                        let reveal = reveal.clone();
+                                                        div()
+                                                            .id(id)
+                                                            .focusable()
+                                                            .role(Role::MenuItem)
+                                                            .aria_label(label)
+                                                            .h(px(28.))
+                                                            .px(px(8.))
+                                                            .rounded(px(5.))
+                                                            .cursor_pointer()
+                                                            .flex()
+                                                            .items_center()
+                                                            .text_size(px(13.))
+                                                            .text_color(theme.text_primary)
+                                                            .hover(move |s| s.bg(theme.bg_hover))
+                                                            .focus_visible(move |s| s.bg(theme.bg_hover))
+                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                                this.menu_open = false;
+                                                                match action {
+                                                                    DetailMenuAction::CopyText => {
+                                                                        cx.write_to_clipboard(ClipboardItem::new_string(content.clone()));
+                                                                        this.flash_copied("Copied text", cx);
+                                                                    }
+                                                                    DetailMenuAction::CopyCitation => {
+                                                                        cx.write_to_clipboard(ClipboardItem::new_string(citation.clone()));
+                                                                        this.flash_copied("Copied citation", cx);
+                                                                    }
+                                                                    DetailMenuAction::CopyMarkdown => cx.emit(DetailEvent::CopyMarkdown),
+                                                                    DetailMenuAction::Export => cx.emit(DetailEvent::Export),
+                                                                    DetailMenuAction::RevealInGraph => {
+                                                                        cx.emit(DetailEvent::RevealInGraph(reveal.clone()))
+                                                                    }
+                                                                }
+                                                                cx.notify();
+                                                            }))
+                                                            .child(label)
+                                                    })),
+                                            )
+                                            .with_priority(15),
+                                        )
+                                    })
+                            })
                             .child(
                                 div()
                                     .id("btn-close-detail")
@@ -765,6 +871,20 @@ impl Render for DetailView {
                                     })),
                             ),
                     ),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .px(px(16.))
+                    .py(px(6.))
+                    .border_b_1()
+                    .border_color(theme.border_subtle)
+                    .text_size(px(12.))
+                    .line_height(px(16.))
+                    .font_features(tabular_nums())
+                    .text_color(theme.text_muted)
+                    .truncate()
+                    .child(meta_strip),
             )
             .child({
                 let scroll_handle = self.scroll_handle.clone();
@@ -860,8 +980,8 @@ impl Render for DetailView {
                                     .id("detail-content-body")
                                     .w_full()
                                     .min_w(px(0.))
-                                    .text_size(px(15.))
-                                    .line_height(px(22.))
+                                    .text_size(px(if self.large_text { 17. } else { 15. }))
+                                    .line_height(px(if self.large_text { 26. } else { 23. }))
                                     .text_color(if is_empty_body {
                                         theme.text_muted
                                     } else {
@@ -900,6 +1020,48 @@ impl Render for DetailView {
                                         ),
                                 )
                             })
+                            .when(self.write_mode, |el| {
+                                el.child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .child(
+                                            crate::ui::views::kit::button(
+                                                "btn-edit-memory",
+                                                "Edit",
+                                                crate::ui::views::kit::ButtonKind::Secondary,
+                                                &theme,
+                                            )
+                                            .tooltip(tooltip_view(
+                                                "Saves a new version that supersedes this one",
+                                                theme,
+                                            ))
+                                            .on_click(
+                                                cx.listener(|_, _, _, cx| {
+                                                    cx.emit(DetailEvent::EditSelected);
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            crate::ui::views::kit::button(
+                                                "btn-forget-memory",
+                                                "Forget…",
+                                                crate::ui::views::kit::ButtonKind::Subtle,
+                                                &theme,
+                                            )
+                                            .tooltip(tooltip_view(
+                                                "Asks for confirmation first",
+                                                theme,
+                                            ))
+                                            .on_click(
+                                                cx.listener(|_, _, _, cx| {
+                                                    cx.emit(DetailEvent::ForgetSelected);
+                                                }),
+                                            ),
+                                        ),
+                                )
+                            })
                             .child(self.render_receipts_section(&detail, cx))
                             .when(!contradiction_rows.is_empty(), |el| {
                                 el.child(
@@ -913,7 +1075,7 @@ impl Render for DetailView {
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(theme.text_muted)
                                                 .child(format!(
-                                                    "Contradictions ({})",
+                                                    "Conflicts · {}",
                                                     contradiction_rows.len()
                                                 )),
                                         )
@@ -932,7 +1094,7 @@ impl Render for DetailView {
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(theme.text_muted)
                                                 .child(format!(
-                                                    "Connections ({})",
+                                                    "Linked memories · {}",
                                                     edge_rows.len()
                                                 )),
                                         )
@@ -1097,15 +1259,13 @@ impl Render for DetailView {
                                                                     .text_color(theme.text_muted)
                                                                     .child("Metadata"),
                                                             )
-                                                            .children(
-                                                                metadata_entries.iter().map(
-                                                                    |(k, v)| {
-                                                                        self.render_meta_row_text(
-                                                                            k, v, true,
-                                                                        )
-                                                                    },
-                                                                ),
-                                                            ),
+                                                            .children(metadata_entries.iter().map(
+                                                                |(k, v)| {
+                                                                    self.render_meta_row_text(
+                                                                        k, v, true,
+                                                                    )
+                                                                },
+                                                            )),
                                                     )
                                                 }),
                                         )
@@ -1169,7 +1329,7 @@ impl Render for DetailView {
                                         )
                                         .child(
                                             div()
-                                                .font_family("Consolas")
+                                                .font_family(crate::ui::views::kit::MONO_FONT)
                                                 .text_size(px(12.))
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(theme.text_primary)
@@ -1305,10 +1465,8 @@ impl DetailView {
             .id("detail-receipts")
             .w_full()
             .min_w(px(0.))
-            .p(px(12.))
-            .rounded(px(8.))
-            .bg(theme.bg_sunken)
-            .border_1()
+            .pt(px(12.))
+            .border_t_1()
             .border_color(theme.border_subtle)
             .flex()
             .flex_col()
@@ -1418,7 +1576,7 @@ impl DetailView {
                                 )
                                 .child(
                                     div()
-                                        .font_family("Consolas")
+                                        .font_family(crate::ui::views::kit::MONO_FONT)
                                         .text_size(px(11.))
                                         .text_color(theme.text_muted)
                                         .flex_shrink_0()
@@ -1465,7 +1623,7 @@ impl DetailView {
                                 )
                                 .child(
                                     div()
-                                        .font_family("Consolas")
+                                        .font_family(crate::ui::views::kit::MONO_FONT)
                                         .text_size(px(11.))
                                         .text_color(theme.text_muted)
                                         .flex_shrink_0()
@@ -1564,6 +1722,69 @@ mod tests {
         assert_eq!(causal.len(), 2);
         assert_eq!(causal[0].relation, "derived_from");
         assert_eq!(causal[1].relation, "supersedes");
+    }
+
+    #[test]
+    fn meta_strip_reads_namespace_age_trust_reads_and_conflicts() {
+        let now = 1_800_000_000_000_i64;
+        let mut d = sample_detail_for_strip();
+        d.updated_at = now - 3 * 3_600_000;
+        d.trust_score = 0.624;
+        d.access_count = 4;
+        assert_eq!(
+            detail_meta_strip(&d, now),
+            "auth · updated 3h ago · trust 62% · read 4×"
+        );
+        d.access_count = 0;
+        d.contradictions
+            .push(crate::core::model::LinkedContradiction {
+                id: "c".into(),
+                status: "unresolved".into(),
+                detected_at: now,
+                peer_id: "p".into(),
+                peer_short_id: "p".into(),
+                peer_preview: "x".into(),
+            });
+        assert_eq!(
+            detail_meta_strip(&d, now),
+            "auth · updated 3h ago · trust 62% · 1 conflict"
+        );
+    }
+
+    fn sample_detail_for_strip() -> MemoryDetail {
+        MemoryDetail {
+            id: "id".into(),
+            short_id: "abcd".into(),
+            citation_token: "[mem:abcd]".into(),
+            content: "c".into(),
+            summary: String::new(),
+            node_type: "fact".into(),
+            namespace: "auth".into(),
+            provenance: "user".into(),
+            source: "user_input".into(),
+            pool: "event".into(),
+            harness: String::new(),
+            importance: 0.5,
+            trust_score: 1.0,
+            confidence: None,
+            evidence_count: None,
+            created_at: 0,
+            updated_at: 0,
+            access_count: 0,
+            last_accessed: 0,
+            valid_from: None,
+            valid_to: None,
+            expires_at: None,
+            quarantined: false,
+            quarantined_at: None,
+            quarantine_reason: None,
+            tags: Vec::new(),
+            entities: Vec::new(),
+            metadata_json: "{}".into(),
+            edges: Vec::new(),
+            contradictions: Vec::new(),
+            receipts: Vec::new(),
+        }
     }
 
     #[test]

@@ -31,6 +31,22 @@ pub enum PaletteAction {
     OpenHealth,
     OpenDreamDiff,
     PreviewContext,
+    OpenContextPack,
+    TogglePinSelected,
+    CompareSelected,
+    QuickCapture,
+    /// Read-only stand-in for write commands: explains and opens Settings.
+    ExplainWriteMode,
+    ToggleInspector,
+    ToggleGraphFocus,
+    OpenSearchSyntax,
+    ManageSavedView(String),
+    ExportMemories,
+    ShowPinned,
+    ClearPins,
+    SwitchStore,
+    OpenRecentStore(std::path::PathBuf),
+    ToggleReadingSize,
     SaveCurrentView,
     DeleteSavedView(String),
     OpenShortcuts,
@@ -70,6 +86,8 @@ pub struct PaletteEntry {
     pub shortcut: Option<&'static str>,
     pub group: PaletteGroup,
     pub action: PaletteAction,
+    /// Extra search terms (synonyms) that are not shown.
+    pub keywords: &'static str,
     pub match_score: i32,
     pub title_matches: Vec<Range<usize>>,
 }
@@ -89,6 +107,8 @@ pub struct CommandPalette {
     memories_snapshot: Vec<MemoryListItem>,
     saved_views_snapshot: Vec<SavedView>,
     recent_titles: Vec<String>,
+    /// Other stores the user opened recently, offered as direct switches.
+    recent_stores: Vec<std::path::PathBuf>,
     write_mode: bool,
     has_selection: bool,
     theme: ThemePalette,
@@ -98,12 +118,8 @@ pub struct CommandPalette {
 impl CommandPalette {
     pub fn new(theme: ThemePalette, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| {
-            TextInput::new(
-                cx,
-                "Search memories or run a command",
-                theme,
-            )
-            .with_leading_icon(crate::ui::views::UiIcon::Search)
+            TextInput::new(cx, "Search memories or run a command", theme)
+                .with_leading_icon(crate::ui::views::UiIcon::Search)
         });
         let sub = cx.subscribe_in(&input, window, |this, _, event, _window, cx| match event {
             InputEvent::Changed(query) => {
@@ -150,6 +166,7 @@ impl CommandPalette {
             memories_snapshot: Vec::new(),
             saved_views_snapshot: Vec::new(),
             recent_titles: Vec::new(),
+            recent_stores: Vec::new(),
             write_mode: false,
             has_selection: false,
             theme,
@@ -172,6 +189,10 @@ impl CommandPalette {
             self.rebuild_entries(&q);
             cx.notify();
         }
+    }
+
+    pub fn set_recent_stores(&mut self, stores: Vec<std::path::PathBuf>) {
+        self.recent_stores = stores;
     }
 
     pub fn is_open(&self) -> bool {
@@ -232,6 +253,35 @@ impl CommandPalette {
             self.write_mode,
             self.has_selection,
         );
+        let trimmed = query.trim();
+        for path in &self.recent_stores {
+            let name = path
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let title = format!("Open store: {name}");
+            let matched = if trimmed.is_empty() {
+                Some((0, Vec::new()))
+            } else {
+                fuzzy_match_ranges(&title, trimmed)
+            };
+            if let Some((score, ranges)) = matched {
+                self.entries.push(PaletteEntry {
+                    title,
+                    subtitle: path
+                        .parent()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    badge: "Store",
+                    shortcut: None,
+                    group: PaletteGroup::Actions,
+                    action: PaletteAction::OpenRecentStore(path.clone()),
+                    keywords: "",
+                    match_score: score,
+                    title_matches: ranges,
+                });
+            }
+        }
         self.selected_ix = 0;
     }
 }
@@ -337,241 +387,85 @@ pub fn split_highlight_segments(text: &str, ranges: &[Range<usize>]) -> Vec<(Str
     out
 }
 
+/// `(title, subtitle, badge, shortcut, group, action, keywords)`.
+type StaticCommand = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    PaletteGroup,
+    PaletteAction,
+    &'static str,
+);
+
 fn static_palette_commands() -> Vec<PaletteEntry> {
-    let entries = vec![
-        (
-            "Switch View: List",
-            "Browse virtualized memories list",
-            "View",
-            Some("1"),
-            PaletteGroup::Views,
-            PaletteAction::SwitchView(ViewMode::List),
-        ),
-        (
-            "Switch View: Graph",
-            "Open interactive GPUI + lyon graph canvas",
-            "View",
-            Some("2"),
-            PaletteGroup::Views,
-            PaletteAction::SwitchView(ViewMode::Graph),
-        ),
-        (
-            "Open Today Brief",
-            "Jump to the daily brief across new, changed, expiring, and standing issues",
-            "Today",
-            None,
-            PaletteGroup::Views,
-            PaletteAction::OpenToday,
-        ),
-        (
-            "Open Review Queue",
-            "Inspect memories awaiting approval and review decisions",
-            "Review",
-            None,
-            PaletteGroup::Views,
-            PaletteAction::OpenReview,
-        ),
-        (
-            "Fit Graph View",
-            "Center and fit all visible graph nodes inside canvas bounds",
-            "Graph",
-            None,
-            PaletteGroup::Views,
-            PaletteAction::FitGraphView,
-        ),
-        (
-            "Graph Mode: Namespace",
-            "Cluster memories by namespace",
-            "Graph",
-            None,
-            PaletteGroup::Views,
-            PaletteAction::SwitchGraphMode(GraphMode::Namespace),
-        ),
-        (
-            "Graph Mode: Tag",
-            "Cluster memories by primary tag",
-            "Graph",
-            None,
-            PaletteGroup::Views,
-            PaletteAction::SwitchGraphMode(GraphMode::Tag),
-        ),
-        (
-            "Graph Mode: Entity",
-            "Group memories sharing extracted entities",
-            "Graph",
-            None,
-            PaletteGroup::Views,
-            PaletteAction::SwitchGraphMode(GraphMode::Entity),
-        ),
-        (
-            "Graph Mode: Temporal",
-            "Lay memories along chronological created_at timeline",
-            "Graph",
-            None,
-            PaletteGroup::Views,
-            PaletteAction::SwitchGraphMode(GraphMode::Temporal),
-        ),
-        (
-            "Graph Mode: Contradictions",
-            "Highlight contradicting memory pairs and edges",
-            "Graph",
-            None,
-            PaletteGroup::Views,
-            PaletteAction::SwitchGraphMode(GraphMode::Contradictions),
-        ),
-        (
-            "Clear Active Filters",
-            "Reset search query, health filters, and sidebar facets",
-            "Filter",
-            None,
-            PaletteGroup::Views,
-            PaletteAction::ClearFilters,
-        ),
-        (
-            "Save current view...",
-            "Save active query, facets, and sort order to the sidebar",
-            "View",
-            None,
-            PaletteGroup::Views,
-            PaletteAction::SaveCurrentView,
-        ),
-        (
-            "Preview context for current view",
-            "Inspect formatted read-only AI context payload and estimated tokens",
-            "Context",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::PreviewContext,
-        ),
-        (
-            "Store Health & What to Fix",
-            "View 0–100 health score, contradictions, stale items, and duplicates",
-            "Health",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::OpenHealth,
-        ),
-        (
-            "Dream Diff Timeline",
-            "Inspect read-only memory promotions, merges, decay, and contradictions over time",
-            "Timeline",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::OpenDreamDiff,
-        ),
-        (
-            "Copy Active Memory as Markdown",
-            "Format the selected memory heading, body, and citation as Markdown",
-            "Copy",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::CopyActiveMarkdown,
-        ),
-        (
-            "Toggle Color Theme",
-            "Switch between Dark and Light modes",
-            "UI",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::ToggleTheme,
-        ),
-        (
-            "Toggle Row Density",
-            "Switch list rows between Comfortable (64 px) and Compact (48 px)",
-            "UI",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::ToggleRowDensity,
-        ),
-        (
-            "Sort Memories: Recency",
-            "Newest updated memories first",
-            "Sort",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::SetSort(SortOrder::Recency),
-        ),
-        (
-            "Sort Memories: Importance",
-            "Highest importance score first",
-            "Sort",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::SetSort(SortOrder::Importance),
-        ),
-        (
-            "Sort Memories: Trust",
-            "Highest trust score first",
-            "Sort",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::SetSort(SortOrder::Trust),
-        ),
-        (
-            "Open Tools",
-            "Connect Claude Code, Codex, Cursor, Windsurf, Cline, OpenCode, Hermes, dsh & more",
-            "Tools",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::OpenHarnesses,
-        ),
-        (
-            "Optimize Store",
-            "Add missing read-path indexes — safe and repeatable",
-            "Database",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::OptimizeStore,
-        ),
-        (
-            "Open Settings",
-            "Appearance, default view, crash reporting, and logs",
-            "Settings",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::OpenSettings,
-        ),
-        (
-            "Keyboard Shortcuts",
-            "View navigation, graph, and modal keyboard shortcuts",
-            "Help",
-            Some("?"),
-            PaletteGroup::Actions,
-            PaletteAction::OpenShortcuts,
-        ),
-        (
-            "Open Logs Directory",
-            "Reveal rotating file logs and local crash reports",
-            "Diag",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::OpenLogs,
-        ),
-        (
-            "Copy Diagnostics",
-            "Copy non-sensitive versions, counts, and log paths to clipboard",
-            "Diag",
-            None,
-            PaletteGroup::Actions,
-            PaletteAction::CopyDiagnostics,
-        ),
+    use PaletteGroup::{Actions, Views};
+    #[rustfmt::skip]
+    let entries: Vec<StaticCommand> = vec![
+        ("Show list", "Browse memories as a list", "View", Some("Ctrl 1"), Views, PaletteAction::SwitchView(ViewMode::List), "switch view rows"),
+        ("Show graph", "See how memories connect", "View", Some("Ctrl 2"), Views, PaletteAction::SwitchView(ViewMode::Graph), "switch view network map"),
+        ("Open Today", "What changed in the last day, and standing issues", "Today", Some("Ctrl 3"), Views, PaletteAction::OpenToday, "brief daily digest"),
+        ("Open Review queue", "Memories agents proposed that are waiting for a decision", "Review", Some("Ctrl 4"), Views, PaletteAction::OpenReview, "approve reject pending candidates"),
+        ("Fit graph view", "Center and fit every visible node", "Graph", Some("0"), Views, PaletteAction::FitGraphView, "zoom reset"),
+        ("Focus on selected node", "Dim everything but the selection and its direct links", "Graph", Some("F"), Views, PaletteAction::ToggleGraphFocus, "neighborhood isolate"),
+        ("Graph by namespace", "Cluster memories by namespace", "Graph", None, Views, PaletteAction::SwitchGraphMode(GraphMode::Namespace), "mode ns"),
+        ("Graph by tag", "Cluster memories by their first tag", "Graph", None, Views, PaletteAction::SwitchGraphMode(GraphMode::Tag), "mode"),
+        ("Graph by entity", "Group memories that mention the same entity", "Graph", None, Views, PaletteAction::SwitchGraphMode(GraphMode::Entity), "mode people"),
+        ("Graph over time", "Lay memories out by creation date", "Graph", None, Views, PaletteAction::SwitchGraphMode(GraphMode::Temporal), "mode temporal timeline"),
+        ("Graph contradictions", "Show only memories that conflict, and their links", "Graph", None, Views, PaletteAction::SwitchGraphMode(GraphMode::Contradictions), "mode conflicts"),
+        ("Clear filters", "Reset search, scopes and facets", "Filter", None, Views, PaletteAction::ClearFilters, "reset all"),
+        ("Save current view…", "Keep this search, filter and sort in the sidebar", "View", None, Views, PaletteAction::SaveCurrentView, "bookmark"),
+        ("Search syntax", "Scopes like type:, tag:, ns:, is:stale and after:", "Search", Some("Ctrl /"), Views, PaletteAction::OpenSearchSyntax, "help tokens query builder filter"),
+        ("Build context pack", "Collect memories for an agent within a token budget", "Context", Some("C"), Actions, PaletteAction::OpenContextPack, "ai prompt copy export what the ai sees"),
+        ("Preview context for current view", "Context pack from the memories in this view", "Context", None, Actions, PaletteAction::PreviewContext, "ai sees prompt"),
+        ("Pin selected memory", "Add or remove the selection from the context pack", "Context", Some("P"), Actions, PaletteAction::TogglePinSelected, "unpin collect basket"),
+        ("Compare with conflicting memory", "Side by side with the memory it contradicts", "Conflict", Some("X"), Actions, PaletteAction::CompareSelected, "contradiction diff versus"),
+        ("Show or hide inspector", "Toggle the detail pane for the selection", "View", Some("I"), Actions, PaletteAction::ToggleInspector, "detail panel"),
+        ("Store health", "Cleanup suggestions: conflicts, stale and duplicate memories", "Health", None, Actions, PaletteAction::OpenHealth, "fix issues score what to fix"),
+        ("Dream diff timeline", "Promotions, merges, decay and conflicts over time", "Timeline", None, Actions, PaletteAction::OpenDreamDiff, "history activity"),
+        ("Export memories…", "Save the selection, pins or this view as Markdown, JSON or text", "Export", Some("Ctrl E"), Actions, PaletteAction::ExportMemories, "save file download backup markdown json"),
+        ("Show pinned memories", "Your hand-picked set, saved for this store", "Pins", None, Actions, PaletteAction::ShowPinned, "pins pinned basket collection"),
+        ("Clear all pins", "Unpin every memory in this store", "Pins", None, Actions, PaletteAction::ClearPins, "unpin remove reset"),
+        ("Switch store…", "Open another MemOS store in this window", "Store", None, Actions, PaletteAction::SwitchStore, "database file open recent change"),
+        ("Toggle reading size", "Larger text in the inspector and comparison", "Look", None, Actions, PaletteAction::ToggleReadingSize, "font text zoom bigger accessibility"),
+        ("Copy selected memory as Markdown", "Heading, metadata line, body and citation", "Copy", None, Actions, PaletteAction::CopyActiveMarkdown, "clipboard export"),
+        ("Toggle theme", "Switch between dark and light", "Look", None, Actions, PaletteAction::ToggleTheme, "color appearance dark light mode"),
+        ("Toggle row density", "Comfortable or compact list rows", "Look", None, Actions, PaletteAction::ToggleRowDensity, "compact spacing"),
+        ("Sort by recency", "Most recently updated first", "Sort", None, Actions, PaletteAction::SetSort(SortOrder::Recency), "newest order"),
+        ("Sort by importance", "Most important first", "Sort", None, Actions, PaletteAction::SetSort(SortOrder::Importance), "order"),
+        ("Sort by trust", "Most trusted first", "Sort", None, Actions, PaletteAction::SetSort(SortOrder::Trust), "order"),
+        ("Open tools", "Connect Claude Code, Codex, Cursor and other harnesses", "Tools", None, Actions, PaletteAction::OpenHarnesses, "harness integrations mcp"),
+        ("Optimize store", "Add missing read-path indexes. Safe to repeat", "Store", None, Actions, PaletteAction::OptimizeStore, "index speed database"),
+        ("Open settings", "Appearance, store, writing and privacy", "Settings", None, Actions, PaletteAction::OpenSettings, "preferences config write mode"),
+        ("Keyboard shortcuts", "Every key the workbench understands", "Help", Some("?"), Actions, PaletteAction::OpenShortcuts, "keys hotkeys"),
+        ("Open logs folder", "Rotating logs and local crash reports", "Diagnostics", None, Actions, PaletteAction::OpenLogs, "debug"),
+        ("Copy diagnostics", "Versions, counts and log paths. No memory text", "Diagnostics", None, Actions, PaletteAction::CopyDiagnostics, "support debug"),
     ];
 
     entries
         .into_iter()
         .map(
-            |(title, subtitle, badge, shortcut, group, action)| PaletteEntry {
+            |(title, subtitle, badge, shortcut, group, action, keywords)| PaletteEntry {
                 title: title.to_string(),
                 subtitle: subtitle.to_string(),
                 badge,
                 shortcut,
                 group,
                 action,
+                keywords,
                 match_score: 0,
                 title_matches: Vec::new(),
             },
         )
         .collect()
+}
+
+/// Every word of the query is a prefix of some keyword.
+fn keywords_match(keywords: &str, q_lower: &str) -> bool {
+    !keywords.is_empty()
+        && q_lower
+            .split_whitespace()
+            .all(|w| keywords.split_whitespace().any(|k| k.starts_with(w)))
 }
 
 /// Pure ranking/filter helper backing the Ctrl/Cmd+K command palette.
@@ -621,43 +515,73 @@ pub fn filter_palette_entries_full(
     let mut action_matches = Vec::new();
 
     let mut all_cmds = static_palette_commands();
+    all_cmds.insert(
+        0,
+        PaletteEntry {
+            title: "Capture memory".to_string(),
+            subtitle: if write_mode {
+                "Quick one-field capture with #tags, ns: and type:".to_string()
+            } else {
+                "Editing is off. Opens Settings to turn on write mode".to_string()
+            },
+            badge: "Write",
+            shortcut: Some(if cfg!(target_os = "macos") {
+                "⌘ N"
+            } else {
+                "Ctrl N"
+            }),
+            group: PaletteGroup::Actions,
+            action: if write_mode {
+                PaletteAction::QuickCapture
+            } else {
+                PaletteAction::ExplainWriteMode
+            },
+            keywords: "new add note quick store write",
+            match_score: 0,
+            title_matches: Vec::new(),
+        },
+    );
     if write_mode {
         all_cmds.insert(
-            0,
+            1,
             PaletteEntry {
-                title: "New memory".to_string(),
-                subtitle: "Store a new memory through the configured MCP writer".to_string(),
+                title: "New memory with all fields…".to_string(),
+                subtitle: "Full composer: type, pool, namespace, tags and context".to_string(),
                 badge: "Write",
                 shortcut: None,
                 group: PaletteGroup::Actions,
                 action: PaletteAction::NewMemory,
+                keywords: "create add write full composer",
                 match_score: 0,
                 title_matches: Vec::new(),
             },
         );
         if has_selection {
             all_cmds.insert(
-                1,
+                2,
                 PaletteEntry {
                     title: "Edit selected memory".to_string(),
-                    subtitle: "Create a new version superseding the active memory".to_string(),
+                    subtitle: "Saves a new version that supersedes this one".to_string(),
                     badge: "Write",
                     shortcut: None,
                     group: PaletteGroup::Actions,
                     action: PaletteAction::EditSelectedMemory,
+                    keywords: "change update supersede",
                     match_score: 0,
                     title_matches: Vec::new(),
                 },
             );
             all_cmds.insert(
-                2,
+                3,
                 PaletteEntry {
-                    title: "Forget selected memory".to_string(),
-                    subtitle: "Mark the active memory as forgotten through MCP".to_string(),
+                    title: "Forget selected memory…".to_string(),
+                    subtitle: "Asks for confirmation, then forgets it through the writer"
+                        .to_string(),
                     badge: "Write",
                     shortcut: None,
                     group: PaletteGroup::Actions,
                     action: PaletteAction::ForgetSelectedMemory,
+                    keywords: "delete remove",
                     match_score: 0,
                     title_matches: Vec::new(),
                 },
@@ -672,6 +596,18 @@ pub fn filter_palette_entries_full(
             shortcut: None,
             group: PaletteGroup::Views,
             action: PaletteAction::DeleteSavedView(view.id.clone()),
+            keywords: "remove",
+            match_score: 0,
+            title_matches: Vec::new(),
+        });
+        all_cmds.push(PaletteEntry {
+            title: format!("Rename or update view: {}", view.name),
+            subtitle: "Rename it, or replace its filters with the current ones".to_string(),
+            badge: "View",
+            shortcut: None,
+            group: PaletteGroup::Views,
+            action: PaletteAction::ManageSavedView(view.id.clone()),
+            keywords: "edit manage saved view",
             match_score: 0,
             title_matches: Vec::new(),
         });
@@ -700,7 +636,9 @@ pub fn filter_palette_entries_full(
         } else if let Some((sub_score, _)) = fuzzy_match_ranges(&cmd.subtitle, trimmed) {
             cmd.match_score = (sub_score / 2) - 10;
             target_vec.push(cmd);
-        } else if cmd.badge.to_ascii_lowercase().contains(&q_lower) {
+        } else if cmd.badge.to_ascii_lowercase().contains(&q_lower)
+            || keywords_match(cmd.keywords, &q_lower)
+        {
             cmd.match_score = 10;
             target_vec.push(cmd);
         }
@@ -723,6 +661,10 @@ pub fn filter_palette_entries_full(
                     } else if entry.badge.to_ascii_lowercase().contains(&q_lower) {
                         entry.title_matches.clear();
                         entry.match_score = 75;
+                        Some(entry)
+                    } else if keywords_match(entry.keywords, &q_lower) {
+                        entry.title_matches.clear();
+                        entry.match_score = 60;
                         Some(entry)
                     } else if entry.subtitle.to_ascii_lowercase().contains(&q_lower) {
                         entry.title_matches.clear();
@@ -760,6 +702,9 @@ pub fn filter_palette_entries_full(
                     | PaletteAction::FitGraphView
                     | PaletteAction::SaveCurrentView
                     | PaletteAction::DeleteSavedView(_)
+                    | PaletteAction::ManageSavedView(_)
+                    | PaletteAction::ToggleGraphFocus
+                    | PaletteAction::OpenSearchSyntax
                     | PaletteAction::ClearFilters => PaletteGroup::Views,
                     _ => PaletteGroup::Actions,
                 };
@@ -795,6 +740,7 @@ pub fn filter_palette_entries_full(
                 shortcut: None,
                 group: PaletteGroup::Navigate,
                 action: PaletteAction::JumpToMemory(item.id.clone()),
+                keywords: "",
                 match_score: 0,
                 title_matches: Vec::new(),
             });
@@ -820,6 +766,7 @@ pub fn filter_palette_entries_full(
                 shortcut: None,
                 group: PaletteGroup::Navigate,
                 action: PaletteAction::JumpToMemory(item.id.clone()),
+                keywords: "",
                 match_score: score,
                 title_matches: ranges,
             });
@@ -913,6 +860,7 @@ impl Render for CommandPalette {
             let title_for_recent = entry.clone();
             let subtitle: SharedString = entry.subtitle.clone().into();
             let segments = split_highlight_segments(&entry.title, &entry.title_matches);
+            let seg_count = segments.len();
 
             list_elements.push(
                 div()
@@ -968,23 +916,34 @@ impl Render for CommandPalette {
                                     } else {
                                         theme.text_secondary
                                     })
-                                    .children(segments.into_iter().map(|(seg, is_match)| {
-                                        div()
-                                            .flex_shrink_0()
-                                            .font_weight(if is_match {
-                                                FontWeight::BOLD
-                                            } else if selected {
-                                                FontWeight::MEDIUM
-                                            } else {
-                                                FontWeight::NORMAL
-                                            })
-                                            .text_color(if is_match || selected {
-                                                theme.text_primary
-                                            } else {
-                                                theme.text_secondary
-                                            })
-                                            .child(SharedString::from(seg))
-                                    })),
+                                    .children(segments.into_iter().enumerate().map(
+                                        |(seg_ix, (seg, is_match))| {
+                                            // Only the tail may shrink, so long titles end in "…".
+                                            let is_last = seg_ix + 1 == seg_count;
+                                            div()
+                                                .when(!is_last, |d| d.flex_shrink_0())
+                                                .when(is_last, |d| {
+                                                    d.flex_shrink(1.)
+                                                        .min_w(px(0.))
+                                                        .overflow_hidden()
+                                                        .whitespace_nowrap()
+                                                        .text_ellipsis()
+                                                })
+                                                .font_weight(if is_match {
+                                                    FontWeight::BOLD
+                                                } else if selected {
+                                                    FontWeight::MEDIUM
+                                                } else {
+                                                    FontWeight::NORMAL
+                                                })
+                                                .text_color(if is_match || selected {
+                                                    theme.text_primary
+                                                } else {
+                                                    theme.text_secondary
+                                                })
+                                                .child(SharedString::from(seg))
+                                        },
+                                    )),
                             )
                             .child(
                                 div()
@@ -1002,12 +961,16 @@ impl Render for CommandPalette {
                             .gap(px(6.))
                             .flex_shrink_0()
                             .when_some(entry.shortcut, |row, sc| row.child(keycap(sc, &theme)))
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(theme.text_muted)
-                                    .child(entry.badge),
-                            ),
+                            // Memory rows already read as memories; the badge only
+                            // labels commands.
+                            .when(entry.badge != "Memory", |row| {
+                                row.child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(theme.text_muted)
+                                        .child(entry.badge),
+                                )
+                            }),
                     )
                     .into_any_element(),
             );
@@ -1315,19 +1278,19 @@ mod tests {
 
     #[test]
     fn fuzzy_matcher_produces_byte_ranges_for_bold_highlights() {
-        let (score, ranges) = fuzzy_match_ranges("Fit Graph View", "fgv").expect("fuzzy match");
+        let (score, ranges) = fuzzy_match_ranges("Fit graph view", "fgv").expect("fuzzy match");
         assert!(score > 0);
         assert_eq!(ranges.len(), 3);
-        let segs = split_highlight_segments("Fit Graph View", &ranges);
+        let segs = split_highlight_segments("Fit graph view", &ranges);
         assert_eq!(segs[0], ("F".to_string(), true));
-        assert_eq!(segs[2], ("G".to_string(), true));
-        assert_eq!(segs[4], ("V".to_string(), true));
+        assert_eq!(segs[2], ("g".to_string(), true));
+        assert_eq!(segs[4], ("v".to_string(), true));
     }
 
     #[test]
     fn recent_commands_promote_to_recent_group() {
         let items = sample_items(2);
-        let recents = vec!["Store Health & What to Fix".to_string()];
+        let recents = vec!["Store health".to_string()];
         let out = filter_palette_entries_with_recents("", &items, &recents);
         assert_eq!(out[0].group, PaletteGroup::Recent);
         assert_eq!(out[0].action, PaletteAction::OpenHealth);
@@ -1336,16 +1299,13 @@ mod tests {
     #[test]
     fn recent_does_not_outrank_direct_title_match_for_theme_query() {
         let items = sample_items(5);
-        let recents = vec![
-            "Store Health & What to Fix".to_string(),
-            "Open Settings".to_string(),
-        ];
+        let recents = vec!["Store health".to_string(), "Open settings".to_string()];
         let out = filter_palette_entries_with_recents("theme", &items, &recents);
         assert!(!out.is_empty());
         assert_eq!(
             out[0].action,
             PaletteAction::ToggleTheme,
-            "expected Toggle Color Theme first for 'theme', got {:?}",
+            "expected Toggle theme first for 'theme', got {:?}",
             out.iter()
                 .map(|e| (&e.title, e.group, e.match_score))
                 .collect::<Vec<_>>()
@@ -1367,7 +1327,18 @@ mod tests {
             built_in: false,
         });
         let del = filter_palette_entries_with_views("delete saved view", &items, &[], &views);
-        assert_eq!(del.len(), 1);
+        assert_eq!(
+            del[0].action,
+            PaletteAction::DeleteSavedView("custom-auth".to_string())
+        );
+        let manage = filter_palette_entries_with_views("rename", &items, &[], &views);
+        assert!(
+            manage
+                .iter()
+                .any(|e| e.action == PaletteAction::ManageSavedView("custom-auth".to_string()))
+        );
+        let by_alias = filter_palette_entries_with_views("what the ai sees", &items, &[], &views);
+        assert_eq!(by_alias[0].action, PaletteAction::OpenContextPack);
         assert_eq!(
             del[0].action,
             PaletteAction::DeleteSavedView("custom-auth".to_string())

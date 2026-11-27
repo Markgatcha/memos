@@ -4,13 +4,14 @@ use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{
     AccessibleAction, AnyElement, App, AppContext, Bounds, ClipboardItem, Context, Entity,
-    FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, IntoElement, KeyBinding,
-    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Render, Role,
-    ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
-    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowOptions, actions, div,
-    point, prelude::FluentBuilder, px, rgb, rgba, size,
+    FocusHandle, Focusable, FontWeight, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent,
+    MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Render, Role, ScrollHandle,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TitlebarOptions, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions, actions, div, point,
+    prelude::FluentBuilder, px, rgba, size,
 };
 
+use crate::core::context_pack::PackSource;
 use crate::core::db::{
     DEFAULT_GRAPH_NODE_CAP, DbError, LIST_NEXT_PAGE_SIZE, ListCursor, ReadOnlyStore,
 };
@@ -23,10 +24,9 @@ use crate::core::health::{
     HealthPanelFilter, StoreHealthReport, StoreHealthStatus, assess_store_health, now_unix_ms,
 };
 use crate::core::model::{
-    AiContextPreview, BriefSnapshot, CONTEXT_PREVIEW_VIEW_LIMIT, ContextPreviewItem, DbOverview,
-    DreamDiffEntry, DreamDiffKind, GraphMode, MemoryListItem, QueryFilter, RowDensity, SortOrder,
-    ViewMode, WriterSchemaPreflight, describe_filter_target, extract_search_scopes,
-    format_ai_context_payload, format_timestamp_ms, remove_last_search_scope, remove_search_scope,
+    BriefSnapshot, DbOverview, DreamDiffEntry, DreamDiffKind, GraphMode, MemoryListItem,
+    QueryFilter, RowDensity, SortOrder, ViewMode, WriterSchemaPreflight, describe_filter_target,
+    extract_search_scopes, format_timestamp_ms, remove_last_search_scope, remove_search_scope,
     scopes_from_filter,
 };
 use crate::core::settings::{
@@ -43,6 +43,7 @@ use crate::ui::motion::prefers_reduced_motion;
 use crate::ui::views::brief::{BriefEvent, BriefSectionKind, BriefView};
 use crate::ui::views::detail::{DetailEvent, DetailView};
 use crate::ui::views::graph::{GraphEvent, GraphView};
+use crate::ui::views::kit;
 use crate::ui::views::list::{ListEvent, MemoryListView};
 use crate::ui::views::momo::render_momo_button;
 use crate::ui::views::onboarding::{
@@ -57,6 +58,16 @@ use crate::ui::views::{
     tabular_nums, tooltip_view,
 };
 
+mod capture_ui;
+mod compare_ui;
+mod dialogs_ui;
+mod health_ui;
+mod pack_ui;
+mod review_batch;
+mod search_ui;
+mod shortcuts;
+mod store_ui;
+
 const APP_BUILD_DATE: &str = env!("MEMOS_BUILD_DATE");
 
 actions!(
@@ -66,7 +77,12 @@ actions!(
         FocusSearch,
         SwitchToList,
         SwitchToGraph,
-        ToggleTheme
+        ToggleTheme,
+        QuickCapture,
+        OpenTodaySurface,
+        OpenReviewSurface,
+        ToggleSearchSyntax,
+        ExportMemories
     ]
 );
 
@@ -217,6 +233,11 @@ pub fn register_app_key_bindings(cx: &mut App) {
         KeyBinding::new("cmd-f", FocusSearch, None),
         KeyBinding::new("cmd-1", SwitchToList, None),
         KeyBinding::new("cmd-2", SwitchToGraph, None),
+        KeyBinding::new("cmd-3", OpenTodaySurface, None),
+        KeyBinding::new("cmd-4", OpenReviewSurface, None),
+        KeyBinding::new("cmd-n", QuickCapture, None),
+        KeyBinding::new("cmd-/", ToggleSearchSyntax, None),
+        KeyBinding::new("cmd-e", ExportMemories, None),
     ]);
 
     #[cfg(not(target_os = "macos"))]
@@ -225,6 +246,11 @@ pub fn register_app_key_bindings(cx: &mut App) {
         KeyBinding::new("ctrl-f", FocusSearch, None),
         KeyBinding::new("ctrl-1", SwitchToList, None),
         KeyBinding::new("ctrl-2", SwitchToGraph, None),
+        KeyBinding::new("ctrl-3", OpenTodaySurface, None),
+        KeyBinding::new("ctrl-4", OpenReviewSurface, None),
+        KeyBinding::new("ctrl-n", QuickCapture, None),
+        KeyBinding::new("ctrl-/", ToggleSearchSyntax, None),
+        KeyBinding::new("ctrl-e", ExportMemories, None),
     ]);
 }
 
@@ -366,10 +392,14 @@ pub struct MemOSApp {
     show_health_modal: bool,
     show_dream_diff_modal: bool,
     show_shortcuts_modal: bool,
-    show_context_modal: bool,
-    context_loading: bool,
-    context_preview: Option<AiContextPreview>,
-    context_scroll: ScrollHandle,
+    pack: pack_ui::PackState,
+    compare: compare_ui::CompareState,
+    capture: capture_ui::CaptureState,
+    search_ui: search_ui::SearchUiState,
+    review_batch: review_batch::ReviewBatchState,
+    store_switch: store_ui::StoreSwitchState,
+    graph_card: shortcuts::GraphCardState,
+    ingest_ui: dialogs_ui::IngestUiState,
     show_save_view_modal: bool,
     save_view_input: Entity<TextInput>,
     health_filter: HealthPanelFilter,
@@ -434,7 +464,6 @@ pub struct MemOSApp {
     _harness_detail_task: Option<Task<()>>,
     _diag_task: Option<Task<()>>,
     _dream_diff_task: Option<Task<()>>,
-    _context_task: Option<Task<()>>,
     _bounds_save_task: Option<Task<()>>,
     _notice_task: Option<Task<()>>,
     _celebrate_task: Option<Task<()>>,
@@ -477,8 +506,8 @@ impl MemOSApp {
             initial_filter.sort = settings.last_sort;
         }
         let search_input = cx.new(|cx| {
-            let mut input = TextInput::new(cx, "Search memories", theme)
-                .with_leading_icon(UiIcon::Search);
+            let mut input =
+                TextInput::new(cx, "Search memories", theme).with_leading_icon(UiIcon::Search);
             if !initial_filter.query.trim().is_empty() {
                 input.set_text(initial_filter.query.clone(), cx);
             }
@@ -547,6 +576,7 @@ impl MemOSApp {
         let detail_view = cx.new(|cx| {
             let mut v = DetailView::new(theme);
             v.set_write_mode(settings.write_mode, cx);
+            v.set_large_text(settings.large_reading_text, cx);
             v
         });
         let graph_view = cx.new(|cx| {
@@ -564,6 +594,15 @@ impl MemOSApp {
         let show_onboarding =
             !options.smoke_exit_after_first_frame && !settings.onboarding_completed;
         let mut subs = Vec::new();
+        let (capture, capture_sub) = capture_ui::CaptureState::new(theme, window, cx);
+        subs.push(capture_sub);
+        let (search_ui, search_ui_sub) = search_ui::SearchUiState::new(theme, window, cx);
+        subs.push(search_ui_sub);
+        subs.push(dialogs_ui::IngestUiState::subscribe(
+            &ingest_path_input,
+            window,
+            cx,
+        ));
 
         let onboarding = if show_onboarding {
             let ob = cx.new(|cx| {
@@ -575,7 +614,12 @@ impl MemOSApp {
                         settings,
                         selected_db,
                     } => {
-                        this.complete_onboarding(settings.clone(), selected_db.clone(), window, cx);
+                        this.complete_onboarding(
+                            (**settings).clone(),
+                            selected_db.clone(),
+                            window,
+                            cx,
+                        );
                     }
                     OnboardingEvent::ThemeChanged(mode) => {
                         this.settings.theme = *mode;
@@ -617,9 +661,10 @@ impl MemOSApp {
         subs.push(cx.subscribe_in(
             &brief_view,
             window,
-            |this, _, event, _window, cx| match event {
+            |this, _, event, window, cx| match event {
                 BriefEvent::OpenMemory(id) => this.select_memory(id.clone(), false, cx),
                 BriefEvent::ViewAll(section) => this.open_brief_section_in_list(*section, cx),
+                BriefEvent::Compare(a, b) => this.open_compare(a.clone(), b.clone(), window, cx),
                 BriefEvent::ViewAllMemories => {
                     this.active_surface = WorkspaceSurface::Memories;
                     this.sidebar.update(cx, |s, cx| {
@@ -640,6 +685,10 @@ impl MemOSApp {
                 ReviewEvent::Approve(id) => this.execute_review_decision(id.clone(), true, cx),
                 ReviewEvent::Reject(id) => this.execute_review_decision(id.clone(), false, cx),
                 ReviewEvent::OpenSettings => this.open_settings_modal(window, cx),
+                ReviewEvent::Batch { ids, approve } => {
+                    this.start_review_batch(ids.clone(), *approve, cx)
+                }
+                ReviewEvent::StopBatch => this.stop_review_batch(cx),
             },
         ));
 
@@ -678,7 +727,10 @@ impl MemOSApp {
             &list_view,
             window,
             |this, _, event, window, cx| match event {
-                ListEvent::Select(id) => this.select_memory(id.clone(), false, cx),
+                ListEvent::Select(id) => {
+                    this.record_recent_search();
+                    this.select_memory(id.clone(), false, cx)
+                }
                 ListEvent::Highlight(id) => {
                     this.selected_id = Some(id.clone());
                     this.graph_view
@@ -758,7 +810,20 @@ impl MemOSApp {
             |this, _, event, window, cx| match event {
                 DetailEvent::SelectMemory(id) => this.select_memory(id.clone(), true, cx),
                 DetailEvent::RevealInGraph(id) => this.reveal_in_graph(id.clone(), cx),
-                DetailEvent::PreviewContext => this.open_selected_context_modal(window, cx),
+                DetailEvent::PreviewContext => {
+                    this.open_context_pack(Some(PackSource::Selected), window, cx)
+                }
+                DetailEvent::TogglePin => this.toggle_pin_selected(cx),
+                DetailEvent::CopyMarkdown => this.copy_active_memory_markdown(cx),
+                DetailEvent::Export => {
+                    this.pack.budget = crate::core::context_pack::PackBudget::Unlimited;
+                    this.open_context_pack(Some(PackSource::Selected), window, cx);
+                }
+                DetailEvent::Compare(peer) => {
+                    if let Some(sel) = this.selected_id.clone() {
+                        this.open_compare(sel, peer.clone(), window, cx);
+                    }
+                }
                 DetailEvent::EditSelected => this.open_edit_memory_composer(window, cx),
                 DetailEvent::ForgetSelected => this.open_forget_confirm(cx),
                 DetailEvent::Close => this.close_detail(cx),
@@ -833,10 +898,9 @@ impl MemOSApp {
                     window.focus(&this.focus_handle, cx);
                     cx.notify();
                 }
-                InputEvent::Submit(_)
-                | InputEvent::MoveUp
-                | InputEvent::MoveDown
-                | InputEvent::BackspaceWhenEmpty => {}
+                // Ctrl/Cmd+Enter in the content field saves.
+                InputEvent::Submit(_) => this.submit_composer(window, cx),
+                InputEvent::MoveUp | InputEvent::MoveDown | InputEvent::BackspaceWhenEmpty => {}
             },
         ));
 
@@ -903,6 +967,7 @@ impl MemOSApp {
                 GraphEvent::SelectMemory(id) => {
                     this.select_memory(id.clone(), true, cx);
                 }
+                GraphEvent::Inspect(id) => this.inspect_from_graph(id.clone(), cx),
                 GraphEvent::Hover(hovered_id) => {
                     this.sync_linked_hover(HoverOrigin::Graph, hovered_id.clone(), cx);
                 }
@@ -989,10 +1054,14 @@ impl MemOSApp {
             show_health_modal: false,
             show_dream_diff_modal: false,
             show_shortcuts_modal: false,
-            show_context_modal: false,
-            context_loading: false,
-            context_preview: None,
-            context_scroll: ScrollHandle::new(),
+            pack: pack_ui::PackState::default(),
+            compare: compare_ui::CompareState::default(),
+            capture,
+            search_ui,
+            review_batch: review_batch::ReviewBatchState::default(),
+            store_switch: store_ui::StoreSwitchState::default(),
+            graph_card: shortcuts::GraphCardState::default(),
+            ingest_ui: dialogs_ui::IngestUiState::default(),
             show_save_view_modal: false,
             save_view_input,
             health_filter: HealthPanelFilter::All,
@@ -1052,7 +1121,6 @@ impl MemOSApp {
             _harness_detail_task: None,
             _diag_task: None,
             _dream_diff_task: None,
-            _context_task: None,
             _bounds_save_task: None,
             _notice_task: None,
             _celebrate_task: None,
@@ -1146,6 +1214,7 @@ impl MemOSApp {
     }
 
     fn spawn_initial_load(&mut self, cx: &mut Context<Self>) {
+        self.load_pins_for_store(cx);
         let db_path = self.resolved_db.path.clone();
         let filter = self.filter.clone();
         let timeline = self.timeline.clone();
@@ -1171,11 +1240,8 @@ impl MemOSApp {
                         fast_timeline.record_span("db_open", db_open_start, Instant::now());
                         fast_shared.with_store(&fast_db, |store| {
                             let (node_count, contradiction_ids) = store.load_list_fast_meta()?;
-                            let overview = DbOverview::fast(
-                                fast_db.clone(),
-                                node_count,
-                                contradiction_ids,
-                            );
+                            let overview =
+                                DbOverview::fast(fast_db.clone(), node_count, contradiction_ids);
                             let list_start = Instant::now();
                             let page = store.query_nodes_page(
                                 &fast_filter,
@@ -1188,7 +1254,9 @@ impl MemOSApp {
                             } else if fast_filter.is_empty() {
                                 node_count
                             } else {
-                                store.count_matching_nodes(&fast_filter)?.max(page.items.len())
+                                store
+                                    .count_matching_nodes(&fast_filter)?
+                                    .max(page.items.len())
                             };
                             Ok::<_, DbError>((overview, page, total_matching, list_start))
                         })
@@ -1237,8 +1305,11 @@ impl MemOSApp {
                             })
                         } else {
                             let list_start = Instant::now();
-                            let loaded =
-                                load_initial_snapshot_with_overview(store, overview.clone(), &filter)?;
+                            let loaded = load_initial_snapshot_with_overview(
+                                store,
+                                overview.clone(),
+                                &filter,
+                            )?;
                             Ok(PhaseTwo {
                                 overview,
                                 health: None,
@@ -1483,6 +1554,7 @@ impl MemOSApp {
         };
         self.filter.query = effective_query.clone();
         telemetry::set_active_query(&effective_query);
+        self.record_recent_search();
         self.apply_filter_update(cx);
     }
 
@@ -1514,103 +1586,102 @@ impl MemOSApp {
         let shared = self.shared_store.clone();
         self.list_view.update(cx, |l, cx| l.set_loading(true, cx));
 
-        self._search_task = Some(cx.spawn(async move |this, cx| {
-            if debounce_ms > 0 {
-                cx.background_executor()
-                    .timer(Duration::from_millis(debounce_ms))
-                    .await;
-            }
-
-            let started = Instant::now();
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    shared.with_store(&db_path, |store| {
-                        let overview = match overview_clone {
-                            Some(ov) => ov,
-                            None => store.load_overview()?,
-                        };
-                        let page = store.query_nodes_page(
-                            &filter,
-                            &overview.contradiction_node_ids,
-                            None,
-                            crate::core::db::LIST_PAGE_SIZE,
-                        )?;
-                        let total_matching = if !page.has_more {
-                            page.items.len()
-                        } else if filter.is_empty() {
-                            overview.node_count
-                        } else {
-                            store.count_matching_nodes(&filter)?.max(page.items.len())
-                        };
-                        Ok::<(DbOverview, crate::core::db::ListPageResult, usize), DbError>((
-                            overview,
-                            page,
-                            total_matching,
-                        ))
-                    })
-                })
-                .await;
-
-            let _ = this.update(cx, |app, cx| {
-                if !app.query_generation.is_current(request_gen) {
-                    return;
+        self._search_task =
+            Some(cx.spawn(async move |this, cx| {
+                if debounce_ms > 0 {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(debounce_ms))
+                        .await;
                 }
-                let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
-                match result {
-                    Ok((ov, page, total_matching)) => {
-                        tracing::info!(
-                            results = page.items.len(),
-                            total_matching,
-                            has_more = page.has_more,
-                            elapsed_ms,
-                            has_query = !app.filter.query.trim().is_empty(),
-                            "filtered query complete"
-                        );
-                        let total = ov.node_count;
-                        let selected_still_present = app
-                            .selected_id
-                            .as_deref()
-                            .is_some_and(|sel| page.items.iter().any(|it| it.id == sel));
-                        app.list_cursor = page.next_cursor;
-                        app.list_total_matching = total_matching;
-                        app.loading_next_page = false;
-                        app.list_view.update(cx, |list, cx| {
-                            list.set_items(
-                                page.items,
-                                !app.filter.is_empty(),
+
+                let started = Instant::now();
+                let result =
+                    cx.background_executor()
+                        .spawn(async move {
+                            shared.with_store(&db_path, |store| {
+                                let overview = match overview_clone {
+                                    Some(ov) => ov,
+                                    None => store.load_overview()?,
+                                };
+                                let page = store.query_nodes_page(
+                                    &filter,
+                                    &overview.contradiction_node_ids,
+                                    None,
+                                    crate::core::db::LIST_PAGE_SIZE,
+                                )?;
+                                let total_matching = if !page.has_more {
+                                    page.items.len()
+                                } else if filter.is_empty() {
+                                    overview.node_count
+                                } else {
+                                    store.count_matching_nodes(&filter)?.max(page.items.len())
+                                };
+                                Ok::<(DbOverview, crate::core::db::ListPageResult, usize), DbError>(
+                                    (overview, page, total_matching),
+                                )
+                            })
+                        })
+                        .await;
+
+                let _ = this.update(cx, |app, cx| {
+                    if !app.query_generation.is_current(request_gen) {
+                        return;
+                    }
+                    let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
+                    match result {
+                        Ok((ov, page, total_matching)) => {
+                            tracing::info!(
+                                results = page.items.len(),
                                 total_matching,
-                                total,
-                                page.has_more,
-                                cx,
+                                has_more = page.has_more,
+                                elapsed_ms,
+                                has_query = !app.filter.query.trim().is_empty(),
+                                "filtered query complete"
                             );
-                        });
-                        if !selected_still_present {
-                            app.selected_id = None;
-                            app.detail_open = false;
+                            let total = ov.node_count;
+                            let selected_still_present = app
+                                .selected_id
+                                .as_deref()
+                                .is_some_and(|sel| page.items.iter().any(|it| it.id == sel));
+                            app.list_cursor = page.next_cursor;
+                            app.list_total_matching = total_matching;
+                            app.loading_next_page = false;
+                            app.list_view.update(cx, |list, cx| {
+                                list.set_items(
+                                    page.items,
+                                    !app.filter.is_empty(),
+                                    total_matching,
+                                    total,
+                                    page.has_more,
+                                    cx,
+                                );
+                            });
+                            if !selected_still_present {
+                                app.selected_id = None;
+                                app.detail_open = false;
+                                app.list_view
+                                    .update(cx, |list, cx| list.set_selected(None, false, cx));
+                                app.graph_view
+                                    .update(cx, |graph, cx| graph.set_selected(None, false, cx));
+                                app.detail_view.update(cx, |d, cx| d.set_detail(None, cx));
+                            }
+                            if app.view_mode == ViewMode::Graph {
+                                app.spawn_graph_load(cx);
+                            }
+                        }
+                        Err(DbError::NotFound) => {
+                            let path_str = app.resolved_db.path.display().to_string();
                             app.list_view
-                                .update(cx, |list, cx| list.set_selected(None, false, cx));
-                            app.graph_view
-                                .update(cx, |graph, cx| graph.set_selected(None, false, cx));
-                            app.detail_view.update(cx, |d, cx| d.set_detail(None, cx));
+                                .update(cx, |list, cx| list.set_missing_db(Some(path_str), cx));
                         }
-                        if app.view_mode == ViewMode::Graph {
-                            app.spawn_graph_load(cx);
+                        Err(err) => {
+                            let msg = sanitize_db_error(&err, &app.resolved_db.path);
+                            app.list_view
+                                .update(cx, |list, cx| list.set_error(Some(msg), cx));
                         }
                     }
-                    Err(DbError::NotFound) => {
-                        let path_str = app.resolved_db.path.display().to_string();
-                        app.list_view
-                            .update(cx, |list, cx| list.set_missing_db(Some(path_str), cx));
-                    }
-                    Err(err) => {
-                        let msg = sanitize_db_error(&err, &app.resolved_db.path);
-                        app.list_view
-                            .update(cx, |list, cx| list.set_error(Some(msg), cx));
-                    }
-                }
-            });
-        }));
+                });
+            }));
     }
 
     fn spawn_next_page_load(&mut self, cx: &mut Context<Self>) {
@@ -1712,9 +1783,9 @@ impl MemOSApp {
         self._detail_task = Some(cx.spawn(async move |this, cx| {
             let detail_res = cx
                 .background_executor()
-                .spawn(async move {
-                    shared.with_store(&db_path, |store| store.load_node_detail(&id))
-                })
+                .spawn(
+                    async move { shared.with_store(&db_path, |store| store.load_node_detail(&id)) },
+                )
                 .await;
 
             let _ = this.update(cx, |app, cx| {
@@ -1943,6 +2014,14 @@ impl MemOSApp {
                 self.open_harnesses_modal(window, cx);
                 return;
             }
+            SidebarEvent::OpenPins => {
+                self.open_context_pack(Some(PackSource::Pinned), window, cx);
+                return;
+            }
+            SidebarEvent::ManageView(id) => {
+                self.open_manage_view(id, window, cx);
+                return;
+            }
             SidebarEvent::OpenHealth => {
                 self.open_health_modal(HealthPanelFilter::All, window, cx);
                 return;
@@ -1999,6 +2078,12 @@ impl MemOSApp {
         self.ingest_extensions_input
             .update(cx, |v, cx| v.set_theme(theme, cx));
         self.ingest_chunk_input
+            .update(cx, |v, cx| v.set_theme(theme, cx));
+        self.capture
+            .input
+            .update(cx, |v, cx| v.set_theme(theme, cx));
+        self.search_ui
+            .manage_input
             .update(cx, |v, cx| v.set_theme(theme, cx));
         self.sidebar.update(cx, |v, cx| v.set_theme(theme, cx));
         self.list_view.update(cx, |v, cx| v.set_theme(theme, cx));
@@ -2100,7 +2185,12 @@ impl MemOSApp {
         self.show_health_modal = false;
         self.show_dream_diff_modal = false;
         self.show_shortcuts_modal = false;
-        self.show_context_modal = false;
+        self.pack.open = false;
+        self.compare.open = false;
+        self.capture.open = false;
+        self.store_switch.open = false;
+        self.search_ui.manage_view_id = None;
+        self.search_ui.help_open = false;
         self.show_save_view_modal = false;
         self.show_composer_modal = false;
         self.forget_confirm_target = None;
@@ -2166,9 +2256,9 @@ impl MemOSApp {
         self._dream_diff_task = Some(cx.spawn(async move |this, cx| {
             let loaded = cx
                 .background_executor()
-                .spawn(async move {
-                    shared.with_store(&db_path, |store| store.load_dream_diff(120))
-                })
+                .spawn(
+                    async move { shared.with_store(&db_path, |store| store.load_dream_diff(120)) },
+                )
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.dream_diff_loading = false;
@@ -2192,80 +2282,6 @@ impl MemOSApp {
         self.show_shortcuts_modal = true;
         window.focus(&self.focus_handle, cx);
         cx.notify();
-    }
-
-    fn open_selected_context_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(detail) = self.detail_view.read(cx).detail().cloned() else {
-            return;
-        };
-        let item = ContextPreviewItem {
-            short_id: detail.short_id.to_string(),
-            node_type: detail.node_type,
-            namespace: detail.namespace,
-            content: detail.content,
-            summary: detail.summary,
-        };
-        let preview = format_ai_context_payload(&[item], 1, "Selected memory");
-        self.dismiss_popovers(PopoverOwner::None, cx);
-        self.close_all_modals();
-        self.context_loading = false;
-        self.context_preview = Some(preview);
-        self.context_scroll.set_offset(point(px(0.), px(0.)));
-        self.show_context_modal = true;
-        window.focus(&self.focus_handle, cx);
-        cx.notify();
-    }
-
-    fn open_view_context_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.dismiss_popovers(PopoverOwner::None, cx);
-        self.close_all_modals();
-        self.context_loading = true;
-        self.context_preview = None;
-        self.context_scroll.set_offset(point(px(0.), px(0.)));
-        self.show_context_modal = true;
-        window.focus(&self.focus_handle, cx);
-        cx.notify();
-
-        let db_path = self.resolved_db.path.clone();
-        let filter = self.filter.clone();
-        let overview_clone = self.overview.clone();
-        let shared = self.shared_store.clone();
-        self._context_task = Some(cx.spawn(async move |this, cx| {
-            let loaded = cx
-                .background_executor()
-                .spawn(async move {
-                    shared.with_store(&db_path, |store| {
-                        let overview = match overview_clone {
-                            Some(ov) => ov,
-                            None => store.load_overview()?,
-                        };
-                        let (items, total) = store.load_context_items_for_filter(
-                            &filter,
-                            &overview.contradiction_node_ids,
-                            CONTEXT_PREVIEW_VIEW_LIMIT,
-                        )?;
-                        let subtitle = describe_filter_target(&filter);
-                        Ok::<AiContextPreview, DbError>(format_ai_context_payload(
-                            &items, total, subtitle,
-                        ))
-                    })
-                })
-                .await;
-
-            let _ = this.update(cx, |app, cx| {
-                app.context_loading = false;
-                match loaded {
-                    Ok(preview) => {
-                        app.context_preview = Some(preview);
-                    }
-                    Err(err) => {
-                        app.show_context_modal = false;
-                        app.set_notice(sanitize_db_error(&err, &app.resolved_db.path), cx);
-                    }
-                }
-                cx.notify();
-            });
-        }));
     }
 
     fn open_save_view_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2409,7 +2425,11 @@ impl MemOSApp {
             || self.show_health_modal
             || self.show_dream_diff_modal
             || self.show_shortcuts_modal
-            || self.show_context_modal
+            || self.pack.open
+            || self.compare.open
+            || self.capture.open
+            || self.store_switch.open
+            || self.search_ui.manage_view_id.is_some()
             || self.show_save_view_modal
             || self.show_composer_modal
             || self.forget_confirm_target.is_some()
@@ -2510,6 +2530,7 @@ impl MemOSApp {
         total_matching: usize,
         cx: &mut Context<Self>,
     ) {
+        self.remember_current_store();
         if self.active_surface != WorkspaceSurface::Memories {
             return;
         }
@@ -2542,6 +2563,7 @@ impl MemOSApp {
         jump_to_id: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        self.remember_current_store();
         self.last_db_stamp = stamp;
         self.pending_live_reload = None;
         let total = loaded.overview.node_count;
@@ -2933,21 +2955,26 @@ impl MemOSApp {
     }
 
     fn open_forget_confirm(&mut self, cx: &mut Context<Self>) {
-        if !self.settings.write_mode {
-            self.set_notice("Enable write mode in Settings to forget memories", cx);
-            return;
-        }
         let Some(target_id) = self.selected_id.clone() else {
             self.set_notice("Select a memory first", cx);
             return;
         };
+        self.open_forget_confirm_for(target_id, cx);
+    }
+
+    fn open_forget_confirm_for(&mut self, target_id: String, cx: &mut Context<Self>) {
+        if !self.settings.write_mode {
+            self.set_notice("Enable write mode in Settings to forget memories", cx);
+            return;
+        }
 
         let detail_opt = self
             .detail_view
             .read(cx)
             .detail()
             .filter(|d| d.id == target_id)
-            .cloned();
+            .cloned()
+            .or_else(|| self.compare.detail_for(&target_id).cloned());
         let (short_id, raw_preview) = if let Some(d) = detail_opt {
             let text = if !d.summary.trim().is_empty() {
                 d.summary.clone()
@@ -3518,503 +3545,6 @@ impl MemOSApp {
         }));
     }
 
-    fn render_ingest_modal(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        let current_ns = self
-            .ingest_namespace_input
-            .read(cx)
-            .text()
-            .trim()
-            .to_string();
-
-        div()
-            .id("ingest-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(theme.glass_scrim)
-            .px(px(24.))
-            .py(px(20.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.show_ingest_modal = false;
-                    window.focus(&this.focus_handle, cx);
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .id("ingest-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Ingest documents")
-                    .w_full()
-                    .max_w(px(560.))
-                    .max_h(gpui::relative(0.9))
-                    .rounded(px(16.))
-                    .bg(theme.glass_panel)
-                    .border_1()
-                    .border_color(theme.glass_border)
-                    .shadow_lg()
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .px(px(16.))
-                            .py(px(12.))
-                            .border_b_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.))
-                                    .child(
-                                        div()
-                                            .text_size(px(15.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(theme.text_primary)
-                                            .child("Ingest files or folder"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.text_muted)
-                                            .child("Chunk and index Markdown, text, HTML, or PDF via memos_ingest."),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("ingest-close-x")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close ingest dialog")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_hover))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_ingest_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(UiIcon::Close, 14.0, theme.text_secondary)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .p(px(16.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(5.))
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("File or folder path"),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(8.))
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w(px(0.))
-                                                    .child(self.ingest_path_input.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .id("ingest-browse-btn")
-                                                    .focusable()
-                                                    .role(Role::Button)
-                                                    .cursor_pointer()
-                                                    .h(px(32.))
-                                                    .px(px(12.))
-                                                    .rounded(px(6.))
-                                                    .bg(theme.bg_elevated)
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .hover(move |s| s.bg(theme.bg_selected))
-                                                    .flex()
-                                                    .items_center()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_primary)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.browse_ingest_path(cx);
-                                                    }))
-                                                    .child("Browse…"),
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(5.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .gap(px(8.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Namespace"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap(px(6.))
-                                                    .children(["default", "documents"].into_iter().enumerate().map(|(ix, preset)| {
-                                                        let active = current_ns == preset;
-                                                        div()
-                                                            .id(("ingest-ns-preset", ix))
-                                                            .cursor_pointer()
-                                                            .px(px(7.))
-                                                            .py(px(2.))
-                                                            .rounded(px(4.))
-                                                            .bg(if active { theme.bg_selected } else { theme.bg_elevated })
-                                                            .border_1()
-                                                            .border_color(if active { theme.accent } else { theme.border_subtle })
-                                                            .text_size(px(11.))
-                                                            .text_color(theme.text_secondary)
-                                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                                this.ingest_namespace_input.update(cx, |i, cx| i.set_text(preset, cx));
-                                                            }))
-                                                            .child(preset)
-                                                    })),
-                                            ),
-                                    )
-                                    .child(self.ingest_namespace_input.clone()),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .flex()
-                                    .items_start()
-                                    .gap(px(10.))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(5.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Extensions"),
-                                            )
-                                            .child(self.ingest_extensions_input.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .w(px(150.))
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(5.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Chunk size (chars)"),
-                                            )
-                                            .child(self.ingest_chunk_input.clone()),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("ingest-recursive-toggle")
-                                    .focusable()
-                                    .role(Role::CheckBox)
-                                    .cursor_pointer()
-                                    .py(px(4.))
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.ingest_recursive = !this.ingest_recursive;
-                                        cx.notify();
-                                    }))
-                                    .child(
-                                        div()
-                                            .w(px(16.))
-                                            .h(px(16.))
-                                            .rounded(px(4.))
-                                            .border_1()
-                                            .border_color(if self.ingest_recursive {
-                                                theme.accent
-                                            } else {
-                                                theme.border_strong
-                                            })
-                                            .bg(if self.ingest_recursive {
-                                                theme.accent
-                                            } else {
-                                                theme.bg_sunken
-                                            })
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .when(self.ingest_recursive, |b| {
-                                                b.child(render_ui_icon(
-                                                    UiIcon::Check,
-                                                    11.0,
-                                                    theme.primary_btn_fg,
-                                                ))
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.text_primary)
-                                            .child("Include subfolders recursively"),
-                                    ),
-                            )
-                            .when(self.ingest_in_flight, |col| {
-                                col.child(
-                                    div()
-                                        .id("ingest-spinner")
-                                        .px(px(12.))
-                                        .py(px(8.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_sunken)
-                                        .border_1()
-                                        .border_color(theme.border_subtle)
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.))
-                                        .child(status_dot(theme.accent))
-                                        .child(
-                                            div()
-                                                .text_size(px(12.))
-                                                .text_color(theme.text_secondary)
-                                                .child("Ingesting files via memos_ingest…"),
-                                        ),
-                                )
-                            })
-                            .when_some(self.ingest_result.clone(), |col, counts| {
-                                let stats = [
-                                    ("Added", counts.added),
-                                    ("Updated", counts.updated),
-                                    ("Unchanged", counts.unchanged),
-                                    ("Removed", counts.removed),
-                                    ("Skipped", counts.skipped),
-                                    ("Errors", counts.errors),
-                                    ("Chunks", counts.chunks),
-                                ];
-                                col.child(
-                                    div()
-                                        .id("ingest-result-card")
-                                        .p(px(10.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_sunken)
-                                        .border_1()
-                                        .border_color(theme.success)
-                                        .flex()
-                                        .flex_wrap()
-                                        .gap(px(10.))
-                                        .children(stats.into_iter().map(|(label, val)| {
-                                            div()
-                                                .px(px(8.))
-                                                .py(px(4.))
-                                                .rounded(px(5.))
-                                                .bg(theme.bg_elevated)
-                                                .flex()
-                                                .items_center()
-                                                .gap(px(5.))
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(theme.text_muted)
-                                                        .child(label),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(12.))
-                                                        .font_weight(FontWeight::SEMIBOLD)
-                                                        .font_features(tabular_nums())
-                                                        .text_color(theme.text_primary)
-                                                        .child(SharedString::from(val.to_string())),
-                                                )
-                                        })),
-                                )
-                            })
-                            .when_some(self.ingest_error.clone(), |col, err| {
-                                col.child(
-                                    div()
-                                        .id("ingest-error-box")
-                                        .p(px(10.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_sunken)
-                                        .border_1()
-                                        .border_color(theme.danger)
-                                        .flex()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap(px(8.))
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .text_size(px(12.))
-                                                .text_color(theme.danger)
-                                                .child(SharedString::from(err)),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .flex()
-                                                .items_center()
-                                                .gap(px(6.))
-                                                .child(
-                                                    div()
-                                                        .id("ingest-settings-btn")
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label("Open Settings")
-                                                        .cursor_pointer()
-                                                        .h(px(26.))
-                                                        .px(px(10.))
-                                                        .rounded(px(5.))
-                                                        .bg(theme.bg_elevated)
-                                                        .border_1()
-                                                        .border_color(theme.border_subtle)
-                                                        .hover(move |s| s.bg(theme.bg_selected))
-                                                        .flex()
-                                                        .items_center()
-                                                        .text_size(px(12.))
-                                                        .text_color(theme.text_primary)
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.show_ingest_modal = false;
-                                                                this.open_settings_modal(
-                                                                    window, cx,
-                                                                );
-                                                            },
-                                                        ))
-                                                        .child("Settings"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .id("ingest-retry-btn")
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .cursor_pointer()
-                                                        .h(px(26.))
-                                                        .px(px(10.))
-                                                        .rounded(px(5.))
-                                                        .bg(theme.bg_elevated)
-                                                        .border_1()
-                                                        .border_color(theme.border_subtle)
-                                                        .hover(move |s| s.bg(theme.bg_selected))
-                                                        .flex()
-                                                        .items_center()
-                                                        .text_size(px(12.))
-                                                        .text_color(theme.text_primary)
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.submit_ingest(window, cx);
-                                                            },
-                                                        ))
-                                                        .child("Retry"),
-                                                ),
-                                        ),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .px(px(16.))
-                            .py(px(12.))
-                            .border_t_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .id("ingest-cancel-btn")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .cursor_pointer()
-                                    .h(px(32.))
-                                    .px(px(12.))
-                                    .rounded(px(6.))
-                                    .bg(theme.bg_elevated)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .hover(move |s| s.bg(theme.bg_selected))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .text_color(theme.text_primary)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_ingest_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(if self.ingest_result.is_some() {
-                                        "Done"
-                                    } else {
-                                        "Cancel"
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .id("ingest-submit-btn")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .cursor_pointer()
-                                    .h(px(32.))
-                                    .px(px(14.))
-                                    .rounded(px(6.))
-                                    .bg(theme.accent)
-                                    .hover(move |s| s.opacity(0.92))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.primary_btn_fg)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.submit_ingest(window, cx);
-                                    }))
-                                    .child(if self.ingest_in_flight {
-                                        "Ingesting…"
-                                    } else {
-                                        "Ingest"
-                                    }),
-                            ),
-                    ),
-            )
-            .into_any_element()
-    }
-
     fn render_write_error_banner(
         &self,
         banner: BridgeErrorBanner,
@@ -4065,7 +3595,7 @@ impl MemOSApp {
                             .bg(theme.bg_sunken)
                             .border_1()
                             .border_color(theme.border_subtle)
-                            .font_family("Consolas")
+                            .font_family(crate::ui::views::kit::MONO_FONT)
                             .text_size(px(11.))
                             .text_color(theme.text_muted)
                             .truncate()
@@ -4147,631 +3677,6 @@ impl MemOSApp {
                                 cx.notify();
                             }))
                             .child(render_ui_icon(UiIcon::Close, 13.0, theme.text_muted)),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_composer_modal(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        let is_edit = self.composer_editing_id.is_some();
-        let title = if is_edit { "Edit memory" } else { "New memory" };
-        let submit_label = if self.write_in_flight {
-            "Saving…"
-        } else if is_edit {
-            "Save new version"
-        } else {
-            "Save memory"
-        };
-
-        let mut type_choices = vec!["fact", "preference", "decision", "procedure", "note"];
-        if !type_choices.contains(&self.composer_type.as_str())
-            && !self.composer_type.trim().is_empty()
-        {
-            type_choices.push("custom");
-        }
-        let active_type = self.composer_type.clone();
-        let pool_choices = [
-            ("event", "event"),
-            ("note", "note"),
-            ("procedure", "procedure"),
-        ];
-
-        div()
-            .id("composer-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(theme.glass_scrim)
-            .px(px(24.))
-            .py(px(20.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.show_composer_modal = false;
-                    window.focus(&this.focus_handle, cx);
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .id("composer-dialog")
-                    .role(Role::Dialog)
-                    .aria_label(title)
-                    .w_full()
-                    .max_w(px(580.))
-                    .max_h(gpui::relative(0.9))
-                    .rounded(px(16.))
-                    .bg(theme.glass_panel)
-                    .border_1()
-                    .border_color(theme.glass_border)
-                    .shadow_lg()
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    })
-                    .child(
-                        div()
-                            .px(px(16.))
-                            .py(px(12.))
-                            .border_b_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.))
-                                    .child(
-                                        div()
-                                            .text_size(px(15.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(theme.text_primary)
-                                            .child(title),
-                                    )
-                                    .when(is_edit, |col| {
-                                        col.child(
-                                            div()
-                                                .text_size(px(12.))
-                                                .text_color(theme.text_muted)
-                                                .child("Creates a new version via memos_store and supersedes the original."),
-                                        )
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .id("close-composer-modal")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close composer")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_composer_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(
-                                        UiIcon::Close,
-                                        14.0,
-                                        theme.text_secondary,
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("composer-scroll-body")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .p(px(16.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(6.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Content"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_muted)
-                                                    .child("Required"),
-                                            ),
-                                    )
-                                    .child(self.composer_content_input.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(6.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Type"),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_wrap()
-                                            .gap(px(6.))
-                                            .children(type_choices.into_iter().enumerate().map(
-                                                |(ix, ty_key)| {
-                                                    let value = if ty_key == "custom" {
-                                                        active_type.clone()
-                                                    } else {
-                                                        ty_key.to_string()
-                                                    };
-                                                    let selected = self.composer_type == value;
-                                                    let val_for_click = value.clone();
-                                                    div()
-                                                        .id(("composer-type-pill", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!("Type {value}"))
-                                                        .aria_selected(selected)
-                                                        .h(px(28.))
-                                                        .px(px(10.))
-                                                        .rounded(px(6.))
-                                                        .cursor_pointer()
-                                                        .bg(if selected {
-                                                            theme.bg_selected
-                                                        } else {
-                                                            theme.bg_elevated
-                                                        })
-                                                        .border_1()
-                                                        .border_color(if selected {
-                                                            theme.accent
-                                                        } else {
-                                                            theme.border_subtle
-                                                        })
-                                                        .hover(move |s| s.bg(theme.bg_selected))
-                                                        .flex()
-                                                        .items_center()
-                                                        .text_size(px(12.))
-                                                        .text_color(if selected {
-                                                            theme.text_primary
-                                                        } else {
-                                                            theme.text_secondary
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
-                                                                this.composer_type =
-                                                                    val_for_click.clone();
-                                                                cx.notify();
-                                                            },
-                                                        ))
-                                                        .child(SharedString::from(value))
-                                                },
-                                            )),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(6.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Pool"),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_wrap()
-                                            .gap(px(6.))
-                                            .children(pool_choices.into_iter().enumerate().map(
-                                                |(ix, (pool_val, label))| {
-                                                    let selected = self.composer_pool == pool_val;
-                                                    div()
-                                                        .id(("composer-pool-pill", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!("Pool {label}"))
-                                                        .aria_selected(selected)
-                                                        .h(px(28.))
-                                                        .px(px(10.))
-                                                        .rounded(px(6.))
-                                                        .cursor_pointer()
-                                                        .bg(if selected {
-                                                            theme.bg_selected
-                                                        } else {
-                                                            theme.bg_elevated
-                                                        })
-                                                        .border_1()
-                                                        .border_color(if selected {
-                                                            theme.accent
-                                                        } else {
-                                                            theme.border_subtle
-                                                        })
-                                                        .hover(move |s| s.bg(theme.bg_selected))
-                                                        .flex()
-                                                        .items_center()
-                                                        .text_size(px(12.))
-                                                        .text_color(if selected {
-                                                            theme.text_primary
-                                                        } else {
-                                                            theme.text_secondary
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
-                                                                this.composer_pool =
-                                                                    pool_val.to_string();
-                                                                cx.notify();
-                                                            },
-                                                        ))
-                                                        .child(label)
-                                                },
-                                            )),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(6.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Tags"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_muted)
-                                                    .child("Comma-separated"),
-                                            ),
-                                    )
-                                    .child(self.composer_tags_input.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .when(self.compact_layout, |f| f.flex_col())
-                                    .gap(px(10.))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(6.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Namespace"),
-                                            )
-                                            .child(self.composer_namespace_input.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(6.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.text_primary)
-                                                    .child("Context"),
-                                            )
-                                            .child(self.composer_context_input.clone()),
-                                    ),
-                            )
-                            .when_some(self.composer_validation_error.clone(), |col, msg| {
-                                col.child(
-                                    div()
-                                        .px(px(10.))
-                                        .py(px(8.))
-                                        .rounded(px(6.))
-                                        .bg(theme.bg_app)
-                                        .border_1()
-                                        .border_color(theme.danger)
-                                        .text_size(px(12.))
-                                        .text_color(theme.danger)
-                                        .child(SharedString::from(msg)),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .px(px(16.))
-                            .py(px(12.))
-                            .bg(theme.bg_sunken)
-                            .border_t_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(theme.text_muted)
-                                    .child("via MemOS MCP"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .id("composer-cancel-btn")
-                                            .focusable()
-                                            .role(Role::Button)
-                                            .aria_label("Cancel")
-                                            .h(px(32.))
-                                            .px(px(12.))
-                                            .rounded(px(6.))
-                                            .cursor_pointer()
-                                            .bg(theme.bg_elevated)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .hover(move |s| s.bg(theme.bg_selected))
-                                            .flex()
-                                            .items_center()
-                                            .text_size(px(13.))
-                                            .text_color(theme.text_primary)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.show_composer_modal = false;
-                                                window.focus(&this.focus_handle, cx);
-                                                cx.notify();
-                                            }))
-                                            .child("Cancel"),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("composer-submit-btn")
-                                            .focusable()
-                                            .role(Role::Button)
-                                            .aria_label(submit_label)
-                                            .h(px(32.))
-                                            .px(px(14.))
-                                            .rounded(px(6.))
-                                            .cursor_pointer()
-                                            .bg(theme.accent)
-                                            .hover(move |s| s.opacity(0.92))
-                                            .flex()
-                                            .items_center()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.primary_btn_fg)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.submit_composer(window, cx);
-                                            }))
-                                            .child(submit_label),
-                                    ),
-                            ),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_forget_confirm_modal(
-        &self,
-        target: ForgetTarget,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = self.theme;
-        div()
-            .id("forget-confirm-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000088))
-            .px(px(24.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.forget_confirm_target = None;
-                    window.focus(&this.focus_handle, cx);
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .id("forget-confirm-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Forget memory")
-                    .w_full()
-                    .max_w(px(440.))
-                    .rounded(px(10.))
-                    .bg(theme.bg_panel)
-                    .border_1()
-                    .border_color(theme.border_subtle)
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    })
-                    .child(
-                        div()
-                            .h(px(44.))
-                            .px(px(16.))
-                            .border_b_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_size(px(15.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.text_primary)
-                                    .child("Forget memory?"),
-                            )
-                            .child(
-                                div()
-                                    .id("close-forget-modal")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close forget dialog")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.forget_confirm_target = None;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(
-                                        UiIcon::Close,
-                                        14.0,
-                                        theme.text_secondary,
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .p(px(16.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .line_height(px(18.))
-                                    .text_color(theme.text_secondary)
-                                    .child("Calls memos_forget through your configured MemOS MCP server and removes this memory from the active store."),
-                            )
-                            .child(
-                                div()
-                                    .p(px(10.))
-                                    .rounded(px(6.))
-                                    .bg(theme.bg_app)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(4.))
-                                    .child(
-                                        div()
-                                            .font_family("Consolas")
-                                            .text_size(px(11.))
-                                            .text_color(theme.text_muted)
-                                            .child(SharedString::from(format!(
-                                                "mem:{}",
-                                                target.short_id
-                                            ))),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .text_color(theme.text_primary)
-                                            .child(SharedString::from(target.preview)),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .px(px(16.))
-                            .py(px(12.))
-                            .bg(theme.bg_sunken)
-                            .border_t_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .id("forget-cancel-btn")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Cancel")
-                                    .h(px(30.))
-                                    .px(px(12.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .bg(theme.bg_elevated)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .hover(move |s| s.bg(theme.bg_selected))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .text_color(theme.text_primary)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.forget_confirm_target = None;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child("Cancel"),
-                            )
-                            .child(
-                                div()
-                                    .id("forget-confirm-btn")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Confirm forget memory")
-                                    .h(px(30.))
-                                    .px(px(14.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .bg(theme.danger)
-                                    .hover(move |s| s.opacity(0.92))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(rgb(0xFFFFFF))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.confirm_forget(window, cx);
-                                    }))
-                                    .child("Forget memory"),
-                            ),
                     ),
             )
             .into_any_element()
@@ -4872,10 +3777,28 @@ impl MemOSApp {
                 cx.notify();
                 return;
             }
-            if self.show_context_modal {
-                self.show_context_modal = false;
-                window.focus(&self.focus_handle, cx);
-                cx.notify();
+            if self.pack.open {
+                self.close_context_pack(window, cx);
+                return;
+            }
+            if self.compare.open {
+                self.close_compare(window, cx);
+                return;
+            }
+            if self.capture.open {
+                self.close_quick_capture(window, cx);
+                return;
+            }
+            if self.store_switch.open {
+                self.close_store_switcher(window, cx);
+                return;
+            }
+            if self.search_ui.manage_view_id.is_some() {
+                self.close_manage_view(window, cx);
+                return;
+            }
+            if self.search_ui.help_open {
+                self.close_search_help(cx);
                 return;
             }
             if self.show_shortcuts_modal {
@@ -4914,6 +3837,19 @@ impl MemOSApp {
                 self.dismiss_popovers(PopoverOwner::None, cx);
                 return;
             }
+            if self.active_surface == WorkspaceSurface::Memories
+                && self.view_mode == ViewMode::Graph
+                && !self.has_overlay_open(cx)
+                && self.graph_view.update(cx, |g, cx| g.exit_focus_mode(cx))
+            {
+                return;
+            }
+            if self.active_surface == WorkspaceSurface::Review
+                && !self.has_overlay_open(cx)
+                && self.review_view.update(cx, |r, cx| r.clear_checked(cx))
+            {
+                return;
+            }
             if self.detail_open && !self.has_overlay_open(cx) {
                 self.close_detail(cx);
                 return;
@@ -4944,6 +3880,9 @@ impl MemOSApp {
             window.focus(&h, cx);
             return;
         }
+        if !event.is_held && !mods.shift && self.handle_workbench_key(&key_lower, window, cx) {
+            return;
+        }
 
         match self.active_surface {
             WorkspaceSurface::Today => match key_lower.as_str() {
@@ -4965,6 +3904,10 @@ impl MemOSApp {
                     .update(cx, |r, cx| r.select_relative(-1, cx)),
                 "enter" if !event.is_held => {
                     self.review_view.update(cx, |r, cx| r.open_selected(cx));
+                }
+                "space" if !event.is_held => {
+                    self.review_view
+                        .update(cx, |r, cx| r.toggle_checked_selected(cx));
                 }
                 _ => {}
             },
@@ -5113,8 +4056,17 @@ impl MemOSApp {
         let saved_views = self.settings.saved_views.clone();
         let write_mode = self.settings.write_mode;
         let has_selection = self.selected_id.is_some();
+        let current = self.resolved_db.path.clone();
+        let stores: Vec<PathBuf> = self
+            .settings
+            .recent_stores
+            .iter()
+            .filter(|p| **p != current)
+            .cloned()
+            .collect();
         self.palette.update(cx, |p, cx| {
             p.set_write_context(write_mode, has_selection, cx);
+            p.set_recent_stores(stores);
             p.open(&items, &saved_views, window, cx);
         });
     }
@@ -5176,7 +4128,57 @@ impl MemOSApp {
             }
             PaletteAction::OpenHealth => self.open_health_modal(HealthPanelFilter::All, window, cx),
             PaletteAction::OpenDreamDiff => self.open_dream_diff_modal(window, cx),
-            PaletteAction::PreviewContext => self.open_view_context_modal(window, cx),
+            PaletteAction::PreviewContext => {
+                self.open_context_pack(Some(PackSource::CurrentView), window, cx)
+            }
+            PaletteAction::OpenContextPack => self.open_context_pack(None, window, cx),
+            PaletteAction::TogglePinSelected => self.toggle_pin_selected(cx),
+            PaletteAction::CompareSelected => {
+                self.compare_selected(window, cx);
+                return;
+            }
+            PaletteAction::QuickCapture => {
+                self.open_quick_capture(window, cx);
+                return;
+            }
+            PaletteAction::ExplainWriteMode => {
+                self.explain_write_mode(window, cx);
+                return;
+            }
+            PaletteAction::ToggleInspector => self.toggle_inspector(cx),
+            PaletteAction::ToggleGraphFocus => {
+                if self.view_mode != ViewMode::Graph
+                    || self.active_surface != WorkspaceSurface::Memories
+                {
+                    self.switch_view(ViewMode::Graph, cx);
+                }
+                self.graph_view.update(cx, |g, cx| g.toggle_focus_mode(cx));
+            }
+            PaletteAction::OpenSearchSyntax => {
+                self.toggle_search_help(window, cx);
+                return;
+            }
+            PaletteAction::ExportMemories => {
+                self.open_export(window, cx);
+                return;
+            }
+            PaletteAction::ShowPinned => {
+                self.open_context_pack(Some(PackSource::Pinned), window, cx);
+                return;
+            }
+            PaletteAction::ClearPins => self.clear_pins(cx),
+            PaletteAction::SwitchStore => {
+                self.open_store_switcher(window, cx);
+                return;
+            }
+            PaletteAction::OpenRecentStore(path) => {
+                self.try_switch_store(path, cx);
+            }
+            PaletteAction::ToggleReadingSize => self.toggle_reading_size(cx),
+            PaletteAction::ManageSavedView(id) => {
+                self.open_manage_view(id, window, cx);
+                return;
+            }
             PaletteAction::SaveCurrentView => {
                 self.open_save_view_modal(window, cx);
                 return;
@@ -6237,8 +5239,8 @@ impl MemOSApp {
         ];
         let default_views = [(ViewMode::List, "List"), (ViewMode::Graph, "Graph")];
         let densities = [
-            (RowDensity::Comfortable, "Comfortable (64 px)"),
-            (RowDensity::Compact, "Compact (48 px)"),
+            (RowDensity::Comfortable, "Comfortable"),
+            (RowDensity::Compact, "Compact"),
         ];
 
         div()
@@ -6269,7 +5271,7 @@ impl MemOSApp {
                     .max_w(gpui::relative(0.92))
                     .h(px(dialog_h))
                     .max_h(gpui::relative(0.92))
-                    .rounded(px(16.))
+                    .rounded(px(12.))
                     .bg(theme.glass_panel)
                     .border_1()
                     .border_color(theme.glass_border)
@@ -6283,7 +5285,7 @@ impl MemOSApp {
                     .child(
                         div()
                             .h(px(52.))
-                            .px(px(24.))
+                            .px(px(20.))
                             .border_b_1()
                             .border_color(theme.border_subtle)
                             .flex()
@@ -6291,7 +5293,7 @@ impl MemOSApp {
                             .justify_between()
                             .child(
                                 div()
-                                    .text_size(px(17.))
+                                    .text_size(px(16.))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.text_primary)
                                     .child("Settings"),
@@ -6340,207 +5342,122 @@ impl MemOSApp {
                                     .overflow_y_scroll()
                                     .overflow_x_hidden()
                                     .track_scroll(&self.settings_scroll)
-                                    .p(px(24.))
+                                    .p(px(20.))
                             .flex()
                             .flex_col()
                             .gap(px(16.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Appearance"),
-                                    )
-                                    .child(
-                                        div()
-                                            .p(px(3.))
-                                            .rounded(px(8.))
-                                            .bg(theme.bg_app)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(3.))
-                                            .children(themes.into_iter().enumerate().map(
-                                                |(ix, (mode, label))| {
-                                                    let active = self.settings.theme == mode;
-                                                    div()
-                                                        .id(("settings-theme", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!("Theme {label}"))
-                                                        .aria_selected(active)
-                                                        .cursor_pointer()
-                                                        .flex_1()
-                                                        .h(px(30.))
-                                                        .rounded(px(6.))
-                                                        .bg(if active {
-                                                            theme.bg_elevated
-                                                        } else {
-                                                            gpui::transparent_black()
-                                                        })
-                                                        .when(active, |el| {
-                                                            el.border_1().border_color(theme.border)
-                                                        })
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .text_size(px(13.))
-                                                        .text_color(if active {
-                                                            theme.text_primary
-                                                        } else {
-                                                            theme.text_muted
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            move |this, _, window, cx| {
-                                                                this.settings.theme = mode;
-                                                                this.settings.save_async();
-                                                                let resolved =
-                                                                    ThemePalette::resolve(
-                                                                        mode,
-                                                                        window.appearance(),
-                                                                    );
-                                                                this.apply_theme_palette(
-                                                                    resolved, window, cx,
-                                                                );
-                                                            },
-                                                        ))
-                                                        .child(label)
+                            .child(kit::field(
+                                "Appearance",
+                                None,
+                                kit::segmented(
+                                    "settings-theme",
+                                    "Appearance",
+                                    themes
+                                        .into_iter()
+                                        .map(|(mode, label)| {
+                                            let e = cx.entity();
+                                            kit::Segment::new(
+                                                label,
+                                                self.settings.theme == mode,
+                                                move |_, window, cx| {
+                                                    e.update(cx, |this, cx| {
+                                                        this.settings.theme = mode;
+                                                        this.settings.save_async();
+                                                        let resolved = ThemePalette::resolve(
+                                                            mode,
+                                                            window.appearance(),
+                                                        );
+                                                        this.apply_theme_palette(resolved, window, cx);
+                                                    })
                                                 },
-                                            )),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Default view"),
-                                    )
-                                    .child(
-                                        div()
-                                            .p(px(3.))
-                                            .rounded(px(8.))
-                                            .bg(theme.bg_app)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(3.))
-                                            .children(default_views.into_iter().enumerate().map(
-                                                |(ix, (vm, label))| {
-                                                    let active = self.settings.default_view == vm;
-                                                    div()
-                                                        .id(("settings-view", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!("Default view {label}"))
-                                                        .aria_selected(active)
-                                                        .cursor_pointer()
-                                                        .flex_1()
-                                                        .h(px(30.))
-                                                        .rounded(px(6.))
-                                                        .bg(if active {
-                                                            theme.bg_elevated
-                                                        } else {
-                                                            gpui::transparent_black()
-                                                        })
-                                                        .when(active, |el| {
-                                                            el.border_1().border_color(theme.border)
-                                                        })
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .text_size(px(13.))
-                                                        .text_color(if active {
-                                                            theme.text_primary
-                                                        } else {
-                                                            theme.text_muted
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
-                                                                this.settings.default_view = vm;
-                                                                this.settings.save_async();
-                                                                cx.notify();
-                                                            },
-                                                        ))
-                                                        .child(label)
+                                            )
+                                        })
+                                        .collect(),
+                                    &theme,
+                                ),
+                                &theme,
+                            ))
+                            .child(kit::field(
+                                "Default view",
+                                Some("used when the app starts".into()),
+                                kit::segmented(
+                                    "settings-default-view",
+                                    "Default view",
+                                    default_views
+                                        .into_iter()
+                                        .map(|(vm, label)| {
+                                            let e = cx.entity();
+                                            kit::Segment::new(
+                                                label,
+                                                self.settings.default_view == vm,
+                                                move |_, _, cx| {
+                                                    e.update(cx, |this, cx| {
+                                                        this.settings.default_view = vm;
+                                                        this.settings.save_async();
+                                                        cx.notify();
+                                                    })
                                                 },
-                                            )),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .child("Row density"),
-                                    )
-                                    .child(
-                                        div()
-                                            .p(px(3.))
-                                            .rounded(px(8.))
-                                            .bg(theme.bg_app)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(3.))
-                                            .children(densities.into_iter().enumerate().map(
-                                                |(ix, (density, label))| {
-                                                    let active = self.settings.row_density == density;
-                                                    div()
-                                                        .id(("settings-density", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!("Row density {label}"))
-                                                        .aria_selected(active)
-                                                        .cursor_pointer()
-                                                        .flex_1()
-                                                        .h(px(30.))
-                                                        .rounded(px(6.))
-                                                        .bg(if active {
-                                                            theme.bg_elevated
-                                                        } else {
-                                                            gpui::transparent_black()
-                                                        })
-                                                        .when(active, |el| {
-                                                            el.border_1().border_color(theme.border)
-                                                        })
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .text_size(px(13.))
-                                                        .text_color(if active {
-                                                            theme.text_primary
-                                                        } else {
-                                                            theme.text_muted
-                                                        })
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
-                                                                this.set_row_density(density, cx);
-                                                            },
-                                                        ))
-                                                        .child(label)
+                                            )
+                                        })
+                                        .collect(),
+                                    &theme,
+                                ),
+                                &theme,
+                            ))
+                            .child(kit::field(
+                                "Row density",
+                                None,
+                                kit::segmented(
+                                    "settings-density",
+                                    "Row density",
+                                    densities
+                                        .into_iter()
+                                        .map(|(density, label)| {
+                                            let e = cx.entity();
+                                            kit::Segment::new(
+                                                label,
+                                                self.settings.row_density == density,
+                                                move |_, _, cx| {
+                                                    e.update(cx, |this, cx| this.set_row_density(density, cx))
                                                 },
-                                            )),
-                                    ),
-                            )
+                                            )
+                                        })
+                                        .collect(),
+                                    &theme,
+                                ),
+                                &theme,
+                            ))
+                            .child(kit::field(
+                                "Reading size",
+                                Some("inspector and comparison text".into()),
+                                {
+                                    let e_std = cx.entity();
+                                    let e_lg = cx.entity();
+                                    let large = self.settings.large_reading_text;
+                                    kit::segmented(
+                                        "settings-reading-size",
+                                        "Reading size",
+                                        vec![
+                                            kit::Segment::new("Standard", !large, move |_, _, cx| {
+                                                e_std.update(cx, |app, cx| {
+                                                    if app.settings.large_reading_text {
+                                                        app.toggle_reading_size(cx);
+                                                    }
+                                                })
+                                            }),
+                                            kit::Segment::new("Large", large, move |_, _, cx| {
+                                                e_lg.update(cx, |app, cx| {
+                                                    if !app.settings.large_reading_text {
+                                                        app.toggle_reading_size(cx);
+                                                    }
+                                                })
+                                            }),
+                                        ],
+                                        &theme,
+                                    )
+                                },
+                                &theme,
+                            ))
                             .child(
                                 div()
                                     .border_t_1()
@@ -6900,7 +5817,7 @@ impl MemOSApp {
                                                     .text_size(px(13.))
                                                     .font_weight(FontWeight::MEDIUM)
                                                     .text_color(theme.text_primary)
-                                                    .child("Database"),
+                                                    .child("Memory store"),
                                             )
                                             .child(
                                                 div()
@@ -6923,50 +5840,38 @@ impl MemOSApp {
                                             .justify_start()
                                             .gap(px(8.))
                                             .child(
-                                                div()
-                                                    .id("settings-reveal-db")
-                                                    .focusable()
-                                                    .role(Role::Button)
-                                                    .aria_label("Reveal database")
-                                                    .h(px(28.))
-                                                    .px(px(10.))
-                                                    .rounded(px(6.))
-                                                    .cursor_pointer()
-                                                    .bg(theme.bg_elevated)
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .hover(move |s| s.bg(theme.bg_selected))
-                                                    .flex()
-                                                    .items_center()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_primary)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.reveal_database_file(cx);
-                                                    }))
-                                                    .child("Reveal database"),
+                                                kit::button(
+                                                    "settings-switch-store",
+                                                    "Switch store…",
+                                                    kit::ButtonKind::Secondary,
+                                                    &theme,
+                                                )
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.flush_dirty_settings();
+                                                    this.open_store_switcher(window, cx);
+                                                })),
                                             )
                                             .child(
-                                                div()
-                                                    .id("settings-copy-db-path")
-                                                    .focusable()
-                                                    .role(Role::Button)
-                                                    .aria_label("Copy database path")
-                                                    .h(px(28.))
-                                                    .px(px(10.))
-                                                    .rounded(px(6.))
-                                                    .cursor_pointer()
-                                                    .bg(gpui::transparent_black())
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                                    .flex()
-                                                    .items_center()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_secondary)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.copy_database_path(cx);
-                                                    }))
-                                                    .child("Copy path"),
+                                                kit::button(
+                                                    "settings-reveal-db",
+                                                    "Reveal",
+                                                    kit::ButtonKind::Subtle,
+                                                    &theme,
+                                                )
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.reveal_database_file(cx);
+                                                })),
+                                            )
+                                            .child(
+                                                kit::button(
+                                                    "settings-copy-db-path",
+                                                    "Copy path",
+                                                    kit::ButtonKind::Subtle,
+                                                    &theme,
+                                                )
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.copy_database_path(cx);
+                                                })),
                                             )
                                             .child(
                                                 div()
@@ -7120,572 +6025,6 @@ impl MemOSApp {
             g.set_active_visible(false, cx);
         });
         self.mark_custom_filter_changed(cx);
-    }
-
-    fn render_health_modal(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        let report = self.health_report.as_ref();
-        let status = self.health_status;
-        let score = report.map(|h| h.score).unwrap_or(0);
-        let dot_color = match status {
-            StoreHealthStatus::Healthy | StoreHealthStatus::Many => theme.success,
-            StoreHealthStatus::Contradictions => theme.danger,
-            StoreHealthStatus::Stale => theme.warning,
-            StoreHealthStatus::Empty => theme.text_muted,
-        };
-        let score_color = if status == StoreHealthStatus::Empty {
-            theme.text_muted
-        } else if score >= 80 {
-            theme.success
-        } else if score >= 50 {
-            theme.warning
-        } else {
-            theme.danger
-        };
-
-        let filter = self.health_filter;
-        let filter_pills = HealthPanelFilter::ALL
-            .into_iter()
-            .enumerate()
-            .map(|(ix, f)| {
-                let active = filter == f;
-                div()
-                    .id(("health-filter-pill", ix))
-                    .focusable()
-                    .cursor_pointer()
-                    .h(px(28.))
-                    .px(px(10.))
-                    .rounded(px(6.))
-                    .bg(if active {
-                        theme.bg_selected
-                    } else {
-                        theme.bg_elevated
-                    })
-                    .border_1()
-                    .border_color(if active {
-                        theme.accent
-                    } else {
-                        theme.border_subtle
-                    })
-                    .hover(move |s| s.bg(theme.bg_selected))
-                    .flex()
-                    .items_center()
-                    .text_size(px(12.))
-                    .font_weight(if active {
-                        FontWeight::MEDIUM
-                    } else {
-                        FontWeight::NORMAL
-                    })
-                    .text_color(theme.text_primary)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.health_filter = f;
-                        cx.notify();
-                    }))
-                    .child(f.label())
-            });
-
-        #[derive(Clone, Copy)]
-        enum HealthFixKind {
-            Contradictions,
-            StaleOrDrifted,
-            Duplicates,
-            LowTrust,
-        }
-        struct HealthFixRow {
-            id: &'static str,
-            kind: HealthFixKind,
-            title: String,
-            subtitle: String,
-            badge_color: Hsla,
-        }
-
-        let now_ms = now_unix_ms();
-        let stale_cutoff_ms =
-            now_ms.saturating_sub(crate::core::health::STALE_STORE_AGE_DAYS * 86_400_000);
-        let mut fix_rows: Vec<HealthFixRow> = Vec::new();
-        if let Some(h) = report {
-            if h.contradiction_count > 0
-                && matches!(
-                    filter,
-                    HealthPanelFilter::All | HealthPanelFilter::Contradictions
-                )
-            {
-                fix_rows.push(HealthFixRow {
-                    id: "health-fix-contradictions",
-                    kind: HealthFixKind::Contradictions,
-                    title: "Contradicting memories".to_string(),
-                    subtitle: format!("{} conflict pair(s) need review", h.contradiction_count),
-                    badge_color: theme.danger,
-                });
-            }
-            let stale_total = h.expired_count + h.drifted_source_count + h.stale_count;
-            if stale_total > 0
-                && matches!(filter, HealthPanelFilter::All | HealthPanelFilter::Stale)
-            {
-                fix_rows.push(HealthFixRow {
-                    id: "health-fix-stale",
-                    kind: HealthFixKind::StaleOrDrifted,
-                    title: "Stale, expired, or drifted memories".to_string(),
-                    subtitle: format!(
-                        "{} expired · {} drifted · {} >90d old",
-                        h.expired_count, h.drifted_source_count, h.stale_count
-                    ),
-                    badge_color: theme.warning,
-                });
-            }
-            if h.duplicate_count > 0 && filter == HealthPanelFilter::All {
-                fix_rows.push(HealthFixRow {
-                    id: "health-fix-duplicates",
-                    kind: HealthFixKind::Duplicates,
-                    title: "Exact duplicate memories".to_string(),
-                    subtitle: format!("{} excess copy record(s)", h.duplicate_count),
-                    badge_color: theme.warning,
-                });
-            }
-            if h.low_trust_count > 0
-                && matches!(filter, HealthPanelFilter::All | HealthPanelFilter::Stale)
-            {
-                fix_rows.push(HealthFixRow {
-                    id: "health-fix-low-trust",
-                    kind: HealthFixKind::LowTrust,
-                    title: "Low-trust memories".to_string(),
-                    subtitle: format!("{} record(s) with trust < 0.50", h.low_trust_count),
-                    badge_color: theme.text_muted,
-                });
-            }
-        }
-
-        let summary_rows: Vec<(String, String)> = if let Some(h) = report {
-            match filter {
-                HealthPanelFilter::Contradictions => vec![
-                    (
-                        "Contradictions".to_string(),
-                        format!("{}", h.contradiction_count),
-                    ),
-                    (
-                        "Quarantined".to_string(),
-                        format!("{}", h.quarantined_count),
-                    ),
-                    ("Total memories".to_string(), format!("{}", h.node_count)),
-                ],
-                HealthPanelFilter::Stale => vec![
-                    (
-                        "Expired memories".to_string(),
-                        format!("{}", h.expired_count),
-                    ),
-                    (
-                        "Drifted sources".to_string(),
-                        format!("{}", h.drifted_source_count),
-                    ),
-                    ("Aged (>90d)".to_string(), format!("{}", h.stale_count)),
-                    (
-                        "Newest update".to_string(),
-                        h.newest_updated_at
-                            .map(crate::core::model::format_timestamp_ms)
-                            .unwrap_or_else(|| "—".to_string()),
-                    ),
-                ],
-                HealthPanelFilter::All => vec![
-                    ("Memories".to_string(), format!("{}", h.node_count)),
-                    ("Edges".to_string(), format!("{}", h.edge_count)),
-                    (
-                        "Duplicate copies".to_string(),
-                        format!("{}", h.duplicate_count),
-                    ),
-                    (
-                        "Low-trust (< 0.50)".to_string(),
-                        format!("{}", h.low_trust_count),
-                    ),
-                    (
-                        "FTS5 index".to_string(),
-                        if h.has_fts5 { "Ready" } else { "Absent" }.to_string(),
-                    ),
-                ],
-            }
-        } else {
-            vec![("Status".to_string(), "Store unavailable".to_string())]
-        };
-
-        let show_contradiction_jump = report.is_some_and(|h| h.contradiction_count > 0)
-            && matches!(
-                filter,
-                HealthPanelFilter::All | HealthPanelFilter::Contradictions
-            );
-
-        div()
-            .id("health-modal-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(theme.glass_scrim)
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.show_health_modal = false;
-                    window.focus(&this.focus_handle, cx);
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .id("health-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Store health")
-                    .w(px(520.))
-                    .max_w(gpui::relative(0.92))
-                    .p(px(24.))
-                    .rounded(px(16.))
-                    .bg(theme.glass_panel)
-                    .border_1()
-                    .border_color(theme.glass_border)
-                    .shadow_lg()
-                    .flex()
-                    .flex_col()
-                    .gap(px(16.))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .child(status_dot(dot_color))
-                                    .child(
-                                        div()
-                                            .text_size(px(19.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(theme.text_primary)
-                                            .child("Store health"),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(10.))
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.text_muted)
-                                            .child(status.label()),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("close-health-modal")
-                                            .focusable()
-                                            .role(Role::Button)
-                                            .aria_label("Close store health")
-                                            .w(px(28.))
-                                            .h(px(28.))
-                                            .rounded(px(6.))
-                                            .cursor_pointer()
-                                            .hover(move |s| s.bg(theme.bg_elevated))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.show_health_modal = false;
-                                                window.focus(&this.focus_handle, cx);
-                                                cx.notify();
-                                            }))
-                                            .child(render_ui_icon(
-                                                UiIcon::Close,
-                                                14.0,
-                                                theme.text_secondary,
-                                            )),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .p(px(14.))
-                            .rounded(px(8.))
-                            .bg(theme.bg_sunken)
-                            .border_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_end()
-                                    .justify_between()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_baseline()
-                                            .gap(px(6.))
-                                            .child(
-                                                div()
-                                                    .text_size(px(26.))
-                                                    .line_height(px(30.))
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(theme.text_primary)
-                                                    .font_features(tabular_nums())
-                                                    .child(format!("{score}")),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(13.))
-                                                    .text_color(theme.text_muted)
-                                                    .font_features(tabular_nums())
-                                                    .child("/ 100"),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.text_muted)
-                                            .child("Health score"),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(px(6.))
-                                    .rounded(px(3.))
-                                    .bg(theme.bg_elevated)
-                                    .overflow_hidden()
-                                    .child(
-                                        div()
-                                            .h_full()
-                                            .w(gpui::relative(
-                                                (score as f32 / 100.0).clamp(0.0, 1.0),
-                                            ))
-                                            .rounded(px(3.))
-                                            .bg(score_color),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .children(filter_pills),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(6.))
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.text_muted)
-                                    .child("What to fix"),
-                            )
-                            .when(fix_rows.is_empty(), |col| {
-                                col.child(
-                                    div()
-                                        .p(px(10.))
-                                        .rounded(px(8.))
-                                        .bg(theme.bg_app)
-                                        .border_1()
-                                        .border_color(theme.border_subtle)
-                                        .text_size(px(13.))
-                                        .text_color(theme.text_secondary)
-                                        .child("No actionable issues in this view."),
-                                )
-                            })
-                            .children(fix_rows.into_iter().map(|row| {
-                                let kind = row.kind;
-                                let row_aria: SharedString =
-                                    format!("Filter {}: {}", row.title, row.subtitle).into();
-                                div()
-                                    .id(row.id)
-                                    .focusable()
-                                    .cursor_pointer()
-                                    .role(Role::Button)
-                                    .aria_label(row_aria)
-                                    .min_h(px(56.))
-                                    .px(px(14.))
-                                    .py(px(10.))
-                                    .rounded(px(8.))
-                                    .bg(theme.bg_app)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .hover(move |s| s.bg(theme.bg_elevated))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap(px(12.))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        let next_filter = match kind {
-                                            HealthFixKind::Contradictions => QueryFilter {
-                                                has_contradiction: true,
-                                                ..Default::default()
-                                            },
-                                            HealthFixKind::StaleOrDrifted => QueryFilter {
-                                                stale_before_ms: Some(stale_cutoff_ms),
-                                                ..Default::default()
-                                            },
-                                            HealthFixKind::Duplicates => QueryFilter {
-                                                duplicates_only: true,
-                                                ..Default::default()
-                                            },
-                                            HealthFixKind::LowTrust => QueryFilter {
-                                                max_trust: Some(0.5),
-                                                ..Default::default()
-                                            },
-                                        };
-                                        this.apply_health_fix_filter(next_filter, cx);
-                                    }))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(8.))
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .child(status_dot(row.badge_color))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap(px(2.))
-                                                    .min_w(px(0.))
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(13.))
-                                                            .font_weight(FontWeight::MEDIUM)
-                                                            .text_color(theme.text_primary)
-                                                            .child(SharedString::from(row.title)),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(12.))
-                                                            .text_color(theme.text_muted)
-                                                            .child(SharedString::from(
-                                                                row.subtitle,
-                                                            )),
-                                                    ),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .h(px(26.))
-                                            .px(px(10.))
-                                            .rounded(px(6.))
-                                            .bg(theme.bg_panel)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(5.))
-                                            .text_size(px(12.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .flex_shrink_0()
-                                            .child("Filter")
-                                            .child(render_ui_icon(
-                                                UiIcon::ArrowRight,
-                                                12.0,
-                                                theme.text_secondary,
-                                            )),
-                                    )
-                            })),
-                    )
-                    .child(
-                        div()
-                            .p(px(12.))
-                            .rounded(px(8.))
-                            .bg(theme.bg_app)
-                            .border_1()
-                            .border_color(theme.border_subtle)
-                            .flex()
-                            .flex_col()
-                            .gap(px(6.))
-                            .children(summary_rows.into_iter().map(|(k, v)| {
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap(px(12.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .text_color(theme.text_muted)
-                                            .child(SharedString::from(k)),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(theme.text_primary)
-                                            .font_features(tabular_nums())
-                                            .child(SharedString::from(v)),
-                                    )
-                            })),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(8.))
-                            .when(show_contradiction_jump, |row| {
-                                row.child(
-                                    div()
-                                        .id("health-view-contradictions")
-                                        .focusable()
-                                        .cursor_pointer()
-                                        .h(px(32.))
-                                        .px(px(12.))
-                                        .rounded(px(6.))
-                                        .bg(theme.accent)
-                                        .hover(move |s| s.opacity(0.9))
-                                        .flex()
-                                        .items_center()
-                                        .text_size(px(13.))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(theme.primary_btn_fg)
-                                        .child("Review contradictions")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.apply_health_fix_filter(
-                                                QueryFilter {
-                                                    has_contradiction: true,
-                                                    ..Default::default()
-                                                },
-                                                cx,
-                                            );
-                                        })),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .id("health-modal-close")
-                                    .focusable()
-                                    .cursor_pointer()
-                                    .h(px(32.))
-                                    .px(px(12.))
-                                    .rounded(px(6.))
-                                    .bg(theme.bg_elevated)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .hover(move |s| s.bg(theme.bg_selected))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .text_color(theme.text_primary)
-                                    .child("Close")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.show_health_modal = false;
-                                        cx.notify();
-                                    })),
-                            ),
-                    ),
-            )
-            .into_any_element()
     }
 
     fn render_overflow_menu(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -8050,7 +6389,7 @@ impl MemOSApp {
                                                     .py(px(1.))
                                                     .rounded(px(4.))
                                                     .bg(theme.bg_elevated)
-                                                    .font_family("Consolas")
+                                                    .font_family(crate::ui::views::kit::MONO_FONT)
                                                     .text_size(px(11.))
                                                     .text_color(theme.text_secondary)
                                                     .child(format!("[mem:{}]", entry.short_id)),
@@ -8178,576 +6517,6 @@ impl MemOSApp {
             )
             .into_any_element()
     }
-
-    fn render_shortcuts_modal(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        #[cfg(target_os = "macos")]
-        let mod_prefix = "Cmd";
-        #[cfg(not(target_os = "macos"))]
-        let mod_prefix = "Ctrl";
-
-        let nav_rows = [
-            ("Next memory", vec!["J", "Down"]),
-            ("Previous memory", vec!["K", "Up"]),
-            ("First / Last memory", vec!["Home", "End"]),
-            ("Open detail pane", vec!["Enter"]),
-            ("Close pane / modal / menu", vec!["Esc"]),
-        ];
-        let global_rows = [
-            ("Command palette", vec![mod_prefix, "K"]),
-            ("Focus search", vec![mod_prefix, "F", "/"]),
-            ("List view", vec![mod_prefix, "1"]),
-            ("Graph view", vec![mod_prefix, "2"]),
-            ("Keyboard shortcuts", vec!["?"]),
-        ];
-
-        let section = |title: &'static str, rows: Vec<(&'static str, Vec<&'static str>)>| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(theme.text_muted)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .rounded(px(8.))
-                        .bg(theme.bg_sunken)
-                        .border_1()
-                        .border_color(theme.border_subtle)
-                        .p(px(10.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .children(rows.into_iter().map(|(label, keys)| {
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap(px(12.))
-                                .child(
-                                    div()
-                                        .text_size(px(13.))
-                                        .text_color(theme.text_primary)
-                                        .child(label),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(4.))
-                                        .children(keys.into_iter().map(|k| keycap(k, &theme))),
-                                )
-                        })),
-                )
-        };
-
-        div()
-            .id("shortcuts-modal-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000099))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.show_shortcuts_modal = false;
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .id("shortcuts-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Keyboard shortcuts")
-                    .w(px(480.))
-                    .max_w(gpui::relative(0.92))
-                    .p(px(24.))
-                    .rounded(px(10.))
-                    .bg(theme.bg_floating)
-                    .border_1()
-                    .border_color(theme.border_strong)
-                    .flex()
-                    .flex_col()
-                    .gap(px(16.))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_size(px(19.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.text_primary)
-                                    .child("Keyboard shortcuts"),
-                            )
-                            .child(
-                                div()
-                                    .id("close-shortcuts-modal")
-                                    .focusable()
-                                    .cursor_pointer()
-                                    .role(Role::Button)
-                                    .aria_label("Close keyboard shortcuts")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .hover(move |s| s.bg(theme.bg_hover))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_shortcuts_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(
-                                        UiIcon::Close,
-                                        14.0,
-                                        theme.text_secondary,
-                                    )),
-                            ),
-                    )
-                    .child(section("Navigation", nav_rows.to_vec()))
-                    .child(section("Global & Views", global_rows.to_vec())),
-            )
-            .into_any_element()
-    }
-
-    fn render_context_modal(&self, viewport_h: f32, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        let payload_max_h = (viewport_h * 0.86 - 176.0).clamp(150.0, 420.0);
-        let subtitle_text = if self.context_loading {
-            "Formatting prompt context...".to_string()
-        } else if let Some(preview) = &self.context_preview {
-            if preview.total_count > preview.shown_count {
-                format!(
-                    "{} · showing {} of {}",
-                    preview.subtitle, preview.shown_count, preview.total_count
-                )
-            } else {
-                preview.subtitle.clone()
-            }
-        } else {
-            "No matching memories in this view.".to_string()
-        };
-
-        let meta_text = if let Some(preview) = &self.context_preview {
-            format!(
-                "≈ {} tokens · {} chars (estimated, chars/4)",
-                preview.estimated_tokens, preview.char_count
-            )
-        } else if self.context_loading {
-            "Estimating size...".to_string()
-        } else {
-            "0 tokens · 0 chars (estimated, chars/4)".to_string()
-        };
-
-        let copy_payload = self
-            .context_preview
-            .as_ref()
-            .map(|p| p.payload.clone())
-            .filter(|s| !s.is_empty());
-
-        let body_el = if self.context_loading {
-            div()
-                .w_full()
-                .rounded(px(8.))
-                .bg(theme.bg_sunken)
-                .border_1()
-                .border_color(theme.border_subtle)
-                .py(px(32.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(13.))
-                .text_color(theme.text_muted)
-                .child("Formatting context...")
-                .into_any_element()
-        } else if let Some(preview) = &self.context_preview {
-            if preview.shown_count == 0 {
-                div()
-                    .w_full()
-                    .rounded(px(8.))
-                    .bg(theme.bg_sunken)
-                    .border_1()
-                    .border_color(theme.border_subtle)
-                    .py(px(28.))
-                    .px(px(16.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_size(px(13.))
-                    .text_color(theme.text_muted)
-                    .child("No memories match the active filters.")
-                    .into_any_element()
-            } else {
-                div()
-                    .relative()
-                    .w_full()
-                    .max_h(px(payload_max_h))
-                    .rounded(px(8.))
-                    .bg(theme.bg_sunken)
-                    .border_1()
-                    .border_color(theme.border_subtle)
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .id("context-preview-scroll")
-                            .w_full()
-                            .max_h(px(payload_max_h))
-                            .overflow_y_scroll()
-                            .track_scroll(&self.context_scroll)
-                            .p(px(12.))
-                            .pr(px(16.))
-                            .font_family("Consolas")
-                            .text_size(px(12.))
-                            .line_height(gpui::relative(1.45))
-                            .text_color(theme.text_primary)
-                            .child(preview.payload.clone()),
-                    )
-                    .child(render_vertical_scroll_overlay(
-                        self.context_scroll.clone(),
-                        theme.bg_sunken,
-                        theme,
-                    ))
-                    .into_any_element()
-            }
-        } else {
-            div().into_any_element()
-        };
-
-        div()
-            .id("context-modal-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(theme.glass_scrim)
-            .px(px(24.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.show_context_modal = false;
-                    cx.notify();
-                }),
-            )
-            .on_scroll(|_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .id("context-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("What the AI sees")
-                    .w(px(640.))
-                    .max_w(gpui::relative(0.92))
-                    .max_h(gpui::relative(0.88))
-                    .p(px(20.))
-                    .rounded(px(16.))
-                    .bg(theme.glass_panel)
-                    .border_1()
-                    .border_color(theme.glass_border)
-                    .shadow_lg()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .absolute()
-                            .top(px(0.))
-                            .left(px(16.))
-                            .right(px(16.))
-                            .h(px(1.))
-                            .bg(theme.glass_highlight),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_start()
-                            .justify_between()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .min_w(px(0.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(3.))
-                                    .child(
-                                        div()
-                                            .text_size(px(19.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(theme.text_primary)
-                                            .child("What the AI sees"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.text_muted)
-                                            .truncate()
-                                            .child(subtitle_text),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("close-context-modal")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close context preview")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_hover))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_context_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(
-                                        UiIcon::Close,
-                                        14.0,
-                                        theme.text_secondary,
-                                    )),
-                            ),
-                    )
-                    .child(body_el)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(theme.text_muted)
-                                    .child(meta_text),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .id("btn-context-close")
-                                            .focusable()
-                                            .role(Role::Button)
-                                            .aria_label("Close")
-                                            .h(px(32.))
-                                            .px(px(12.))
-                                            .rounded(px(6.))
-                                            .cursor_pointer()
-                                            .bg(theme.bg_elevated)
-                                            .border_1()
-                                            .border_color(theme.border_subtle)
-                                            .hover(move |s| s.bg(theme.bg_selected))
-                                            .focus_visible(move |s| {
-                                                s.border_1().border_color(theme.accent)
-                                            })
-                                            .flex()
-                                            .items_center()
-                                            .text_size(px(13.))
-                                            .text_color(theme.text_primary)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.show_context_modal = false;
-                                                cx.notify();
-                                            }))
-                                            .child("Close"),
-                                    )
-                                    .when_some(copy_payload, |el, payload| {
-                                        el.child(
-                                            div()
-                                                .id("btn-context-copy")
-                                                .focusable()
-                                                .role(Role::Button)
-                                                .aria_label("Copy context")
-                                                .h(px(32.))
-                                                .px(px(14.))
-                                                .rounded(px(6.))
-                                                .cursor_pointer()
-                                                .bg(theme.accent)
-                                                .hover(move |s| s.opacity(0.9))
-                                                .focus_visible(move |s| {
-                                                    s.border_2().border_color(theme.text_primary)
-                                                })
-                                                .flex()
-                                                .items_center()
-                                                .text_size(px(13.))
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .text_color(theme.primary_btn_fg)
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(payload.clone()),
-                                                    );
-                                                    this.set_notice(
-                                                        "Copied AI context to clipboard",
-                                                        cx,
-                                                    );
-                                                }))
-                                                .child("Copy context"),
-                                        )
-                                    }),
-                            ),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_save_view_modal(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        let summary = crate::core::model::describe_filter_target(&self.filter);
-
-        div()
-            .id("save-view-modal-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(rgba(0x00000099))
-            .px(px(24.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.show_save_view_modal = false;
-                    cx.notify();
-                }),
-            )
-            .on_scroll(|_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .id("save-view-dialog")
-                    .role(Role::Dialog)
-                    .aria_label("Save current view")
-                    .w(px(400.))
-                    .max_w(gpui::relative(0.92))
-                    .p(px(20.))
-                    .rounded(px(10.))
-                    .bg(theme.bg_panel)
-                    .border_1()
-                    .border_color(theme.border_strong)
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .text_size(px(17.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.text_primary)
-                                    .child("Save current view"),
-                            )
-                            .child(
-                                div()
-                                    .id("close-save-view-modal")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Close save view dialog")
-                                    .w(px(28.))
-                                    .h(px(28.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(theme.bg_hover))
-                                    .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_save_view_modal = false;
-                                        window.focus(&this.focus_handle, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(render_ui_icon(
-                                        UiIcon::Close,
-                                        14.0,
-                                        theme.text_secondary,
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(theme.text_muted)
-                            .truncate()
-                            .child(summary),
-                    )
-                    .child(div().w_full().child(self.save_view_input.clone()))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .id("btn-save-view-cancel")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Cancel")
-                                    .h(px(32.))
-                                    .px(px(12.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .bg(theme.bg_elevated)
-                                    .border_1()
-                                    .border_color(theme.border_subtle)
-                                    .hover(move |s| s.bg(theme.bg_selected))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .text_color(theme.text_primary)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.show_save_view_modal = false;
-                                        cx.notify();
-                                    }))
-                                    .child("Cancel"),
-                            )
-                            .child(
-                                div()
-                                    .id("btn-save-view-confirm")
-                                    .focusable()
-                                    .role(Role::Button)
-                                    .aria_label("Save view")
-                                    .h(px(32.))
-                                    .px(px(14.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .bg(theme.accent)
-                                    .hover(move |s| s.opacity(0.9))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.primary_btn_fg)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.confirm_save_view(window, cx);
-                                    }))
-                                    .child("Save"),
-                            ),
-                    ),
-            )
-            .into_any_element()
-    }
 }
 
 impl Focusable for MemOSApp {
@@ -8836,20 +6605,26 @@ impl Render for MemOSApp {
                 .child(onboarding.clone())
                 .into_any_element()
         } else {
-            let mode_label = if self.settings.write_mode {
+            let (mode_label, mode_dot) = if self.settings.write_mode {
                 if self.write_in_flight {
-                    "saving…"
+                    ("Saving…", theme.accent)
                 } else {
-                    "editing on"
+                    ("Editing on", theme.success)
                 }
             } else {
-                "view only"
+                ("View only", theme.text_muted)
             };
             let footer_left: SharedString = if let Some(ov) = &self.overview {
-                format!("{} · {mode_label}", format_memory_count(ov.node_count)).into()
+                format_memory_count(ov.node_count).into()
             } else {
-                format!("no database · {mode_label}").into()
+                "No database".into()
             };
+            let footer_count_color = if self.is_celebrating_100() {
+                theme.accent
+            } else {
+                theme.text_muted
+            };
+            let pin_count = self.pack.pins.len();
 
             div()
                 .id("memos-desktop-root")
@@ -8863,6 +6638,25 @@ impl Render for MemOSApp {
                 .on_action(cx.listener(Self::on_switch_list))
                 .on_action(cx.listener(Self::on_switch_graph))
                 .on_action(cx.listener(Self::on_toggle_theme))
+                .on_action(cx.listener(|this, _: &QuickCapture, window, cx| {
+                    if !this.has_overlay_open(cx) || this.capture.open {
+                        this.open_quick_capture(window, cx);
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &OpenTodaySurface, _, cx| {
+                    this.open_today_view(cx);
+                }))
+                .on_action(cx.listener(|this, _: &OpenReviewSurface, _, cx| {
+                    this.open_review_view(cx);
+                }))
+                .on_action(cx.listener(|this, _: &ToggleSearchSyntax, window, cx| {
+                    this.toggle_search_help(window, cx);
+                }))
+                .on_action(cx.listener(|this, _: &ExportMemories, window, cx| {
+                    if !this.has_overlay_open(cx) || this.pack.open {
+                        this.open_export(window, cx);
+                    }
+                }))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -8905,138 +6699,154 @@ impl Render for MemOSApp {
                         .items_start()
                         .justify_between()
                         .gap(px(12.))
-                        .child({
-                            let brand_color = if self.is_celebrating_100() {
-                                Hsla::from(rgb(0xC97B4A))
-                            } else {
-                                theme.text_primary
-                            };
-                            div()
-                                .id("top-bar-brand")
-                                .h(px(32.))
-                                .flex_shrink_0()
-                                .flex()
-                                .items_center()
-                                .text_size(px(15.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(brand_color)
-                                .child("MemOS")
-                        })
                         .child(
-                            div()
-                                .flex_1()
-                                .max_w(px(520.))
-                                .min_w(px(120.))
-                                .overflow_hidden()
-                                .flex()
-                                .flex_col()
-                                .gap(px(6.))
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .min_w(px(0.))
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(6.))
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w(px(0.))
-                                                .child(self.search_input.clone()),
-                                        )
-                                        .when(!self.filter.query.trim().is_empty(), |el| {
-                                            el.child(
+                            // Aligns search with the content column instead of
+                            // repeating the app name the title bar already shows.
+                            div().flex_shrink_0().w(px(if self.compact_layout {
+                                40.
+                            } else {
+                                204.
+                            })),
+                        )
+                        .child(
+                            div().flex_1().min_w(px(120.)).flex().child(
+                                div()
+                                    .flex_1()
+                                    .max_w(px(560.))
+                                    .min_w(px(120.))
+                                    .overflow_hidden()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(6.))
+                                    .child(
+                                        div()
+                                            .relative()
+                                            .w_full()
+                                            .min_w(px(0.))
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(6.))
+                                            .child(
                                                 div()
-                                                    .id("clear-search-btn")
-                                                    .focusable()
-                                                    .h(px(28.))
-                                                    .px(px(8.))
-                                                    .rounded(px(6.))
-                                                    .cursor_pointer()
-                                                    .bg(theme.bg_elevated)
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .hover(move |s| s.bg(theme.bg_selected))
-                                                    .flex()
-                                                    .items_center()
-                                                    .text_size(px(12.))
-                                                    .text_color(theme.text_secondary)
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.search_input
-                                                            .update(cx, |i, cx| i.clear(cx));
-                                                    }))
-                                                    .child("Clear"),
+                                                    .flex_1()
+                                                    .min_w(px(0.))
+                                                    .child(self.search_input.clone()),
                                             )
-                                        })
-                                        .when(self.filter.query.trim().is_empty(), |el| {
-                                            el.child(
-                                                div()
-                                                    .flex_shrink_0()
-                                                    .pr(px(2.))
-                                                    .child(keycap(
+                                            .when(!self.filter.query.trim().is_empty(), |el| {
+                                                el.child(
+                                                    div()
+                                                        .id("clear-search-btn")
+                                                        .focusable()
+                                                        .h(px(28.))
+                                                        .px(px(8.))
+                                                        .rounded(px(6.))
+                                                        .cursor_pointer()
+                                                        .bg(theme.bg_elevated)
+                                                        .border_1()
+                                                        .border_color(theme.border_subtle)
+                                                        .hover(move |s| s.bg(theme.bg_selected))
+                                                        .flex()
+                                                        .items_center()
+                                                        .text_size(px(12.))
+                                                        .text_color(theme.text_secondary)
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.search_input
+                                                                .update(cx, |i, cx| i.clear(cx));
+                                                        }))
+                                                        .child("Clear"),
+                                                )
+                                            })
+                                            .child(
+                                                kit::button(
+                                                    "search-syntax-btn",
+                                                    "Syntax",
+                                                    kit::ButtonKind::Subtle,
+                                                    &theme,
+                                                )
+                                                .text_size(px(12.))
+                                                .aria_expanded(self.search_ui.help_open)
+                                                .tooltip(tooltip_view(
+                                                    if cfg!(target_os = "macos") {
+                                                        "Search scopes and recent searches (⌘ /)"
+                                                    } else {
+                                                        "Search scopes and recent searches (Ctrl /)"
+                                                    },
+                                                    theme,
+                                                ))
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.toggle_search_help(window, cx);
+                                                })),
+                                            )
+                                            .when(self.filter.query.trim().is_empty(), |el| {
+                                                el.child(div().flex_shrink_0().pr(px(2.)).child(
+                                                    keycap(
                                                         if cfg!(target_os = "macos") {
                                                             "⌘ K"
                                                         } else {
                                                             "Ctrl K"
                                                         },
                                                         &theme,
-                                                    )),
-                                            )
-                                        }),
-                                )
-                                .when(!scope_chips.is_empty(), |col| {
-                                    col.child(
-                                        div()
-                                            .id("search-scope-chips")
-                                            .w_full()
-                                            .flex()
-                                            .flex_wrap()
-                                            .items_center()
-                                            .gap(px(6.))
-                                            .children(scope_chips.into_iter().enumerate().map(
-                                                |(ix, chip)| {
-                                                    let kind = chip.kind;
-                                                    div()
-                                                        .id(("search-scope-chip", ix))
-                                                        .focusable()
-                                                        .role(Role::Button)
-                                                        .aria_label(format!(
-                                                            "Remove {}",
-                                                            chip.label
-                                                        ))
-                                                        .h(px(22.))
-                                                        .px(px(8.))
-                                                        .rounded(px(11.))
-                                                        .cursor_pointer()
-                                                        .bg(theme.bg_elevated)
-                                                        .border_1()
-                                                        .border_color(theme.border_subtle)
-                                                        .hover(move |s| {
-                                                            s.border_color(theme.accent)
-                                                        })
-                                                        .flex()
-                                                        .items_center()
-                                                        .gap(px(5.))
-                                                        .text_size(px(11.))
-                                                        .text_color(theme.text_secondary)
-                                                        .child(SharedString::from(chip.label))
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(11.))
-                                                                .text_color(theme.text_muted)
-                                                                .child("×"),
-                                                        )
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _, cx| {
-                                                                this.remove_search_scope_chip(
-                                                                    kind, cx,
-                                                                );
-                                                            },
-                                                        ))
-                                                },
-                                            )),
+                                                    ),
+                                                ))
+                                            })
+                                            .when(self.search_ui.help_open, |el| {
+                                                el.child(self.render_search_help(cx))
+                                            }),
                                     )
-                                }),
+                                    .when(!scope_chips.is_empty(), |col| {
+                                        col.child(
+                                            div()
+                                                .id("search-scope-chips")
+                                                .w_full()
+                                                .flex()
+                                                .flex_wrap()
+                                                .items_center()
+                                                .gap(px(6.))
+                                                .children(scope_chips.into_iter().enumerate().map(
+                                                    |(ix, chip)| {
+                                                        let kind = chip.kind;
+                                                        div()
+                                                            .id(("search-scope-chip", ix))
+                                                            .focusable()
+                                                            .role(Role::Button)
+                                                            .aria_label(format!(
+                                                                "Remove {}",
+                                                                chip.label
+                                                            ))
+                                                            .h(px(22.))
+                                                            .px(px(8.))
+                                                            .rounded(px(11.))
+                                                            .cursor_pointer()
+                                                            .bg(theme.bg_elevated)
+                                                            .border_1()
+                                                            .border_color(theme.border_subtle)
+                                                            .hover(move |s| {
+                                                                s.border_color(theme.accent)
+                                                            })
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap(px(5.))
+                                                            .text_size(px(11.))
+                                                            .text_color(theme.text_secondary)
+                                                            .child(SharedString::from(chip.label))
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(11.))
+                                                                    .text_color(theme.text_muted)
+                                                                    .child("×"),
+                                                            )
+                                                            .on_click(cx.listener(
+                                                                move |this, _, _, cx| {
+                                                                    this.remove_search_scope_chip(
+                                                                        kind, cx,
+                                                                    );
+                                                                },
+                                                            ))
+                                                    },
+                                                )),
+                                        )
+                                    }),
+                            ),
                         )
                         .child(
                             div()
@@ -9049,68 +6859,38 @@ impl Render for MemOSApp {
                                     |cluster| {
                                         cluster
                                             .child(
-                                                div()
-                                                    .id("header-ingest-btn")
-                                                    .focusable()
-                                                    .role(Role::Button)
-                                                    .aria_label("Ingest")
-                                                    .h(px(32.))
-                                                    .px(px(11.))
-                                                    .rounded(px(6.))
-                                                    .cursor_pointer()
-                                                    .bg(theme.bg_elevated)
-                                                    .border_1()
-                                                    .border_color(theme.border_subtle)
-                                                    .hover(move |s| s.bg(theme.bg_selected))
-                                                    .focus_visible(move |s| {
-                                                        s.border_1().border_color(theme.accent)
-                                                    })
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap(px(5.))
-                                                    .text_size(px(13.))
-                                                    .text_color(theme.text_primary)
-                                                    .on_click(cx.listener(|this, _, window, cx| {
-                                                        this.open_ingest_modal(window, cx);
-                                                    }))
-                                                    .child(render_ui_icon(
-                                                        UiIcon::Import,
-                                                        13.0,
-                                                        theme.text_secondary,
-                                                    ))
-                                                    .child("Ingest"),
+                                                kit::icon_button(
+                                                    "header-ingest-btn",
+                                                    UiIcon::Import,
+                                                    "Ingest files or a folder",
+                                                    &theme,
+                                                )
+                                                .tooltip(tooltip_view(
+                                                    "Ingest files or a folder",
+                                                    theme,
+                                                ))
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.open_ingest_modal(window, cx);
+                                                })),
                                             )
                                             .child(
-                                                div()
-                                                    .id("header-new-memory-btn")
-                                                    .focusable()
-                                                    .role(Role::Button)
-                                                    .aria_label("New memory")
-                                                    .h(px(32.))
-                                                    .px(px(12.))
-                                                    .rounded(px(6.))
-                                                    .cursor_pointer()
-                                                    .bg(theme.accent)
-                                                    .hover(move |s| s.opacity(0.92))
-                                                    .focus_visible(move |s| {
-                                                        s.border_2()
-                                                            .border_color(theme.text_primary)
-                                                    })
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap(px(6.))
-                                                    .text_size(px(13.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(theme.primary_btn_fg)
-                                                    .on_click(cx.listener(|this, _, window, cx| {
-                                                        this.open_new_memory_composer(window, cx);
-                                                    }))
-                                                    .child(render_ui_icon(
-                                                        UiIcon::Plus,
-                                                        14.0,
-                                                        theme.primary_btn_fg,
-                                                    ))
-                                                    .child("New memory"),
+                                                kit::button(
+                                                    "header-capture-btn",
+                                                    "Capture",
+                                                    kit::ButtonKind::Secondary,
+                                                    &theme,
+                                                )
+                                                .tooltip(tooltip_view(
+                                                    if cfg!(target_os = "macos") {
+                                                        "Capture a memory (⌘ N)"
+                                                    } else {
+                                                        "Capture a memory (Ctrl N)"
+                                                    },
+                                                    theme,
+                                                ))
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.open_quick_capture(window, cx);
+                                                })),
                                             )
                                     },
                                 )
@@ -9395,12 +7175,29 @@ impl Render for MemOSApp {
                                     div()
                                         .id("footer-mode-status")
                                         .role(Role::Status)
-                                        .aria_label(footer_left.clone())
+                                        .aria_label(SharedString::from(format!(
+                                            "{footer_left}, {mode_label}"
+                                        )))
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(10.))
                                         .text_size(px(12.))
-                                        .text_color(theme.text_muted)
                                         .font_features(tabular_nums())
-                                        .truncate()
-                                        .child(footer_left),
+                                        .child(
+                                            div()
+                                                .text_color(footer_count_color)
+                                                .truncate()
+                                                .child(footer_left),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(5.))
+                                                .text_color(theme.text_secondary)
+                                                .child(status_dot(mode_dot))
+                                                .child(mode_label),
+                                        ),
                                 ),
                         )
                         .child(
@@ -9408,12 +7205,38 @@ impl Render for MemOSApp {
                                 .flex()
                                 .items_center()
                                 .gap(px(12.))
+                                .min_w(px(0.))
                                 .when_some(self.status_notice.clone(), |el, msg| {
                                     el.child(
                                         div()
+                                            .id("footer-notice")
+                                            .role(Role::Status)
                                             .text_size(px(12.))
-                                            .text_color(theme.success)
+                                            .text_color(theme.text_secondary)
+                                            .truncate()
                                             .child(SharedString::from(msg)),
+                                    )
+                                })
+                                .when(pin_count > 0, |el| {
+                                    el.child(
+                                        kit::button(
+                                            "footer-pins",
+                                            format!("{pin_count} pinned"),
+                                            kit::ButtonKind::Subtle,
+                                            &theme,
+                                        )
+                                        .h(px(22.))
+                                        .text_size(px(12.))
+                                        .tooltip(tooltip_view("Open the context pack (C)", theme))
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                this.open_context_pack(
+                                                    Some(PackSource::Pinned),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }),
+                                        ),
                                     )
                                 }),
                         ),
@@ -9448,28 +7271,40 @@ impl Render for MemOSApp {
                     el.child(self.render_settings_modal(window, cx))
                 })
                 .when(self.show_health_modal, |el| {
-                    el.child(self.render_health_modal(cx))
+                    el.child(self.render_health_center(cx))
                 })
                 .when(self.show_dream_diff_modal, |el| {
                     el.child(self.render_dream_diff_modal(cx))
                 })
                 .when(self.show_shortcuts_modal, |el| {
-                    el.child(self.render_shortcuts_modal(cx))
+                    el.child(self.render_shortcut_sheet(cx))
                 })
-                .when(self.show_context_modal, |el| {
-                    el.child(self.render_context_modal(viewport_h, cx))
+                .when(self.pack.open, |el| {
+                    el.child(self.render_pack_modal(viewport_h, cx))
+                })
+                .when(self.compare.open, |el| {
+                    el.child(self.render_compare_modal(viewport_h, cx))
+                })
+                .when(self.capture.open, |el| {
+                    el.child(self.render_quick_capture(cx))
+                })
+                .when(self.store_switch.open, |el| {
+                    el.child(self.render_store_switcher(cx))
+                })
+                .when(self.search_ui.manage_view_id.is_some(), |el| {
+                    el.child(self.render_manage_view(cx))
                 })
                 .when(self.show_save_view_modal, |el| {
-                    el.child(self.render_save_view_modal(cx))
+                    el.child(self.render_save_view_dialog(cx))
                 })
                 .when(self.show_composer_modal, |el| {
-                    el.child(self.render_composer_modal(cx))
+                    el.child(self.render_composer_dialog(cx))
                 })
                 .when(self.show_ingest_modal, |el| {
-                    el.child(self.render_ingest_modal(cx))
+                    el.child(self.render_ingest_dialog(cx))
                 })
                 .when_some(self.forget_confirm_target.clone(), |el, target| {
-                    el.child(self.render_forget_confirm_modal(target, cx))
+                    el.child(self.render_forget_dialog(target, cx))
                 })
                 .when(self.show_consent_modal, |el| {
                     el.child(self.render_consent_modal(cx))

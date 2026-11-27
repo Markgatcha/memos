@@ -11,6 +11,7 @@ use gpui::{
 use crate::core::db::{self, DbProbeSummary};
 use crate::core::settings::{AppSettings, ThemeMode};
 use crate::core::store_init;
+use crate::ui::views::kit;
 use crate::ui::views::{ThemePalette, status_dot};
 
 pub const CLI_INIT_COMMAND: &str = "memos init --yes";
@@ -171,7 +172,7 @@ impl OnboardingState {
 #[derive(Clone, Debug)]
 pub enum OnboardingEvent {
     Complete {
-        settings: AppSettings,
+        settings: Box<AppSettings>,
         selected_db: PathBuf,
     },
     ThemeChanged(ThemeMode),
@@ -388,7 +389,7 @@ impl OnboardingView {
         };
         next_settings.save_async();
         cx.emit(OnboardingEvent::Complete {
-            settings: next_settings,
+            settings: Box::new(next_settings),
             selected_db,
         });
     }
@@ -464,10 +465,6 @@ impl OnboardingView {
         div()
             .w_full()
             .h(px(140.))
-            .rounded(px(8.))
-            .bg(theme.bg_app)
-            .border_1()
-            .border_color(theme.border_subtle)
             .overflow_hidden()
             .child(
                 canvas(
@@ -891,49 +888,32 @@ impl OnboardingView {
                 .justify_between()
                 .gap(px(12.))
                 .child(
-                    div()
-                        .id("onboarding-skip-btn")
-                        .track_focus(&self.skip_focus)
-                        .tab_stop(true)
-                        .tab_index(20)
-                        .focusable()
-                        .cursor_pointer()
-                        .h(px(34.))
-                        .px(px(10.))
-                        .rounded(px(6.))
-                        .hover(move |s| s.bg(theme.bg_elevated))
-                        .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                        .flex()
-                        .items_center()
-                        .text_size(px(13.))
-                        .text_color(theme.text_muted)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.skip_now(cx);
-                        }))
-                        .child("Skip"),
+                    kit::button(
+                        "onboarding-skip-btn",
+                        "Skip",
+                        kit::ButtonKind::Subtle,
+                        &theme,
+                    )
+                    .track_focus(&self.skip_focus)
+                    .tab_stop(true)
+                    .tab_index(20)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.skip_now(cx);
+                    })),
                 )
                 .child(
-                    div()
-                        .id("onboarding-primary-btn")
-                        .track_focus(&self.primary_focus)
-                        .tab_stop(true)
-                        .tab_index(10)
-                        .focusable()
-                        .cursor_pointer()
-                        .h(px(36.))
-                        .px(px(18.))
-                        .rounded(px(6.))
-                        .bg(theme.accent)
-                        .focus_visible(move |s| s.border_2().border_color(theme.text_primary))
-                        .flex()
-                        .items_center()
-                        .text_size(px(13.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(theme.primary_btn_fg)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.advance_or_finish(cx);
-                        }))
-                        .child("Continue"),
+                    kit::button(
+                        "onboarding-primary-btn",
+                        "Continue",
+                        kit::ButtonKind::Primary,
+                        &theme,
+                    )
+                    .track_focus(&self.primary_focus)
+                    .tab_stop(true)
+                    .tab_index(10)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.advance_or_finish(cx);
+                    })),
                 )
                 .into_any_element()
         } else {
@@ -943,52 +923,32 @@ impl OnboardingView {
                 .justify_between()
                 .gap(px(12.))
                 .child(
-                    div()
-                        .id("onboarding-retry-btn")
-                        .track_focus(&self.retry_focus)
-                        .tab_stop(true)
-                        .tab_index(20)
-                        .focusable()
-                        .cursor_pointer()
-                        .h(px(34.))
-                        .px(px(12.))
-                        .rounded(px(6.))
-                        .bg(theme.bg_elevated)
-                        .border_1()
-                        .border_color(theme.border_subtle)
-                        .hover(move |s| s.bg(theme.bg_selected))
-                        .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                        .flex()
-                        .items_center()
-                        .text_size(px(13.))
-                        .text_color(theme.text_primary)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.start_probe(retry_target.clone(), cx);
-                        }))
-                        .child("Retry"),
+                    kit::button(
+                        "onboarding-retry-btn",
+                        "Retry",
+                        kit::ButtonKind::Secondary,
+                        &theme,
+                    )
+                    .track_focus(&self.retry_focus)
+                    .tab_stop(true)
+                    .tab_index(20)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.start_probe(retry_target.clone(), cx);
+                    })),
                 )
                 .child(
-                    div()
-                        .id("onboarding-browse-primary")
-                        .track_focus(&self.browse_focus)
-                        .tab_stop(true)
-                        .tab_index(10)
-                        .focusable()
-                        .cursor_pointer()
-                        .h(px(36.))
-                        .px(px(18.))
-                        .rounded(px(6.))
-                        .bg(theme.accent)
-                        .focus_visible(move |s| s.border_2().border_color(theme.text_primary))
-                        .flex()
-                        .items_center()
-                        .text_size(px(13.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(theme.primary_btn_fg)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.open_browse_dialog(cx);
-                        }))
-                        .child("Browse…"),
+                    kit::button(
+                        "onboarding-browse-primary",
+                        "Browse…",
+                        kit::ButtonKind::Primary,
+                        &theme,
+                    )
+                    .track_focus(&self.browse_focus)
+                    .tab_stop(true)
+                    .tab_index(10)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.open_browse_dialog(cx);
+                    })),
                 )
                 .into_any_element()
         };
@@ -1235,55 +1195,25 @@ impl OnboardingView {
                     .justify_between()
                     .gap(px(12.))
                     .child(
-                        div()
-                            .id("onboarding-back-btn")
+                        kit::button("onboarding-back-btn", "Back", kit::ButtonKind::Secondary, &theme)
                             .track_focus(&self.back_focus)
                             .tab_stop(true)
                             .tab_index(20)
-                            .focusable()
-                            .cursor_pointer()
-                            .h(px(34.))
-                            .px(px(14.))
-                            .rounded(px(6.))
-                            .bg(theme.bg_elevated)
-                            .border_1()
-                            .border_color(theme.border_subtle)
-                            .hover(move |s| s.bg(theme.bg_selected))
-                            .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                            .flex()
-                            .items_center()
-                            .text_size(px(13.))
-                            .text_color(theme.text_primary)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if this.state.go_back() {
                                     this.needs_focus_sync = true;
                                     cx.notify();
                                 }
-                            }))
-                            .child("Back"),
+                            })),
                     )
                     .child(
-                        div()
-                            .id("onboarding-primary-btn")
+                        kit::button("onboarding-primary-btn", "Finish", kit::ButtonKind::Primary, &theme)
                             .track_focus(&self.primary_focus)
                             .tab_stop(true)
                             .tab_index(10)
-                            .focusable()
-                            .cursor_pointer()
-                            .h(px(36.))
-                            .px(px(18.))
-                            .rounded(px(6.))
-                            .bg(theme.accent)
-                            .focus_visible(move |s| s.border_2().border_color(theme.text_primary))
-                            .flex()
-                            .items_center()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.primary_btn_fg)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.advance_or_finish(cx);
-                            }))
-                            .child("Finish"),
+                            })),
                     ),
             )
             .into_any_element()

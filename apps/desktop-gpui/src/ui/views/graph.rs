@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,9 +18,7 @@ use lyon::path::Event as LyonEvent;
 use crate::core::model::{
     GraphEdgeData, GraphMode, GraphNodeData, GraphSnapshot, short_citation_id,
 };
-use crate::ui::views::{
-    ThemePalette, UiIcon, render_ui_icon, status_dot, tooltip_view,
-};
+use crate::ui::views::{ThemePalette, UiIcon, render_ui_icon, status_dot, tooltip_view};
 
 const MAX_PAN_WORLD: f32 = 12_000.0;
 const MIN_ZOOM: f32 = 0.08;
@@ -29,7 +27,10 @@ const MAX_ZOOM: f32 = 6.0;
 #[derive(Clone, Debug)]
 pub enum GraphEvent {
     SwitchMode(GraphMode),
+    /// Open the full inspector for a memory (Enter, or Open in the graph card).
     SelectMemory(String),
+    /// A node was picked on the canvas; the graph shows its compact card.
+    Inspect(Option<String>),
     Hover(Option<String>),
     PopoverOpened,
 }
@@ -188,8 +189,91 @@ struct CanvasRenderData {
     constellation: bool,
     drift_phase: f32,
     has_legend: bool,
+    /// Node indices kept at full strength in focus mode (selection + neighbors).
+    focus: Option<Arc<HashSet<usize>>>,
     theme: ThemePalette,
     label_cache: Rc<RefCell<LabelShapeCache>>,
+}
+
+/// Selected node plus its direct neighbors, by layout index.
+pub(crate) fn neighborhood(layout: &ComputedLayout, memory_id: &str) -> Option<HashSet<usize>> {
+    let center = layout
+        .nodes
+        .iter()
+        .position(|n| n.data.memory_id.as_deref() == Some(memory_id))?;
+    let mut set = HashSet::new();
+    set.insert(center);
+    for e in &layout.edges {
+        if e.source_idx == center {
+            set.insert(e.target_idx);
+        } else if e.target_idx == center {
+            set.insert(e.source_idx);
+        }
+    }
+    Some(set)
+}
+
+/// Full title and link breakdown for the inspected node, loaded lazily from
+/// the store because graph labels are deliberately short.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectorDetail {
+    pub memory_id: String,
+    pub title: String,
+    /// `(relation, count)`, most common first.
+    pub relations: Vec<(String, usize)>,
+}
+
+/// Count linked edges by relation, most common first, ties alphabetical.
+pub fn relation_breakdown<'a>(relations: impl Iterator<Item = &'a str>) -> Vec<(String, usize)> {
+    let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+    for r in relations {
+        let key = r.trim().replace('_', " ");
+        if !key.is_empty() {
+            *counts.entry(key).or_default() += 1;
+        }
+    }
+    let mut out: Vec<(String, usize)> = counts.into_iter().collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out
+}
+
+/// Facts for the compact graph inspector card.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NodeSummary {
+    pub label: String,
+    pub node_type: String,
+    pub group: String,
+    pub importance: f32,
+    pub created_at: i64,
+    pub links: usize,
+    pub conflicts: usize,
+}
+
+pub(crate) fn summarize_node(layout: &ComputedLayout, memory_id: &str) -> Option<NodeSummary> {
+    let (ix, node) = layout
+        .nodes
+        .iter()
+        .enumerate()
+        .find(|(_, n)| n.data.memory_id.as_deref() == Some(memory_id))?;
+    let mut links = 0;
+    let mut conflicts = 0;
+    for e in &layout.edges {
+        if e.source_idx == ix || e.target_idx == ix {
+            links += 1;
+            if e.is_contradiction {
+                conflicts += 1;
+            }
+        }
+    }
+    Some(NodeSummary {
+        label: strip_short_id_prefix(&node.data.label, node.data.memory_id.as_deref()).to_string(),
+        node_type: node.data.node_type.clone(),
+        group: node.data.group.clone(),
+        importance: node.data.importance,
+        created_at: node.data.created_at,
+        links,
+        conflicts,
+    })
 }
 
 /// Interactive GPUI graph canvas with background force/temporal layout and lyon edges.
@@ -219,6 +303,10 @@ pub struct GraphView {
     window_active: bool,
     no_fun: bool,
     layout_generation: u64,
+    focus_mode: bool,
+    focus_set: Option<Arc<HashSet<usize>>>,
+    inspector_dismissed: bool,
+    inspector_detail: Option<InspectorDetail>,
     label_cache: Rc<RefCell<LabelShapeCache>>,
     _layout_task: Option<Task<()>>,
     _drift_task: Option<Task<()>>,
@@ -381,6 +469,10 @@ impl GraphView {
             window_active: true,
             no_fun: false,
             layout_generation: 0,
+            focus_mode: false,
+            focus_set: None,
+            inspector_dismissed: false,
+            inspector_detail: None,
             label_cache: Rc::new(RefCell::new(LabelShapeCache::default())),
             _layout_task: None,
             _drift_task: None,
@@ -393,6 +485,62 @@ impl GraphView {
             self.external_hovered_id = hovered_id;
             cx.notify();
         }
+    }
+
+    pub fn set_inspector_detail(
+        &mut self,
+        detail: Option<InspectorDetail>,
+        cx: &mut Context<Self>,
+    ) {
+        self.inspector_detail = detail;
+        cx.notify();
+    }
+
+    /// Leave focus mode if it is on (Esc). Returns whether anything changed.
+    pub fn exit_focus_mode(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.focus_mode {
+            self.toggle_focus_mode(cx);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Dim everything except the selected node and its direct neighbors.
+    pub fn toggle_focus_mode(&mut self, cx: &mut Context<Self>) {
+        self.focus_mode = !self.focus_mode;
+        self.recompute_focus();
+        cx.notify();
+    }
+
+    pub fn is_focus_mode(&self) -> bool {
+        self.focus_mode
+    }
+
+    fn recompute_focus(&mut self) {
+        self.focus_set = if self.focus_mode {
+            match (&self.layout, &self.selected_id) {
+                (Some(layout), Some(id)) => neighborhood(layout, id).map(Arc::new),
+                _ => None,
+            }
+        } else {
+            None
+        };
+    }
+
+    /// Zoom around the canvas center (toolbar buttons and +/- keys).
+    pub fn zoom_by(&mut self, factor: f32, cx: &mut Context<Self>) {
+        self.needs_fit_on_bounds = false;
+        self.viewport.zoom = (self.viewport.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        cx.notify();
+    }
+
+    fn select_on_canvas(&mut self, memory_id: Option<String>, cx: &mut Context<Self>) {
+        self.selected_id = memory_id.clone();
+        self.inspector_dismissed = false;
+        self.recompute_focus();
+        cx.emit(GraphEvent::Inspect(memory_id));
+        cx.notify();
     }
 
     pub fn fit_view(&mut self, cx: &mut Context<Self>) {
@@ -542,6 +690,8 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) {
         self.selected_id = memory_id.clone();
+        self.inspector_dismissed = false;
+        self.recompute_focus();
         if center {
             if let (Some(id), Some(layout)) = (memory_id, &self.layout)
                 && let Some(node) = layout
@@ -582,7 +732,9 @@ impl GraphView {
             .keyboard_index
             .and_then(|k| indices.iter().position(|&i| i == k));
         let next = match current {
-            Some(p) => (p as isize).saturating_add(delta).clamp(0, indices.len() as isize - 1) as usize,
+            Some(p) => (p as isize)
+                .saturating_add(delta)
+                .clamp(0, indices.len() as isize - 1) as usize,
             None => {
                 if delta < 0 {
                     indices.len() - 1
@@ -592,13 +744,9 @@ impl GraphView {
             }
         };
         let ix = indices[next];
-        let memory_id = layout
-            .nodes
-            .get(ix)
-            .and_then(|n| n.data.memory_id.clone());
+        let memory_id = layout.nodes.get(ix).and_then(|n| n.data.memory_id.clone());
         self.keyboard_index = Some(ix);
-        self.selected_id = memory_id;
-        cx.notify();
+        self.select_on_canvas(memory_id, cx);
     }
 
     /// Currently ringed node, used by Enter to open the detail pane.
@@ -640,6 +788,7 @@ impl GraphView {
                 view.label_cache.borrow_mut().entries.clear();
                 view.layout = Some(Arc::new(computed));
                 view.is_loading = false;
+                view.recompute_focus();
                 let focus_id = if std::mem::take(&mut view.pending_center_on_load) {
                     selected_id.as_deref()
                 } else {
@@ -775,9 +924,8 @@ impl GraphView {
         ) && let Some(node) = layout.nodes.get(node_ix)
         {
             if let Some(memory_id) = &node.data.memory_id {
-                self.selected_id = Some(memory_id.clone());
-                cx.emit(GraphEvent::SelectMemory(memory_id.clone()));
-                cx.notify();
+                let memory_id = memory_id.clone();
+                self.select_on_canvas(Some(memory_id), cx);
             } else {
                 // Cluster node: zoom smoothly onto cluster center.
                 self.needs_fit_on_bounds = false;
@@ -816,6 +964,235 @@ impl GraphView {
             self.viewport.zoom = new_zoom;
         }
         cx.notify();
+    }
+}
+
+impl GraphView {
+    fn render_zoom_cluster(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::ui::views::kit::{ButtonKind, button, icon_button};
+        let theme = self.theme;
+        let zoom_pct: SharedString = format!("{:.0}%", self.viewport.zoom * 100.0).into();
+        div()
+            .id("graph-zoom-cluster")
+            .absolute()
+            .bottom(px(12.))
+            .right(px(12.))
+            .p(px(2.))
+            .rounded(px(8.))
+            .bg(theme.bg_panel)
+            .border_1()
+            .border_color(theme.border_subtle)
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                icon_button("graph-zoom-out", UiIcon::Minus, "Zoom out (-)", &theme)
+                    .tooltip(tooltip_view("Zoom out (-)", theme))
+                    .on_click(cx.listener(|this, _, _, cx| this.zoom_by(0.8, cx))),
+            )
+            .child(
+                div()
+                    .w(px(44.))
+                    .text_center()
+                    .text_size(px(12.))
+                    .font_features(crate::ui::views::tabular_nums())
+                    .text_color(theme.text_secondary)
+                    .child(zoom_pct),
+            )
+            .child(
+                icon_button("graph-zoom-in", UiIcon::Plus, "Zoom in (+)", &theme)
+                    .tooltip(tooltip_view("Zoom in (+)", theme))
+                    .on_click(cx.listener(|this, _, _, cx| this.zoom_by(1.25, cx))),
+            )
+            .child(div().w(px(1.)).h(px(16.)).bg(theme.border_subtle))
+            .child(
+                button("graph-reset-view", "Fit", ButtonKind::Subtle, &theme)
+                    .tooltip(tooltip_view("Fit all nodes in view (0)", theme))
+                    .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+                        this.mode_menu_open = false;
+                        if event.click_count() == 3 && !this.no_fun {
+                            this.toggle_constellation(cx);
+                        } else {
+                            this.fit_view(cx);
+                        }
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn render_inspector(&self, summary: NodeSummary, cx: &mut Context<Self>) -> AnyElement {
+        use crate::ui::views::kit::{ButtonKind, button, icon_button};
+        let theme = self.theme;
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let full = self
+            .inspector_detail
+            .as_ref()
+            .filter(|d| self.selected_id.as_deref() == Some(d.memory_id.as_str()));
+        let label: SharedString = match full {
+            Some(d) => d.title.clone().into(),
+            None => sanitize_single_line(&summary.label, 120).into(),
+        };
+        let relations: Option<SharedString> = full.filter(|d| !d.relations.is_empty()).map(|d| {
+            d.relations
+                .iter()
+                .take(3)
+                .map(|(r, n)| format!("{n} {r}"))
+                .collect::<Vec<_>>()
+                .join(" · ")
+                .into()
+        });
+        let mut facts: Vec<String> = vec![summary.node_type.clone()];
+        if !summary.group.trim().is_empty() && summary.group != summary.node_type {
+            facts.push(summary.group.clone());
+        }
+        if summary.created_at > 0 {
+            facts.push(format!(
+                "{} old",
+                crate::core::model::format_relative_age(summary.created_at, now_ms)
+            ));
+        }
+        let facts: SharedString = facts.join(" · ").into();
+        let links: SharedString = match summary.links {
+            0 => "No links".to_string(),
+            1 => "1 link".to_string(),
+            n => format!("{n} links"),
+        }
+        .into();
+        let importance: SharedString = format!(
+            "importance {:.0}%",
+            (summary.importance.clamp(0.0, 1.0) * 100.0).round()
+        )
+        .into();
+        let focus_label = if self.focus_mode { "Show all" } else { "Focus" };
+        let open_id = self.selected_id.clone();
+
+        div()
+            .id("graph-inspector")
+            .role(Role::Region)
+            .aria_label("Selected node")
+            .absolute()
+            .top(px(12.))
+            .left(px(12.))
+            .w(px(276.))
+            .p(px(12.))
+            .rounded(px(10.))
+            .bg(theme.bg_panel)
+            .border_1()
+            .border_color(theme.border)
+            .shadow_md()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_scroll(|_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .mt(px(5.))
+                            .w(px(8.))
+                            .h(px(8.))
+                            .rounded_full()
+                            .flex_shrink_0()
+                            .bg(theme.type_color(&summary.node_type)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .text_size(px(13.))
+                            .line_height(px(18.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.text_primary)
+                            .line_clamp(3)
+                            .child(label),
+                    )
+                    .child(
+                        icon_button("graph-inspector-close", UiIcon::Close, "Hide card", &theme)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.inspector_dismissed = true;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(theme.text_muted)
+                    .truncate()
+                    .child(facts),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .text_size(px(12.))
+                    .font_features(crate::ui::views::tabular_nums())
+                    .text_color(theme.text_secondary)
+                    .child(links)
+                    .child(importance)
+                    .when(summary.conflicts > 0, |row| {
+                        row.child(crate::ui::views::kit::state_marker(
+                            if summary.conflicts == 1 {
+                                "1 conflict".to_string()
+                            } else {
+                                format!("{} conflicts", summary.conflicts)
+                            },
+                            theme.danger,
+                        ))
+                    }),
+            )
+            .when_some(relations, |col, rel| {
+                col.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(theme.text_muted)
+                        .truncate()
+                        .child(rel),
+                )
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(
+                        button(
+                            "graph-inspector-open",
+                            "Open",
+                            ButtonKind::Secondary,
+                            &theme,
+                        )
+                        .tooltip(tooltip_view("Open in the inspector (Enter)", theme))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            if let Some(id) = open_id.clone() {
+                                cx.emit(GraphEvent::SelectMemory(id));
+                            }
+                        })),
+                    )
+                    .child(
+                        button(
+                            "graph-inspector-focus",
+                            focus_label,
+                            ButtonKind::Subtle,
+                            &theme,
+                        )
+                        .tooltip(tooltip_view(
+                            "Dim everything but this node and its links (F)",
+                            theme,
+                        ))
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_focus_mode(cx))),
+                    ),
+            )
+            .into_any_element()
     }
 }
 
@@ -925,9 +1302,21 @@ impl Render for GraphView {
             constellation: self.constellation,
             drift_phase: self.drift_phase,
             has_legend,
+            focus: self.focus_set.clone(),
             theme,
             label_cache: self.label_cache.clone(),
         });
+
+        let inspector: Option<AnyElement> = if self.inspector_dismissed {
+            None
+        } else {
+            self.selected_id
+                .as_deref()
+                .zip(self.layout.as_ref())
+                .and_then(|(id, layout)| summarize_node(layout, id))
+                .map(|summary| self.render_inspector(summary, cx))
+        };
+        let inspector_shown = inspector.is_some();
 
         let mode_control: AnyElement = if compact_toolbar {
             div()
@@ -1167,12 +1556,12 @@ impl Render for GraphView {
                     .when(self.error.is_none(), |el| {
                         let empty_msg = match self.mode {
                             GraphMode::Contradictions => {
-                                "No contradictions detected in the active filter slice."
+                                "No conflicts in this view. Memories that contradict each other appear here as linked pairs."
                             }
                             GraphMode::Entity => {
-                                "No entity-indexed memories match the active filters."
+                                "No memories in this view mention a known entity yet."
                             }
-                            _ => "No memories match the active filter slice.",
+                            _ => "Nothing to draw. Clear a filter or search to see more of the store.",
                         };
                         let is_empty = self
                             .layout
@@ -1230,46 +1619,63 @@ impl Render for GraphView {
                             )
                         }
                     })
-                    .child(
-                        div()
-                            .id("graph-reset-view")
-                            .focusable()
-                            .role(Role::Button)
-                            .aria_label("Fit graph view")
-                            .tooltip(tooltip_view("Fit all nodes in view", theme))
-                            .absolute()
-                            .top(px(12.))
-                            .right(px(12.))
-                            .h(px(28.))
-                            .px(px(10.))
-                            .rounded(px(6.))
-                            .cursor_pointer()
-                            .bg(theme.bg_panel)
-                            .border_1()
-                            .border_color(theme.border_subtle)
-                            .hover(move |s| s.bg(theme.bg_selected))
-                            .focus_visible(move |s| s.border_1().border_color(theme.accent))
-                            .flex()
-                            .items_center()
-                            .text_size(px(12.))
-                            .text_color(theme.text_secondary)
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-                                this.mode_menu_open = false;
-                                if event.click_count() == 3 && !this.no_fun {
-                                    this.toggle_constellation(cx);
-                                } else {
-                                    this.fit_view(cx);
-                                }
-                            }))
-                            .child("Fit view"),
-                    )
+                    .child(self.render_zoom_cluster(cx))
+                    .when_some(inspector, |el, card| el.child(card))
+                    .when(self.focus_mode && self.focus_set.is_some(), |el| {
+                        let n = self.focus_set.as_ref().map_or(0, |f| f.len().saturating_sub(1));
+                        el.child(
+                            div()
+                                .absolute()
+                                .bottom(px(56.))
+                                .left(px(0.))
+                                .right(px(0.))
+                                .flex()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .id("graph-focus-banner")
+                                        .role(Role::Status)
+                                        .px(px(10.))
+                                        .h(px(28.))
+                                        .rounded(px(6.))
+                                        .bg(theme.bg_panel)
+                                        .border_1()
+                                        .border_color(theme.border)
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .text_size(px(12.))
+                                        .text_color(theme.text_secondary)
+                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .child(SharedString::from(if n == 1 {
+                                            "Focused on 1 linked memory".to_string()
+                                        } else {
+                                            format!("Focused on {n} linked memories")
+                                        }))
+                                        .child(
+                                            crate::ui::views::kit::button(
+                                                "graph-focus-exit",
+                                                "Show all",
+                                                crate::ui::views::kit::ButtonKind::Subtle,
+                                                &theme,
+                                            )
+                                            .h(px(22.))
+                                            .text_size(px(12.))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.toggle_focus_mode(cx)
+                                            })),
+                                        ),
+                                ),
+                        )
+                    })
                     .when(self.is_loading, |el| {
                         el.child(
                             div()
                                 .absolute()
                                 .top(px(12.))
-                                .right(px(88.))
+                                .right(px(12.))
                                 .px(px(10.))
                                 .py(px(5.))
                                 .rounded(px(6.))
@@ -1286,7 +1692,7 @@ impl Render for GraphView {
                             div()
                                 .absolute()
                                 .top(px(12.))
-                                .left(px(12.))
+                                .left(px(if inspector_shown { 300. } else { 12. }))
                                 .px(px(10.))
                                 .py(px(5.))
                                 .rounded(px(6.))
@@ -1890,10 +2296,7 @@ fn finalize_layout(
             let anchor_x = core_xs[core_xs.len() / 2];
             // Clear every node in the group, not just the core, so a heading
             // never lands on top of an outlier node.
-            let top_y = pts
-                .iter()
-                .map(|p| p.1 - p.2)
-                .fold(f32::INFINITY, f32::min);
+            let top_y = pts.iter().map(|p| p.1 - p.2).fold(f32::INFINITY, f32::min);
 
             group_labels.push(GroupAnchorLabel {
                 text: sanitize_single_line(name, 26),
@@ -2134,14 +2537,8 @@ fn paint_graph_canvas(
         let dy = p1.y.as_f32() - ctrl.y.as_f32();
         let len = (dx * dx + dy * dy).sqrt().max(0.001);
         let (ux, uy) = (dx / len, dy / len);
-        let tip = point(
-            px(p1.x.as_f32() - ux * 11.0),
-            px(p1.y.as_f32() - uy * 11.0),
-        );
-        let base = point(
-            px(tip.x.as_f32() - ux * 9.0),
-            px(tip.y.as_f32() - uy * 9.0),
-        );
+        let tip = point(px(p1.x.as_f32() - ux * 11.0), px(p1.y.as_f32() - uy * 11.0));
+        let base = point(px(tip.x.as_f32() - ux * 9.0), px(tip.y.as_f32() - uy * 9.0));
         let left = point(
             px(base.x.as_f32() - uy * 5.0),
             px(base.y.as_f32() + ux * 5.0),
@@ -2156,10 +2553,7 @@ fn paint_graph_canvas(
                 px((a.y.as_f32() + b.y.as_f32()) * 0.5),
             )
         };
-        [
-            (tip, mid(tip, left), left),
-            (tip, mid(tip, right), right),
-        ]
+        [(tip, mid(tip, left), left), (tip, mid(tip, right), right)]
     }
 
     let mut regular_edges: Vec<EdgeCurve> = Vec::new();
@@ -2201,6 +2595,11 @@ fn paint_graph_canvas(
             || data.hovered_node == Some(edge.target_idx)
             || ext_hover_hit;
 
+        if let Some(focus) = data.focus.as_ref()
+            && !(focus.contains(&edge.source_idx) && focus.contains(&edge.target_idx))
+        {
+            continue;
+        }
         if s_selected || t_selected || is_hovered {
             let mut ec = theme.edge_color(&edge.relation);
             ec.a = if data.constellation { 0.45 } else { 0.70 };
@@ -2247,11 +2646,15 @@ fn paint_graph_canvas(
     let r_edge = bounds.right().as_f32();
     let b = bounds.bottom().as_f32();
     let mut hud_rects: Vec<(f32, f32, f32, f32)> = vec![
-        // Top-right Fit view button + loading badge gutter
-        (r_edge - 104.0, t + 6.0, r_edge - 6.0, t + 46.0),
-        // Bottom-right zoom badge
-        (r_edge - 84.0, b - 44.0, r_edge - 6.0, b - 6.0),
+        // Top-right loading badge gutter
+        (r_edge - 180.0, t + 6.0, r_edge - 6.0, t + 46.0),
+        // Bottom-right zoom cluster
+        (r_edge - 196.0, b - 46.0, r_edge - 6.0, b - 6.0),
     ];
+    if data.selected_id.is_some() {
+        // Top-left inspector card
+        hud_rects.push((l + 6.0, t + 6.0, l + 300.0, t + 176.0));
+    }
     if data.layout.mode == GraphMode::Temporal && !data.layout.timeline_ticks.is_empty() {
         hud_rects.push((l, t, r_edge, t + 58.0));
     }
@@ -2277,7 +2680,7 @@ fn paint_graph_canvas(
     };
     let mut occupied: Vec<(f32, f32, f32, f32)> = hud_rects.clone();
 
-    if vp.zoom >= 0.20 && vp.zoom <= 2.4 {
+    if data.focus.is_none() && vp.zoom >= 0.20 && vp.zoom <= 2.4 {
         let mut cache = data.label_cache.borrow_mut();
         for gl in &data.layout.group_labels {
             let p = vp.world_to_screen(bounds, gl.x, gl.y);
@@ -2370,7 +2773,11 @@ fn paint_graph_canvas(
             data.external_hovered_id.as_deref(),
             node.data.memory_id.as_deref(),
         );
-        let fill_color = theme.type_color(&node.data.node_type);
+        let dimmed = data.focus.as_ref().is_some_and(|f| !f.contains(&ix));
+        let mut fill_color = theme.type_color(&node.data.node_type);
+        if dimmed {
+            fill_color.a = 0.16;
+        }
 
         if is_selected {
             let halo_r = r + 5.5;
@@ -2415,7 +2822,9 @@ fn paint_graph_canvas(
             ));
         }
 
-        let border_color = if node.data.has_contradiction {
+        let border_color = if dimmed {
+            gpui::transparent_black()
+        } else if node.data.has_contradiction {
             theme.danger
         } else if node.data.cluster_count > 1 {
             theme.text_secondary
@@ -2445,13 +2854,14 @@ fn paint_graph_canvas(
             && sp.x.as_f32() <= r_edge - 4.0
             && sp.y.as_f32() >= t + 4.0
             && sp.y.as_f32() <= b - 4.0;
-        let show_node_label = should_show_node_label(
-            node_in_canvas,
-            is_selected,
-            is_hovered,
-            vp.zoom,
-            top_label_indices.contains(&ix),
-        );
+        let show_node_label = !dimmed
+            && should_show_node_label(
+                node_in_canvas,
+                is_selected,
+                is_hovered,
+                vp.zoom,
+                top_label_indices.contains(&ix),
+            );
         if show_node_label {
             if node.data.cluster_count > 1 {
                 let count_txt: SharedString = format!("+{}", node.data.cluster_count).into();
@@ -3005,6 +3415,19 @@ mod tests {
     }
 
     #[test]
+    fn relation_breakdown_counts_and_orders_relations() {
+        let rels = ["supports", "contradicts", "supports", "relates_to", " "];
+        assert_eq!(
+            relation_breakdown(rels.iter().copied()),
+            vec![
+                ("supports".to_string(), 2),
+                ("contradicts".to_string(), 1),
+                ("relates to".to_string(), 1),
+            ]
+        );
+    }
+
+    #[test]
     fn linked_node_hover_matches_local_or_external_id() {
         assert!(is_node_hovered(Some(2), 2, None, Some("m1")));
         assert!(is_node_hovered(None, 2, Some("m1"), Some("m1")));
@@ -3016,9 +3439,21 @@ mod tests {
     fn graph_label_zoom_gate_collision_and_bounds_clamp() {
         // Below the ambient threshold, only selected or hovered labels appear.
         let gate = GRAPH_AMBIENT_LABEL_MIN_ZOOM;
-        assert!(!should_show_node_label(true, false, false, gate - 0.01, true));
+        assert!(!should_show_node_label(
+            true,
+            false,
+            false,
+            gate - 0.01,
+            true
+        ));
         assert!(should_show_node_label(true, false, false, gate, true));
-        assert!(!should_show_node_label(true, false, false, gate - 0.01, false));
+        assert!(!should_show_node_label(
+            true,
+            false,
+            false,
+            gate - 0.01,
+            false
+        ));
         assert!(should_show_node_label(true, true, false, 0.25, false));
         assert!(should_show_node_label(true, false, true, 0.25, false));
 
