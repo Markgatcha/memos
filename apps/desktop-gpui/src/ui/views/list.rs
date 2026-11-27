@@ -456,7 +456,7 @@ impl MemoryListView {
         if self.filter.has_contradiction {
             count += 1;
         }
-        if self.filter.stale_before_ms.is_some() || self.filter.updated_before_ms.is_some() {
+        if self.filter.stale_before_ms.is_some() || self.filter.untouched_only {
             count += 1;
         }
         if self.filter.max_trust.is_some() {
@@ -709,7 +709,7 @@ impl MemoryListView {
             }
         };
         let has_health = self.filter.stale_before_ms.is_some()
-            || self.filter.updated_before_ms.is_some()
+            || self.filter.untouched_only
             || self.filter.duplicates_only
             || self.filter.max_trust.is_some();
         let est_content_h = group_est(namespaces.len())
@@ -876,7 +876,7 @@ impl MemoryListView {
                                     if self.filter.stale_before_ms.is_some() {
                                         labels.push("Stale / expired / drifted");
                                     }
-                                    if self.filter.updated_before_ms.is_some() {
+                                    if self.filter.untouched_only {
                                         labels.push("Untouched for 90 days");
                                     }
                                     if self.filter.duplicates_only {

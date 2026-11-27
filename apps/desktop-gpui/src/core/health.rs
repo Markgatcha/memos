@@ -428,9 +428,7 @@ pub fn health_issues(
             impact: "Old is not wrong, but facts drift. Skim them and forget what no longer holds.",
             action_label: "Show",
             action: HealthIssueAction::Filter(Box::new(QueryFilter {
-                updated_before_ms: Some(
-                    now_ms.saturating_sub(STALE_STORE_AGE_DAYS.saturating_mul(86_400_000)),
-                ),
+                untouched_only: true,
                 ..Default::default()
             })),
             panel: HealthPanelFilter::Stale,
@@ -508,7 +506,7 @@ mod tests {
         );
         assert_eq!(issues[3].title, "1 low-trust memory");
         match &issues[4].action {
-            HealthIssueAction::Filter(f) => assert!(f.updated_before_ms.is_some()),
+            HealthIssueAction::Filter(f) => assert!(f.untouched_only),
             other => panic!("unexpected {other:?}"),
         }
 

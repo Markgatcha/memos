@@ -154,7 +154,7 @@ pub struct QueryFilter {
     #[serde(default)]
     pub stale_before_ms: Option<i64>,
     #[serde(default)]
-    pub updated_before_ms: Option<i64>,
+    pub untouched_only: bool,
     #[serde(default)]
     pub max_trust: Option<f32>,
     #[serde(default)]
@@ -180,7 +180,7 @@ impl QueryFilter {
             && self.created_after_ms.is_none()
             && !self.quarantined_only
             && self.stale_before_ms.is_none()
-            && self.updated_before_ms.is_none()
+            && !self.untouched_only
             && self.max_trust.is_none()
             && !self.duplicates_only
             && self.updated_not_new_after_ms.is_none()
@@ -771,8 +771,7 @@ fn parse_scope_token(
             Some(SearchScopeKind::IsQuarantined)
         }
         "is" if val.trim().eq_ignore_ascii_case("untouched") => {
-            let age_ms = crate::core::health::STALE_STORE_AGE_DAYS.saturating_mul(86_400_000);
-            out.updated_before_ms = Some(now_ms.saturating_sub(age_ms));
+            out.untouched_only = true;
             Some(SearchScopeKind::IsUntouched)
         }
         "after" => {
@@ -905,7 +904,7 @@ pub fn scopes_from_filter(filter: &QueryFilter) -> Vec<SearchScopeChip> {
             label: "is:stale".to_string(),
         });
     }
-    if filter.updated_before_ms.is_some() {
+    if filter.untouched_only {
         chips.push(SearchScopeChip {
             kind: SearchScopeKind::IsUntouched,
             label: "is:untouched".to_string(),
@@ -952,7 +951,7 @@ pub fn remove_search_scope(filter: &mut QueryFilter, kind: SearchScopeKind) -> b
             std::mem::replace(&mut filter.has_contradiction, false)
         }
         SearchScopeKind::IsStale => filter.stale_before_ms.take().is_some(),
-        SearchScopeKind::IsUntouched => filter.updated_before_ms.take().is_some(),
+        SearchScopeKind::IsUntouched => std::mem::take(&mut filter.untouched_only),
         SearchScopeKind::AfterDate => filter.created_after_ms.take().is_some(),
         SearchScopeKind::MaxTrust => filter.max_trust.take().is_some(),
         SearchScopeKind::IsQuarantined => std::mem::replace(&mut filter.quarantined_only, false),
@@ -997,7 +996,7 @@ pub fn describe_filter_target(filter: &QueryFilter) -> String {
     if filter.created_after_ms.is_some() {
         parts.push("recent".to_string());
     }
-    if filter.updated_before_ms.is_some() {
+    if filter.untouched_only {
         parts.push("untouched for 90 days".to_string());
     }
     if parts.is_empty() {
@@ -1134,7 +1133,7 @@ mod tests {
         assert_eq!(edited.max_trust, None);
         let res = extract_search_scopes("is:untouched oauth", &mut edited, now_ms, true);
         assert_eq!(res.remaining_input, "oauth");
-        assert_eq!(edited.updated_before_ms, Some(now_ms - 90 * 86_400_000));
+        assert!(edited.untouched_only);
         assert!(
             scopes_from_filter(&edited)
                 .iter()
@@ -1144,6 +1143,6 @@ mod tests {
             &mut edited,
             SearchScopeKind::IsUntouched
         ));
-        assert_eq!(edited.updated_before_ms, None);
+        assert!(!edited.untouched_only);
     }
 }

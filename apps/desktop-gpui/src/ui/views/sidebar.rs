@@ -95,7 +95,7 @@ impl SidebarState {
                     && filter.min_importance.is_none()
                     && !filter.quarantined_only
                     && filter.stale_before_ms.is_none()
-                    && filter.updated_before_ms.is_none()
+                    && !filter.untouched_only
                     && filter.max_trust.is_none()
                     && !filter.duplicates_only
                     && filter.updated_not_new_after_ms.is_none()
@@ -113,7 +113,7 @@ impl SidebarState {
                     && filter.created_after_ms.is_none()
                     && !filter.quarantined_only
                     && filter.stale_before_ms.is_none()
-                    && filter.updated_before_ms.is_none()
+                    && !filter.untouched_only
                     && filter.max_trust.is_none()
                     && !filter.duplicates_only
                     && filter.updated_not_new_after_ms.is_none()
@@ -131,7 +131,7 @@ impl SidebarState {
                     && filter.created_after_ms.is_none()
                     && !filter.quarantined_only
                     && filter.stale_before_ms.is_none()
-                    && filter.updated_before_ms.is_none()
+                    && !filter.untouched_only
                     && filter.max_trust.is_none()
                     && !filter.duplicates_only
                     && filter.updated_not_new_after_ms.is_none()

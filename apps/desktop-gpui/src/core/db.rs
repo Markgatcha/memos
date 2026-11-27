@@ -938,7 +938,9 @@ impl ReadOnlyStore {
             }
         }
 
-        if let Some(cutoff_ms) = filter.updated_before_ms {
+        if filter.untouched_only {
+            let cutoff_ms = crate::core::health::now_unix_ms()
+                .saturating_sub(crate::core::health::STALE_STORE_AGE_DAYS * 86_400_000);
             if self.schema.has_col("nodes", "updated_at") {
                 conds.push(format!(
                     "({alias}.updated_at > 0 AND (CASE WHEN {alias}.updated_at < 10000000000 THEN {alias}.updated_at * 1000 ELSE {alias}.updated_at END) < ?)"
@@ -4045,7 +4047,7 @@ mod tests {
                 ",
             )
             .unwrap();
-            let now = 1_800_000_000_000_i64;
+            let now = crate::core::health::now_unix_ms();
             let old = now - 100 * 86_400_000;
             conn.execute(
                 "INSERT INTO nodes VALUES (?1, 'fact', 'default', 'dup body', 'dup', 0.8, 0.9, 0, 'manual', ?2, ?2, NULL)",
@@ -4067,7 +4069,7 @@ mod tests {
         }
 
         let store = ReadOnlyStore::open(&tmp).unwrap();
-        let now = 1_800_000_000_000_i64;
+        let now = crate::core::health::now_unix_ms();
         let cutoff = now - 90 * 86_400_000;
         let raw = store.load_health_raw_stats(now, cutoff).unwrap();
         assert_eq!(raw.duplicate_count, 1);
@@ -4116,7 +4118,7 @@ mod tests {
         let untouched = store
             .query_nodes(
                 &QueryFilter {
-                    updated_before_ms: Some(cutoff),
+                    untouched_only: true,
                     ..Default::default()
                 },
                 &no_contras,
