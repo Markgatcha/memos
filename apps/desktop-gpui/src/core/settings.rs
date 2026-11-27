@@ -219,6 +219,9 @@ pub struct AppSettings {
     /// Recently submitted search expressions, newest first. Local to this
     /// settings file only (like saved views); never sent anywhere.
     pub recent_searches: Vec<String>,
+    /// Titles of the last palette commands run, newest first. Only built-in
+    /// command titles are kept (never memory titles, view names or paths).
+    pub recent_commands: Vec<String>,
     /// Pinned memory ids per store path, in the user's order. Local UI state:
     /// never written into the store and never treated as memory metadata.
     pub pins: BTreeMap<String, Vec<String>>,
@@ -247,6 +250,7 @@ impl Default for AppSettings {
             writer_command: default_writer_command_string(),
             row_density: crate::core::model::RowDensity::Comfortable,
             recent_searches: Vec::new(),
+            recent_commands: Vec::new(),
             pins: BTreeMap::new(),
             recent_stores: Vec::new(),
             large_reading_text: false,

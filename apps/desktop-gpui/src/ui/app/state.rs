@@ -131,6 +131,7 @@ impl MemOSApp {
         let palette = cx.new(|cx| {
             let mut p = CommandPalette::new(theme, window, cx);
             p.set_write_context(settings.write_mode, false, cx);
+            p.set_recent_commands(&settings.recent_commands);
             p
         });
 
@@ -207,7 +208,9 @@ impl MemOSApp {
             |this, _, event, window, cx| match event {
                 BriefEvent::OpenMemory(id) => this.select_memory(id.clone(), false, cx),
                 BriefEvent::ViewAll(section) => this.open_brief_section_in_list(*section, cx),
-                BriefEvent::Compare(a, b) => this.open_compare(a.clone(), b.clone(), window, cx),
+                BriefEvent::Compare(a, b) => {
+                    this.open_compare(a.clone(), Some(b.clone()), window, cx)
+                }
                 BriefEvent::ViewAllMemories => {
                     this.active_surface = WorkspaceSurface::Memories;
                     this.sidebar.update(cx, |s, cx| {
@@ -232,6 +235,7 @@ impl MemOSApp {
                     this.start_review_batch(ids.clone(), *approve, cx)
                 }
                 ReviewEvent::StopBatch => this.stop_review_batch(cx),
+                ReviewEvent::Compare(id) => this.open_compare(id.clone(), None, window, cx),
             },
         ));
 
@@ -364,7 +368,7 @@ impl MemOSApp {
                 }
                 DetailEvent::Compare(peer) => {
                     if let Some(sel) = this.selected_id.clone() {
-                        this.open_compare(sel, peer.clone(), window, cx);
+                        this.open_compare(sel, Some(peer.clone()), window, cx);
                     }
                 }
                 DetailEvent::EditSelected => this.open_edit_memory_composer(window, cx),
@@ -522,6 +526,12 @@ impl MemOSApp {
             cx.subscribe_in(&palette, window, |this, _, event, window, cx| match event {
                 PaletteEvent::Execute(action) => {
                     this.execute_palette_action(action.clone(), window, cx)
+                }
+                PaletteEvent::RecentCommandsChanged(titles) => {
+                    if &this.settings.recent_commands != titles {
+                        this.settings.recent_commands = titles.clone();
+                        this.settings.save_async();
+                    }
                 }
                 PaletteEvent::Closed => {
                     if let Some(handle) = this.palette_return_focus.take() {

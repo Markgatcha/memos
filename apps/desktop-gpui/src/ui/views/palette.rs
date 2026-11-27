@@ -96,6 +96,8 @@ pub struct PaletteEntry {
 pub enum PaletteEvent {
     Execute(PaletteAction),
     Closed,
+    /// The recent-command list changed; persistable titles only.
+    RecentCommandsChanged(Vec<String>),
 }
 
 /// Modal Ctrl/Cmd+K command palette for jumping to memories and running app commands.
@@ -144,7 +146,7 @@ impl CommandPalette {
             }
             InputEvent::Submit(_) => {
                 if let Some(entry) = this.entries.get(this.selected_ix).cloned() {
-                    this.record_recent(&entry);
+                    this.record_recent(&entry, cx);
                     this.is_open = false;
                     cx.emit(PaletteEvent::Execute(entry.action));
                     cx.notify();
@@ -232,7 +234,7 @@ impl CommandPalette {
         cx.notify();
     }
 
-    fn record_recent(&mut self, entry: &PaletteEntry) {
+    fn record_recent(&mut self, entry: &PaletteEntry, cx: &mut Context<Self>) {
         if matches!(
             entry.action,
             PaletteAction::JumpToMemory(_) | PaletteAction::DeleteSavedView(_)
@@ -241,7 +243,15 @@ impl CommandPalette {
         }
         self.recent_titles.retain(|t| t != &entry.title);
         self.recent_titles.insert(0, entry.title.clone());
-        self.recent_titles.truncate(4);
+        self.recent_titles.truncate(RECENT_COMMAND_LIMIT);
+        cx.emit(PaletteEvent::RecentCommandsChanged(
+            persistable_recent_commands(&self.recent_titles),
+        ));
+    }
+
+    /// Seed recents saved by an earlier session.
+    pub fn set_recent_commands(&mut self, titles: &[String]) {
+        self.recent_titles = persistable_recent_commands(titles);
     }
 
     fn rebuild_entries(&mut self, query: &str) {
@@ -397,6 +407,26 @@ type StaticCommand = (
     PaletteAction,
     &'static str,
 );
+
+/// Recent commands shown when the palette opens with an empty query.
+pub const RECENT_COMMAND_LIMIT: usize = 4;
+
+/// The recents that may be written to `settings.json`: built-in command
+/// titles only, so no memory text, saved-view name or store path is ever
+/// persisted, and renamed or removed commands drop out on load.
+pub fn persistable_recent_commands(titles: &[String]) -> Vec<String> {
+    let known = static_palette_commands();
+    let mut out: Vec<String> = Vec::new();
+    for t in titles {
+        if known.iter().any(|e| &e.title == t) && !out.contains(t) {
+            out.push(t.clone());
+        }
+        if out.len() == RECENT_COMMAND_LIMIT {
+            break;
+        }
+    }
+    out
+}
 
 fn static_palette_commands() -> Vec<PaletteEntry> {
     use PaletteGroup::{Actions, Views};
@@ -875,7 +905,7 @@ impl Render for CommandPalette {
                     .when(selected, |el| el.bg(theme.bg_selected))
                     .when(!selected, |el| el.hover(move |s| s.bg(theme.bg_elevated)))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.record_recent(&title_for_recent);
+                        this.record_recent(&title_for_recent, cx);
                         this.is_open = false;
                         cx.emit(PaletteEvent::Execute(action.clone()));
                         cx.notify();
@@ -1197,6 +1227,28 @@ impl Render for CommandPalette {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_builtin_command_titles_are_persisted_as_recents() {
+        let titles: Vec<String> = [
+            "Open Today",
+            // A memory title or saved-view name must never reach settings.json.
+            "Staging database lives in eu-west-1",
+            "Open Today",
+            "Switch store…",
+            "Optimize store",
+            "Sort by recency",
+            "Open Review",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let kept = persistable_recent_commands(&titles);
+        assert_eq!(kept.len(), RECENT_COMMAND_LIMIT);
+        assert_eq!(kept[0], "Open Today");
+        assert!(!kept.iter().any(|t| t.contains("eu-west-1")));
+        assert_eq!(kept.iter().filter(|t| *t == "Open Today").count(), 1);
+    }
 
     fn sample_items(count: usize) -> Vec<MemoryListItem> {
         (0..count)

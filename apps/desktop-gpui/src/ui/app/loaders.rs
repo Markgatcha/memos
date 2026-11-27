@@ -199,6 +199,7 @@ impl MemOSApp {
                             .or_else(|| phase.full.as_ref().and_then(|(l, _)| l.health.clone()));
                         app.apply_store_health_and_milestones(&overview, health, cx);
                         app.overview = Some(overview.clone());
+                        app.sync_review_conflicts(cx);
                         app.last_db_stamp = db_file_stamp(&app.resolved_db.path);
                         app.sidebar
                             .update(cx, |s, cx| s.set_overview(Some(overview.clone()), cx));
@@ -662,6 +663,7 @@ impl MemOSApp {
         self.list_total_matching = total_matching;
         self.loading_next_page = false;
         self.overview = Some(overview.clone());
+        self.sync_review_conflicts(cx);
         self.sidebar
             .update(cx, |s, cx| s.set_overview(Some(overview.clone()), cx));
         self.list_view.update(cx, |list, cx| {
@@ -701,6 +703,7 @@ impl MemOSApp {
 
         self.apply_store_health_and_milestones(&loaded.overview, loaded.health, cx);
         self.overview = Some(loaded.overview);
+        self.sync_review_conflicts(cx);
         self.sidebar
             .update(cx, |s, cx| s.set_overview(Some(ov), cx));
         self.list_view.update(cx, |list, cx| {

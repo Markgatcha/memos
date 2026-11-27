@@ -51,7 +51,9 @@ impl MemOSApp {
     pub(super) fn open_compare(
         &mut self,
         left_id: String,
-        right_id: String,
+        // `None`: compare with the left memory's first recorded conflict,
+        // resolved in the same background read (used from Review).
+        right_id: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -74,8 +76,16 @@ impl MemOSApp {
                 .spawn(async move {
                     shared.with_store(&db_path, |store| {
                         let a = store.load_node_detail(&left_id)?;
-                        let b = store.load_node_detail(&right_id)?;
-                        Ok::<_, DbError>((a, b))
+                        let right = right_id.or_else(|| {
+                            a.as_ref()
+                                .and_then(|d| d.contradictions.first())
+                                .map(|c| c.peer_id.clone())
+                        });
+                        let Some(right) = right else {
+                            return Ok::<_, DbError>((a, None, false));
+                        };
+                        let b = store.load_node_detail(&right)?;
+                        Ok((a, b, true))
                     })
                 })
                 .await;
@@ -85,7 +95,11 @@ impl MemOSApp {
                 }
                 app.compare.loading = false;
                 match res {
-                    Ok((Some(a), Some(b))) => {
+                    Ok((Some(_), None, false)) => {
+                        app.compare.error =
+                            Some("This memory has no recorded conflict to compare.".to_string());
+                    }
+                    Ok((Some(a), Some(b), _)) => {
                         for d in [&a, &b] {
                             crate::telemetry::register_sensitive_text(&d.content);
                         }
@@ -121,7 +135,7 @@ impl MemOSApp {
             .filter(|d| d.id == sel)
             .and_then(|d| d.contradictions.first().map(|c| c.peer_id.clone()));
         match peer {
-            Some(peer) => self.open_compare(sel, peer, window, cx),
+            Some(peer) => self.open_compare(sel, Some(peer), window, cx),
             None => self.set_notice("This memory has no recorded conflict", cx),
         }
     }
@@ -434,5 +448,20 @@ impl MemOSApp {
                     }),
             )
             .into_any_element()
+    }
+}
+
+impl MemOSApp {
+    /// Tell the Review view which candidates have a recorded conflict, so it
+    /// can offer Compare on exactly those rows.
+    pub(super) fn sync_review_conflicts(&mut self, cx: &mut Context<Self>) {
+        let ids = std::sync::Arc::new(
+            self.overview
+                .as_ref()
+                .map(|o| o.contradiction_node_ids.clone())
+                .unwrap_or_default(),
+        );
+        self.review_view
+            .update(cx, |r, cx| r.set_conflict_ids(ids, cx));
     }
 }

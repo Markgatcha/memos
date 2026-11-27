@@ -28,6 +28,8 @@ pub enum ReviewEvent {
     },
     /// Stop a running batch after the current item.
     StopBatch,
+    /// Open the candidate side by side with the memory it conflicts with.
+    Compare(String),
 }
 
 /// Ordered multi-selection of review candidates.
@@ -287,6 +289,8 @@ pub struct ReviewView {
     armed_batch: Option<bool>,
     batch: Option<BatchProgress>,
     hovered_ix: Option<usize>,
+    /// Memories with a recorded conflict; their rows offer Compare.
+    conflict_ids: std::sync::Arc<std::collections::HashSet<String>>,
     theme: ThemePalette,
 }
 
@@ -308,6 +312,7 @@ impl ReviewView {
             armed_batch: None,
             batch: None,
             hovered_ix: None,
+            conflict_ids: Default::default(),
             theme,
         }
     }
@@ -315,6 +320,17 @@ impl ReviewView {
     pub fn set_theme(&mut self, theme: ThemePalette, cx: &mut Context<Self>) {
         self.theme = theme;
         cx.notify();
+    }
+
+    pub fn set_conflict_ids(
+        &mut self,
+        ids: std::sync::Arc<std::collections::HashSet<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.conflict_ids != ids {
+            self.conflict_ids = ids;
+            cx.notify();
+        }
     }
 
     pub fn set_write_mode(&mut self, write_mode: bool, cx: &mut Context<Self>) {
@@ -500,6 +516,8 @@ impl ReviewView {
         let id_check = item.id.clone();
         let id_approve = item.id.clone();
         let id_reject = item.id.clone();
+        let id_compare = item.id.clone();
+        let in_conflict = self.conflict_ids.contains(&item.id);
 
         let age = format_relative_age(item.created_at, now_ms);
         let mut meta_parts = vec![item.node_type.clone()];
@@ -664,6 +682,9 @@ impl ReviewView {
                                     .truncate()
                                     .child(meta_line),
                             )
+                            .when(in_conflict, |row| {
+                                row.child(kit::state_marker("Conflict", theme.danger))
+                            })
                             .when(low_confidence, |row| {
                                 row.child(kit::state_marker("Low confidence", theme.text_secondary))
                             }),
@@ -691,6 +712,31 @@ impl ReviewView {
                         .child(kit::state_marker(label, color)),
                 )
             })
+            // Comparing only reads, so it is offered in view-only mode too.
+            .when(
+                in_conflict && show_actions && batch_state.is_none(),
+                |row| {
+                    row.child(
+                        kit::button(
+                            ("review-compare", ix),
+                            "Compare",
+                            ButtonKind::Subtle,
+                            &theme,
+                        )
+                        .tooltip(tooltip_view(
+                            "Side by side with the memory it conflicts with",
+                            theme,
+                        ))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(ReviewEvent::Compare(id_compare.clone()));
+                        })),
+                    )
+                },
+            )
             .when(
                 self.write_mode && show_actions && batch_state.is_none(),
                 |row| {
