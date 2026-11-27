@@ -7,9 +7,7 @@ use crate::core::model::{
     BriefContradictionPair, BriefSnapshot, MemoryListItem, QueryFilter, SortOrder,
     format_relative_age, format_time_relative_and_absolute,
 };
-use crate::ui::views::{
-    ThemePalette, UiIcon, render_ui_icon, render_vertical_scroll_overlay, status_dot, tabular_nums,
-};
+use crate::ui::views::{ThemePalette, render_vertical_scroll_overlay, status_dot, tabular_nums};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BriefSectionKind {
@@ -28,6 +26,19 @@ impl BriefSectionKind {
             BriefSectionKind::Expiring => "Expiring soon",
             BriefSectionKind::Contradictions => "Contradictions",
             BriefSectionKind::NeedsReview => "Worth a look",
+        }
+    }
+
+    /// One line on why the section is here, shown under its title.
+    pub fn explanation(self) -> &'static str {
+        match self {
+            BriefSectionKind::New => "Stored in the last 24 hours",
+            BriefSectionKind::Changed => "Edited in the last 24 hours",
+            BriefSectionKind::Expiring => "Expire in the next 7 days unless refreshed",
+            BriefSectionKind::Contradictions => {
+                "Agents may recall either side until one is resolved"
+            }
+            BriefSectionKind::NeedsReview => "Low trust, inferred or held back; skim and confirm",
         }
     }
 
@@ -90,8 +101,15 @@ pub struct BriefRowCursorItem {
     pub memory_id: String,
 }
 
+/// Keyboard order, matching the visual order: attention, changes, upcoming.
 pub fn brief_selectable_ids(snapshot: &BriefSnapshot) -> Vec<String> {
     let mut ids = Vec::new();
+    for pair in &snapshot.contradiction_pairs {
+        ids.push(pair.node_a_id.clone());
+    }
+    for item in &snapshot.needs_review_items {
+        ids.push(item.id.clone());
+    }
     for item in &snapshot.new_items {
         ids.push(item.id.clone());
     }
@@ -99,12 +117,6 @@ pub fn brief_selectable_ids(snapshot: &BriefSnapshot) -> Vec<String> {
         ids.push(item.id.clone());
     }
     for item in &snapshot.expiring_items {
-        ids.push(item.id.clone());
-    }
-    for pair in &snapshot.contradiction_pairs {
-        ids.push(pair.node_a_id.clone());
-    }
-    for item in &snapshot.needs_review_items {
         ids.push(item.id.clone());
     }
     ids
@@ -352,12 +364,16 @@ impl BriefView {
             .role(Role::ListItem)
             .aria_selected(is_selected)
             .w_full()
-            .p(px(12.))
-            .rounded(px(6.))
+            .min_w(px(0.))
+            .pl(px(12.))
+            .pr(px(4.))
+            .py(px(8.))
+            .border_l_2()
+            .border_color(theme.danger)
             .bg(if is_selected {
                 theme.bg_selected
             } else {
-                theme.bg_panel
+                gpui::transparent_black()
             })
             .flex()
             .flex_col()
@@ -421,9 +437,8 @@ impl BriefView {
                     .min_w(px(0.))
                     .cursor_pointer()
                     .px(px(8.))
-                    .py(px(5.))
+                    .py(px(4.))
                     .rounded(px(5.))
-                    .bg(theme.bg_elevated)
                     .hover(move |s| s.bg(theme.bg_hover))
                     .flex()
                     .items_center()
@@ -458,9 +473,8 @@ impl BriefView {
                     .min_w(px(0.))
                     .cursor_pointer()
                     .px(px(8.))
-                    .py(px(5.))
+                    .py(px(4.))
                     .rounded(px(5.))
-                    .bg(theme.bg_elevated)
                     .hover(move |s| s.bg(theme.bg_hover))
                     .flex()
                     .items_center()
@@ -491,6 +505,16 @@ impl BriefView {
             .into_any_element()
     }
 
+    fn render_group_heading(&self, title: &'static str) -> AnyElement {
+        div()
+            .pt(px(4.))
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(self.theme.text_muted)
+            .child(title)
+            .into_any_element()
+    }
+
     fn render_section_card(
         &self,
         kind: BriefSectionKind,
@@ -503,68 +527,62 @@ impl BriefView {
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(8.))
+            .gap(px(6.))
             .child(
                 div()
                     .w_full()
                     .flex()
-                    .items_center()
+                    .items_start()
                     .justify_between()
                     .gap(px(8.))
-                    .child({
-                        let mut title_row = div().flex().items_center().gap(px(8.));
-                        if kind == BriefSectionKind::Contradictions {
-                            title_row = title_row.child(status_dot(theme.danger));
-                        }
-                        title_row
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.text_primary)
-                                    .child(kind.title()),
-                            )
-                            .child({
-                                let (pill_bg, pill_fg) = if kind == BriefSectionKind::Contradictions
-                                {
-                                    (theme.danger_soft, theme.danger)
-                                } else {
-                                    (theme.bg_badge, theme.text_muted)
-                                };
-                                div()
-                                    .px(px(7.))
-                                    .py(px(1.))
-                                    .rounded(px(10.))
-                                    .bg(pill_bg)
-                                    .text_size(px(11.))
-                                    .font_features(tabular_nums())
-                                    .text_color(pill_fg)
-                                    .child(SharedString::from(total_count.to_string()))
-                            })
-                    })
                     .child(
                         div()
-                            .id(("brief-view-all", kind as usize))
-                            .focusable()
-                            .role(Role::Button)
-                            .cursor_pointer()
-                            .px(px(8.))
-                            .py(px(3.))
-                            .rounded(px(5.))
-                            .hover(move |s| s.bg(theme.bg_elevated))
+                            .min_w(px(0.))
                             .flex()
-                            .items_center()
-                            .gap(px(4.))
-                            .text_size(px(12.))
-                            .text_color(theme.accent_text)
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.emit(BriefEvent::ViewAll(kind));
-                            }))
-                            .child("View all")
-                            .child(render_ui_icon(UiIcon::ArrowRight, 11.0, theme.accent_text)),
+                            .flex_col()
+                            .gap(px(1.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_baseline()
+                                    .gap(px(6.))
+                                    .child(
+                                        div()
+                                            .text_size(px(14.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(theme.text_primary)
+                                            .child(kind.title()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .font_features(tabular_nums())
+                                            .text_color(theme.text_muted)
+                                            .child(SharedString::from(total_count.to_string())),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(theme.text_muted)
+                                    .truncate()
+                                    .child(kind.explanation()),
+                            ),
+                    )
+                    .child(
+                        crate::ui::views::kit::button(
+                            ("brief-view-all", kind as usize),
+                            "View all",
+                            crate::ui::views::kit::ButtonKind::Subtle,
+                            &theme,
+                        )
+                        .text_size(px(12.))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(BriefEvent::ViewAll(kind));
+                        })),
                     ),
             )
-            .child(div().flex().flex_col().gap(px(6.)).children(rows))
+            .child(div().flex().flex_col().gap(px(2.)).children(rows))
             .into_any_element()
     }
 }
@@ -649,38 +667,77 @@ impl Render for BriefView {
                         .flex_col()
                         .items_center()
                         .gap(px(14.))
-                        .child(
-                            div()
-                                .text_size(px(18.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.text_primary)
-                                .child("Nothing changed in the last 24 hours"),
-                        )
+                        .child(crate::ui::views::kit::empty_state(
+                            "You're caught up",
+                            "Nothing was stored or edited in the last day, nothing expires this week, and there are no open conflicts.",
+                            &theme,
+                        ))
                         .child(
                             div()
                                 .id("brief-view-all-memories-btn")
                                 .focusable()
                                 .role(Role::Button)
                                 .cursor_pointer()
-                                .h(px(34.))
-                                .px(px(14.))
+                                .h(px(28.))
+                                .px(px(12.))
                                 .rounded(px(6.))
-                                .bg(theme.accent)
-                                .hover(move |s| s.opacity(0.92))
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.bg_elevated)
+                                .hover(move |s| s.bg(theme.bg_selected))
                                 .text_size(px(13.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(theme.primary_btn_fg)
+                                .text_color(theme.text_primary)
                                 .flex()
                                 .items_center()
                                 .on_click(cx.listener(|_, _, _, cx| {
                                     cx.emit(BriefEvent::ViewAllMemories);
                                 }))
-                                .child("View all memories"),
+                                .child("Browse all memories"),
                         ),
                 )
                 .into_any_element()
         } else {
             let mut sections: Vec<AnyElement> = Vec::new();
+            let attention = !self.snapshot.contradiction_pairs.is_empty()
+                || !self.snapshot.needs_review_items.is_empty();
+            if attention {
+                sections.push(self.render_group_heading("Needs your attention"));
+            }
+            if !self.snapshot.contradiction_pairs.is_empty() {
+                let rows = self
+                    .snapshot
+                    .contradiction_pairs
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, pair)| self.render_contradiction_row(ix, pair, cx))
+                    .collect();
+                sections.push(self.render_section_card(
+                    BriefSectionKind::Contradictions,
+                    self.snapshot.contradiction_count,
+                    rows,
+                    cx,
+                ));
+            }
+            if !self.snapshot.needs_review_items.is_empty() {
+                let rows = self
+                    .snapshot
+                    .needs_review_items
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, it)| {
+                        self.render_memory_row(BriefSectionKind::NeedsReview, ix, it, cx)
+                    })
+                    .collect();
+                sections.push(self.render_section_card(
+                    BriefSectionKind::NeedsReview,
+                    self.snapshot.needs_review_count,
+                    rows,
+                    cx,
+                ));
+            }
+            if !self.snapshot.new_items.is_empty() || !self.snapshot.changed_items.is_empty() {
+                sections.push(self.render_group_heading("What changed"));
+            }
             if !self.snapshot.new_items.is_empty() {
                 let rows = self
                     .snapshot
@@ -712,6 +769,9 @@ impl Render for BriefView {
                 ));
             }
             if !self.snapshot.expiring_items.is_empty() {
+                sections.push(self.render_group_heading("Coming up"));
+            }
+            if !self.snapshot.expiring_items.is_empty() {
                 let rows = self
                     .snapshot
                     .expiring_items
@@ -722,38 +782,6 @@ impl Render for BriefView {
                 sections.push(self.render_section_card(
                     BriefSectionKind::Expiring,
                     self.snapshot.expiring_count,
-                    rows,
-                    cx,
-                ));
-            }
-            if !self.snapshot.contradiction_pairs.is_empty() {
-                let rows = self
-                    .snapshot
-                    .contradiction_pairs
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, pair)| self.render_contradiction_row(ix, pair, cx))
-                    .collect();
-                sections.push(self.render_section_card(
-                    BriefSectionKind::Contradictions,
-                    self.snapshot.contradiction_count,
-                    rows,
-                    cx,
-                ));
-            }
-            if !self.snapshot.needs_review_items.is_empty() {
-                let rows = self
-                    .snapshot
-                    .needs_review_items
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, it)| {
-                        self.render_memory_row(BriefSectionKind::NeedsReview, ix, it, cx)
-                    })
-                    .collect();
-                sections.push(self.render_section_card(
-                    BriefSectionKind::NeedsReview,
-                    self.snapshot.needs_review_count,
                     rows,
                     cx,
                 ));
@@ -878,7 +906,7 @@ mod tests {
         assert_eq!(populated.total_count(), 5);
         assert_eq!(
             brief_selectable_ids(&populated),
-            vec!["n1", "c1", "e1", "x1", "r1"]
+            vec!["x1", "r1", "n1", "c1", "e1"]
         );
 
         assert_eq!(
