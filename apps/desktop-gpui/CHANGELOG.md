@@ -6,6 +6,42 @@ versioned independently from the `@mem-os/sdk` package.
 
 ## [Unreleased]
 
+### Windows pass (2026-11-27)
+
+Checked on Windows 11 against a real `memos` writer: batch review, pins, export, the store switcher and the graph card all work; the fixes below come from that run.
+
+#### Added
+
+- **Compare from Review.** Candidates with a recorded conflict show a *Conflict* marker and **Compare**, which opens the comparison dialog against the memory they conflict with (read-only, so also in view-only mode).
+- **Recent palette commands survive restarts.** Only built-in command titles are saved to `settings.json`; memory titles, view names and store paths never are.
+- **Store switch in the header.** The empty slot above the sidebar names the open store and opens **Switch store**.
+- `MEMOS_DESKTOP_RENDER_STATS=1` logs rendered frames per 10 s (counts only); the startup report gains an `app_view_new` span; `cargo build --profile profiling` builds optimised binaries without LTO; `smoke_bench -- --ignored generate_store` writes a synthetic store for GUI measurements.
+
+#### Changed
+
+- **One definition of a link.** Links are stored edges, counted once per linked memory in either direction; conflicts are counted separately. The graph card, the inspector and the graph header now agree, and the layout chains that only shape a view are no longer counted, highlighted or treated as focus neighbours.
+- **Graph labels and fit.** Graphs of up to 24 memories label every node; larger graphs label the most important nodes with a budget that grows with zoom. The first fit is centred, may zoom to 2.4× so small graphs fill the canvas, and stays fitted through resizes until you pan or zoom.
+- **Linked memories look and act like links**: chevron, accent hover, pressed and focus states, an accessible name, one row per linked memory.
+- **"N health issues"** replaces "N to check" on the sidebar store card, which counts Health findings, not the Review queue.
+- **"Conflict" everywhere.** The UI no longer mixes "Conflict" and "Contradictions"; `has:conflict` joins `has:contradiction`, and the built-in view is renamed in existing settings.
+- **Shared dialog frame.** Consent, Tools and Dream diff use `ModalShell` (Dream diff filters use the segmented control); Settings' switches share `kit::switch_row` with an accent track and focus ring, and **Optimize store** is a kit button that is disabled while it runs.
+- **Export shortcut.** `Ctrl/Cmd+E` makes **Save…** the primary action, and pressing it again saves.
+- The store database poll is event-driven (merged from `desktop-idle-watcher`): a kernel file watch wakes the reload only when the store, `-wal` or `-shm` changes.
+
+#### Fixed
+
+- Batch review: rows in a running batch show their own state instead of unusable buttons; a finished summary no longer sits above the next selection or an empty queue; a busy row says "Working…" once. Per-update UI cost for a 1,000-memory batch fell from 7.3 ms to 0.41 ms.
+- Pin reordering uses up/down arrows and disables the moves that cannot happen; chevron fallbacks no longer use the U+2303/U+2304 keyboard glyphs.
+- The Tools description wraps instead of running past the dialog; the consent footer no longer truncates; Switch store's footer no longer says "read-only" while editing is on.
+- The harness detection test allows for Defender's first-spawn scan of new `.cmd` files on Windows.
+
+#### Engineering
+
+- `ui/app.rs` (7.9k lines) is split by concern into `state`, `keymap`, `actions`, `loaders`, `write_path`, `modals`, `settings_ui`, `tools_ui` and `shell`; code moved only.
+- `[lints]`: `unsafe_code` is denied except in `src/win32.rs`, the one Windows FFI module (every block has a `SAFETY` comment); `clippy::unwrap_used` warns outside tests.
+- CI adds `cargo fmt --check`, a Windows leg, `dev` push triggers, and Clippy and tests for the CLI-only build. Dependabot covers cargo.
+- `smoke_bench` covers a 1,000-memory export and a 1,000-memory batch with UI-thread budgets.
+
 ### Added
 
 - **Batch review.** In write mode, tick Review candidates (click or `Space`, or **Select all**) and **Approve N** / **Reject N** after an inline confirmation. Each memory is a separate `memos_review` call through the existing writer, with per-item progress, **Stop after this one**, and an honest summary ("Approved 3 of 4. 1 failed."); failed items stay in the queue. Rows explain why each candidate is pending and flag low confidence. Read-only mode explains instead of showing disabled controls.
