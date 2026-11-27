@@ -61,6 +61,10 @@ impl CaptureState {
 
 impl MemOSApp {
     pub(super) fn open_quick_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.capture.open {
+            window.focus(&self.capture.input.focus_handle(cx), cx);
+            return;
+        }
         if !self.settings.write_mode {
             self.explain_write_mode(window, cx);
             return;
