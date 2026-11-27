@@ -196,6 +196,10 @@ impl BriefView {
         }
     }
 
+    pub fn highlighted_id(&self) -> Option<&str> {
+        self.selected_id.as_deref()
+    }
+
     pub fn set_selected(&mut self, id: Option<String>, cx: &mut Context<Self>) {
         if self.selected_id != id {
             self.selected_id = id;

@@ -21,7 +21,18 @@ impl MemOSApp {
     ) -> bool {
         match key {
             "c" => self.open_context_pack(None, window, cx),
-            "p" => self.toggle_pin_selected(cx),
+            "p" => {
+                let highlighted = match self.active_surface {
+                    WorkspaceSurface::Today => self.brief_view.read(cx).highlighted_id(),
+                    WorkspaceSurface::Review => self.review_view.read(cx).highlighted_id(),
+                    WorkspaceSurface::Memories => self.selected_id.as_deref(),
+                };
+                if let Some(id) = highlighted.map(str::to_owned) {
+                    self.toggle_pin(&id, cx);
+                } else {
+                    self.set_notice("Select a memory to pin it", cx);
+                }
+            }
             "x" => self.compare_selected(window, cx),
             "i" => self.toggle_inspector(cx),
             "f" if self.active_surface == WorkspaceSurface::Memories
