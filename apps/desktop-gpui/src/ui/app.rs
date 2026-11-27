@@ -7156,12 +7156,9 @@ impl MemOSApp {
 
     fn apply_health_fix_filter(&mut self, filter: QueryFilter, cx: &mut Context<Self>) {
         self.show_health_modal = false;
+        self.switch_view(ViewMode::List, cx);
+        self.search_input.update(cx, |i, cx| i.set_text(filter.query.clone(), cx));
         self.filter = filter;
-        self.view_mode = ViewMode::List;
-        self.settings.last_view_mode = Some(ViewMode::List);
-        self.graph_view.update(cx, |g, cx| {
-            g.set_active_visible(false, cx);
-        });
         self.mark_custom_filter_changed(cx);
     }
 
