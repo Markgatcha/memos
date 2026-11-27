@@ -163,7 +163,9 @@ export async function invoke({install,root,model,system,prompt,maxTokens,credent
       assert.ok(stage===stages.length && messages.cwd && messages.system && messages.prompt && messages.header && messages.completed && messages.text?.trim());
     }
     await request('shutdown',{});
-    assert.equal(await closed,0);
+    const exitCode=await closed;
+    if(fatal)throw fatal;
+    assert.equal(exitCode,0);
     return probe?{initialized:true,modelCalls:0}:{text:messages.text,usage:messages.usage};
   } finally {clearTimeout(timer);if(child.exitCode===null)child.kill();await closed.catch(()=>{});}
 }

@@ -15,7 +15,7 @@ assert.ok(['probe','run','resume'].includes(mode)&&dataset&&directory&&Number.is
   'Usage: node run.mjs probe|run|resume DATASET PRIVATE_OUTPUT [QUESTION_COUNT]');
 const output=path.resolve(directory);
 const install=await installation();
-await validateData(dataset);
+if(mode==='probe')await validateData(dataset);
 const credentialStore=mode==='probe'?path.join(output,'probe-unused.yaml'):process.env.DSH_BENCH_ACCOUNT_STORE;
 assert.ok(credentialStore && path.isAbsolute(credentialStore),'Set DSH_BENCH_ACCOUNT_STORE to your benchmark account store');
 if(mode!=='probe')assert.ok(fs.statSync(credentialStore).isFile(),'SDK account store missing');
@@ -23,6 +23,7 @@ if(mode==='resume')assert.ok(fs.statSync(output).isDirectory(),'Private run fold
 else fs.mkdirSync(output);
 const dir=name=>{const dest=path.join(output,name);fs.mkdirSync(dest,{recursive:true});return dest;};
 const scratch=dir('sdk');
+const snapshot=path.join(output,'dataset.snapshot');
 const readJSON=file=>JSON.parse(fs.readFileSync(file,'utf8'));
 const writeAtomic=(file,bytes)=>{
   const tmp=file+'.'+randomUUID()+'.tmp';
@@ -38,7 +39,7 @@ async function runPhase(view,worker) {
     const failure=results.find(result=>result.status==='rejected');
     if(failure)throw failure.reason;
   };
-  for await(const row of project(dataset,view,limit)){
+  for await(const row of project(snapshot,view,limit)){
     batch.push(row);
     if(batch.length===concurrency)await flush();
   }
@@ -74,6 +75,32 @@ async function call(phase,ordinal,model,system,prompt,maxTokens) {
   }
 }
 
+function uninitialized() {
+  return fs.readdirSync(output,{withFileTypes:true}).every(entry=>{
+    if(entry.isDirectory())return ['sdk','answers-private','judge-rows'].includes(entry.name) &&
+      fs.readdirSync(path.join(output,entry.name)).length===0;
+    return entry.isFile() && (/^owner\.sqlite(?:-journal)?$/.test(entry.name) ||
+      /^run-config\.json\.[0-9a-f-]{36}\.tmp$/.test(entry.name));
+  });
+}
+
+async function freezeDataset() {
+  if(fs.existsSync(snapshot)){
+    assert.ok(fs.lstatSync(snapshot).isFile(),'Expected a private dataset snapshot');
+    await validateData(snapshot);
+    return;
+  }
+  const tmp=snapshot+'.'+randomUUID()+'.tmp';
+  try {
+    fs.copyFileSync(dataset,tmp,fs.constants.COPYFILE_EXCL);
+    await validateData(tmp);
+    fs.chmodSync(tmp,0o444);
+    fs.renameSync(tmp,snapshot);
+  } finally {
+    if(fs.existsSync(tmp)){fs.chmodSync(tmp,0o600);fs.unlinkSync(tmp);}
+  }
+}
+
 async function run() {
   const cfgFile=path.join(output,'run-config.json');
   const cfg={format:2,questions:limit,datasetSha256:measurement.dataset_sha256,
@@ -87,14 +114,17 @@ async function run() {
       stored.readerPromptFileSha256='646418a66dd8e9282ebd5c0f228336db7511fd57f130a98047770c62ef4901cf';
     }
     assert.deepEqual(stored,cfg,'Run configuration differs');
-  } else if(mode==='resume'){
-    const old=readJSON(path.join(output,'measurement.json'));
+  } else if(mode==='resume' && !uninitialized()){
+    const prior=path.join(output,'measurement.json');
+    assert.ok(fs.existsSync(prior),'Unconfigured output contains prior or unknown work');
+    const old=readJSON(prior);
     assert.equal(old.questions,limit);assert.equal(old.concurrency,concurrency);
     assert.equal(old.originalAccuracy,measurement.accuracy);
     assert.equal(readerFileSha256,'646418a66dd8e9282ebd5c0f228336db7511fd57f130a98047770c62ef4901cf');
     assert.equal(judgeFileSha256,'50d4f70a1a66ef13e0ee932b825adfb232a3b366cdc1684b6532db100eb10be1');
   }
   save(cfgFile,cfg);
+  await freezeDataset();
   const seals=dir('answers-private');
   const receipts=dir('judge-rows');
   const records=new Map();
@@ -122,6 +152,7 @@ async function run() {
       records.set(item.ordinal,seal.meta);
     });
     assert.equal(records.size,limit);
+    await validateData(snapshot);
     await runPhase('score',async row=>{
       const file=path.join(receipts,row.ordinal+'.json');
       const meta=records.get(row.ordinal);
@@ -175,7 +206,8 @@ async function run() {
     const judged=rows.filter(row=>row.judge_status==='judged').length;
     const summary={questions:limit,reader_terminal:records.size,
       generated:[...records.values()].filter(meta=>(meta.generation_status??'complete')==='complete').length,
-      rows:rows.length,judged,correct,unresolved:rows.length-judged,accuracy:completed?correct/limit:null,
+      rows:rows.length,judged,correct,unresolved:rows.length-judged,accuracy:completed && limit===500?correct/500:null,
+      ...(limit<500?{sampleAccuracy:completed?correct/limit:null}:{}),
       provisional:true,partial:!completed||limit!==500,concurrency,originalAccuracy:measurement.accuracy};
     save(path.join(output,'measurement.json'),summary);
     console.log(JSON.stringify(summary));
