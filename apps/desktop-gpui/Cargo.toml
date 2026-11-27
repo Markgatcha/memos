@@ -80,3 +80,13 @@ unsafe_code = "deny"
 [lints.clippy]
 unwrap_used = "warn"
 
+
+# Quick optimised builds for local profiling. Numbers that go into DESIGN.md
+# come from the release profile.
+[profile.profiling]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+strip = false
+

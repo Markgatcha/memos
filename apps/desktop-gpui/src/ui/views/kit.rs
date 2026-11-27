@@ -145,6 +145,32 @@ pub fn button_disabled(
         .child(label)
 }
 
+/// Icon button that cannot act right now (e.g. "Move up" on the first row).
+/// Same footprint as [`icon_button`] so rows do not shift; dimmed, no hover,
+/// and the accessible label says why.
+pub fn icon_button_disabled(
+    id: impl Into<ElementId>,
+    icon: UiIcon,
+    aria: &str,
+    reason: &str,
+    theme: &ThemePalette,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(SharedString::from(format!(
+            "{aria} (unavailable: {reason})"
+        )))
+        .w(px(CONTROL_H))
+        .h(px(CONTROL_H))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .opacity(0.35)
+        .child(render_ui_icon(icon, 14.0, theme.text_muted))
+}
+
 /// Square icon-only button. `aria` doubles as the tooltip text at call sites.
 pub fn icon_button(
     id: impl Into<ElementId>,

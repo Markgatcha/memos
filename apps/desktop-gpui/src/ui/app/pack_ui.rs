@@ -536,6 +536,7 @@ impl MemOSApp {
                 .as_ref()
                 .map(|b| b.included_ids.iter().map(String::as_str).collect())
                 .unwrap_or_default();
+            let item_count = self.pack.items.len();
             let rows = self.pack.items.iter().enumerate().map(|(ix, item)| {
                 let id = item.id.clone();
                 let left_out = !included.contains(item.id.as_str());
@@ -586,23 +587,41 @@ impl MemOSApp {
                                 .child("over budget"),
                         )
                     })
-                    .child({
+                    .child(if ix == 0 {
+                        kit::icon_button_disabled(
+                            ("pack-pin-up", ix),
+                            UiIcon::ArrowUp,
+                            "Move up",
+                            "already first",
+                            &theme,
+                        )
+                    } else {
                         let e_up = entity.clone();
                         let id_up = item.id.clone();
-                        icon_button(("pack-pin-up", ix), UiIcon::ChevronUp, "Move up", &theme)
+                        icon_button(("pack-pin-up", ix), UiIcon::ArrowUp, "Move up", &theme)
+                            .tooltip(crate::ui::views::tooltip_view("Move up", theme))
                             .on_click(move |_, _, cx| {
                                 e_up.update(cx, |app, cx| app.move_pin(&id_up, -1, cx));
                             })
                     })
-                    .child({
+                    .child(if ix + 1 == item_count {
+                        kit::icon_button_disabled(
+                            ("pack-pin-down", ix),
+                            UiIcon::ArrowDown,
+                            "Move down",
+                            "already last",
+                            &theme,
+                        )
+                    } else {
                         let e_down = entity.clone();
                         let id_down = item.id.clone();
                         icon_button(
                             ("pack-pin-down", ix),
-                            UiIcon::ChevronDown,
+                            UiIcon::ArrowDown,
                             "Move down",
                             &theme,
                         )
+                        .tooltip(crate::ui::views::tooltip_view("Move down", theme))
                         .on_click(move |_, _, cx| {
                             e_down.update(cx, |app, cx| app.move_pin(&id_down, 1, cx));
                         })

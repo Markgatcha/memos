@@ -31,6 +31,7 @@ pub(super) fn window_bounds_to_setting(wb: WindowBounds) -> WindowBoundsSetting 
 
 impl Render for MemOSApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        telemetry::note_root_render();
         // Read once per frame; the DB watcher's fallback poll backs off when
         // this is false, and the graph stops its drift loop while backgrounded.
         let active = window.is_window_active();
@@ -194,15 +195,10 @@ impl Render for MemOSApp {
                         .items_start()
                         .justify_between()
                         .gap(px(12.))
-                        .child(
-                            // Aligns search with the content column instead of
-                            // repeating the app name the title bar already shows.
-                            div().flex_shrink_0().w(px(if self.compact_layout {
-                                40.
-                            } else {
-                                204.
-                            })),
-                        )
+                        // The slot above the sidebar names the open store and
+                        // switches it, so search still lines up with the
+                        // content column and the corner is no longer empty.
+                        .child(self.render_header_store_switch(cx))
                         .child(
                             div().flex_1().min_w(px(120.)).flex().child(
                                 div()

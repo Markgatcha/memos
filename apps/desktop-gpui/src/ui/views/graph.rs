@@ -219,8 +219,13 @@ pub(crate) fn neighborhood(layout: &ComputedLayout, memory_id: &str) -> Option<H
 pub struct InspectorDetail {
     pub memory_id: String,
     pub title: String,
-    /// `(relation, count)`, most common first.
+    /// `(relation, count)` over link edges (not conflicts), most common first.
     pub relations: Vec<(String, usize)>,
+    /// [`crate::core::model::linked_memory_count`], the same number the
+    /// inspector shows as "Linked memories".
+    pub links: usize,
+    /// Recorded contradictions, the inspector's "Conflicts" count.
+    pub conflicts: usize,
 }
 
 /// Count linked edges by relation, most common first, ties alphabetical.
@@ -235,6 +240,15 @@ pub fn relation_breakdown<'a>(relations: impl Iterator<Item = &'a str>) -> Vec<(
     let mut out: Vec<(String, usize)> = counts.into_iter().collect();
     out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     out
+}
+
+/// "No links" / "1 link" / "N links", shared by the graph card and its tests.
+pub(crate) fn link_count_label(n: usize) -> String {
+    match n {
+        0 => "No links".to_string(),
+        1 => "1 link".to_string(),
+        n => format!("{n} links"),
+    }
 }
 
 /// Facts for the compact graph inspector card.
@@ -255,16 +269,32 @@ pub(crate) fn summarize_node(layout: &ComputedLayout, memory_id: &str) -> Option
         .iter()
         .enumerate()
         .find(|(_, n)| n.data.memory_id.as_deref() == Some(memory_id))?;
-    let mut links = 0;
-    let mut conflicts = 0;
+    // Same definition as `linked_memory_count`: distinct neighbours over stored
+    // edges, either direction; structural layout chains are not links and
+    // contradictions are counted separately. This is only the fallback shown
+    // until the node's detail (which also sees neighbours outside the current
+    // graph) has loaded.
+    let mut linked: Vec<usize> = Vec::new();
+    let mut conflicting: Vec<usize> = Vec::new();
     for e in &layout.edges {
-        if e.source_idx == ix || e.target_idx == ix {
-            links += 1;
-            if e.is_contradiction {
-                conflicts += 1;
-            }
+        let other = if e.source_idx == ix {
+            e.target_idx
+        } else if e.target_idx == ix {
+            e.source_idx
+        } else {
+            continue;
+        };
+        if e.is_contradiction {
+            conflicting.push(other);
+        } else if !e.structural {
+            linked.push(other);
         }
     }
+    for v in [&mut linked, &mut conflicting] {
+        v.sort_unstable();
+        v.dedup();
+    }
+    let (links, conflicts) = (linked.len(), conflicting.len());
     Some(NodeSummary {
         label: strip_short_id_prefix(&node.data.label, node.data.memory_id.as_deref()).to_string(),
         node_type: node.data.node_type.clone(),
@@ -1056,12 +1086,12 @@ impl GraphView {
             ));
         }
         let facts: SharedString = facts.join(" · ").into();
-        let links: SharedString = match summary.links {
-            0 => "No links".to_string(),
-            1 => "1 link".to_string(),
-            n => format!("{n} links"),
-        }
-        .into();
+        // Prefer the loaded detail: it is the inspector's own count and also
+        // sees linked memories that the current graph filter leaves out.
+        let (link_count, conflict_count) = full.map_or((summary.links, summary.conflicts), |d| {
+            (d.links, d.conflicts)
+        });
+        let links: SharedString = link_count_label(link_count).into();
         let importance: SharedString = format!(
             "importance {:.0}%",
             (summary.importance.clamp(0.0, 1.0) * 100.0).round()
@@ -1139,12 +1169,12 @@ impl GraphView {
                     .text_color(theme.text_secondary)
                     .child(links)
                     .child(importance)
-                    .when(summary.conflicts > 0, |row| {
+                    .when(conflict_count > 0, |row| {
                         row.child(crate::ui::views::kit::state_marker(
-                            if summary.conflicts == 1 {
+                            if conflict_count == 1 {
                                 "1 conflict".to_string()
                             } else {
-                                format!("{} conflicts", summary.conflicts)
+                                format!("{conflict_count} conflicts")
                             },
                             theme.danger,
                         ))
@@ -1279,15 +1309,26 @@ impl Render for GraphView {
             // what matched; use the store-side total so a clustered 50k store
             // does not read as "1,936 memories".
             let total = l.total_matching_nodes.max(l.nodes.len());
+            // Stored links only, matching the card and the inspector; the
+            // structural chains that give each view its shape are not counted.
+            let links = l
+                .edges
+                .iter()
+                .filter(|e| !e.structural && !e.is_contradiction)
+                .count();
             if l.clustered_nodes > 0 {
                 SharedString::from(format!(
-                    "{} memories · {} links · {} grouped",
+                    "{} memories · {} · {} grouped",
                     total,
-                    l.edges.len(),
+                    link_count_label(links).to_lowercase(),
                     l.clustered_nodes
                 ))
             } else {
-                SharedString::from(format!("{} memories · {} links", total, l.edges.len()))
+                SharedString::from(format!(
+                    "{} memories · {}",
+                    total,
+                    link_count_label(links).to_lowercase()
+                ))
             }
         });
         let has_legend = !legend_entries.is_empty();
@@ -3140,6 +3181,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn card_counts_stored_links_not_layout_chains() {
+        let node = |i: usize| GraphNodeData {
+            key: format!("n-{i}"),
+            memory_id: Some(format!("id-{i}")),
+            label: format!("Node {i}"),
+            group: "default".to_string(),
+            node_type: "fact".to_string(),
+            importance: 0.5,
+            created_at: 1_700_000_000_000,
+            cluster_count: 1,
+            has_contradiction: false,
+        };
+        let edge = |a, b, relation: &str, contra, structural| GraphEdgeData {
+            source_idx: a,
+            target_idx: b,
+            relation: relation.to_string(),
+            weight: 0.5,
+            is_contradiction: contra,
+            structural,
+        };
+        let snapshot = GraphSnapshot {
+            mode: GraphMode::Namespace,
+            nodes: (0..4).map(node).collect(),
+            edges: vec![
+                edge(0, 1, "relates_to", false, false),
+                // Incoming stored link: counts.
+                edge(2, 0, "derived_from", false, false),
+                // Layout chain within the namespace: not a link.
+                edge(0, 3, "same_namespace", false, true),
+                // Conflict, counted separately.
+                edge(0, 3, "contradicts (open)", true, false),
+            ],
+            total_matching_nodes: 4,
+            clustered_nodes: 0,
+        };
+        let layout = compute_graph_layout(&snapshot);
+        let s = summarize_node(&layout, "id-0").expect("node 0");
+        assert_eq!((s.links, s.conflicts), (2, 1));
+        assert_eq!(link_count_label(s.links), "2 links");
+        assert_eq!(link_count_label(1), "1 link");
+        assert_eq!(link_count_label(0), "No links");
+    }
+
+    #[test]
     fn temporal_layout_orders_chronologically_and_2k_layout_stays_finite() {
         let temporal = GraphSnapshot {
             mode: GraphMode::Temporal,
@@ -3189,6 +3274,7 @@ mod tests {
                     relation: "relates".to_string(),
                     weight: 0.5,
                     is_contradiction: false,
+                    structural: false,
                 })
                 .collect(),
             total_matching_nodes: 2_000,

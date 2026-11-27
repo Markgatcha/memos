@@ -214,6 +214,7 @@ pub fn launch_main_app(
     let gpui_init_start = Instant::now();
     gpui_platform::application().run(move |cx: &mut App| {
         timeline.record_span("gpui_app_init", gpui_init_start, Instant::now());
+        telemetry::start_render_stats_if_requested();
         register_app_key_bindings(cx);
         cx.on_window_closed(|cx, _window_id| {
             if cx.windows().is_empty() {
@@ -267,7 +268,12 @@ pub fn launch_main_app(
         let tl_win = timeline.clone();
         let window_open_start = Instant::now();
         let open_res = cx.open_window(window_opts, move |window, cx| {
-            cx.new(|cx| MemOSApp::new(db, st, tel, tl_win, options, window, cx))
+            // `window_open` minus this span is GPUI's own window/device setup.
+            let view_start = Instant::now();
+            let tl_view = tl_win.clone();
+            let view = cx.new(|cx| MemOSApp::new(db, st, tel, tl_win, options, window, cx));
+            tl_view.record_span("app_view_new", view_start, Instant::now());
+            view
         });
         timeline.record_span("window_open", window_open_start, Instant::now());
         if let Err(err) = open_res {
