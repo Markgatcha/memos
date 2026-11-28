@@ -165,6 +165,9 @@ pub struct QueryFilter {
     pub expiring_window_ms: Option<(i64, i64)>,
     #[serde(default)]
     pub needs_review_only: bool,
+    /// Bitemporal "as of" point in ms: show the store as it stood then.
+    #[serde(default)]
+    pub as_of_ms: Option<i64>,
     pub sort: SortOrder,
 }
 
@@ -186,6 +189,7 @@ impl QueryFilter {
             && self.updated_not_new_after_ms.is_none()
             && self.expiring_window_ms.is_none()
             && !self.needs_review_only
+            && self.as_of_ms.is_none()
     }
 }
 
@@ -697,6 +701,7 @@ pub enum SearchScopeKind {
     AfterDate,
     MaxTrust,
     IsQuarantined,
+    AsOf,
 }
 
 /// Active search scope chip displayed beneath the search box.
@@ -795,6 +800,10 @@ fn parse_scope_token(
                 .saturating_mul(1000);
             out.created_after_ms = Some(ms);
             Some(SearchScopeKind::AfterDate)
+        }
+        "asof" | "as-of" => {
+            out.as_of_ms = Some(crate::core::timetravel::parse_as_of_date(val)?);
+            Some(SearchScopeKind::AsOf)
         }
         "trust" => {
             let num_str = val.trim().strip_prefix('<')?;
@@ -937,6 +946,12 @@ pub fn scopes_from_filter(filter: &QueryFilter) -> Vec<SearchScopeChip> {
             label: "is:quarantined".to_string(),
         });
     }
+    if let Some(as_of) = filter.as_of_ms {
+        chips.push(SearchScopeChip {
+            kind: SearchScopeKind::AsOf,
+            label: format!("asof:{}", crate::core::timetravel::format_as_of_date(as_of)),
+        });
+    }
     chips
 }
 
@@ -955,6 +970,7 @@ pub fn remove_search_scope(filter: &mut QueryFilter, kind: SearchScopeKind) -> b
         SearchScopeKind::AfterDate => filter.created_after_ms.take().is_some(),
         SearchScopeKind::MaxTrust => filter.max_trust.take().is_some(),
         SearchScopeKind::IsQuarantined => std::mem::replace(&mut filter.quarantined_only, false),
+        SearchScopeKind::AsOf => filter.as_of_ms.take().is_some(),
     }
 }
 
@@ -999,6 +1015,12 @@ pub fn describe_filter_target(filter: &QueryFilter) -> String {
     if filter.untouched_only {
         parts.push("untouched for 90 days".to_string());
     }
+    if let Some(as_of) = filter.as_of_ms {
+        parts.push(format!(
+            "as of {}",
+            crate::core::timetravel::format_as_of_label(as_of)
+        ));
+    }
     if parts.is_empty() {
         format!("Current view · All memories · {}", filter.sort.label())
     } else {
@@ -1013,6 +1035,42 @@ pub fn describe_filter_target(filter: &QueryFilter) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asof_token_round_trips_through_chip_and_removal() {
+        let mut filter = QueryFilter::default();
+        let parsed = extract_search_scopes("asof:2026-03-31 pkce", &mut filter, 0, true);
+        assert_eq!(parsed.remaining_input, "pkce");
+        assert_eq!(
+            filter.as_of_ms,
+            crate::core::timetravel::parse_as_of_date("2026-03-31")
+        );
+        assert!(!filter.is_empty());
+        let chips = scopes_from_filter(&filter);
+        assert_eq!(
+            chips.last().map(|c| c.label.as_str()),
+            Some("asof:2026-03-31")
+        );
+        assert!(describe_filter_target(&filter).contains("as of Mar 31, 2026"));
+        assert_eq!(
+            remove_last_search_scope(&mut filter),
+            Some(SearchScopeKind::AsOf)
+        );
+        assert!(filter.as_of_ms.is_none());
+
+        // Invalid dates stay in the text instead of silently scoping.
+        let mut filter = QueryFilter::default();
+        let parsed = extract_search_scopes("asof:2026-02-30", &mut filter, 0, true);
+        assert_eq!(parsed.remaining_input, "asof:2026-02-30");
+        assert!(filter.as_of_ms.is_none());
+
+        // Saved views from before this field existed still deserialize.
+        let legacy: QueryFilter = serde_json::from_str(
+            r#"{"query":"","namespace":null,"tag":null,"node_type":null,"provenance":null,"has_contradiction":false,"min_importance":null,"created_after_ms":null,"quarantined_only":false,"sort":"Recency"}"#,
+        )
+        .expect("legacy filter json");
+        assert!(legacy.as_of_ms.is_none());
+    }
 
     #[test]
     fn formats_ai_context_payload_with_summary_when_different_and_token_estimate() {

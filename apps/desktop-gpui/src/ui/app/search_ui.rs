@@ -86,6 +86,12 @@ pub(crate) const SCOPE_HELP: &[ScopeHelp] = &[
         facet: None,
     },
     ScopeHelp {
+        insert: "asof:",
+        example: "asof:2026-06-30",
+        meaning: "The store as it stood at the end of a day (UTC)",
+        facet: None,
+    },
+    ScopeHelp {
         insert: "trust:<",
         example: "trust:<0.5",
         meaning: "Trust below a threshold, 0 to 1",
@@ -228,6 +234,7 @@ impl MemOSApp {
             SearchScopeKind::AfterDate,
             SearchScopeKind::MaxTrust,
             SearchScopeKind::IsQuarantined,
+            SearchScopeKind::AsOf,
         ] {
             remove_search_scope(&mut self.filter, kind);
         }

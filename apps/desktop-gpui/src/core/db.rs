@@ -936,6 +936,10 @@ impl ReadOnlyStore {
             params.push(SqlValue::Integer(after_ms));
         }
 
+        if let Some(as_of) = filter.as_of_ms {
+            self.push_as_of_conds(alias, as_of, conds, params);
+        }
+
         if filter.quarantined_only {
             if self.schema.has_col("nodes", "quarantined") {
                 conds.push(format!("{alias}.quarantined != 0"));
@@ -1052,6 +1056,203 @@ impl ReadOnlyStore {
                 conds.push(format!("({})", review_parts.join(" OR ")));
             }
         }
+    }
+
+    /// "Present at `as_of`" in SQL; mirrors `timetravel::present_at`.
+    fn push_as_of_conds(
+        &self,
+        alias: &str,
+        as_of: i64,
+        conds: &mut Vec<String>,
+        params: &mut Vec<SqlValue>,
+    ) {
+        use crate::core::timetravel::sql_ms;
+        for col in ["created_at", "valid_from"] {
+            if self.schema.has_col("nodes", col) {
+                let c = format!("{alias}.{col}");
+                if col == "created_at" {
+                    conds.push(format!("{} <= ?", sql_ms(&c)));
+                } else {
+                    conds.push(format!("({c} IS NULL OR {} <= ?)", sql_ms(&c)));
+                }
+                params.push(SqlValue::Integer(as_of));
+            }
+        }
+        if self.schema.has_col("nodes", "valid_to") {
+            let c = format!("{alias}.valid_to");
+            conds.push(format!("({c} IS NULL OR {} >= ?)", sql_ms(&c)));
+            params.push(SqlValue::Integer(as_of));
+        }
+        if self.schema.has_col("nodes", "expires_at") {
+            let c = format!("{alias}.expires_at");
+            conds.push(format!("({c} IS NULL OR {c} <= 0 OR {} > ?)", sql_ms(&c)));
+            params.push(SqlValue::Integer(as_of));
+        }
+    }
+
+    /// Activity histogram over the store's life: creations, validity ends
+    /// (supersessions) and TTL expiries per bucket. Three grouped scans with
+    /// no row materialisation; columns the store lacks contribute nothing.
+    pub fn load_timeline(&self, now_ms: i64) -> Result<crate::core::timetravel::Timeline, DbError> {
+        use crate::core::timetravel::{Timeline, bucket_width_ms, sql_ms};
+
+        if !self.schema.has_col("nodes", "created_at") {
+            return Ok(Timeline::default());
+        }
+        let created = sql_ms("created_at");
+        let (min_ms, max_ms): (Option<i64>, Option<i64>) = self
+            .conn
+            .query_row(
+                &format!("SELECT MIN({created}), MAX({created}) FROM nodes WHERE created_at > 0"),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| DbError::from_sqlite(&e, false))?;
+        let Some(min_ms) = min_ms else {
+            return Ok(Timeline::default());
+        };
+        // The span runs to now, so recent supersessions and upcoming expiries
+        // that already happened are on the bar; future events are not.
+        let last_ms = now_ms.max(max_ms.unwrap_or(min_ms));
+        let width = bucket_width_ms(last_ms - min_ms);
+        // Align buckets to whole days so labels read as calendar dates.
+        let origin = min_ms - min_ms.rem_euclid(crate::core::timetravel::DAY_MS);
+
+        let grouped = |col: &str| -> Result<Vec<(i64, u32)>, DbError> {
+            if !self.schema.has_col("nodes", col) {
+                return Ok(Vec::new());
+            }
+            let expr = sql_ms(col);
+            let sql = format!(
+                "SELECT ({expr} - ?1) / ?2 AS b, COUNT(*) FROM nodes \
+                 WHERE {col} IS NOT NULL AND {col} > 0 AND {expr} BETWEEN ?1 AND ?3 \
+                 GROUP BY b"
+            );
+            let mut stmt = self
+                .conn
+                .prepare(&sql)
+                .map_err(|e| DbError::from_sqlite(&e, false))?;
+            let rows = stmt
+                .query_map(rusqlite::params![origin, width, last_ms], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+                })
+                .map_err(|e| DbError::from_sqlite(&e, false))?;
+            Ok(rows
+                .filter_map(Result::ok)
+                .map(|(b, n)| (b, u32::try_from(n).unwrap_or(u32::MAX)))
+                .collect())
+        };
+
+        let mut timeline = Timeline::from_counts(
+            origin,
+            width,
+            last_ms,
+            &grouped("created_at")?,
+            &grouped("valid_to")?,
+            &grouped("expires_at")?,
+        );
+        timeline.has_validity = self.schema.has_col("nodes", "valid_to");
+        timeline.has_expiry = self.schema.has_col("nodes", "expires_at");
+        Ok(timeline)
+    }
+
+    /// How the store at `filter.as_of_ms` relates to today, within the rest of
+    /// the active filter. One aggregate scan.
+    pub fn load_as_of_summary(
+        &self,
+        filter: &QueryFilter,
+        now_ms: i64,
+    ) -> Result<crate::core::timetravel::AsOfSummary, DbError> {
+        use crate::core::timetravel::{AsOfSummary, sql_ms};
+
+        let Some(as_of) = filter.as_of_ms else {
+            return Ok(AsOfSummary::default());
+        };
+        let present = self.count_matching_nodes(filter)?;
+        // Text search runs through FTS, which the aggregate below does not
+        // join; report only the exact count rather than mismatched extras.
+        if !filter.query.trim().is_empty() {
+            return Ok(AsOfSummary {
+                present,
+                ..AsOfSummary::default()
+            });
+        }
+
+        let mut base = filter.clone();
+        base.as_of_ms = None;
+        let mut conds = Vec::new();
+        let mut params = Vec::new();
+        self.build_filter_where("n", &base, &mut conds, &mut params);
+        let where_base = if conds.is_empty() {
+            String::from("1 = 1")
+        } else {
+            conds.join(" AND ")
+        };
+
+        let mut present_conds = Vec::new();
+        let mut present_params = Vec::new();
+        self.push_as_of_conds("n", as_of, &mut present_conds, &mut present_params);
+        let present_sql = if present_conds.is_empty() {
+            String::from("1 = 1")
+        } else {
+            present_conds.join(" AND ")
+        };
+
+        let ended = if self.schema.has_col("nodes", "valid_to") {
+            format!("n.valid_to IS NOT NULL AND {} <= ?", sql_ms("n.valid_to"))
+        } else {
+            "0".to_string()
+        };
+        let expired = if self.schema.has_col("nodes", "expires_at") {
+            format!(
+                "n.expires_at IS NOT NULL AND n.expires_at > 0 AND {} <= ?",
+                sql_ms("n.expires_at")
+            )
+        } else {
+            "0".to_string()
+        };
+        let after = if self.schema.has_col("nodes", "created_at") {
+            format!("{} > ?", sql_ms("n.created_at"))
+        } else {
+            "0".to_string()
+        };
+
+        // Positional params bind in textual order: each CASE arm's own
+        // placeholders first, then the base filter's in the WHERE clause.
+        let sql = format!(
+            "SELECT \
+               SUM(CASE WHEN ({present_sql}) AND ({ended}) THEN 1 ELSE 0 END), \
+               SUM(CASE WHEN ({present_sql}) AND ({expired}) THEN 1 ELSE 0 END), \
+               SUM(CASE WHEN {after} THEN 1 ELSE 0 END) \
+             FROM nodes n WHERE {where_base}"
+        );
+        let mut bound: Vec<SqlValue> = Vec::new();
+        bound.extend(present_params.iter().cloned());
+        if self.schema.has_col("nodes", "valid_to") {
+            bound.push(SqlValue::Integer(now_ms));
+        }
+        bound.extend(present_params.iter().cloned());
+        if self.schema.has_col("nodes", "expires_at") {
+            bound.push(SqlValue::Integer(now_ms));
+        }
+        if self.schema.has_col("nodes", "created_at") {
+            bound.push(SqlValue::Integer(as_of));
+        }
+        bound.extend(params);
+
+        let (ended_n, expired_n, after_n): (Option<i64>, Option<i64>, Option<i64>) = self
+            .conn
+            .query_row(&sql, rusqlite::params_from_iter(bound.iter()), |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .map_err(|e| DbError::from_sqlite(&e, false))?;
+        let to_usize = |v: Option<i64>| usize::try_from(v.unwrap_or(0)).unwrap_or(0);
+        Ok(AsOfSummary {
+            present,
+            since_ended: to_usize(ended_n),
+            since_expired: to_usize(expired_n),
+            created_after: to_usize(after_n),
+        })
     }
 
     fn id_sort_col(&self, alias: &str) -> String {
@@ -3573,6 +3774,115 @@ mod tests {
     use super::*;
     use std::env;
     use uuid::Uuid;
+
+    #[test]
+    fn as_of_filter_timeline_and_summary_follow_bitemporal_columns() {
+        const DAY: i64 = 86_400_000;
+        let t0: i64 = 1_767_225_600_000; // 2026-01-01
+        let tmp = env::temp_dir().join(format!("memos-asof-{}.db", Uuid::new_v4()));
+        {
+            let rw = Connection::open(&tmp).unwrap();
+            rw.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, content TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'fact',
+                    namespace TEXT DEFAULT 'default',
+                    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                    valid_from INTEGER, valid_to INTEGER, expires_at INTEGER
+                 );",
+            )
+            .unwrap();
+            let mut ins = rw
+                .prepare("INSERT INTO nodes (id, content, created_at, updated_at, valid_from, valid_to, expires_at, namespace) VALUES (?, 'x', ?, ?, ?, ?, ?, ?)")
+                .unwrap();
+            // old: created day 0, superseded on day 10.
+            ins.execute(rusqlite::params![
+                "old",
+                t0,
+                t0,
+                t0,
+                t0 + 10 * DAY,
+                None::<i64>,
+                "a"
+            ])
+            .unwrap();
+            // new: created day 10, replaces old.
+            ins.execute(rusqlite::params![
+                "new",
+                t0 + 10 * DAY,
+                t0 + 10 * DAY,
+                t0 + 10 * DAY,
+                None::<i64>,
+                None::<i64>,
+                "a"
+            ])
+            .unwrap();
+            // ttl: created day 2, expires day 5 (seconds, like the SDK).
+            ins.execute(rusqlite::params![
+                "ttl",
+                t0 + 2 * DAY,
+                t0 + 2 * DAY,
+                None::<i64>,
+                None::<i64>,
+                Some((t0 + 5 * DAY) / 1000),
+                "b"
+            ])
+            .unwrap();
+            // legacy: no validity, seconds-era created_at on day 1.
+            ins.execute(rusqlite::params![
+                "legacy",
+                (t0 + DAY) / 1000,
+                (t0 + DAY) / 1000,
+                None::<i64>,
+                None::<i64>,
+                Some(0),
+                "b"
+            ])
+            .unwrap();
+        }
+        let store = ReadOnlyStore::open(&tmp).unwrap();
+        let at = |day: i64| QueryFilter {
+            as_of_ms: Some(t0 + day * DAY + 1),
+            ..QueryFilter::default()
+        };
+        let ids_at = |day: i64| -> usize { store.count_matching_nodes(&at(day)).unwrap() };
+        assert_eq!(ids_at(0), 1, "only old exists on day 0");
+        assert_eq!(ids_at(3), 3, "old, legacy and ttl on day 3");
+        assert_eq!(ids_at(6), 2, "ttl expired by day 6");
+        assert_eq!(ids_at(11), 2, "old superseded by new on day 10");
+        assert_eq!(
+            store.count_matching_nodes(&QueryFilter::default()).unwrap(),
+            4
+        );
+
+        let now = t0 + 20 * DAY;
+        let summary = store.load_as_of_summary(&at(3), now).unwrap();
+        assert_eq!(summary.present, 3);
+        assert_eq!(summary.since_ended, 1);
+        assert_eq!(summary.since_expired, 1);
+        assert_eq!(summary.created_after, 1);
+
+        // Scoped summaries respect the rest of the filter.
+        let mut scoped = at(3);
+        scoped.namespace = Some("b".to_string());
+        let summary = store.load_as_of_summary(&scoped, now).unwrap();
+        assert_eq!(
+            (summary.present, summary.since_ended, summary.created_after),
+            (2, 0, 0)
+        );
+
+        let tl = store.load_timeline(now).unwrap();
+        assert_eq!(tl.width_ms, DAY);
+        assert_eq!(tl.origin_ms, t0);
+        let created: u32 = tl.buckets.iter().map(|b| b.created).sum();
+        let ended: u32 = tl.buckets.iter().map(|b| b.ended).sum();
+        let expired: u32 = tl.buckets.iter().map(|b| b.expired).sum();
+        assert_eq!((created, ended, expired), (4, 1, 1));
+        assert_eq!(tl.buckets[10].ended, 1);
+        assert_eq!(tl.buckets[5].expired, 1);
+        assert!(tl.has_validity && tl.has_expiry);
+        drop(store);
+        let _ = std::fs::remove_file(&tmp);
+    }
 
     #[test]
     fn opens_read_only_and_rejects_writes() {

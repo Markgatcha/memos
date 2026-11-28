@@ -64,6 +64,7 @@ mod health_ui;
 mod pack_ui;
 mod search_ui;
 mod shortcuts;
+mod time_travel_ui;
 
 const APP_BUILD_DATE: &str = env!("MEMOS_BUILD_DATE");
 
@@ -454,6 +455,7 @@ pub struct MemOSApp {
     _harness_detail_task: Option<Task<()>>,
     _diag_task: Option<Task<()>>,
     _dream_diff_task: Option<Task<()>>,
+    time_travel: time_travel_ui::TimeTravelPanel,
     _bounds_save_task: Option<Task<()>>,
     _notice_task: Option<Task<()>>,
     _celebrate_task: Option<Task<()>>,
@@ -1093,6 +1095,7 @@ impl MemOSApp {
             _harness_detail_task: None,
             _diag_task: None,
             _dream_diff_task: None,
+            time_travel: Default::default(),
             _bounds_save_task: None,
             _notice_task: None,
             _celebrate_task: None,
@@ -1546,6 +1549,7 @@ impl MemOSApp {
     }
 
     fn schedule_filtered_query(&mut self, debounce_ms: u64, cx: &mut Context<Self>) {
+        self.refresh_time_travel(cx);
         self.page_generation.advance();
         self.list_cursor = None;
         self.loading_next_page = false;
@@ -2448,6 +2452,7 @@ impl MemOSApp {
 
                 if let Ok(loaded) = reloaded {
                     let _ = this.update(cx, |app, cx| {
+                        app.time_travel_store_changed(cx);
                         let is_browsing = app.selected_id.is_some()
                             || app.detail_open
                             || app.list_view.read(cx).is_browsing_or_scrolled();
@@ -5183,6 +5188,7 @@ impl MemOSApp {
             }
             PaletteAction::OpenHealth => self.open_health_modal(HealthPanelFilter::All, window, cx),
             PaletteAction::OpenDreamDiff => self.open_dream_diff_modal(window, cx),
+            PaletteAction::OpenTimeTravel => self.open_time_travel(cx),
             PaletteAction::PreviewContext => {
                 self.open_context_pack(Some(PackSource::CurrentView), window, cx)
             }
@@ -8356,10 +8362,25 @@ impl Render for MemOSApp {
                         .child(match self.active_surface {
                             WorkspaceSurface::Today => self.brief_view.clone().into_any_element(),
                             WorkspaceSurface::Review => self.review_view.clone().into_any_element(),
-                            WorkspaceSurface::Memories => match self.view_mode {
-                                ViewMode::List => self.list_view.clone().into_any_element(),
-                                ViewMode::Graph => self.graph_view.clone().into_any_element(),
-                            },
+                            WorkspaceSurface::Memories => {
+                                let surface = match self.view_mode {
+                                    ViewMode::List => self.list_view.clone().into_any_element(),
+                                    ViewMode::Graph => self.graph_view.clone().into_any_element(),
+                                };
+                                if self.time_travel_visible() {
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(0.))
+                                        .h_full()
+                                        .flex()
+                                        .flex_col()
+                                        .child(self.render_time_travel_bar(list_right_inset, cx))
+                                        .child(div().flex_1().min_h_0().flex().child(surface))
+                                        .into_any_element()
+                                } else {
+                                    surface
+                                }
+                            }
                         })
                         .when(show_detail && !detail_overlay, |row| {
                             row.child(
