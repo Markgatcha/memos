@@ -54,10 +54,16 @@ impl MemOSApp {
         let subtitle: SharedString = match report {
             None => "Health appears once the store has loaded".into(),
             Some(r) if r.status == StoreHealthStatus::Empty => "Empty store".into(),
-            Some(r) => match actionable {
-                0 => format!("Score {} of 100 · nothing needs attention", r.score).into(),
-                1 => format!("Score {} of 100 · 1 thing to look at", r.score).into(),
-                n => format!("Score {} of 100 · {n} things to look at", r.score).into(),
+            Some(r) => match (actionable, self.integrity_alert()) {
+                (0, Some(alert)) => format!("Score {} of 100 · {alert}", r.score).into(),
+                (_, Some(alert)) => format!(
+                    "Score {} of 100 · {actionable} to look at · {alert}",
+                    r.score
+                )
+                .into(),
+                (0, None) => format!("Score {} of 100 · nothing needs attention", r.score).into(),
+                (1, None) => format!("Score {} of 100 · 1 thing to look at", r.score).into(),
+                (n, None) => format!("Score {} of 100 · {n} things to look at", r.score).into(),
             },
         };
 
@@ -195,6 +201,10 @@ impl MemOSApp {
                         }),
                 );
             }
+        }
+
+        if report.is_some_and(|r| r.status != StoreHealthStatus::Empty) {
+            shell = shell.child(self.render_integrity_card(cx));
         }
 
         if let Some(r) = report {

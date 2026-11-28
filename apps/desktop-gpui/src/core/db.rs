@@ -2036,6 +2036,74 @@ impl ReadOnlyStore {
     }
 
     /// Collect recent consolidation, decay, contradiction, and update events across available tables.
+    /// Recompute the `tamper_log` hash chain and cross-check it against the
+    /// node ids that exist now. Read-only: two plain SELECTs streamed off the
+    /// cursor, so a long log never materialises in memory. Stores without the
+    /// log (or with an unrecognised layout) report `NotRecorded`.
+    pub fn verify_tamper_log(
+        &self,
+        anchor: Option<crate::core::integrity::IntegrityAnchor>,
+        now_ms: i64,
+    ) -> Result<crate::core::integrity::IntegrityReport, DbError> {
+        use crate::core::integrity::{ChainVerifier, IntegrityReport, TamperRow};
+
+        let has = |col: &str| self.schema.has_col("tamper_log", col);
+        let hash_col = if has("node_hash") {
+            "node_hash"
+        } else if has("content_hash") {
+            "content_hash"
+        } else {
+            return Ok(IntegrityReport::not_recorded());
+        };
+        if !["seq", "ts", "op", "node_id", "prev_hash", "entry_hash"]
+            .into_iter()
+            .all(has)
+        {
+            return Ok(IntegrityReport::not_recorded());
+        }
+
+        let mut verifier = ChainVerifier::new(anchor);
+        {
+            let sql = format!(
+                "SELECT seq, ts, op, node_id, {hash_col}, prev_hash, entry_hash \
+                 FROM tamper_log ORDER BY seq ASC"
+            );
+            let mut stmt = self
+                .conn
+                .prepare(&sql)
+                .map_err(|e| DbError::from_sqlite(&e, false))?;
+            let mut rows = stmt
+                .query([])
+                .map_err(|e| DbError::from_sqlite(&e, false))?;
+            while let Some(row) = rows.next().map_err(|e| DbError::from_sqlite(&e, false))? {
+                verifier.push(&TamperRow {
+                    seq: row.get::<_, i64>(0).unwrap_or(-1),
+                    ts: row.get::<_, i64>(1).unwrap_or(0),
+                    op: get_string(row, 2),
+                    node_id: get_string(row, 3),
+                    node_hash: get_string(row, 4),
+                    prev_hash: get_string(row, 5),
+                    entry_hash: get_string(row, 6),
+                });
+            }
+        }
+
+        let mut live_ids = HashSet::new();
+        if self.schema.has_col("nodes", "id") {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id FROM nodes")
+                .map_err(|e| DbError::from_sqlite(&e, false))?;
+            let mut rows = stmt
+                .query([])
+                .map_err(|e| DbError::from_sqlite(&e, false))?;
+            while let Some(row) = rows.next().map_err(|e| DbError::from_sqlite(&e, false))? {
+                live_ids.insert(get_string(row, 0));
+            }
+        }
+        Ok(verifier.finish(&live_ids, now_ms))
+    }
+
     pub fn load_dream_diff(
         &self,
         limit: usize,

@@ -60,6 +60,7 @@ directories = "6.0"
 open = { version = "5.4", optional = true }
 time = { version = "0.3", features = ["formatting", "macros"] }
 uuid = { version = "1.1", features = ["v4"] }
+sha2 = "0.10"
 
 [profile.dev]
 debug = 0

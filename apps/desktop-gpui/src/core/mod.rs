@@ -47,6 +47,7 @@ pub mod db;
 pub mod easter_eggs;
 pub mod harness;
 pub mod health;
+pub mod integrity;
 pub mod model;
 pub mod settings;
 pub mod store_cache;

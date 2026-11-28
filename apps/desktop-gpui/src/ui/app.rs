@@ -61,6 +61,7 @@ use crate::ui::views::{
 mod capture_ui;
 mod compare_ui;
 mod health_ui;
+mod integrity_ui;
 mod pack_ui;
 mod search_ui;
 mod shortcuts;
@@ -455,6 +456,7 @@ pub struct MemOSApp {
     _harness_detail_task: Option<Task<()>>,
     _diag_task: Option<Task<()>>,
     _dream_diff_task: Option<Task<()>>,
+    integrity: integrity_ui::IntegrityPanel,
     time_travel: time_travel_ui::TimeTravelPanel,
     _bounds_save_task: Option<Task<()>>,
     _notice_task: Option<Task<()>>,
@@ -1095,6 +1097,7 @@ impl MemOSApp {
             _harness_detail_task: None,
             _diag_task: None,
             _dream_diff_task: None,
+            integrity: Default::default(),
             time_travel: Default::default(),
             _bounds_save_task: None,
             _notice_task: None,
@@ -5189,6 +5192,10 @@ impl MemOSApp {
             PaletteAction::OpenHealth => self.open_health_modal(HealthPanelFilter::All, window, cx),
             PaletteAction::OpenDreamDiff => self.open_dream_diff_modal(window, cx),
             PaletteAction::OpenTimeTravel => self.open_time_travel(cx),
+            PaletteAction::VerifyIntegrity => {
+                self.open_health_modal(HealthPanelFilter::All, window, cx);
+                self.verify_integrity(false, cx);
+            }
             PaletteAction::PreviewContext => {
                 self.open_context_pack(Some(PackSource::CurrentView), window, cx)
             }
